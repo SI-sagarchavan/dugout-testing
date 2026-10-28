@@ -1,8 +1,8 @@
 {
-  "name": "fanos-agents",
+  "name": "dugout",
   "version": "0.0.0",
   "private": true,
-  "description": "FanOS agent harness — core loop, tools, memory and evals",
+  "description": "Dugout — FanOS agent harness, agents and site-building packages",
   "type": "module",
   "packageManager": "pnpm@10.7.1",
   "engines": {

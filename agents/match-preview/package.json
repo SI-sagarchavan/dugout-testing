@@ -1,5 +1,5 @@
 {
-  "name": "@harness/agent-match-preview",
+  "name": "@dugout/agent-match-preview",
   "version": "0.0.0",
   "private": true,
   "type": "module",

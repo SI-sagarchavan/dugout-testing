@@ -1,5 +1,5 @@
 # Local infra for the harness: Postgres+pgvector, Valkey (no-eviction, like prod streams), Temporal dev server.
-name: fanos-agents
+name: dugout
 services:
   postgres:
     image: pgvector/pgvector:pg17

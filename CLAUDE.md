@@ -1,4 +1,4 @@
-# FanOS agent harness
+# Dugout (FanOS agent harness)
 
 Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability, memory. Agents are a spec plus typed tools on top. Plan and task IDs (H*, M*, S*, E*): `docs/PLAN.md`.
 
@@ -25,3 +25,17 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - Only the consolidation workflow writes long-term memory; agents propose.
 - Config is read live through a tool, never copied into memory.
 - Public npm registry is pinned in `.npmrc` (the global CodeArtifact token expires).
+
+## Agent skills
+
+### Issue tracker
+
+Local markdown under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
