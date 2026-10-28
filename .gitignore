@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+.DS_Store
+.turbo/
+
+# Local env. `.env.example` is the tracked template.
+.env
+.env.local
+
+# Local run artifacts: eval results, workspaces
+.runs/
+.evals/
