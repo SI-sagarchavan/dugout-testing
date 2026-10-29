@@ -1,6 +1,6 @@
 # 0006 — A run's working memory is saved in Postgres, so runs outlive their process
 
-Date: 2026-10-29 · Status: accepted
+Date: 2026-10-29 · Status: accepted; claiming, decisions and recovery moved from the API to workers (ADR 0009)
 
 ## Context
 

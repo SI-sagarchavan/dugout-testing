@@ -1,6 +1,6 @@
 # 0008 — A request chooses whether its response streams; structured output streams too
 
-Date: 2026-10-30 · Status: accepted
+Date: 2026-10-30 · Status: tool-call arguments streaming stands; the request modes (`stream`, wait, `background`) and the per-agent default left with the API (ADR 0009). wnm-fanxp-backend chooses how it answers its own clients
 
 ## Context
 
