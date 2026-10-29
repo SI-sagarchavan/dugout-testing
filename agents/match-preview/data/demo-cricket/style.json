@@ -1,0 +1,20 @@
+{
+  "facts": [
+    {
+      "key": "style.spelling",
+      "content": "Use British English spelling (colour, favourite, centre, organise, defence)."
+    },
+    {
+      "key": "style.length",
+      "content": "Keep the preview body to at most 120 words."
+    },
+    {
+      "key": "style.betting",
+      "content": "Never use betting language: no odds, bets, wagers, tips, punts or bookmakers."
+    },
+    {
+      "key": "style.tone",
+      "content": "Measured, knowledgeable tone; no hype words such as 'epic' or 'mouth-watering'."
+    }
+  ]
+}
