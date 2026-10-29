@@ -86,7 +86,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
     models = loadModelConfig();
     if (opts.fast) models.tiers.smart = models.tiers.fast;
     client = createOpenAICompatibleClient(models);
-    // judge model is fixed to the smart tier's default so scores stay comparable across --fast runs
+    // the judge always uses the smart tier's model, so --fast doesn't change how drafts are scored
     judge = createJudge(client, loadModelConfig().tiers.smart.model);
     lessons = createModelLessonWriter(client, models.tiers.fast.model);
   } else {

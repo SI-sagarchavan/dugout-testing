@@ -19,7 +19,10 @@ export interface ModelConfig {
 
 const THINKING = { thinking: { type: "enabled" } };
 
-/** DeepSeek defaults (ADR 0001); base URL and model ids can be overridden from the environment. */
+/**
+ * DeepSeek defaults (ADR 0001): both tiers use `deepseek-flash` with thinking, differing only in
+ * effort. Base URL and model ids can be overridden from the environment.
+ */
 export function loadModelConfig(
   env: Record<string, string | undefined> = process.env,
 ): ModelConfig {
@@ -37,7 +40,7 @@ export function loadModelConfig(
         extraBody: THINKING,
       },
       smart: {
-        model: env.LLM_MODEL_SMART || "deepseek-v4-pro",
+        model: env.LLM_MODEL_SMART || "deepseek-flash",
         contextWindow: 1_000_000,
         reasoningEffort: "high",
         extraBody: THINKING,

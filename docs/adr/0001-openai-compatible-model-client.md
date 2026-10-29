@@ -11,7 +11,7 @@ The plan locked "official provider SDKs behind `ModelClient`; Anthropic direct o
 - One `ModelClient` adapter for **Chat Completions** (`/chat/completions`), built on the official `openai` npm SDK. `baseURL` and `apiKey` come from config, so DeepSeek, OpenAI or a local server only differ in config.
 - Not the Responses API: fewer providers implement it, and DeepSeek's version is stateless and Codex-oriented.
 - Transcript types in `@dugout/contracts` are **shaped like** Chat Completions (`system`/`user`/`assistant`/`tool`, `toolCalls` with JSON-string arguments) but are our own zod types; SDK types stay inside the adapter.
-- Tiers map to a model plus thinking settings in config, never in specs. Testing defaults: `fast` = `deepseek-flash` (thinking, effort `low`), `smart` = `deepseek-v4-pro` (thinking, effort `high`).
+- Tiers map to a model plus thinking settings in config, never in specs. Defaults: both tiers use `deepseek-flash` with thinking, `fast` at effort `low` and `smart` at effort `high` (changed from `deepseek-v4-pro` for `smart` on 2026-10-29, to keep runs and evals cheap). `deepseek-v4-pro` stays in the price table for overrides.
 - Env: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL_FAST`, `LLM_MODEL_SMART`.
 
 ## Consequences
