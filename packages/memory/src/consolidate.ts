@@ -23,8 +23,8 @@ export interface ConsolidateOptions {
 }
 
 /**
- * The only path from a run into long-term memory. Rejections become episodes; `memory.propose`
- * calls become proposed facts that wait for review.
+ * The only path from a run into long-term memory. Rejections and change requests become episodes;
+ * `memory.propose` calls become proposed facts that wait for review.
  */
 export async function consolidateRun(
   opts: ConsolidateOptions,
@@ -40,16 +40,18 @@ export async function consolidateRun(
     if (event.type === "tool.started" && event.data.tool === PROPOSE_TOOL) {
       proposed.set(event.data.callId, event.data.input);
     }
-    if (event.type === "approval.rejected") {
-      const rejection = {
-        tool: event.data.tool,
-        input: requested.get(event.data.callId),
-        reason: event.data.reason,
-      };
+    // a change request is feedback on the draft just like a rejection, so it is remembered the
+    // same way; the run itself went on
+    if (event.type === "approval.rejected" || event.type === "approval.changes_requested") {
+      const rejected = event.type === "approval.rejected";
+      const reason = rejected ? event.data.reason : event.data.changes;
+      const rejection = { tool: event.data.tool, input: requested.get(event.data.callId), reason };
       const lesson = await opts.lessons?.(rejection).catch(() => undefined);
       const content = lesson
-        ? `${lesson} (Reviewer: "${rejection.reason}")`
-        : `A reviewer rejected a ${rejection.tool} draft: "${rejection.reason}"`;
+        ? `${lesson} (Reviewer: "${reason}")`
+        : rejected
+          ? `A reviewer rejected a ${rejection.tool} draft: "${reason}"`
+          : `A reviewer asked for a change to a ${rejection.tool} draft: "${reason}"`;
       episodes.push(
         await writer.addEpisode({
           tenantId,
@@ -83,7 +85,7 @@ export function createModelLessonWriter(client: ModelClient, model: string): Les
         {
           role: "system",
           content:
-            "A reviewer rejected an AI agent's draft. Write ONE short imperative sentence the agent should follow next time to avoid the same rejection. Output only the sentence.",
+            "A reviewer rejected an AI agent's draft, or sent it back asking for a change. Write ONE short imperative sentence the agent should follow next time so the reviewer would not have to ask. Output only the sentence.",
         },
         {
           role: "user",
