@@ -26,6 +26,8 @@ const runs = createRunManager({
   agents: {
     "match-preview": {
       input: matchPreview.input,
+      // as defineAgent sets them: text answers stream, structured output waits
+      stream: matchPreview.stream,
       run: (opts) =>
         matchPreview.create({
           store,
@@ -38,6 +40,7 @@ const runs = createRunManager({
     },
     sitemap: {
       input: sitemap.input,
+      stream: sitemap.stream,
       run: (opts) =>
         sitemap.create({
           store,
@@ -50,14 +53,8 @@ const runs = createRunManager({
     },
   },
 });
-const app = createApp({
-  pool,
-  runs,
-  events,
-  tenants: loadTenants(),
-  secret: SECRET,
-  heartbeatMs: 50,
-});
+const appDeps = { pool, runs, events, tenants: loadTenants(), secret: SECRET, heartbeatMs: 50 };
+const app = createApp(appDeps);
 
 let cricket: string;
 let football: string;
@@ -82,8 +79,13 @@ async function readStream(
   headers: Record<string, string>,
   until: (e: RunEvent) => boolean = () => false,
 ) {
-  const res = await app.request(path, { headers });
+  return readEvents(await app.request(path, { headers }), until);
+}
+
+/** The SSE events in a response, until `until` returns true or the response ends. */
+async function readEvents(res: Response, until: (e: RunEvent) => boolean = () => false) {
   expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toContain("text/event-stream");
   const reader = (res.body as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
   const out: RunEvent[] = [];
@@ -117,7 +119,11 @@ const start = async (token = cricket) => {
   const res = await app.request("/runs", {
     method: "POST",
     headers: { ...auth(token), "content-type": "application/json" },
-    body: JSON.stringify({ agent: "match-preview", input: { fixtureId: "c-101" } }),
+    body: JSON.stringify({
+      agent: "match-preview",
+      input: { fixtureId: "c-101" },
+      background: true,
+    }),
   });
   expect(res.status).toBe(202);
   return ((await res.json()) as { runId: string }).runId;
@@ -127,7 +133,7 @@ const approve = (runId: string, callId: string, token = cricket) =>
   app.request(`/runs/${runId}/approvals/${callId}`, {
     method: "POST",
     headers: { ...auth(token), "content-type": "application/json" },
-    body: JSON.stringify({ approved: true }),
+    body: JSON.stringify({ approved: true, background: true }),
   });
 
 describe("api", () => {
@@ -151,7 +157,7 @@ describe("api", () => {
     expect(request.data.input).toMatchObject({ fixtureId: "c-101" });
 
     expect((await approve(runId, request.data.callId, football)).status).toBe(404);
-    expect((await approve(runId, request.data.callId)).status).toBe(200);
+    expect((await approve(runId, request.data.callId)).status).toBe(202);
     expect((await approve(runId, request.data.callId)).status).toBe(404);
 
     // reconnect with Last-Event-ID and read to the end
@@ -192,7 +198,7 @@ describe("api", () => {
       (e) => e.type === "approval.requested",
     );
     const callId = (seen.at(-1) as Extract<RunEvent, { type: "approval.requested" }>).data.callId;
-    expect((await approve(runId, callId)).status).toBe(200);
+    expect((await approve(runId, callId)).status).toBe(202);
     await runs.idle();
   });
 
@@ -231,7 +237,8 @@ describe("api", () => {
       auth(cricket),
     );
     expect(stored.length).toBeGreaterThan(3);
-    expect(stored.every((e) => e.type !== "token" && e.seq > 2)).toBe(true);
+    expect(stored.every((e) => e.type !== "token" && e.type !== "tool.input.delta")).toBe(true);
+    expect(stored.every((e) => e.seq > 2)).toBe(true);
     expect(stored.at(-1)?.type).toBe("run.completed");
   });
 
@@ -247,10 +254,10 @@ describe("api", () => {
       app.request(`/runs/${runId}/approvals/${request.data.callId}`, {
         method: "POST",
         headers: { ...auth(cricket), "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...(body as object), background: true }),
       });
     expect((await decide({ approved: false })).status).toBe(400);
-    expect((await decide({ approved: false, changes: "Name both captains." })).status).toBe(200);
+    expect((await decide({ approved: false, changes: "Name both captains." })).status).toBe(202);
 
     const rest = await readStream(
       `/runs/${runId}/stream`,
@@ -264,7 +271,7 @@ describe("api", () => {
     const again = rest.events.at(-1) as Extract<RunEvent, { type: "approval.requested" }>;
     expect(again.type).toBe("approval.requested");
     expect(again.data.input).toMatchObject({ body: expect.stringContaining("captains") });
-    expect((await approve(runId, again.data.callId)).status).toBe(200);
+    expect((await approve(runId, again.data.callId)).status).toBe(202);
     const end = await readStream(`/runs/${runId}/stream`, {
       ...auth(cricket),
       "last-event-id": String(again.seq),
@@ -283,6 +290,7 @@ describe("api", () => {
       body: JSON.stringify({
         agent: "sitemap",
         input: { brief: "A T20 club with a fan zone.", sports: ["cricket"] },
+        background: true,
       }),
     });
     expect(res.status).toBe(202);
@@ -299,9 +307,13 @@ describe("api", () => {
     const changed = await app.request(`/runs/${runId}/approvals/${request.data.callId}`, {
       method: "POST",
       headers: { ...auth(cricket), "content-type": "application/json" },
-      body: JSON.stringify({ approved: false, changes: "Use /fanzone for the Fan Zone." }),
+      body: JSON.stringify({
+        approved: false,
+        changes: "Use /fanzone for the Fan Zone.",
+        background: true,
+      }),
     });
-    expect(changed.status).toBe(200);
+    expect(changed.status).toBe(202);
 
     const second = await readStream(
       `/runs/${runId}/stream`,
@@ -311,7 +323,7 @@ describe("api", () => {
     const again = second.events.at(-1) as Requested;
     const fanZone = { name: "Fan Zone", url: "/fanzone" };
     expect(again.data.input).toMatchObject({ navigation: expect.arrayContaining([fanZone]) });
-    expect((await approve(runId, again.data.callId)).status).toBe(200);
+    expect((await approve(runId, again.data.callId)).status).toBe(202);
 
     const end = await readStream(`/runs/${runId}/stream`, {
       ...auth(cricket),
@@ -358,5 +370,137 @@ describe("api", () => {
     expect(waiting).toContain(": heartbeat");
     await approve(runId, callId);
     await runs.idle();
+  });
+});
+
+describe("response modes", () => {
+  type Requested = Extract<RunEvent, { type: "approval.requested" }>;
+  const post = (path: string, body: unknown, token = cricket) =>
+    app.request(path, {
+      method: "POST",
+      headers: { ...auth(token), "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const brief = { brief: "A T20 club with a fan zone.", sports: ["cricket"] };
+  const fanZone = { name: "Fan Zone", url: "/fanzone" };
+
+  it("answers in JSON when the response isn't streamed: a whole review without SSE", async () => {
+    // the sitemap agent has an output schema, so its responses wait by default
+    const first = await post("/runs", { agent: "sitemap", input: brief });
+    expect(first.status).toBe(200);
+    const waiting = (await first.json()) as {
+      runId: string;
+      status: string;
+      approval: { callId: string; tool: string; input: unknown };
+    };
+    expect(waiting).toMatchObject({ status: "waiting", approval: { tool: "sitemap.save" } });
+    const { runId } = waiting;
+
+    const changed = await post(`/runs/${runId}/approvals/${waiting.approval.callId}`, {
+      approved: false,
+      changes: "Use /fanzone for the Fan Zone.",
+    });
+    expect(changed.status).toBe(200);
+    const again = (await changed.json()) as typeof waiting;
+    expect(again).toMatchObject({
+      runId,
+      status: "waiting",
+      approval: { input: { navigation: expect.arrayContaining([fanZone]) } },
+    });
+
+    const approved = await post(`/runs/${runId}/approvals/${again.approval.callId}`, {
+      approved: true,
+    });
+    expect(approved.status).toBe(200);
+    expect(await approved.json()).toMatchObject({
+      runId,
+      status: "completed",
+      output: { navigation: expect.arrayContaining([fanZone]) },
+      usage: { steps: expect.any(Number) },
+    });
+  });
+
+  it("streams each invocation in its response, and the pieces join up without gaps", async () => {
+    // match-preview answers in text, so its responses stream by default
+    const first = await readEvents(
+      await post("/runs", { agent: "match-preview", input: { fixtureId: "c-101" } }),
+    );
+    // the response ends where the run waits for a person
+    expect(first.events.at(0)?.type).toBe("run.started");
+    expect(first.events.some((e) => e.type === "token")).toBe(true);
+    const request = first.events.at(-1) as Requested;
+    expect(request.type).toBe("approval.requested");
+
+    const rest = await readEvents(
+      await post(`/runs/${request.runId}/approvals/${request.data.callId}`, { approved: true }),
+    );
+    expect(rest.events.at(0)).toMatchObject({ type: "run.resumed", data: { reason: "approval" } });
+    expect(rest.events.at(-1)).toMatchObject({
+      type: "run.completed",
+      data: { status: "completed" },
+    });
+    const all = [...first.events, ...rest.events];
+    expect(all.map((e) => e.seq)).toEqual(all.map((_, i) => i + 1));
+  });
+
+  it("lets the request choose against the agent's default", async () => {
+    const streamed = await readEvents(
+      await post("/runs", { agent: "sitemap", input: brief, stream: true }),
+    );
+    const request = streamed.events.at(-1) as Requested;
+    expect(request.type).toBe("approval.requested");
+    // structured output streams as the tool call's arguments, before the call is made
+    const fragments = streamed.events.flatMap((e) =>
+      e.type === "tool.input.delta" && e.data.callId === request.data.callId ? [e.data.text] : [],
+    );
+    expect(JSON.parse(fragments.join(""))).toEqual(request.data.input);
+
+    const waited = await post(`/runs/${request.runId}/approvals/${request.data.callId}`, {
+      approved: true,
+      stream: false,
+    });
+    expect(await waited.json()).toMatchObject({ status: "completed" });
+
+    const preview = await post("/runs", {
+      agent: "match-preview",
+      input: { fixtureId: "c-101" },
+      stream: false,
+    });
+    const waiting = (await preview.json()) as { runId: string; approval: { callId: string } };
+    expect(waiting).toMatchObject({ status: "waiting", approval: { tool: "draft.save" } });
+    await post(`/runs/${waiting.runId}/approvals/${waiting.approval.callId}`, {
+      approved: false,
+      reason: "not this week",
+    });
+  });
+
+  it("answers 202 with the run id when the run takes longer than the request waits", async () => {
+    const impatient = createApp({ ...appDeps, maxWaitMs: 1 });
+    const res = await impatient.request("/runs", {
+      method: "POST",
+      headers: { ...auth(cricket), "content-type": "application/json" },
+      body: JSON.stringify({ agent: "sitemap", input: brief }),
+    });
+    expect(res.status).toBe(202);
+    const { runId, status } = (await res.json()) as { runId: string; status: string };
+    expect(status).toBe("running");
+    // it carries on, and can be followed by its id
+    const { events: seen } = await readStream(
+      `/runs/${runId}/stream`,
+      auth(cricket),
+      (e) => e.type === "approval.requested",
+    );
+    const callId = (seen.at(-1) as Requested).data.callId;
+    expect((await post(`/runs/${runId}/approvals/${callId}`, { approved: true })).status).toBe(200);
+  });
+
+  it("refuses a request that asks to stream a background run", async () => {
+    const res = await post("/runs", {
+      agent: "sitemap",
+      input: brief,
+      stream: true,
+      background: true,
+    });
+    expect(res.status).toBe(400);
   });
 });
