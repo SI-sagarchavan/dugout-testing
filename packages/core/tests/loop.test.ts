@@ -1,0 +1,382 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  type AgentDefinition,
+  type AgentSpec,
+  type ApprovalRequest,
+  defineTool,
+  type RunEvent,
+  type ToolContext,
+} from "@dugout/contracts";
+import { beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
+import {
+  type Approver,
+  createMemoryOutputStore,
+  createMemorySink,
+  createScriptedModel,
+  runLocal,
+  type ScriptStep,
+  SpecError,
+  scriptedModelConfig,
+} from "../src/index.ts";
+
+const seen: ToolContext[] = [];
+
+const statsGet = defineTool({
+  name: "stats.get",
+  description: "Team stats",
+  input: z.object({ team: z.string() }),
+  effect: "read",
+  timeoutMs: 1_000,
+  async run({ team }, ctx) {
+    seen.push(ctx);
+    return { team, wins: 7, contact: "press@example.com" };
+  },
+});
+
+const saved: unknown[] = [];
+const draftSave = defineTool({
+  name: "draft.save",
+  description: "Save a draft",
+  input: z.object({ text: z.string() }),
+  effect: "write",
+  timeoutMs: 1_000,
+  async run(input) {
+    saved.push(input);
+    return { saved: true };
+  },
+});
+
+let slowAttempts = 0;
+const slowRead = defineTool({
+  name: "slow.read",
+  description: "Never finishes in time",
+  input: z.object({}),
+  effect: "read",
+  timeoutMs: 20,
+  retries: 1,
+  run: () => {
+    slowAttempts++;
+    return new Promise(() => {});
+  },
+});
+
+const bigRead = defineTool({
+  name: "big.read",
+  description: "Large output",
+  input: z.object({}),
+  effect: "read",
+  timeoutMs: 1_000,
+  run: async () => `${"x".repeat(20_000)}END`,
+});
+
+const spec = (overrides: Partial<AgentSpec> = {}): AgentSpec => ({
+  id: "test-agent",
+  version: 1,
+  owner: "tests",
+  instructions: "You are a test agent.",
+  tools: ["stats.get", "draft.save", "slow.read", "big.read"],
+  skills: [],
+  model: { tier: "smart" },
+  memory: { read: [], write: [] },
+  budget: { usdPerRun: 1, maxSteps: 6, maxDepth: 0 },
+  approvals: [],
+  ...overrides,
+});
+
+const Output = z.object({ summary: z.string() });
+const final = (summary: unknown) => ({ toolCalls: [{ name: "final", arguments: { summary } }] });
+const call = (name: string, args: unknown = {}) => ({ toolCalls: [{ name, arguments: args }] });
+
+let runsDir: string;
+let approvals: ApprovalRequest[];
+const approveAll: Approver = async (req) => {
+  approvals.push(req);
+  return { approved: true, by: "tester" };
+};
+
+beforeEach(async () => {
+  runsDir = await mkdtemp(join(tmpdir(), "dugout-runs-"));
+  approvals = [];
+  seen.length = 0;
+  saved.length = 0;
+  slowAttempts = 0;
+});
+
+async function run(
+  script: ScriptStep[],
+  opts: { agent?: AgentDefinition; approver?: Approver; input?: unknown } = {},
+) {
+  const sink = createMemorySink();
+  const model = createScriptedModel(script);
+  const result = await runLocal({
+    agent: opts.agent ?? { spec: spec(), output: Output },
+    input: opts.input ?? "Write a preview",
+    tenantId: "demo-cricket",
+    tools: [statsGet, draftSave, slowRead, bigRead],
+    client: model,
+    models: scriptedModelConfig(),
+    approver: opts.approver ?? approveAll,
+    runsDir,
+    sinks: [sink],
+    outputs: createMemoryOutputStore(),
+  });
+  const types = sink.events.map((e) => e.type);
+  const of = <T extends RunEvent["type"]>(type: T) =>
+    sink.events.filter((e): e is Extract<RunEvent, { type: T }> => e.type === type);
+  return { result, events: sink.events, types, of, model };
+}
+
+describe("runAgent", () => {
+  it("completes through the final tool after using a tool", async () => {
+    const { result, types, model } = await run([
+      { reasoning: "need stats", ...call("stats.get", { team: "Lions" }) },
+      final("Lions have won 7"),
+    ]);
+
+    expect(result).toMatchObject({ status: "completed", output: { summary: "Lions have won 7" } });
+    expect(types).toEqual([
+      "run.started",
+      "step.completed",
+      "tool.started",
+      "tool.completed",
+      "step.completed",
+      "run.completed",
+    ]);
+    const second = model.requests[1]?.messages ?? [];
+    expect(second.at(-2)).toMatchObject({ role: "assistant", reasoning: "need stats" });
+    expect(second.at(-1)).toMatchObject({ role: "tool", toolCallId: "call_1_0" });
+    expect(model.requests[0]?.model).toBe("scripted-smart");
+    expect(model.requests[0]?.tools.map((t) => t.name)).toEqual([
+      "stats.get",
+      "draft.save",
+      "slow.read",
+      "big.read",
+      "run.readOutput",
+      "final",
+    ]);
+  });
+
+  it("completes with the message text when the agent has no output schema", async () => {
+    const { result, of } = await run([{ content: "Done." }], { agent: { spec: spec() } });
+    expect(result).toMatchObject({ status: "completed", output: "Done." });
+    expect(of("token").map((e) => e.data.text)).toEqual(["Done."]);
+  });
+
+  it("gives tools the tenant from the run context", async () => {
+    await run([call("stats.get", { team: "Lions" }), final("ok")]);
+    expect(seen[0]).toMatchObject({ tenantId: "demo-cricket" });
+  });
+
+  it.each([
+    ["registry", "nope.tool", { team: "x" }, "unknown tool"],
+    ["policy", "stats.get", "{not json", "not valid JSON"],
+    ["policy", "stats.get", { team: 3 }, "team"],
+    ["policy", "stats.get", { team: "../../etc/passwd" }, "path traversal"],
+    [
+      "policy",
+      "stats.get",
+      { team: "x", tenantId: "demo-football" },
+      "tenant is set by the harness",
+    ],
+    ["policy", "stats.get", { team: "sk-abcdefghijklmnopqrstuvwx" }, "secret"],
+  ])("denies at the %s stage: %s %j", async (stage, name, args, reason) => {
+    const { result, of, model } = await run([call(name, args), final("ok")]);
+    const denied = of("tool.denied")[0];
+    expect(denied?.data.stage).toBe(stage);
+    expect(denied?.data.reason).toContain(reason);
+    expect(model.requests[1]?.messages.at(-1)?.content).toMatch(/^Denied/);
+    expect(result.status).toBe("completed");
+  });
+
+  it("denies a registered tool the spec does not allow", async () => {
+    const { of } = await run([call("big.read"), final("ok")], {
+      agent: { spec: spec({ tools: ["stats.get"] }), output: Output },
+    });
+    expect(of("tool.denied")[0]?.data).toMatchObject({ stage: "spec", tool: "big.read" });
+  });
+
+  it("waits for approval before a write tool, then runs it", async () => {
+    const { types, of } = await run([call("draft.save", { text: "hello" }), final("saved")]);
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]?.input).toEqual({ text: "hello" });
+    expect(saved).toEqual([{ text: "hello" }]);
+    expect(types.slice(2, 6)).toEqual([
+      "approval.requested",
+      "approval.granted",
+      "tool.started",
+      "tool.completed",
+    ]);
+    expect(of("approval.granted")[0]?.data.by).toBe("tester");
+  });
+
+  it("asks for approval on a read tool listed in approvals", async () => {
+    await run([call("stats.get", { team: "x" }), final("ok")], {
+      agent: { spec: spec({ approvals: ["stats.get"] }), output: Output },
+    });
+    expect(approvals.map((a) => a.tool)).toEqual(["stats.get"]);
+  });
+
+  it("ends the run without writing when the approval is rejected", async () => {
+    const { result, types } = await run([call("draft.save", { text: "bad" })], {
+      approver: async () => ({ approved: false, by: "editor", reason: "too long" }),
+    });
+    expect(saved).toEqual([]);
+    expect(result).toMatchObject({
+      status: "rejected",
+      output: { tool: "draft.save", input: { text: "bad" }, by: "editor", reason: "too long" },
+    });
+    expect(types.slice(-2)).toEqual(["approval.rejected", "run.completed"]);
+  });
+
+  it("fails with reason budget once spend passes the limit", async () => {
+    // scripted turns cost 1,200 tokens at $1 per 1M = $0.0012
+    const { result, types } = await run([call("stats.get", { team: "x" }), final("ok")], {
+      agent: { spec: spec({ budget: { usdPerRun: 0.001, maxSteps: 6, maxDepth: 0 } }) },
+    });
+    expect(result).toMatchObject({ status: "failed", reason: "budget" });
+    expect(types).toEqual(["run.started", "step.completed", "run.failed"]);
+  });
+
+  it("fails with reason max_steps when the agent never finishes", async () => {
+    const script = Array.from({ length: 6 }, () => call("stats.get", { team: "x" }));
+    const { result } = await run(script);
+    expect(result).toMatchObject({ status: "failed", reason: "max_steps", usage: { steps: 6 } });
+  });
+
+  it("returns schema errors from final to the model and accepts a corrected result", async () => {
+    const { result, model } = await run([final(42), final("fixed")]);
+    expect(model.requests[1]?.messages.at(-1)?.content).toMatch(/^Invalid result/);
+    expect(result).toMatchObject({ status: "completed", output: { summary: "fixed" } });
+  });
+
+  it("reminds the agent to call final, then fails after repeated invalid output", async () => {
+    const { result, model } = await run([{ content: "here you go" }, final(1), final(2)]);
+    expect(model.requests[1]?.messages.at(-1)).toMatchObject({
+      role: "user",
+      content: "Call the final tool with your result.",
+    });
+    expect(result).toMatchObject({ status: "failed", reason: "invalid_output" });
+  });
+
+  it("reports a tool timeout as a failed call after its retries", async () => {
+    const { of, result } = await run([call("slow.read"), final("ok")]);
+    expect(slowAttempts).toBe(2);
+    expect(of("tool.completed")[0]?.data).toMatchObject({ ok: false });
+    expect(of("tool.completed")[0]?.data.content).toContain("timed out after 20ms");
+    expect(result.status).toBe("completed");
+  });
+
+  it("replaces a large output with a reference the agent can read back", async () => {
+    let ref = "";
+    const { model } = await run([
+      call("big.read"),
+      (req) => {
+        ref = JSON.parse(req.messages.at(-1)?.content ?? "{}").ref;
+        return call("run.readOutput", { ref, offset: 19_998 });
+      },
+      final("ok"),
+    ]);
+    const truncated = JSON.parse(model.requests[1]?.messages.at(-1)?.content ?? "{}");
+    expect(truncated).toMatchObject({ ref: "out-1", chars: 20_003 });
+    expect(truncated.preview).toHaveLength(1_000);
+    expect(model.requests[2]?.messages.at(-1)?.content).toBe("xxEND");
+  });
+
+  it("redacts PII in tool output before the model and the event log see it", async () => {
+    const { model, of } = await run([call("stats.get", { team: "x" }), final("ok")]);
+    const toolMessage = model.requests[1]?.messages.at(-1)?.content ?? "";
+    expect(toolMessage).toContain("[REDACTED:email]");
+    expect(toolMessage).not.toContain("press@example.com");
+    expect(JSON.stringify(of("tool.completed"))).not.toContain("press@example.com");
+  });
+
+  it("writes every event to the run's events.jsonl in seq order", async () => {
+    const { result, events } = await run([final("ok")]);
+    const lines = (await readFile(join(runsDir, result.runId, "events.jsonl"), "utf8"))
+      .trim()
+      .split("\n");
+    const logged = lines.map((line) => JSON.parse(line) as RunEvent);
+    expect(logged.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
+    expect(new Set(logged.map((e) => e.runId))).toEqual(new Set([result.runId]));
+  });
+
+  it("fails with reason error when the model call throws", async () => {
+    const { result } = await run([]);
+    expect(result).toMatchObject({ status: "failed", reason: "error" });
+    expect((result as { message: string }).message).toContain("script exhausted");
+  });
+
+  it.each([
+    ["memory without context", spec({ memory: { read: ["semantic"], write: [] } })],
+    ["skills without context", spec({ skills: ["x"] })],
+    ["sub-agents", spec({ budget: { usdPerRun: 1, maxSteps: 3, maxDepth: 1 } })],
+    ["unknown tool", spec({ tools: ["missing.tool"] })],
+    ["reserved", spec({ tools: ["final"] })],
+    ["approval", spec({ approvals: ["missing.tool"] })],
+  ])("rejects an unsupported spec (%s) before the run starts", async (_, bad) => {
+    await expect(run([final("ok")], { agent: { spec: bad } })).rejects.toBeInstanceOf(SpecError);
+  });
+});
+
+describe("runLocal hooks", () => {
+  it("appends the memory context to the instructions and hands events to afterRun", async () => {
+    const model = createScriptedModel([final("ok")]);
+    const sink = createMemorySink();
+    let after: { events: RunEvent[]; status: string } | undefined;
+    const result = await runLocal({
+      agent: {
+        spec: spec({ skills: ["style"], memory: { read: ["semantic"], write: [] } }),
+        output: Output,
+      },
+      input: "go",
+      tenantId: "demo-cricket",
+      tools: [statsGet, draftSave, slowRead, bigRead],
+      client: model,
+      models: scriptedModelConfig(),
+      approver: approveAll,
+      runsDir,
+      sinks: [sink],
+      outputs: createMemoryOutputStore(),
+      context: async (ctx) => ({
+        text: `## House facts\n- tenant ${ctx.tenantId}`,
+        tokens: 8,
+        sources: [{ id: "m1", kind: "semantic", tokens: 8 }],
+      }),
+      afterRun: async ({ result, events }) => {
+        after = { events, status: result.status };
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(model.requests[0]?.messages[0]?.content).toBe(
+      "You are a test agent.\n\n## House facts\n- tenant demo-cricket",
+    );
+    expect(sink.events[1]).toMatchObject({
+      type: "context.built",
+      data: { tokens: 8, sources: [{ id: "m1" }] },
+    });
+    expect(after?.status).toBe("completed");
+    expect(after?.events.map((e) => e.type)).toEqual(sink.events.map((e) => e.type));
+  });
+
+  it("reports an afterRun failure without failing the run", async () => {
+    const result = await runLocal({
+      agent: { spec: spec(), output: Output },
+      input: "go",
+      tenantId: "demo-cricket",
+      tools: [statsGet, draftSave, slowRead, bigRead],
+      client: createScriptedModel([final("ok")]),
+      models: scriptedModelConfig(),
+      approver: approveAll,
+      runsDir,
+      outputs: createMemoryOutputStore(),
+      afterRun: async () => {
+        throw new Error("consolidation down");
+      },
+    });
+    expect(result).toMatchObject({ status: "completed", afterRunError: "consolidation down" });
+  });
+});
