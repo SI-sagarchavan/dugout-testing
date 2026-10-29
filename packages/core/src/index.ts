@@ -8,5 +8,6 @@ export * from "./model/scripted.ts";
 export * from "./output-store.ts";
 export * from "./policy.ts";
 export * from "./redact.ts";
+export * from "./run-store.ts";
 export * from "./tenants.ts";
 export * from "./tools.ts";
