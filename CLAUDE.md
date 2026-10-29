@@ -11,6 +11,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `packages/evals` — graders, model judge, suite runner and pass-rate gate
 - `packages/tracing` — run events → OpenTelemetry spans → Langfuse
 - `agents/match-preview` — sample agent: tools, skill, spec, demo data, eval cases
+- `agents/sitemap` — second agent: club brief to import-ready pages plus header menu; ported importer rules, skill, eval cases
 - `apps/api` — HTTP/SSE API; runs agents in-process (Valkey stream + Postgres record)
 - `apps/worker` — Temporal worker, parked until durability is needed
 
@@ -22,7 +23,8 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `pnpm db:migrate` / `pnpm seed` — apply migrations; load demo tenants' house-style facts
 - `pnpm preview --tenant demo-cricket --fixture c-101 [--fast]` — run the agent with a terminal approval prompt
 - `pnpm memory:review --tenant <id>` — approve or reject proposed facts
-- `pnpm eval match-preview [--scripted] [--fast] [--only id,id]` — eval suite; exits non-zero below the 90% gate
+- `pnpm eval match-preview [--scripted] [--fast] [--only id,id]` — eval suite; exits non-zero below the 90% gate (`pnpm eval sitemap` likewise)
+- `pnpm sitemap --tenant demo-cricket --brief "..." [--sport cricket] [--fast]` — run the sitemap agent with a terminal approval prompt; `pnpm sitemap:seed` loads its house facts
 - `pnpm api` / `pnpm token <tenant>` — API on :8787; a local dev token for it
 - `pnpm smoke [--fast]` — one minimal live run against the configured model
 

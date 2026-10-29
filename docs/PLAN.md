@@ -33,6 +33,7 @@ Built and tested locally, except H7, which is parked while everything runs on a 
 | M1–M7 | done   | Consolidation runs right after each run, not as a workflow (ADR 0003)                              |
 | S1–S4 | done   | S4 is the approval prompt in `pnpm preview` and the API approval endpoint                          |
 | E1–E6 | done   | `pnpm eval match-preview`; the judge reports but does not gate                                     |
+| A2    | done   | Sitemap agent (`agents/sitemap`): first live use of `final` structured output; `pnpm eval sitemap` |
 
 ## Embedding model
 

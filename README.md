@@ -10,6 +10,10 @@ pnpm check
 
 pnpm preview --tenant demo-cricket --fixture c-101
 pnpm eval match-preview
+
+pnpm sitemap:seed
+pnpm sitemap --tenant demo-cricket --sport cricket --brief "T20 club: news, fixtures, squad, standings"
+pnpm eval sitemap
 ```
 
 API:
