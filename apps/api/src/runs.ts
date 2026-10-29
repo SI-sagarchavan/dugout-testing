@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ApprovalDecision, EventSink, RunEvent, RunStore } from "@dugout/contracts";
-import { type Approver, RunInterrupted } from "@dugout/core";
+import { type Approver, RunInterrupted, type RunResult } from "@dugout/core";
 import { type Pool, withTenant } from "@dugout/db";
 import type { AgentDeps, AnyAgent } from "@dugout/sdk";
 import type { z } from "zod";
@@ -17,9 +17,22 @@ export interface ResumeOptions {
   events: RunEvent[];
 }
 
+/**
+ * How one invocation of a run ended. Besides the run's own results (completed, rejected, failed,
+ * or waiting for an approval), it can stop because another process took the run over
+ * (`interrupted`), or crash, in which case recovery picks the run up once its lease runs out.
+ * Either way the run carries on elsewhere.
+ */
+export type InvocationEnd =
+  | RunResult
+  | { status: "interrupted" }
+  | { status: "crashed"; message: string };
+
 /** How the API starts (or resumes) one kind of agent. */
 export interface AgentEntry {
   input: z.ZodType;
+  /** Whether its responses stream by default; a request's `stream` flag decides otherwise. */
+  stream?: boolean;
   run(opts: {
     tenantId: string;
     input: never;
@@ -28,13 +41,16 @@ export interface AgentEntry {
     sinks: EventSink[];
     store: RunStore;
     resume?: ResumeOptions;
-  }): Promise<unknown>;
+  }): Promise<RunResult>;
 }
 
 /** API entries for agents made with `defineAgent`, by id, all run with the same deps. */
 export function hostAgents(deps: AgentDeps, ...agents: AnyAgent[]): Record<string, AgentEntry> {
   return Object.fromEntries(
-    agents.map((agent) => [agent.spec.id, { input: agent.input, run: agent.create(deps) }]),
+    agents.map((agent) => [
+      agent.spec.id,
+      { input: agent.input, stream: agent.stream, run: agent.create(deps) },
+    ]),
   );
 }
 
@@ -101,14 +117,17 @@ export function createRunManager(opts: {
     runId: string,
     input: unknown,
     resume?: ResumeOptions,
-  ) => {
+  ): Promise<InvocationEnd> => {
     const agent = opts.agents[agentId];
-    if (!agent) return abandon(tenantId, runId, `unknown agent ${agentId}`);
+    if (!agent) {
+      const message = `unknown agent ${agentId}`;
+      return abandon(tenantId, runId, message).then(() => ({ status: "crashed", message }));
+    }
     const heartbeat = setInterval(
       () => void renew(tenantId, runId, lease).catch((err) => opts.onError?.(runId, err)),
       leaseMs / 3,
     );
-    const run = agent
+    const run: Promise<InvocationEnd> = agent
       .run({
         tenantId,
         input: input as never,
@@ -118,8 +137,12 @@ export function createRunManager(opts: {
         store: createPostgresRunStore(opts.pool, { owner: lease, leaseMs }),
         ...(resume ? { resume } : {}),
       })
-      // another process holds the run now; this invocation just stops
-      .catch((err) => (err instanceof RunInterrupted ? undefined : opts.onError?.(runId, err)))
+      .catch((err): InvocationEnd => {
+        // another process holds the run now; this invocation just stops
+        if (err instanceof RunInterrupted) return { status: "interrupted" };
+        opts.onError?.(runId, err);
+        return { status: "crashed", message: err instanceof Error ? err.message : String(err) };
+      })
       .finally(() => {
         clearInterval(heartbeat);
         inFlight.delete(run);
@@ -128,7 +151,10 @@ export function createRunManager(opts: {
     return run;
   };
 
-  /** Loads what a resumed invocation needs besides the saved state, and starts it. */
+  /**
+   * Loads what a resumed invocation needs besides the saved state, and starts it. Returns how it
+   * ends, and the last `seq` before it, so a caller can follow just this invocation's events.
+   */
   const carryOn = async (
     lease: string,
     tenantId: string,
@@ -142,17 +168,20 @@ export function createRunManager(opts: {
       lastSeq(tenantId, runId),
       readStoredEvents(opts.pool, tenantId, runId, 0),
     ]);
-    void launch(lease, tenantId, agentId, runId, input, {
+    const ended = launch(lease, tenantId, agentId, runId, input, {
       reason,
       startSeq,
       events,
       ...(decision ? { decision } : {}),
     });
+    return { ended, afterSeq: startSeq, agentId };
   };
 
   const manager = {
     owner,
     agentIds: () => Object.keys(opts.agents),
+    /** Whether this agent's responses stream when a request doesn't say. */
+    streams: (agentId: string) => opts.agents[agentId]?.stream ?? false,
 
     async start(tenantId: string, agentId: string, rawInput: unknown) {
       const agent = opts.agents[agentId];
@@ -169,13 +198,12 @@ export function createRunManager(opts: {
           [runId, tenantId, agentId, parsed.data, lease, leaseMs / 1000],
         ),
       );
-      void launch(lease, tenantId, agentId, runId, parsed.data);
-      return runId;
+      return { runId, ended: launch(lease, tenantId, agentId, runId, parsed.data) };
     },
 
     /**
-     * Decides the approval a run is waiting for and resumes it in this process. False when the run
-     * is not waiting for this call (already decided, another call, another tenant).
+     * Decides the approval a run is waiting for and resumes it in this process. Undefined when the
+     * run is not waiting for this call (already decided, another call, another tenant).
      */
     async decide(tenantId: string, runId: string, callId: string, decision: ApprovalDecision) {
       const lease = newLease();
@@ -193,9 +221,8 @@ export function createRunManager(opts: {
         );
         return rows[0];
       });
-      if (!claimed) return false;
-      await carryOn(lease, tenantId, runId, claimed.agent_id, claimed.input, "approval", decision);
-      return true;
+      if (!claimed) return undefined;
+      return carryOn(lease, tenantId, runId, claimed.agent_id, claimed.input, "approval", decision);
     },
 
     /** Claims runs whose lease ran out (their process died) and carries them on here. */

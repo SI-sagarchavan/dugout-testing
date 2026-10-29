@@ -91,7 +91,7 @@ const waitingCall = (es: RunEvent[]) =>
 describe("runs that outlive their process", () => {
   it("decides a waiting run in another process and finishes it there", async () => {
     const first = apiProcess(writerModel);
-    const runId = await first.start(TENANT, "match-preview", { fixtureId: "c-101" });
+    const { runId } = await first.start(TENANT, "match-preview", { fixtureId: "c-101" });
     await eventsUntil(runId, lastType("approval.requested"));
     await first.idle();
     // nothing in memory holds the run now: it is saved and waiting
@@ -100,10 +100,10 @@ describe("runs that outlive their process", () => {
     const second = apiProcess(writerModel);
     const callId = waitingCall(await events.read(runId, 0));
     const approve = { approved: true as const, by: "editor" };
-    expect(await second.decide("demo-football", runId, callId, approve)).toBe(false);
-    expect(await second.decide(TENANT, runId, "call_other", approve)).toBe(false);
-    expect(await second.decide(TENANT, runId, callId, approve)).toBe(true);
-    expect(await second.decide(TENANT, runId, callId, approve)).toBe(false);
+    expect(await second.decide("demo-football", runId, callId, approve)).toBeUndefined();
+    expect(await second.decide(TENANT, runId, "call_other", approve)).toBeUndefined();
+    expect(await second.decide(TENANT, runId, callId, approve)).toBeDefined();
+    expect(await second.decide(TENANT, runId, callId, approve)).toBeUndefined();
     await second.idle();
 
     const all = await events.read(runId, 0);
@@ -149,7 +149,7 @@ describe("runs that outlive their process", () => {
     };
     const leaseMs = 600;
     const first = apiProcess(dying, leaseMs);
-    const runId = await first.start(TENANT, "match-preview", { fixtureId: "c-101" });
+    const { runId } = await first.start(TENANT, "match-preview", { fixtureId: "c-101" });
     await first.idle();
     expect(died).toBe(true);
     expect(await runRow(runId)).toMatchObject({ status: "running" });
@@ -165,7 +165,7 @@ describe("runs that outlive their process", () => {
 
     expect(
       await second.decide(TENANT, runId, waitingCall(resumed), { approved: true, by: "editor" }),
-    ).toBe(true);
+    ).toBeDefined();
     await second.idle();
     const all = await events.read(runId, 0);
     contiguous(all);

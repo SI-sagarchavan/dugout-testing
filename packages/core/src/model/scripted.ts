@@ -18,7 +18,7 @@ export function createScriptedModel(script: ScriptStep[]): ModelClient & {
   const requests: ModelRequest[] = [];
   return {
     requests,
-    async complete(req, onToken) {
+    async complete(req, onToken, onToolInput) {
       const { signal: _, ...rest } = req;
       requests.push(structuredClone(rest));
       const step = script[requests.length - 1];
@@ -31,6 +31,10 @@ export function createScriptedModel(script: ScriptStep[]): ModelClient & {
         arguments:
           typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments),
       }));
+      // the whole arguments as one fragment; a real model sends many
+      for (const [index, call] of (toolCalls ?? []).entries()) {
+        onToolInput?.({ index, callId: call.id, tool: call.name, text: call.arguments });
+      }
       return {
         message: {
           role: "assistant",

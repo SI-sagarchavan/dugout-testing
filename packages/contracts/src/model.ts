@@ -43,7 +43,23 @@ export interface ModelTurn {
   finishReason: string;
 }
 
-/** One adapter per wire protocol. `onToken` receives visible content only, never reasoning. */
+/** A fragment of a tool call's arguments (JSON text) as the model writes them. */
+export interface ToolInputDelta {
+  /** Position of the call in the turn. */
+  index: number;
+  callId: string;
+  tool: string;
+  text: string;
+}
+
+/**
+ * One adapter per wire protocol. `onToken` receives visible content only, never reasoning;
+ * `onToolInput` receives tool-call arguments as they stream (not valid JSON until the call ends).
+ */
 export interface ModelClient {
-  complete(req: ModelRequest, onToken?: (text: string) => void): Promise<ModelTurn>;
+  complete(
+    req: ModelRequest,
+    onToken?: (text: string) => void,
+    onToolInput?: (delta: ToolInputDelta) => void,
+  ): Promise<ModelTurn>;
 }

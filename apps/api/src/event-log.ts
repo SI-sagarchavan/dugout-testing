@@ -8,6 +8,8 @@ const RETAIN_SECONDS = 7 * 24 * 3600;
 
 const streamKey = (runId: string) => `run:${runId}:events`;
 const isTerminal = (e: RunEvent) => e.type === "run.completed" || e.type === "run.failed";
+/** Streamed fragments: only the live stream has them; the finished messages are in the record. */
+const LIVE_ONLY = new Set<RunEvent["type"]>(["token", "tool.input.delta"]);
 const parse = (fields: string[]) => JSON.parse(fields[1] ?? "null") as RunEvent;
 
 /**
@@ -50,11 +52,18 @@ export function createValkeyEventLog(valkey: Valkey) {
       // Nothing after `last`: if the newest entry ends the run, the client has seen everything.
       const [newest] = await valkey.xrevrange(streamKey(runId), "+", "-", "COUNT", 1);
       if (newest && isTerminal(parse(newest[1]))) return;
-      // blocking reads need their own connection
+      // blocking reads need their own connection; aborting closes it, ending a read in progress
       const reader = valkey.duplicate();
+      const stop = () => reader.disconnect();
+      signal.addEventListener("abort", stop, { once: true });
       try {
         while (!signal.aborted) {
-          const res = await reader.xread("BLOCK", 2_000, "STREAMS", streamKey(runId), `0-${last}`);
+          const res = await reader
+            .xread("BLOCK", 2_000, "STREAMS", streamKey(runId), `0-${last}`)
+            .catch((err) => {
+              if (signal.aborted) return null;
+              throw err;
+            });
           for (const [, entries] of res ?? []) {
             for (const [, fields] of entries) {
               const event = parse(fields);
@@ -66,6 +75,7 @@ export function createValkeyEventLog(valkey: Valkey) {
           }
         }
       } finally {
+        signal.removeEventListener("abort", stop);
         reader.disconnect();
       }
     },
@@ -74,11 +84,11 @@ export function createValkeyEventLog(valkey: Valkey) {
 
 export type ValkeyEventLog = ReturnType<typeof createValkeyEventLog>;
 
-/** The permanent record: every event except tokens, plus the run's final status. */
+/** The permanent record: every event except streamed fragments, plus the run's final status. */
 export function createPostgresEventSink(pool: Pool, tenantId: string): EventSink {
   return {
     async write(event) {
-      if (event.type === "token") return;
+      if (LIVE_ONLY.has(event.type)) return;
       await withTenant(pool, tenantId, async (db) => {
         await db.query(
           `insert into run_events (run_id, seq, tenant_id, type, data, at)

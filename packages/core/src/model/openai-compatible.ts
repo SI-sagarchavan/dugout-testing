@@ -5,6 +5,7 @@ import type {
   ModelRequest,
   ModelTurn,
   ToolCall,
+  ToolInputDelta,
 } from "@dugout/contracts";
 import OpenAI from "openai";
 
@@ -40,9 +41,9 @@ export function createOpenAICompatibleClient(opts: OpenAICompatibleOptions): Mod
   });
 
   return {
-    async complete(req, onToken) {
+    async complete(req, onToken, onToolInput) {
       for (let attempt = 0; ; attempt++) {
-        const turn = await streamTurn(client, req, opts.replayReasoning, onToken);
+        const turn = await streamTurn(client, req, opts.replayReasoning, onToken, onToolInput);
         if (!RETRYABLE_FINISH.has(turn.finishReason)) return turn;
         if (attempt >= maxRetries) {
           throw new Error(
@@ -60,6 +61,7 @@ async function streamTurn(
   req: ModelRequest,
   replayReasoning: boolean,
   onToken?: (text: string) => void,
+  onToolInput?: (delta: ToolInputDelta) => void,
 ): Promise<ModelTurn> {
   const body = {
     model: req.model,
@@ -112,7 +114,15 @@ async function streamTurn(
       const call = calls[part.index] as ToolCall;
       if (part.id) call.id = part.id;
       if (part.function?.name) call.name = decodeName(part.function.name);
-      if (part.function?.arguments) call.arguments += part.function.arguments;
+      if (part.function?.arguments) {
+        call.arguments += part.function.arguments;
+        onToolInput?.({
+          index: part.index,
+          callId: call.id,
+          tool: call.name,
+          text: part.function.arguments,
+        });
+      }
     }
     if (choice.finish_reason) finishReason = choice.finish_reason;
   }

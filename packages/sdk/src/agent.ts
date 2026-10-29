@@ -74,6 +74,12 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
   tools: (options: Options) => Tool[];
   /** Tool outputs longer than this are stored and replaced by a reference. */
   maxInlineChars?: number;
+  /**
+   * Whether hosts stream its responses by default (the API's `stream` flag decides per request).
+   * Defaults to true for agents that answer in text, false for agents with an `output` schema,
+   * whose callers usually want the checked result in one piece.
+   */
+  stream?: boolean;
   cli?: AgentCli;
 }
 
@@ -84,6 +90,8 @@ export interface Agent<Input extends z.ZodType = z.ZodType, Options extends obje
   readonly definition: AgentDefinition;
   readonly skillsDir: string;
   readonly dataDir: string;
+  /** Whether hosts stream its responses by default. */
+  readonly stream: boolean;
   readonly cli: AgentCli;
   /** Binds the host's deps and returns the function that runs the agent. */
   create(deps: AgentDeps & Options): (opts: RunOptions<z.input<Input>>) => Promise<AgentResult>;
@@ -119,6 +127,7 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
     definition,
     skillsDir,
     dataDir,
+    stream: config.stream ?? !config.output,
     cli: config.cli ?? {},
 
     create(deps) {
