@@ -1,6 +1,18 @@
 import { join } from "node:path";
-import type { AgentSpec, ApprovalRequest, EventSink, ModelClient } from "@dugout/contracts";
-import { type Approver, type ModelConfig, REPO_ROOT, runLocal } from "@dugout/core";
+import type {
+  AgentSpec,
+  ApprovalRequest,
+  EventSink,
+  ModelClient,
+  RunStore,
+} from "@dugout/contracts";
+import {
+  type Approver,
+  type ModelConfig,
+  REPO_ROOT,
+  type RunLocalOptions,
+  runLocal,
+} from "@dugout/core";
 import { type LessonWriter, type MemoryStore, memoryHooks } from "@dugout/memory";
 import { z } from "zod";
 import { createMatchPreviewTools, type Draft } from "./tools.ts";
@@ -75,6 +87,9 @@ export function createMatchPreview(deps: MatchPreviewDeps) {
     approver: Approver;
     runId?: string;
     sinks?: EventSink[];
+    /** Keeps the run's working memory, so it can wait for an approval or be resumed. */
+    store?: RunStore;
+    resume?: RunLocalOptions["resume"];
   }) =>
     runLocal({
       agent: { spec },
@@ -90,6 +105,8 @@ export function createMatchPreview(deps: MatchPreviewDeps) {
       runsDir: deps.runsDir ?? join(REPO_ROOT, ".runs"),
       ...(opts.runId ? { runId: opts.runId } : {}),
       ...(opts.sinks ? { sinks: opts.sinks } : {}),
+      ...(opts.store ? { store: opts.store } : {}),
+      ...(opts.resume ? { resume: opts.resume } : {}),
     });
 }
 

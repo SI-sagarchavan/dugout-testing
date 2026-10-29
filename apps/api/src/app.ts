@@ -123,7 +123,7 @@ export function createApp(deps: AppDeps) {
       );
     }
     const { tenantId, subject } = c.get("identity");
-    const ok = deps.runs.decide(
+    const ok = await deps.runs.decide(
       tenantId,
       c.req.param("id"),
       c.req.param("callId"),

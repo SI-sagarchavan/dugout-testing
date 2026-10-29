@@ -2,19 +2,15 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMatchPreview, Input, seedHouseStyle } from "@dugout/agent-match-preview";
-import type { ModelRequest, RunEvent } from "@dugout/contracts";
-import {
-  createScriptedModel,
-  loadTenants,
-  type ScriptedTurn,
-  scriptedModelConfig,
-} from "@dugout/core";
+import type { RunEvent } from "@dugout/contracts";
+import { createScriptedModel, loadTenants, scriptedModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
 import { Valkey } from "iovalkey";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { createApp, createRunManager, createValkeyEventLog, issueToken } from "../src/index.ts";
+import { writer } from "./fixtures.ts";
 
 const SECRET = "test-secret";
 const pool = createPool(inject("databaseUrl"));
@@ -22,35 +18,6 @@ const valkey = new Valkey(process.env.VALKEY_TEST_URL || "redis://localhost:5637
 const store = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
 const events = createValkeyEventLog(valkey);
 let runsDir: string;
-
-function writer(): Array<(req: ModelRequest) => ScriptedTurn> {
-  let f: { home: string; away: string };
-  const save = (body: string): ScriptedTurn => ({
-    toolCalls: [
-      {
-        name: "draft.save",
-        arguments: { fixtureId: "c-101", title: "Mariners v Chargers", body },
-      },
-    ],
-  });
-  return [
-    () => ({
-      content: "Looking up the fixture.",
-      toolCalls: [{ name: "fixtures.get", arguments: { fixtureId: "c-101" } }],
-    }),
-    (req) => {
-      f = JSON.parse(req.messages.at(-1)?.content ?? "{}");
-      return { toolCalls: [{ name: "team.stats", arguments: { teamId: f.home } }] };
-    },
-    () => save("A measured preview of both sides."),
-    // when the reviewer asks for changes (a user message), save again with them
-    (req) =>
-      req.messages.at(-1)?.role === "user"
-        ? save("A measured preview of both sides, naming both captains.")
-        : { content: "Saved." },
-    () => ({ content: "Saved." }),
-  ];
-}
 
 const runs = createRunManager({
   pool,
