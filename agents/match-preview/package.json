@@ -9,5 +9,14 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@dugout/contracts": "workspace:^",
+    "@dugout/core": "workspace:^",
+    "@dugout/db": "workspace:^",
+    "@dugout/evals": "workspace:^",
+    "@dugout/memory": "workspace:^",
+    "@dugout/tracing": "workspace:^",
+    "zod": "^4.6.7"
   }
 }

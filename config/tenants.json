@@ -1,0 +1,12 @@
+[
+  {
+    "id": "demo-cricket",
+    "name": "Demo Cricket",
+    "sport": "cricket"
+  },
+  {
+    "id": "demo-football",
+    "name": "Demo Football",
+    "sport": "football"
+  }
+]

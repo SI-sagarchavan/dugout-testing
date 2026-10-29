@@ -1,0 +1,20 @@
+{
+  "facts": [
+    {
+      "key": "style.spelling",
+      "content": "Use US English spelling (color, favorite, center, organize, defense)."
+    },
+    {
+      "key": "style.length",
+      "content": "Keep the preview body to at most 80 words."
+    },
+    {
+      "key": "style.kickoff",
+      "content": "Always state the kickoff time with its time zone, for example 7:00 PM CT."
+    },
+    {
+      "key": "style.tone",
+      "content": "Energetic and direct; short sentences."
+    }
+  ]
+}

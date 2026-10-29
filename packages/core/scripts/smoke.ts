@@ -1,0 +1,52 @@
+// Live smoke run against the configured provider: one read tool, then `final`. Exercises streaming,
+// tool calls, reasoning replay and usage. Run with `pnpm smoke` (reads .env if present).
+import { existsSync } from "node:fs";
+import { defineTool } from "@dugout/contracts";
+import { z } from "zod";
+import { createOpenAICompatibleClient, loadModelConfig, runLocal } from "../src/index.ts";
+
+if (existsSync(".env")) process.loadEnvFile(".env");
+
+const fixtureGet = defineTool({
+  name: "fixture.get",
+  description: "Look up a fixture by id.",
+  input: z.object({ fixtureId: z.string() }),
+  effect: "read",
+  timeoutMs: 5_000,
+  async run({ fixtureId }) {
+    return { fixtureId, home: "Lions", away: "Tigers", kickoffUtc: "2026-11-02T14:00:00Z" };
+  },
+});
+
+const models = loadModelConfig();
+const tier = process.argv.includes("--fast") ? "fast" : "smart";
+
+const result = await runLocal({
+  agent: {
+    spec: {
+      id: "smoke",
+      version: 1,
+      owner: "harness",
+      instructions:
+        "Look up the fixture with the fixture.get tool, then call final with a one-line headline and the kickoff time.",
+      tools: ["fixture.get"],
+      skills: [],
+      model: { tier },
+      memory: { read: [], write: [] },
+      budget: { usdPerRun: 0.05, maxSteps: 4, maxDepth: 0 },
+      approvals: [],
+    },
+    output: z.object({ headline: z.string(), kickoffUtc: z.string() }),
+  },
+  input: "Preview fixture f-1",
+  tenantId: "smoke",
+  tools: [fixtureGet],
+  client: createOpenAICompatibleClient(models),
+  models,
+  approver: async () => ({ approved: false, by: "smoke", reason: "smoke runs never write" }),
+  sinks: [{ write: (e) => void (e.type !== "token" && console.log(`${e.seq} ${e.type}`)) }],
+});
+
+console.log(JSON.stringify(result, null, 2));
+console.log(`events: .runs/${result.runId}/events.jsonl`);
+process.exitCode = result.status === "completed" ? 0 : 1;

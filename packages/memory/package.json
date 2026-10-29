@@ -9,5 +9,12 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@dugout/contracts": "workspace:^",
+    "@dugout/core": "workspace:^",
+    "@dugout/db": "workspace:^",
+    "openai": "^7.45.1",
+    "zod": "^4.6.7"
   }
 }

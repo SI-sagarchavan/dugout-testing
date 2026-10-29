@@ -1,4 +1,6 @@
-# Local infra for the harness: Postgres+pgvector, Valkey (no-eviction, like prod streams), Temporal dev server.
+# Local infra: Postgres+pgvector and Valkey (no-eviction, like prod streams).
+# Host ports are offset (55432, 56379) so they don't clash with a local Postgres or Redis.
+# Temporal is parked behind a profile: `docker compose --profile temporal up -d`.
 name: dugout
 services:
   postgres:
@@ -7,7 +9,7 @@ services:
       POSTGRES_USER: harness
       POSTGRES_PASSWORD: harness
       POSTGRES_DB: harness
-    ports: ["5432:5432"]
+    ports: ["55432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U harness"]
@@ -16,13 +18,14 @@ services:
   valkey:
     image: valkey/valkey:8
     command: ["valkey-server", "--maxmemory-policy", "noeviction", "--appendonly", "yes"]
-    ports: ["6379:6379"]
+    ports: ["56379:6379"]
     volumes: [valkeydata:/data]
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 3s
       retries: 20
   temporal:
+    profiles: [temporal]
     image: temporalio/temporal:latest
     command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/data/temporal.db"]
     ports: ["7233:7233", "8233:8233"] # gRPC, UI
