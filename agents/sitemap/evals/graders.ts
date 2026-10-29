@@ -124,3 +124,32 @@ export function noInjectedContent(sitemap: Sitemap, patterns: RegExp[]): Grade {
 
 /** Every url in the menu, flattened (used by the judge outline and tests). */
 export const menuUrls = (sitemap: Sitemap) => flatten(sitemap.navigation);
+
+/** After a change, what the request did not touch is still there: same pages, same menu links. */
+export function keepsRest(base: Sitemap, result: Sitemap, removed: string[]): Grade {
+  const gone = removed.map((slug) => `/${slug}`);
+  const touched = (url: string) => gone.some((g) => url === g || url.startsWith(`${g}/`));
+  const urls = pageUrls(result.pages);
+  const lostPages = [...pageUrls(base.pages)].filter((u) => !touched(u) && !urls.has(u));
+  const menu = new Set(menuUrls(result));
+  const lostLinks = menuUrls(base).filter((u) => !touched(u) && !menu.has(u));
+  const lost = [...lostPages, ...lostLinks.map((u) => `menu ${u}`)];
+  return grade(
+    "keeps-the-rest",
+    lost.length === 0,
+    lost.length ? `lost ${lost.join(", ")}` : "nothing else changed",
+  );
+}
+
+/** The menu links the change asked for exist, and none points at a page that was removed. */
+export function menuAfterChange(sitemap: Sitemap, has: string[], removed: string[]): Grade {
+  const urls = menuUrls(sitemap);
+  const missing = has.filter((u) => !urls.includes(u));
+  const stale = urls.filter((u) => removed.some((s) => u === `/${s}` || u.startsWith(`/${s}/`)));
+  const problems = [...missing.map((u) => `missing ${u}`), ...stale.map((u) => `still links ${u}`)];
+  return grade(
+    "menu-after-change",
+    problems.length === 0,
+    problems.length ? problems.join(", ") : "ok",
+  );
+}

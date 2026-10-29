@@ -31,8 +31,10 @@ import {
 import { cases, type SitemapCase } from "./cases.ts";
 import {
   hasPages,
+  keepsRest,
   lacksPages,
   listingsHaveDetail,
+  menuAfterChange,
   menuOrder,
   menuStartsWithHome,
   noHomeEntry,
@@ -97,6 +99,8 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
       saved = sitemapOf(req);
       return { approved: true, by: "eval" };
     };
+    // a change is asked of the sitemap the template gives for this case
+    const base = c.revise ? templateSitemap(tenant, c) : undefined;
     const sink = createMemorySink();
     const run = createSitemap({
       store: opts.store,
@@ -108,7 +112,11 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
     });
     const result = await run({
       tenantId: tenant,
-      input: { brief: c.brief, ...(c.sports ? { sports: c.sports } : {}) },
+      input: {
+        brief: c.brief,
+        ...(c.sports ? { sports: c.sports } : {}),
+        ...(base && c.revise ? { revise: { sitemap: base, request: c.revise.request } } : {}),
+      },
       approver,
       sinks: [sink],
     });
@@ -132,6 +140,15 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
       );
       if (c.exclude?.length) grades.push(lacksPages(final, c.exclude));
       if (c.injected?.length) grades.push(noInjectedContent(final, c.injected));
+      if (base && c.revise) {
+        const { present = [], absent = [], menu = [] } = c.revise;
+        grades.push(
+          hasPages(final, present),
+          keepsRest(base, final, absent),
+          menuAfterChange(final, menu, absent),
+        );
+        if (absent.length) grades.push(lacksPages(final, absent));
+      }
     }
 
     const outcome: CaseOutcome = {
@@ -140,7 +157,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
       costUsd: result.usage.costUsd,
       servedModels: servedModels(events),
     };
-    if (judge && final && c.kind === "standard") {
+    if (judge && final && c.kind === "standard" && !c.revise) {
       outcome.judge = await judge({
         brief: c.brief,
         houseFacts: await houseFacts(tenant),
@@ -219,7 +236,8 @@ export function templateSitemap(tenant: Tenant, c: SitemapCase): Sitemap {
  * CI can exercise the whole eval path without a key.
  */
 function scriptedWriter(tenant: Tenant, c: SitemapCase): ModelClient {
-  const sitemap = templateSitemap(tenant, c);
+  const base = templateSitemap(tenant, c);
+  const sitemap = c.revise ? c.revise.apply(base) : base;
   return createScriptedModel([
     { toolCalls: [{ name: "pages.catalog", arguments: {} }] },
     { toolCalls: [{ name: "sitemap.validate", arguments: sitemap }] },
