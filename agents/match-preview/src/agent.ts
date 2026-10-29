@@ -1,23 +1,9 @@
 import { join } from "node:path";
-import type {
-  AgentSpec,
-  ApprovalRequest,
-  EventSink,
-  ModelClient,
-  RunStore,
-} from "@dugout/contracts";
-import {
-  type Approver,
-  type ModelConfig,
-  REPO_ROOT,
-  type RunLocalOptions,
-  runLocal,
-} from "@dugout/core";
-import { type LessonWriter, type MemoryStore, memoryHooks } from "@dugout/memory";
+import type { AgentSpec, ApprovalRequest } from "@dugout/contracts";
+import { REPO_ROOT } from "@dugout/core";
+import { defineAgent } from "@dugout/sdk";
 import { z } from "zod";
 import { createMatchPreviewTools, type Draft } from "./tools.ts";
-
-export const SKILLS_DIR = join(import.meta.dirname, "..", "skills");
 
 export const spec: AgentSpec = {
   id: "match-preview",
@@ -49,66 +35,31 @@ export const Input = z.object({
 });
 export type Input = z.infer<typeof Input>;
 
-export interface MatchPreviewDeps {
-  store: MemoryStore;
-  client: ModelClient;
-  models: ModelConfig;
-  draftsDir?: string;
-  dataDir?: string;
-  runsDir?: string;
-  /** False for eval runs that must not write memory. */
-  consolidate?: boolean;
-  lessons?: LessonWriter;
-}
+export const DRAFTS_DIR = join(REPO_ROOT, ".runs", "drafts");
 
-/** Stats tool output above this is stored and replaced by a reference (compaction v1). */
-const MAX_INLINE_CHARS = 2_000;
+const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
 
-export function createMatchPreview(deps: MatchPreviewDeps) {
-  const memory = memoryHooks({
-    store: deps.store,
-    spec,
-    skillsDir: SKILLS_DIR,
-    contextWindow: deps.models.tiers[spec.model.tier].contextWindow,
-    ...(deps.lessons ? { lessons: deps.lessons } : {}),
-    ...(deps.consolidate === false ? { consolidate: false } : {}),
-  });
-  const tools = [
-    ...createMatchPreviewTools({
-      draftsDir: deps.draftsDir ?? join(REPO_ROOT, ".runs", "drafts"),
-      ...(deps.dataDir ? { dataDir: deps.dataDir } : {}),
+export const agent = defineAgent({
+  spec,
+  input: Input,
+  dir: join(import.meta.dirname, ".."),
+  tools: (opts: { draftsDir?: string; dataDir?: string }) =>
+    createMatchPreviewTools({
+      draftsDir: opts.draftsDir ?? DRAFTS_DIR,
+      ...(opts.dataDir ? { dataDir: opts.dataDir } : {}),
     }),
-    ...memory.tools,
-  ];
-
-  return (opts: {
-    tenantId: string;
-    input: Input;
-    approver: Approver;
-    runId?: string;
-    sinks?: EventSink[];
-    /** Keeps the run's working memory, so it can wait for an approval or be resumed. */
-    store?: RunStore;
-    resume?: RunLocalOptions["resume"];
-  }) =>
-    runLocal({
-      agent: { spec },
-      input: Input.parse(opts.input),
-      tenantId: opts.tenantId,
-      tools,
-      client: deps.client,
-      models: deps.models,
-      approver: opts.approver,
-      context: memory.context,
-      afterRun: memory.afterRun,
-      maxInlineChars: MAX_INLINE_CHARS,
-      runsDir: deps.runsDir ?? join(REPO_ROOT, ".runs"),
-      ...(opts.runId ? { runId: opts.runId } : {}),
-      ...(opts.sinks ? { sinks: opts.sinks } : {}),
-      ...(opts.store ? { store: opts.store } : {}),
-      ...(opts.resume ? { resume: opts.resume } : {}),
-    });
-}
+  // stats output above this is stored and replaced by a reference (compaction v1)
+  maxInlineChars: 2_000,
+  cli: {
+    flags: { fixture: "fixtureId" },
+    present: (req) => {
+      const draft = draftOf(req);
+      return `── Draft for ${draft.fixtureId} (${words(draft.body)} words) ──\n${draft.title}\n\n${draft.body}`;
+    },
+    done: (result, tenantId) =>
+      result.status === "completed" ? `saved to .runs/drafts/${tenantId}/` : undefined,
+  },
+});
 
 /** The draft a `draft.save` approval request carries. */
 export function draftOf(req: Pick<ApprovalRequest, "input">): Draft {

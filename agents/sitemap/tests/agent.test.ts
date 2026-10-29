@@ -7,12 +7,12 @@ import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
-import { createSitemap, type Sitemap, seedHouseFacts } from "../src/index.ts";
+import { agent, type Sitemap } from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
 const store = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
-beforeAll(() => seedHouseFacts(store, ["demo-cricket", "demo-football"]));
+beforeAll(() => agent.seed(store, ["demo-cricket", "demo-football"]));
 
 const sitemap: Sitemap = {
   pages: [
@@ -54,7 +54,7 @@ beforeEach(async () => {
 const build = (script: Parameters<typeof createScriptedModel>[0]) => {
   const client = createScriptedModel(script);
   // consolidation is off: these runs must not write memory into the shared test database
-  const run = createSitemap({
+  const run = agent.create({
     store,
     client,
     models: scriptedModelConfig(),

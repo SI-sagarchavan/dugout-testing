@@ -2,14 +2,17 @@
 // memory in Postgres (ADR 0006): a decision resumes a waiting run, and runs whose process died are
 // picked up again by the recovery sweep.
 
-import { createMatchPreview, Input, liveDeps } from "@dugout/agent-match-preview";
+import { agent as matchPreview } from "@dugout/agent-match-preview";
+import { agent as sitemap } from "@dugout/agent-sitemap";
 import { loadTenants } from "@dugout/core";
+import { liveDeps } from "@dugout/sdk";
 import { serve } from "@hono/node-server";
 import { Valkey } from "iovalkey";
 import {
   createApp,
   createRunManager,
   createValkeyEventLog,
+  hostAgents,
   LOCAL_DEV_SECRET,
   LOCAL_VALKEY_URL,
 } from "../src/index.ts";
@@ -18,20 +21,11 @@ const deps = liveDeps();
 const secret = process.env.DUGOUT_JWT_SECRET || LOCAL_DEV_SECRET;
 const valkey = new Valkey(process.env.VALKEY_URL || LOCAL_VALKEY_URL);
 const events = createValkeyEventLog(valkey);
-const preview = createMatchPreview(deps);
 const runs = createRunManager({
   pool: deps.pool,
   events,
-  agents: {
-    "match-preview": {
-      input: Input,
-      run: (opts) =>
-        preview({
-          ...opts,
-          sinks: [...opts.sinks, ...(deps.tracing ? [deps.tracing.sink()] : [])],
-        }),
-    },
-  },
+  // the agents this API serves, by id (POST /runs { agentId })
+  agents: hostAgents(deps, matchPreview, sitemap),
   onError: (runId, err) => console.error(`run ${runId} crashed:`, err),
 });
 const app = createApp({ pool: deps.pool, runs, events, tenants: loadTenants(), secret });

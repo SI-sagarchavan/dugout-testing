@@ -20,12 +20,11 @@ import {
 } from "@dugout/evals";
 import type { MemoryStore } from "@dugout/memory";
 import {
-  createSitemap,
+  agent,
   DATA_DIR,
   type NavItem,
   type PageNode,
   type Sitemap,
-  seedHouseFacts,
   sitemapOf,
   spec,
 } from "../src/index.ts";
@@ -69,7 +68,7 @@ export interface SuiteOptions {
 }
 
 export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<SitemapCase>> {
-  await seedHouseFacts(opts.store, Object.keys(RULES));
+  await agent.seed(opts.store, Object.keys(RULES));
   const live = opts.mode === "live";
 
   let models: ModelConfig;
@@ -105,7 +104,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
       return { approved: true, by: "eval" };
     };
     const sink = createMemorySink();
-    const run = createSitemap({
+    const run = agent.create({
       store: opts.store,
       client: client ?? scriptedWriter(tenant, c),
       models,

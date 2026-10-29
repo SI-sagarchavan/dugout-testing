@@ -41,9 +41,9 @@ importers:
       '@dugout/memory':
         specifier: workspace:^
         version: link:../../packages/memory
-      '@dugout/tracing':
+      '@dugout/sdk':
         specifier: workspace:^
-        version: link:../../packages/tracing
+        version: link:../../packages/sdk
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -65,9 +65,9 @@ importers:
       '@dugout/memory':
         specifier: workspace:^
         version: link:../../packages/memory
-      '@dugout/tracing':
+      '@dugout/sdk':
         specifier: workspace:^
-        version: link:../../packages/tracing
+        version: link:../../packages/sdk
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -77,6 +77,9 @@ importers:
       '@dugout/agent-match-preview':
         specifier: workspace:^
         version: link:../../agents/match-preview
+      '@dugout/agent-sitemap':
+        specifier: workspace:^
+        version: link:../../agents/sitemap
       '@dugout/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -89,6 +92,9 @@ importers:
       '@dugout/memory':
         specifier: workspace:^
         version: link:../../packages/memory
+      '@dugout/sdk':
+        specifier: workspace:^
+        version: link:../../packages/sdk
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.14)
@@ -170,6 +176,27 @@ importers:
       openai:
         specifier: ^7.45.1
         version: 7.45.1(zod@4.6.7)
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/sdk:
+    dependencies:
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../core
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../db
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../memory
+      '@dugout/tracing':
+        specifier: workspace:^
+        version: link:../tracing
       zod:
         specifier: ^4.6.7
         version: 4.6.7

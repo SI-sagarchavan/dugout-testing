@@ -1,26 +1,13 @@
 import { join } from "node:path";
-import type {
-  AgentDefinition,
-  AgentSpec,
-  ApprovalRequest,
-  EventSink,
-  ModelClient,
-  RunStore,
-} from "@dugout/contracts";
-import {
-  type Approver,
-  type ModelConfig,
-  REPO_ROOT,
-  type RunLocalOptions,
-  runLocal,
-} from "@dugout/core";
-import { type MemoryStore, memoryHooks } from "@dugout/memory";
+import type { AgentSpec, ApprovalRequest } from "@dugout/contracts";
+import { REPO_ROOT } from "@dugout/core";
+import { defineAgent } from "@dugout/sdk";
 import { z } from "zod";
 import { createSitemapTools } from "./tools.ts";
-import { type Sitemap, SitemapSchema } from "./validation.ts";
+import { type NavItem, type PageNode, type Sitemap, SitemapSchema } from "./validation.ts";
 
-export const SKILLS_DIR = join(import.meta.dirname, "..", "skills");
 export const SITEMAPS_DIR = join(REPO_ROOT, ".runs", "sitemaps");
+export const DATA_DIR = join(import.meta.dirname, "..", "data");
 
 export const spec: AgentSpec = {
   id: "sitemap",
@@ -61,62 +48,43 @@ export type Input = z.infer<typeof Input>;
 export const Output = SitemapSchema;
 export type Output = Sitemap;
 
-export const definition: AgentDefinition = { spec, output: Output };
-
-export interface SitemapDeps {
-  store: MemoryStore;
-  client: ModelClient;
-  models: ModelConfig;
-  sitemapsDir?: string;
-  runsDir?: string;
-  /** False for eval runs that must not write memory. */
-  consolidate?: boolean;
-}
-
-export function createSitemap(deps: SitemapDeps) {
-  const memory = memoryHooks({
-    store: deps.store,
-    spec,
-    skillsDir: SKILLS_DIR,
-    contextWindow: deps.models.tiers[spec.model.tier].contextWindow,
-    ...(deps.consolidate === false ? { consolidate: false } : {}),
-  });
-  const tools = [
-    ...createSitemapTools({
-      sitemapsDir: deps.sitemapsDir ?? SITEMAPS_DIR,
-    }),
-    ...memory.tools,
-  ];
-
-  return (opts: {
-    tenantId: string;
-    input: Input;
-    approver: Approver;
-    runId?: string;
-    sinks?: EventSink[];
-    /** Keeps the run's working memory, so it can wait for an approval or be resumed. */
-    store?: RunStore;
-    resume?: RunLocalOptions["resume"];
-  }) =>
-    runLocal({
-      agent: definition,
-      input: Input.parse(opts.input),
-      tenantId: opts.tenantId,
-      tools,
-      client: deps.client,
-      models: deps.models,
-      approver: opts.approver,
-      context: memory.context,
-      afterRun: memory.afterRun,
-      runsDir: deps.runsDir ?? join(REPO_ROOT, ".runs"),
-      ...(opts.runId ? { runId: opts.runId } : {}),
-      ...(opts.sinks ? { sinks: opts.sinks } : {}),
-      ...(opts.store ? { store: opts.store } : {}),
-      ...(opts.resume ? { resume: opts.resume } : {}),
-    });
-}
+export const agent = defineAgent({
+  spec,
+  input: Input,
+  output: Output,
+  dir: join(import.meta.dirname, ".."),
+  tools: (opts: { sitemapsDir?: string }) =>
+    createSitemapTools({ sitemapsDir: opts.sitemapsDir ?? SITEMAPS_DIR }),
+  cli: {
+    flags: { sport: "sports" },
+    present: (req) => {
+      const sitemap = sitemapOf(req);
+      return [
+        "── Pages ──",
+        ...pageLines(sitemap.pages),
+        "",
+        "── Header menu ──",
+        ...menuLines(sitemap.navigation),
+      ].join("\n");
+    },
+    done: (result, tenantId) =>
+      result.status === "completed" ? `saved to .runs/sitemaps/${tenantId}/` : undefined,
+  },
+});
 
 /** The sitemap a `sitemap.save` approval request carries. */
 export function sitemapOf(req: Pick<ApprovalRequest, "input">): Sitemap {
   return req.input as Sitemap;
 }
+
+const pageLines = (nodes: PageNode[], indent = ""): string[] =>
+  nodes.flatMap((node) => [
+    `${indent}${node.name}  ${node.dynamic ? "$*" : `/${node.slug ?? ""}`}`,
+    ...pageLines(node.children ?? [], `${indent}  `),
+  ]);
+
+const menuLines = (items: NavItem[], indent = ""): string[] =>
+  items.flatMap((item) => [
+    `${indent}${item.name}  ${item.url}`,
+    ...menuLines(item.children ?? [], `${indent}  `),
+  ]);

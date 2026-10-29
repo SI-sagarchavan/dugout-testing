@@ -35,6 +35,7 @@ Built and tested locally, except H7, which is parked while everything runs on a 
 | E1–E6 | done   | `pnpm eval match-preview`; the judge reports but does not gate                                           |
 | D1    | done   | Runs' working memory saved in Postgres; approvals end the invocation; crash recovery by lease (ADR 0006) |
 | A2    | done   | Sitemap agent (`agents/sitemap`): first live use of `final` structured output; `pnpm eval sitemap`       |
+| A3    | done   | `defineAgent` in `@dugout/sdk` (ADR 0007): both agents on it; `pnpm agent <id>`; the API serves both     |
 
 ## Embedding model
 
