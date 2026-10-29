@@ -5,19 +5,23 @@ import { createRedactor, type Redactor } from "./redact.ts";
 
 export interface RunLog {
   emit(event: RunEventInput): Promise<void>;
+  /** `seq` of the last event emitted. */
+  lastSeq(): number;
 }
 
 /**
  * Stamps `runId`, `seq` and `at`, redacts the payload, and writes to every sink in order. Writes are
- * chained so sinks see events in `seq` order even when callers don't await `emit`.
+ * chained so sinks see events in `seq` order even when callers don't await `emit`. A resumed run
+ * passes `startSeq`, the last `seq` its event log already holds.
  */
 export function createRunLog(
   runId: string,
   sinks: EventSink[],
-  redactor: Redactor = createRedactor(),
-  now: () => Date = () => new Date(),
+  opts: { redactor?: Redactor; now?: () => Date; startSeq?: number } = {},
 ): RunLog {
-  let seq = 0;
+  const redactor = opts.redactor ?? createRedactor();
+  const now = opts.now ?? (() => new Date());
+  let seq = opts.startSeq ?? 0;
   let chain: Promise<void> = Promise.resolve();
   return {
     emit(input) {
@@ -33,6 +37,7 @@ export function createRunLog(
       });
       return chain;
     },
+    lastSeq: () => seq,
   };
 }
 

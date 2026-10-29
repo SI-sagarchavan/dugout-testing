@@ -37,6 +37,25 @@ export function createTracingSink(tracer: Tracer, onRunEnd?: () => Promise<void>
         runs.set(event.runId, { root, lastAt: at, open: new Map() });
         return;
       }
+      // A run resumed in another process (after an approval or a crash) gets a trace of its own
+      // there, in the same Langfuse session as the rest of the run.
+      if (event.type === "run.resumed" && !runs.has(event.runId)) {
+        const root = tracer.startSpan(`run ${event.data.agentId} (resumed)`, {
+          startTime: at,
+          attributes: {
+            "langfuse.trace.name": event.data.agentId,
+            "langfuse.user.id": event.data.tenantId,
+            "langfuse.session.id": event.runId,
+            "dugout.run_id": event.runId,
+            "dugout.tenant_id": event.data.tenantId,
+            "dugout.agent_version": event.data.agentVersion,
+            "dugout.resumed_reason": event.data.reason,
+            "dugout.resumed_at_step": event.data.step,
+          },
+        });
+        runs.set(event.runId, { root, lastAt: at, open: new Map() });
+        return;
+      }
       const run = runs.get(event.runId);
       if (!run) return;
       const parent = trace.setSpan(ROOT_CONTEXT, run.root);

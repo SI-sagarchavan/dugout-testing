@@ -31,6 +31,12 @@ export function createValkeyEventLog(valkey: Valkey) {
 
     exists: async (runId: string) => (await valkey.exists(streamKey(runId))) === 1,
 
+    /** `seq` of the newest event in the run's stream (tokens included), or 0. */
+    async lastSeq(runId: string) {
+      const [newest] = await valkey.xrevrange(streamKey(runId), "+", "-", "COUNT", 1);
+      return newest ? parse(newest[1]).seq : 0;
+    },
+
     read,
 
     /** Backlog after `afterSeq`, then the live tail until the run ends or `signal` aborts. */

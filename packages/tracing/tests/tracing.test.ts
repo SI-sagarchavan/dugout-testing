@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { defineTool } from "@dugout/contracts";
 import {
   createMemoryOutputStore,
+  createMemoryRunStore,
   createScriptedModel,
   runLocal,
   scriptedModelConfig,
@@ -83,6 +84,69 @@ describe("tracing sink", () => {
     expect(spans.find((s) => s.name === "approval draft.save")?.attributes).toMatchObject({
       "dugout.approver": "editor",
     });
+  });
+
+  it("gives a run resumed in a new process its own trace, in the same session", async () => {
+    const store = createMemoryRunStore();
+    const runsDir = await mkdtemp(`${tmpdir()}/trace-`);
+    const spec = {
+      id: "traced",
+      version: 1,
+      owner: "t",
+      instructions: "x",
+      tools: ["draft.save"],
+      skills: [],
+      model: { tier: "fast" as const },
+      memory: { read: [], write: [] },
+      budget: { usdPerRun: 1, maxSteps: 4, maxDepth: 0 },
+      approvals: [],
+    };
+    const invoke = async (
+      exporter: InMemorySpanExporter,
+      script: Parameters<typeof createScriptedModel>[0],
+      resume?: Parameters<typeof runLocal>[0]["resume"],
+    ) => {
+      const provider = createTracerProvider(new SimpleSpanProcessor({ exporter }));
+      return runLocal({
+        agent: { spec },
+        input: "go",
+        tenantId: "demo-cricket",
+        runId: "traced-run",
+        tools: [save],
+        client: createScriptedModel(script),
+        models: scriptedModelConfig(),
+        approver: async () => ({ pending: true }),
+        runsDir,
+        outputs: createMemoryOutputStore(),
+        store,
+        sinks: [createTracingSink(provider.getTracer("test"))],
+        ...(resume ? { resume } : {}),
+      });
+    };
+
+    const before = new InMemorySpanExporter();
+    const first = await invoke(before, [
+      { toolCalls: [{ name: "draft.save", arguments: { text: "hi" } }] },
+    ]);
+    expect(first.status).toBe("waiting");
+
+    // a new process: a new tracing sink that never saw `run.started`
+    const after = new InMemorySpanExporter();
+    const second = await invoke(after, [{ content: "done" }], {
+      reason: "approval",
+      decision: { approved: true, by: "editor" },
+    });
+    expect(second.status).toBe("completed");
+    const spans = after.getFinishedSpans();
+    const root = spans.find((s) => s.name === "run traced (resumed)");
+    expect(root?.attributes).toMatchObject({
+      "langfuse.session.id": "traced-run",
+      "dugout.resumed_reason": "approval",
+      "dugout.status": "completed",
+    });
+    expect(spans.map((s) => s.name).sort()).toEqual(
+      ["model step 2", "run traced (resumed)", "tool draft.save"].sort(),
+    );
   });
 
   it("is off unless both Langfuse keys are set", () => {

@@ -1,4 +1,6 @@
-// pnpm api — HTTP/SSE API on :8787 (PORT), running agents in this process.
+// pnpm api — HTTP/SSE API on :8787 (PORT), running agents in this process. Runs keep their working
+// memory in Postgres (ADR 0006): a decision resumes a waiting run, and runs whose process died are
+// picked up again by the recovery sweep.
 
 import { createMatchPreview, Input, liveDeps } from "@dugout/agent-match-preview";
 import { loadTenants } from "@dugout/core";
@@ -33,10 +35,24 @@ const runs = createRunManager({
   onError: (runId, err) => console.error(`run ${runId} crashed:`, err),
 });
 const app = createApp({ pool: deps.pool, runs, events, tenants: loadTenants(), secret });
+runs.startRecovery();
 
 const port = Number(process.env.PORT || 8787);
-serve({ fetch: app.fetch, port }, () =>
+const server = serve({ fetch: app.fetch, port }, () =>
   console.log(
-    `dugout api on http://localhost:${port}${deps.tracing ? " (tracing to Langfuse)" : ""}`,
+    `dugout api on http://localhost:${port} as ${runs.owner}${deps.tracing ? " (tracing to Langfuse)" : ""}`,
   ),
 );
+
+// Stop taking requests and let runs in flight save and finish. A run still going when the process
+// exits keeps its lease until it runs out, then another process picks it up.
+const shutdown = async () => {
+  runs.stop();
+  server.close();
+  await runs.idle();
+  await deps.tracing?.shutdown();
+  await deps.pool.end();
+  process.exit(0);
+};
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);

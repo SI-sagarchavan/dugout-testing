@@ -27,4 +27,7 @@ curl -s -X POST localhost:8787/runs -H "authorization: Bearer $TOKEN" \
 curl -N localhost:8787/runs/<runId>/stream -H "authorization: Bearer $TOKEN"
 curl -X POST localhost:8787/runs/<runId>/approvals/<callId> -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"approved":true}'
+# or send it back: -d '{"approved":false,"changes":"Name both captains."}'
 ```
+
+A run waiting for approval has status `waiting` and is saved in Postgres, so the API can restart in between; the decision resumes it. A run whose API process died is picked up again once its lease (60 seconds) runs out (ADR 0006).

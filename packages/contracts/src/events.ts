@@ -30,6 +30,17 @@ export const RunEvent = z.discriminatedUnion("type", [
       input: z.unknown(),
     }),
   ),
+  // a later invocation picked the run up from its saved state
+  event(
+    "run.resumed",
+    z.object({
+      agentId: z.string(),
+      agentVersion: z.number(),
+      tenantId: z.string(),
+      step: z.number(),
+      reason: z.enum(["approval", "recovery"]),
+    }),
+  ),
   event(
     "context.built",
     z.object({
