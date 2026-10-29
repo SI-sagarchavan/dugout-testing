@@ -33,13 +33,12 @@ import {
 } from "@dugout/evals";
 import { createModelLessonWriter, type LessonWriter, type MemoryStore } from "@dugout/memory";
 import {
-  createMatchPreview,
+  agent,
   DATA_DIR,
   type Draft,
   draftOf,
   type Fixture,
   readTenantData,
-  seedHouseStyle,
   spec,
 } from "../src/index.ts";
 import { cases, type PreviewCase } from "./cases.ts";
@@ -79,7 +78,7 @@ export interface SuiteOptions {
 }
 
 export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<PreviewCase>> {
-  await seedHouseStyle(opts.store, Object.keys(RULES));
+  await agent.seed(opts.store, Object.keys(RULES));
   const live = opts.mode === "live";
 
   let models: ModelConfig;
@@ -122,7 +121,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
         : { approved: false, by: "eval", reason: decision.reason };
     };
     const sink = createMemorySink();
-    const run = createMatchPreview({
+    const run = agent.create({
       store: opts.store,
       client: client ?? scriptedWriter(tenant, fixtureId),
       models,

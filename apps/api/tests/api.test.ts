@@ -1,7 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createMatchPreview, Input, seedHouseStyle } from "@dugout/agent-match-preview";
+import { agent as matchPreview } from "@dugout/agent-match-preview";
+import { agent as sitemap } from "@dugout/agent-sitemap";
 import type { RunEvent } from "@dugout/contracts";
 import { createScriptedModel, loadTenants, scriptedModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
@@ -10,7 +11,7 @@ import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
 import { Valkey } from "iovalkey";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { createApp, createRunManager, createValkeyEventLog, issueToken } from "../src/index.ts";
-import { writer } from "./fixtures.ts";
+import { sitemapWriter, writer } from "./fixtures.ts";
 
 const SECRET = "test-secret";
 const pool = createPool(inject("databaseUrl"));
@@ -24,14 +25,26 @@ const runs = createRunManager({
   events,
   agents: {
     "match-preview": {
-      input: Input,
+      input: matchPreview.input,
       run: (opts) =>
-        createMatchPreview({
+        matchPreview.create({
           store,
           client: createScriptedModel(writer()),
           models: scriptedModelConfig(),
           runsDir,
           draftsDir: join(runsDir, "drafts"),
+          consolidate: false,
+        })(opts),
+    },
+    sitemap: {
+      input: sitemap.input,
+      run: (opts) =>
+        sitemap.create({
+          store,
+          client: createScriptedModel(sitemapWriter()),
+          models: scriptedModelConfig(),
+          runsDir,
+          sitemapsDir: join(runsDir, "sitemaps"),
           consolidate: false,
         })(opts),
     },
@@ -50,7 +63,8 @@ let cricket: string;
 let football: string;
 beforeAll(async () => {
   runsDir = await mkdtemp(join(tmpdir(), "api-runs-"));
-  await seedHouseStyle(store, ["demo-cricket", "demo-football"]);
+  await matchPreview.seed(store, ["demo-cricket", "demo-football"]);
+  await sitemap.seed(store, ["demo-cricket", "demo-football"]);
   cricket = await issueToken({ secret: SECRET, subject: "editor-1", tenantId: "demo-cricket" });
   football = await issueToken({ secret: SECRET, subject: "editor-2", tenantId: "demo-football" });
 });
@@ -260,6 +274,55 @@ describe("api", () => {
       type: "run.completed",
       data: { status: "completed" },
     });
+  });
+
+  it("serves the sitemap agent, with a change sent back into the run and the result returned", async () => {
+    const res = await app.request("/runs", {
+      method: "POST",
+      headers: { ...auth(cricket), "content-type": "application/json" },
+      body: JSON.stringify({
+        agent: "sitemap",
+        input: { brief: "A T20 club with a fan zone.", sports: ["cricket"] },
+      }),
+    });
+    expect(res.status).toBe(202);
+    const { runId } = (await res.json()) as { runId: string };
+    type Requested = Extract<RunEvent, { type: "approval.requested" }>;
+
+    const first = await readStream(
+      `/runs/${runId}/stream`,
+      auth(cricket),
+      (e) => e.type === "approval.requested",
+    );
+    const request = first.events.at(-1) as Requested;
+    expect(request.data.tool).toBe("sitemap.save");
+    const changed = await app.request(`/runs/${runId}/approvals/${request.data.callId}`, {
+      method: "POST",
+      headers: { ...auth(cricket), "content-type": "application/json" },
+      body: JSON.stringify({ approved: false, changes: "Use /fanzone for the Fan Zone." }),
+    });
+    expect(changed.status).toBe(200);
+
+    const second = await readStream(
+      `/runs/${runId}/stream`,
+      { ...auth(cricket), "last-event-id": String(request.seq) },
+      (e) => e.type === "approval.requested",
+    );
+    const again = second.events.at(-1) as Requested;
+    const fanZone = { name: "Fan Zone", url: "/fanzone" };
+    expect(again.data.input).toMatchObject({ navigation: expect.arrayContaining([fanZone]) });
+    expect((await approve(runId, again.data.callId)).status).toBe(200);
+
+    const end = await readStream(`/runs/${runId}/stream`, {
+      ...auth(cricket),
+      "last-event-id": String(again.seq),
+    });
+    expect(end.events.at(-1)).toMatchObject({
+      type: "run.completed",
+      data: { status: "completed", output: { navigation: expect.arrayContaining([fanZone]) } },
+    });
+    const pages = await readFile(join(runsDir, "sitemaps", "demo-cricket", "pages.json"), "utf8");
+    expect(pages).toContain('"slug": "fanzone"');
   });
 
   it("validates the agent and its input", async () => {

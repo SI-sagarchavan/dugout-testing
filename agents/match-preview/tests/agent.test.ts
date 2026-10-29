@@ -13,12 +13,12 @@ import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
-import { createMatchPreview, seedHouseStyle, spec } from "../src/index.ts";
+import { agent, spec } from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
 const store = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
-beforeAll(() => seedHouseStyle(store, ["demo-cricket", "demo-football"]));
+beforeAll(() => agent.seed(store, ["demo-cricket", "demo-football"]));
 
 const lastTool = (req: ModelRequest) => JSON.parse(req.messages.at(-1)?.content ?? "{}");
 
@@ -74,7 +74,7 @@ const preview = (
   lessons?: () => Promise<string>,
 ) => {
   const client = createScriptedModel(script);
-  const run = createMatchPreview({
+  const run = agent.create({
     store,
     client,
     models: scriptedModelConfig(),

@@ -1,5 +1,5 @@
 import type { ModelClient } from "@dugout/contracts";
-import { JudgeVerdict } from "@dugout/evals";
+import { createModelJudge, type JudgeVerdict } from "@dugout/evals";
 
 const SYSTEM = `You grade a website sitemap (pages and a header menu) against the brief it was made from. Reply in json only:
 {"score": <integer 1-5>, "reasons": ["<short reason>", ...]}
@@ -17,32 +17,11 @@ export type FitJudge = (input: {
   brief: string;
   houseFacts: string;
   outline: string;
-}) => Promise<JudgeVerdict & { servedModel: string }>;
+}) => Promise<JudgeVerdict>;
 
-/** The sports-copy judge in `@dugout/evals` grades tone, so this one grades fit to the brief. Reported, never gating. */
+/** Grades how well a sitemap fits its brief. Reported, never gating. */
 export function createFitJudge(client: ModelClient, model: string): FitJudge {
-  return async ({ brief, houseFacts, outline }) => {
-    let lastError = "";
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const turn = await client.complete({
-        model,
-        tools: [],
-        extraBody: { response_format: { type: "json_object" } },
-        messages: [
-          { role: "system", content: SYSTEM },
-          {
-            role: "user",
-            content: `Brief:\n${brief}\n\nHouse facts:\n${houseFacts}\n\nSitemap:\n${outline}`,
-          },
-        ],
-      });
-      try {
-        const verdict = JudgeVerdict.parse(JSON.parse(turn.message.content));
-        return { ...verdict, servedModel: turn.servedModel };
-      } catch (err) {
-        lastError = (err as Error).message;
-      }
-    }
-    throw new Error(`judge returned invalid json: ${lastError}`);
-  };
+  const judge = createModelJudge(client, model, SYSTEM);
+  return ({ brief, houseFacts, outline }) =>
+    judge(`Brief:\n${brief}\n\nHouse facts:\n${houseFacts}\n\nSitemap:\n${outline}`);
 }

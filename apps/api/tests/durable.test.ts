@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createMatchPreview, Input, seedHouseStyle } from "@dugout/agent-match-preview";
+import { agent as matchPreview } from "@dugout/agent-match-preview";
 import type { ModelClient, RunCheckpoint, RunEvent } from "@dugout/contracts";
 import { createScriptedModel, RunInterrupted, scriptedModelConfig } from "@dugout/core";
 import { createPool, withTenant } from "@dugout/db";
@@ -28,7 +28,7 @@ const errors: unknown[] = [];
 
 beforeAll(async () => {
   runsDir = await mkdtemp(join(tmpdir(), "api-durable-"));
-  await seedHouseStyle(memory, [TENANT]);
+  await matchPreview.seed(memory, [TENANT]);
 });
 afterAll(async () => {
   await pool.end();
@@ -37,9 +37,9 @@ afterAll(async () => {
 
 const agents = (client: () => ModelClient): Record<string, AgentEntry> => ({
   "match-preview": {
-    input: Input,
+    input: matchPreview.input,
     run: (opts) =>
-      createMatchPreview({
+      matchPreview.create({
         store: memory,
         client: client(),
         models: scriptedModelConfig(),

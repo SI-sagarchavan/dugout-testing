@@ -35,3 +35,36 @@ export function writer(): Array<(req: ModelRequest) => ScriptedTurn> {
   };
   return Array.from({ length: 10 }, () => turn);
 }
+
+/** The sitemap agent's workflow, decided from the transcript; a change request moves the Fan Zone. */
+export function sitemapWriter(): Array<(req: ModelRequest) => ScriptedTurn> {
+  const sitemap = (fanZone: string) => ({
+    pages: [
+      { name: "News", slug: "news", children: [{ name: "News Detail", dynamic: true }] },
+      { name: "Fan Zone", slug: fanZone },
+      { name: "404", slug: "404" },
+    ],
+    navigation: [
+      { name: "Home", url: "/" },
+      { name: "News", url: "/news" },
+      { name: "Fan Zone", url: `/${fanZone}` },
+    ],
+  });
+  const turn = (req: ModelRequest): ScriptedTurn => {
+    const taken = req.messages.filter((m) => m.role === "assistant").length;
+    if (taken === 0) return { toolCalls: [{ name: "pages.catalog", arguments: {} }] };
+    if (taken === 1)
+      return { toolCalls: [{ name: "sitemap.validate", arguments: sitemap("fan-zone") }] };
+    if (taken === 2)
+      return { toolCalls: [{ name: "sitemap.save", arguments: sitemap("fan-zone") }] };
+    // the reviewer's change request arrives as a user message
+    if (req.messages.at(-1)?.role === "user")
+      return { toolCalls: [{ name: "sitemap.save", arguments: sitemap("fanzone") }] };
+    // ends with what was saved last
+    const saved = req.messages
+      .flatMap((m) => (m.role === "assistant" ? (m.toolCalls ?? []) : []))
+      .findLast((c) => c.name === "sitemap.save");
+    return { toolCalls: [{ name: "final", arguments: JSON.parse(saved?.arguments ?? "{}") }] };
+  };
+  return Array.from({ length: 10 }, () => turn);
+}

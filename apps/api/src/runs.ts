@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ApprovalDecision, EventSink, RunEvent, RunStore } from "@dugout/contracts";
 import { type Approver, RunInterrupted } from "@dugout/core";
 import { type Pool, withTenant } from "@dugout/db";
+import type { AgentDeps, AnyAgent } from "@dugout/sdk";
 import type { z } from "zod";
 import { createPostgresEventSink, readStoredEvents, type ValkeyEventLog } from "./event-log.ts";
 import { createPostgresRunStore } from "./run-store.ts";
@@ -28,6 +29,13 @@ export interface AgentEntry {
     store: RunStore;
     resume?: ResumeOptions;
   }): Promise<unknown>;
+}
+
+/** API entries for agents made with `defineAgent`, by id, all run with the same deps. */
+export function hostAgents(deps: AgentDeps, ...agents: AnyAgent[]): Record<string, AgentEntry> {
+  return Object.fromEntries(
+    agents.map((agent) => [agent.spec.id, { input: agent.input, run: agent.create(deps) }]),
+  );
 }
 
 /** Approvals in the API wait for a person: the run saves its state and ends; a decision resumes it. */
