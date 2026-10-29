@@ -115,6 +115,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   const pendingNote = () =>
     [...pendingChanges].map(([tool, changes]) => changesMessage(tool, changes)).join("\n\n");
   const UNMADE = "ended without making the changes the reviewer asked for";
+  // tries to finish while a change is outstanding; kept apart from invalid `final` results and
+  // reset when the change is approved, so a long review doesn't use up the run's retries
+  let blockedFinishes = 0;
   try {
     for (let step = 1; step <= spec.budget.maxSteps; step++) {
       const turn = await steps.model({ step, tier: spec.model.tier, messages, tools });
@@ -140,7 +143,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       const calls = turn.message.toolCalls ?? [];
       if (calls.length === 0) {
         if (pendingChanges.size > 0) {
-          if (++invalidOutputs > MAX_INVALID_OUTPUTS) return fail("invalid_output", UNMADE);
+          if (++blockedFinishes > MAX_INVALID_OUTPUTS) return fail("invalid_output", UNMADE);
           messages.push({ role: "user", content: pendingNote() });
           continue;
         }
@@ -155,26 +158,37 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       // set when a reviewer asks for changes: the rest of the turn (even `final`) was planned
       // before the request, so none of it runs
       let changesRequested = false;
-      // the reviewer's words, sent as a user message once this turn's tool results are in
-      let feedback: string | undefined;
+      // whether to restate the outstanding change requests once this turn's tool results are in
+      let remind = false;
+      // a call that does not run still gets a tool result (the API requires one per call) and a
+      // `tool.denied` event, so the run log shows it was planned
+      const skip = async (callId: string, tool: string, reason: string, content: string) => {
+        await log.emit({
+          type: "tool.denied",
+          data: { step, callId, tool, stage: "policy", reason },
+        });
+        messages.push({ role: "tool", toolCallId: callId, content });
+      };
       for (const call of calls) {
         if (changesRequested) {
-          messages.push({
-            role: "tool",
-            toolCallId: call.id,
-            content: "Not run: the reviewer asked for changes to an earlier call in this turn.",
-          });
+          await skip(
+            call.id,
+            call.name,
+            "skipped: the reviewer asked for changes to an earlier call in this turn",
+            "Not run: the reviewer asked for changes to an earlier call in this turn.",
+          );
           continue;
         }
         if (output && call.name === FINAL_TOOL) {
           if (pendingChanges.size > 0) {
-            if (++invalidOutputs > MAX_INVALID_OUTPUTS) return fail("invalid_output", UNMADE);
-            messages.push({
-              role: "tool",
-              toolCallId: call.id,
-              content: "Not accepted: the reviewer has not approved the changes they asked for.",
-            });
-            feedback = pendingNote();
+            if (++blockedFinishes > MAX_INVALID_OUTPUTS) return fail("invalid_output", UNMADE);
+            await skip(
+              call.id,
+              call.name,
+              "the reviewer has not approved the changes they asked for",
+              "Not accepted: the reviewer has not approved the changes they asked for.",
+            );
+            remind = true;
             continue;
           }
           const result = parseFinal(call, output);
@@ -215,7 +229,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           await log.emit({ type: "approval.requested", data: { ...ids, input: checked.input } });
           const decision = await pendingDecision;
           if (!decision.approved && "changes" in decision) {
-            const { by, changes } = decision;
+            const { by } = decision;
+            const changes = decision.changes.trim();
+            if (!changes)
+              throw new Error(`the approver sent ${call.name} back with an empty change request`);
             await log.emit({ type: "approval.changes_requested", data: { ...ids, by, changes } });
             pendingChanges.set(call.name, changes);
             messages.push({
@@ -223,7 +240,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
               toolCallId: call.id,
               content: `Not run: the reviewer sent ${call.name} back with a change request.`,
             });
-            feedback = changesMessage(call.name, changes);
+            remind = true;
             changesRequested = true;
             continue;
           }
@@ -238,7 +255,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
             return { status: "rejected", output: rejected, usage };
           }
           await log.emit({ type: "approval.granted", data: { ...ids, by: decision.by } });
-          pendingChanges.delete(call.name);
+          if (pendingChanges.delete(call.name)) blockedFinishes = 0;
         }
 
         await log.emit({ type: "tool.started", data: { ...ids, input: checked.input } });
@@ -252,8 +269,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         messages.push({ role: "tool", toolCallId: call.id, content });
       }
       // The reviewer is the person the run works for, so their request comes as a user message,
-      // not inside a tool result, which agents are told never to take instructions from.
-      if (feedback) messages.push({ role: "user", content: feedback });
+      // not inside a tool result, which agents are told never to take instructions from. Only
+      // changes still outstanding at the end of the turn are restated.
+      if (remind && pendingChanges.size > 0)
+        messages.push({ role: "user", content: pendingNote() });
     }
     return fail("max_steps", `no result after ${spec.budget.maxSteps} steps`);
   } catch (err) {
@@ -266,6 +285,8 @@ export function changesMessage(tool: string, changes: string): string {
   return [
     `I reviewed your ${tool} call and did not approve it yet. Please change this: ${JSON.stringify(changes)}`,
     `Make only that change and keep everything else exactly as it was, then call ${tool} again with the full updated input.`,
+    "This request takes priority over the brief and your earlier choices.",
+    `Only if ${tool} itself would refuse the change (it fails validation), call ${tool} again with the closest input it accepts; I will decide.`,
   ].join("\n");
 }
 
