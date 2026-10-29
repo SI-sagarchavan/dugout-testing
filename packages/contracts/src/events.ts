@@ -49,6 +49,18 @@ export const RunEvent = z.discriminatedUnion("type", [
     }),
   ),
   event("token", z.object({ step: z.number(), text: z.string() })),
+  // a fragment of a tool call's arguments while the model writes them, `final` included: how
+  // structured output streams. Not valid JSON until the call ends; like tokens, never stored.
+  event(
+    "tool.input.delta",
+    z.object({
+      step: z.number(),
+      index: z.number(),
+      callId: z.string(),
+      tool: z.string(),
+      text: z.string(),
+    }),
+  ),
   event(
     "step.completed",
     z.object({

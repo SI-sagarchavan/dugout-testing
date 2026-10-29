@@ -19,7 +19,7 @@ export function createTracingSink(tracer: Tracer, onRunEnd?: () => Promise<void>
 
   return {
     async write(event: RunEvent) {
-      if (event.type === "token") return;
+      if (event.type === "token" || event.type === "tool.input.delta") return;
       const at = new Date(event.at);
       if (event.type === "run.started") {
         const root = tracer.startSpan(`run ${event.data.agentId}`, {

@@ -139,9 +139,12 @@ describe("runAgent", () => {
     expect(result).toMatchObject({ status: "completed", output: { summary: "Lions have won 7" } });
     expect(types).toEqual([
       "run.started",
+      // each call's arguments stream while the model writes them, `final` included
+      "tool.input.delta",
       "step.completed",
       "tool.started",
       "tool.completed",
+      "tool.input.delta",
       "step.completed",
       "run.completed",
     ]);
@@ -203,7 +206,7 @@ describe("runAgent", () => {
     expect(approvals).toHaveLength(1);
     expect(approvals[0]?.input).toEqual({ text: "hello" });
     expect(saved).toEqual([{ text: "hello" }]);
-    expect(types.slice(2, 6)).toEqual([
+    expect(types.slice(3, 7)).toEqual([
       "approval.requested",
       "approval.granted",
       "tool.started",
@@ -462,7 +465,7 @@ describe("runAgent", () => {
       agent: { spec: spec({ budget: { usdPerRun: 0.001, maxSteps: 6, maxDepth: 0 } }) },
     });
     expect(result).toMatchObject({ status: "failed", reason: "budget" });
-    expect(types).toEqual(["run.started", "step.completed", "run.failed"]);
+    expect(types).toEqual(["run.started", "tool.input.delta", "step.completed", "run.failed"]);
   });
 
   it("fails with reason max_steps when the agent never finishes", async () => {

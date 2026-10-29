@@ -7,12 +7,15 @@ import type {
   ApprovalRequest,
   EventSink,
   ModelClient,
+  ModelTurn,
   RunContext,
   RunEvent,
+  RunEventInput,
   RunMemoryContext,
   RunStore,
   Steps,
   Tool,
+  ToolInputDelta,
 } from "@dugout/contracts";
 import { createJsonlSink, createMemorySink, createRunLog, type RunLog } from "./events.ts";
 import { type RunResult, runAgent } from "./loop.ts";
@@ -42,6 +45,52 @@ export interface LocalStepsOptions {
   /** Keeps the run's working memory; without it the run cannot outlive this invocation. */
   store?: RunStore;
   now?: () => Date;
+  /** How often streamed fragments are sent; defaults to `FRAGMENT_MS`. */
+  fragmentMs?: number;
+}
+
+/**
+ * Streamed text and tool arguments go out as one event per this many milliseconds, not one per
+ * provider chunk (a few characters each): smooth enough to watch, with a fraction of the events.
+ */
+export const FRAGMENT_MS = 50;
+
+/** Collects a model call's streamed fragments and emits them in batches: text, then each call. */
+function batchFragments(log: RunLog, step: number, everyMs: number) {
+  let text = "";
+  const inputs = new Map<number, ToolInputDelta>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let sent: Promise<unknown> = Promise.resolve();
+  const send = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    const batch: RunEventInput[] = [];
+    if (text) batch.push({ type: "token", data: { step, text } });
+    for (const delta of inputs.values())
+      batch.push({ type: "tool.input.delta", data: { step, ...delta } });
+    text = "";
+    inputs.clear();
+    sent = Promise.all([sent, ...batch.map((e) => log.emit(e))]);
+  };
+  const later = () => {
+    timer ??= setTimeout(send, everyMs);
+  };
+  return {
+    token(fragment: string) {
+      text += fragment;
+      later();
+    },
+    toolInput(delta: ToolInputDelta) {
+      const pending = inputs.get(delta.index);
+      if (pending) pending.text += delta.text;
+      else inputs.set(delta.index, { ...delta });
+      later();
+    },
+    flush() {
+      send();
+      return sent;
+    },
+  };
 }
 
 /** `Steps` that call the model, tools and approver directly in this process. */
@@ -50,18 +99,24 @@ export function createLocalSteps(opts: LocalStepsOptions): Steps {
   return {
     async model({ step, tier, messages, tools }) {
       const config = opts.models.tiers[tier];
-      const tokens: Promise<void>[] = [];
-      const turn = await opts.client.complete(
-        {
-          model: config.model,
-          messages,
-          tools,
-          ...(config.reasoningEffort ? { reasoningEffort: config.reasoningEffort } : {}),
-          ...(config.extraBody ? { extraBody: config.extraBody } : {}),
-        },
-        (text) => void tokens.push(opts.log.emit({ type: "token", data: { step, text } })),
-      );
-      await Promise.all(tokens);
+      const fragments = batchFragments(opts.log, step, opts.fragmentMs ?? FRAGMENT_MS);
+      let turn: ModelTurn;
+      try {
+        turn = await opts.client.complete(
+          {
+            model: config.model,
+            messages,
+            tools,
+            ...(config.reasoningEffort ? { reasoningEffort: config.reasoningEffort } : {}),
+            ...(config.extraBody ? { extraBody: config.extraBody } : {}),
+          },
+          fragments.token,
+          fragments.toolInput,
+        );
+      } finally {
+        // every fragment is out before the step completes, or the call fails
+        await fragments.flush();
+      }
       const usage = {
         ...turn.tokens,
         ...priceTokens(opts.models.pricing, config.model, turn.tokens, now()),

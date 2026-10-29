@@ -1,4 +1,4 @@
-import type { Message } from "@dugout/contracts";
+import type { Message, ToolInputDelta } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import { createOpenAICompatibleClient } from "../src/index.ts";
 
@@ -79,6 +79,7 @@ describe("openai-compatible client", () => {
       fetch,
     });
     const tokens: string[] = [];
+    const inputs: ToolInputDelta[] = [];
 
     const turn = await client.complete(
       {
@@ -89,6 +90,7 @@ describe("openai-compatible client", () => {
         extraBody: { thinking: { type: "enabled" } },
       },
       (t) => tokens.push(t),
+      (d) => inputs.push(d),
     );
 
     expect(turn.message).toEqual({
@@ -98,6 +100,11 @@ describe("openai-compatible client", () => {
       toolCalls: [{ id: "t2", name: "draft.save", arguments: '{"text":"hi"}' }],
     });
     expect(tokens).toEqual(["Saving"]);
+    // the arguments stream as they arrive, each fragment named by the call it belongs to
+    expect(inputs).toEqual([
+      { index: 0, callId: "t2", tool: "draft.save", text: '{"te' },
+      { index: 0, callId: "t2", tool: "draft.save", text: 'xt":"hi"}' },
+    ]);
     expect(turn.tokens).toEqual({
       inputTokens: 100,
       cachedInputTokens: 60,
