@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ModelClient, RunEvent } from "@dugout/contracts";
@@ -109,7 +110,8 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
       client: client ?? scriptedWriter(tenant, c),
       models,
       runsDir: opts.runsDir,
-      sitemapsDir: join(opts.runsDir, "sitemaps"),
+      // cases run in parallel, so each gets its own folder rather than sharing the tenant's
+      sitemapsDir: join(opts.runsDir, "sitemaps", randomUUID()),
       consolidate: false,
     });
     const result = await run({

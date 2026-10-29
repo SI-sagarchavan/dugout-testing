@@ -49,22 +49,28 @@ export async function writeSitemap(
   sitemap: Sitemap,
   runId: string,
 ): Promise<{ unchanged: boolean }> {
-  const hash = createHash("sha256").update(JSON.stringify(sitemap)).digest("hex").slice(0, 12);
-  const existing = await readFile(join(dir, "meta.json"), "utf8")
-    .then((s) => JSON.parse(s) as { hash: string })
-    .catch(() => undefined);
-  if (existing?.hash === hash) return { unchanged: true };
-
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "pages.json"), JSON.stringify({ pages: sitemap.pages }, null, 2));
-  await writeFile(
-    join(dir, "navigation.json"),
-    JSON.stringify(
-      { name: HEADER_NAVIGATION_NAME, nodes: toNavigationNodes(sitemap.navigation) },
-      null,
-      2,
-    ),
+  const pages = JSON.stringify({ pages: sitemap.pages }, null, 2);
+  const navigation = JSON.stringify(
+    { name: HEADER_NAVIGATION_NAME, nodes: toNavigationNodes(sitemap.navigation) },
+    null,
+    2,
   );
+  // compare the files themselves: a save that died part way leaves meta.json describing
+  // content the other files no longer hold
+  const read = (file: string) => readFile(join(dir, file), "utf8").catch(() => undefined);
+  const [oldPages, oldNavigation, oldMeta] = await Promise.all([
+    read("pages.json"),
+    read("navigation.json"),
+    read("meta.json"),
+  ]);
+  if (oldPages === pages && oldNavigation === navigation && oldMeta !== undefined) {
+    return { unchanged: true };
+  }
+
+  const hash = createHash("sha256").update(pages).update(navigation).digest("hex").slice(0, 12);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "pages.json"), pages);
+  await writeFile(join(dir, "navigation.json"), navigation);
   await writeFile(join(dir, "meta.json"), JSON.stringify({ hash, runId }, null, 2));
   return { unchanged: false };
 }

@@ -56,14 +56,18 @@ const approver: Approver = async (req) => {
   printPages(sitemap.pages);
   console.log("\n── Header menu ──");
   printMenu(sitemap.navigation);
-  const answer = await ask(`\n${dim("y save · n reject · or type the change you want")}\n> `);
   const by = userInfo().username;
-  if (/^(y|yes)$/i.test(answer)) return { approved: true, by };
-  if (/^(n|no)?$/i.test(answer)) {
-    const reason = (await ask("Reason for rejecting: ")) || "no reason given";
-    return { approved: false, by, reason };
+  for (;;) {
+    const answer = await ask(`\n${dim("y save · n reject · or type the change you want")}\n> `);
+    if (/^(y|yes)$/i.test(answer)) return { approved: true, by };
+    if (/^(n|no)?$/i.test(answer)) {
+      const reason = (await ask("Reason for rejecting: ")) || "no reason given";
+      return { approved: false, by, reason };
+    }
+    const changes = answer.replace(/^change:\s*/i, "");
+    if (changes) return { approved: false, by, changes };
+    console.log("Type the change you want, e.g. change the News path to /stories.");
   }
-  return { approved: false, by, changes: answer.replace(/^change:\s*/i, "") };
 };
 
 const show = (e: RunEvent) => {

@@ -223,6 +223,25 @@ describe("sitemap with a menu", () => {
     expect(issues[0]).toContain('"statistics" is a standard page and must be a top-level page');
   });
 
+  it("catches a slug used both under a listed home entry and next to it, as the importer does", () => {
+    const issues = sitemapIssues({
+      pages: [
+        { name: "Home", slug: "", children: [{ name: "News", slug: "news" }] },
+        { name: "News again", slug: "news" },
+      ],
+      navigation: [{ name: "Home", url: "/" }],
+    });
+    expect(issues).toContain('pages: Duplicate slug "news" at the top level.');
+  });
+
+  it("catches a dynamic page directly under a listed home entry, as the importer does", () => {
+    const issues = sitemapIssues({
+      pages: [{ name: "Home", slug: "", children: [{ name: "Story", dynamic: true }] }],
+      navigation: [{ name: "Home", url: "/" }],
+    });
+    expect(issues).toContain("pages: A dynamic page must sit under a page, not at the top level.");
+  });
+
   it("treats the children of a listed home entry as top level", () => {
     expect(
       sitemapIssues({

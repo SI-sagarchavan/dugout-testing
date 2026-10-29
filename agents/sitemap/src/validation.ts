@@ -224,6 +224,33 @@ const checkStandardSlugs = (
   });
 };
 
+/**
+ * The importer reads a listed home entry's children as top-level pages and then checks that level
+ * again (`parseSitemapImport`): no dynamic page there and no slug twice. The sibling rules above
+ * can't see across a home entry's children and the pages next to it, so the same checks run here.
+ */
+const checkImportedTopLevel = (pages: PageNode[], ctx: z.RefinementCtx) => {
+  const isHome = (node: PageNode) => !node.dynamic && !node.slug;
+  if (!pages.some((node) => isHome(node) && node.children?.length)) return;
+  const top = pages.flatMap((node) => (isHome(node) ? (node.children ?? []) : [node]));
+  if (top.some((node) => node.dynamic)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["pages"],
+      message: "A dynamic page must sit under a page, not at the top level.",
+    });
+  }
+  const slugs = top.map((node) => node.slug);
+  const duplicate = slugs.find((slug, index) => slugs.indexOf(slug) !== index);
+  if (duplicate !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["pages"],
+      message: `Duplicate slug "${duplicate}" at the top level.`,
+    });
+  }
+};
+
 /** The whole agent result: the pages to import and the header menu that links to them. */
 export const SitemapSchema = SitemapShape.superRefine(({ pages, navigation }, ctx) => {
   const imported = SitemapImportSchema.safeParse({ pages });
@@ -232,6 +259,7 @@ export const SitemapSchema = SitemapShape.superRefine(({ pages, navigation }, ct
       ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
     }
   }
+  checkImportedTopLevel(pages, ctx);
   checkStandardSlugs(pages, ["pages"], true, ctx);
 
   const urls = pageUrls(pages);
