@@ -7,7 +7,7 @@ import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
-import { createSitemap, EDIT_REQUEST_PREFIX, type Sitemap, seedHouseFacts } from "../src/index.ts";
+import { createSitemap, type Sitemap, seedHouseFacts } from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
@@ -194,98 +194,46 @@ describe("sitemap agent", () => {
   });
 });
 
-describe("changing a sitemap that already exists", () => {
+describe("changes requested at approval", () => {
   const revised: Sitemap = {
     ...sitemap,
     pages: sitemap.pages.map((p) => (p.slug === "news" ? { ...p, slug: "stories" } : p)),
     navigation: sitemap.navigation.map((i) => (i.url === "/news" ? { ...i, url: "/stories" } : i)),
   };
 
-  it("hands the model the current sitemap and the request, and saves the changed one", async () => {
+  it("are handled in the same run, with no code in the agent, and only the new sitemap is saved", async () => {
     const { run, client } = build([
+      ...writerScript().slice(0, 3),
       () => ({ toolCalls: [{ name: "sitemap.validate", arguments: revised }] }),
       () => ({ toolCalls: [{ name: "sitemap.save", arguments: revised }] }),
       () => ({ toolCalls: [{ name: "final", arguments: revised }] }),
     ]);
-    const request = "Change the News path to /stories";
+    const sink = createMemorySink();
+    const shown: Sitemap[] = [];
     const result = await run({
       tenantId: "demo-cricket",
-      input: { ...input, revise: { sitemap, request } },
-      approver: approve,
+      input,
+      approver: async (req) => {
+        shown.push(req.input as Sitemap);
+        return shown.length === 1
+          ? { approved: false, by: "editor", changes: "Change the News path to /stories" }
+          : { approved: true, by: "editor" };
+      },
+      sinks: [sink],
     });
-    const user = client.requests[0]?.messages[1]?.content ?? "";
-    expect(user).toContain(request);
-    expect(user).toContain('"slug":"news"');
-    expect(client.requests[0]?.messages[0]?.content).toContain("## Changes");
+
     expect(result).toMatchObject({ status: "completed", output: revised });
+    expect(shown).toEqual([sitemap, revised]);
     const saved = JSON.parse(
       await readFile(join(sitemapsDir, "demo-cricket", "pages.json"), "utf8"),
     );
     expect(saved.pages[0].slug).toBe("stories");
-  });
-
-  it("refuses a current sitemap that breaks a rule, or an empty request", () => {
-    const { run } = build(writerScript());
-    const broken = { ...sitemap, navigation: [{ name: "Shop", url: "/shop" }] };
-    expect(() =>
-      run({
-        tenantId: "demo-cricket",
-        input: { ...input, revise: { sitemap: broken, request: "x" } },
-        approver: approve,
-      }),
-    ).toThrow();
-    expect(() =>
-      run({
-        tenantId: "demo-cricket",
-        input: { ...input, revise: { sitemap, request: " " } },
-        approver: approve,
-      }),
-    ).toThrow();
-  });
-
-  it("does not remember an edit request as a rejected draft", async () => {
-    const episodes: unknown[] = [];
-    const spy = Object.assign(Object.create(store), {
-      addEpisode: async (...args: unknown[]) => {
-        episodes.push(args);
-        return (store.addEpisode as (...a: unknown[]) => unknown)(...args);
-      },
-    });
-    const run = createSitemap({
-      store: spy,
-      client: createScriptedModel(writerScript()),
-      models: scriptedModelConfig(),
-      sitemapsDir,
-      runsDir,
-    });
-    const edit = await run({
-      tenantId: "demo-cricket",
-      input,
-      approver: async () => ({
-        approved: false,
-        by: "editor",
-        reason: `${EDIT_REQUEST_PREFIX}path /news /stories`,
-      }),
-    });
-    expect(edit.status).toBe("rejected");
-    expect(episodes).toHaveLength(0);
-
-    const run2 = createSitemap({
-      store: spy,
-      client: createScriptedModel(writerScript()),
-      models: scriptedModelConfig(),
-      sitemapsDir,
-      runsDir,
-    });
-    await run2({
-      tenantId: "demo-cricket",
-      input,
-      approver: async () => ({ approved: false, by: "editor", reason: "too many pages" }),
-    });
-    expect(episodes).toHaveLength(1);
-    await store.deleteBySourceRun(
-      "demo-cricket",
-      (episodes[0] as [{ sourceRunId: string }])[0].sourceRunId,
-    );
+    // the model saw its own first sitemap and the request in one transcript
+    const afterRequest = client.requests[3]?.messages ?? [];
+    expect(JSON.stringify(afterRequest)).toContain('\\"slug\\":\\"news\\"');
+    expect(afterRequest.at(-1)?.content).toContain("Change the News path to /stories");
+    expect(
+      sink.events.filter((e) => e.type === "tool.started" && e.data.tool === "sitemap.save"),
+    ).toHaveLength(1);
   });
 });

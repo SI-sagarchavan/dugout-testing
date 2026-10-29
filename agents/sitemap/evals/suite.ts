@@ -93,14 +93,16 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
 
   const runCase = async (c: SitemapCase, _attempt: number): Promise<CaseOutcome> => {
     const tenant = c.tenant as Tenant;
-    let saved: Sitemap | undefined;
+    // every sitemap shown for approval; with `revise`, the first is sent back for the change
+    const shown: Sitemap[] = [];
     // the editor approves into a throwaway folder, so `final` and the save both get exercised
     const approver: Approver = async (req) => {
-      saved = sitemapOf(req);
+      shown.push(sitemapOf(req));
+      if (c.revise && shown.length === 1) {
+        return { approved: false, by: "eval", changes: c.revise.request };
+      }
       return { approved: true, by: "eval" };
     };
-    // a change is asked of the sitemap the template gives for this case
-    const base = c.revise ? templateSitemap(tenant, c) : undefined;
     const sink = createMemorySink();
     const run = createSitemap({
       store: opts.store,
@@ -112,16 +114,14 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
     });
     const result = await run({
       tenantId: tenant,
-      input: {
-        brief: c.brief,
-        ...(c.sports ? { sports: c.sports } : {}),
-        ...(base && c.revise ? { revise: { sitemap: base, request: c.revise.request } } : {}),
-      },
+      input: { brief: c.brief, ...(c.sports ? { sports: c.sports } : {}) },
       approver,
       sinks: [sink],
     });
     const events = sink.events;
     const final = result.status === "completed" ? (result.output as Sitemap) : undefined;
+    const base = c.revise ? shown[0] : undefined;
+    const saved = c.revise && shown.length < 2 ? undefined : shown.at(-1);
 
     const grades: Grade[] = [
       writesGated(events, ["sitemap.save"]),
@@ -237,11 +237,16 @@ export function templateSitemap(tenant: Tenant, c: SitemapCase): Sitemap {
  */
 function scriptedWriter(tenant: Tenant, c: SitemapCase): ModelClient {
   const base = templateSitemap(tenant, c);
+  const save = (sitemap: Sitemap) => [
+    { toolCalls: [{ name: "sitemap.validate", arguments: sitemap }] },
+    { toolCalls: [{ name: "sitemap.save", arguments: sitemap }] },
+  ];
   const sitemap = c.revise ? c.revise.apply(base) : base;
   return createScriptedModel([
     { toolCalls: [{ name: "pages.catalog", arguments: {} }] },
-    { toolCalls: [{ name: "sitemap.validate", arguments: sitemap }] },
-    { toolCalls: [{ name: "sitemap.save", arguments: sitemap }] },
+    // with `revise`, the first save is sent back and the second carries the change
+    ...(c.revise ? save(base) : []),
+    ...save(sitemap),
     { toolCalls: [{ name: "final", arguments: sitemap }] },
   ]);
 }

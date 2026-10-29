@@ -1,28 +1,13 @@
 // pnpm sitemap --tenant demo-cricket --brief "..." [--sport cricket] [--fast]
 //
-// At the approval prompt: y to save, n to reject, `path /fan-zone /fanzone` to change a page's url,
-// `change: <what to change>` to ask the agent for any other change.
+// At the approval prompt: y to save, n to reject, or type the change you want
+// ("change the Fan Zone path to /fanzone"). A change goes back to the agent in the same run.
 import { userInfo } from "node:os";
-import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import type { RunEvent } from "@dugout/contracts";
 import { type Approver, loadTenants } from "@dugout/core";
-import {
-  createSitemap,
-  EDIT_REQUEST_PREFIX,
-  type Input,
-  liveDeps,
-  type NavItem,
-  type PageNode,
-  parseReply,
-  type Reply,
-  renamePath,
-  SITEMAPS_DIR,
-  type Sitemap,
-  sitemapOf,
-  writeSitemap,
-} from "../src/index.ts";
+import { createSitemap, liveDeps, type NavItem, type PageNode, sitemapOf } from "../src/index.ts";
 
 const { values } = parseArgs({
   options: {
@@ -39,7 +24,6 @@ if (!values.tenant || !values.brief) {
 const tenant = loadTenants().require(values.tenant);
 const deps = liveDeps({ fast: values.fast });
 const run = createSitemap(deps);
-const by = userInfo().username;
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
@@ -57,52 +41,29 @@ const printMenu = (items: NavItem[], indent = "") => {
   }
 };
 
-type Review =
-  | Exclude<Reply, { kind: "unknown" } | { kind: "reject" }>
-  | { kind: "reject"; reason: string };
-
 // one reader for the whole session, so lines typed (or piped) ahead of a prompt are not lost
 const lines = createInterface({ input: process.stdin })[Symbol.asyncIterator]();
 const ask = async (prompt: string) => {
   process.stdout.write(prompt);
   const { value, done } = await lines.next();
   if (done) process.stdout.write("\n");
-  return done ? "" : String(value);
+  return done ? "" : String(value).trim();
 };
 
-/** Shows the sitemap and asks until the editor gives an answer it understands. */
-async function review(sitemap: Sitemap): Promise<Review> {
+const approver: Approver = async (req) => {
+  const sitemap = sitemapOf(req);
   console.log("\n\n── Pages ──");
   printPages(sitemap.pages);
   console.log("\n── Header menu ──");
   printMenu(sitemap.navigation);
-  for (;;) {
-    const answer = await ask(
-      `\n${dim("y save · n reject · path /old /new · change: <what to change>")}\nYour answer: `,
-    );
-    const reply = parseReply(answer);
-    if (reply.kind === "reject") {
-      const reason = (await ask("Reason for rejecting: ")).trim() || "no reason given";
-      return { kind: "reject", reason };
-    }
-    if (reply.kind !== "unknown") return reply;
-    console.log("Say y, n, `path /old /new` or `change: ...`.");
+  const answer = await ask(`\n${dim("y save · n reject · or type the change you want")}\n> `);
+  const by = userInfo().username;
+  if (/^(y|yes)$/i.test(answer)) return { approved: true, by };
+  if (/^(n|no)?$/i.test(answer)) {
+    const reason = (await ask("Reason for rejecting: ")) || "no reason given";
+    return { approved: false, by, reason };
   }
-}
-
-/** A change the editor asked for; the run that was showing the sitemap ends so it can be applied. */
-let asked: Extract<Review, { kind: "path" | "change" }> | undefined;
-
-const approver: Approver = async (req) => {
-  const reply = await review(sitemapOf(req));
-  if (reply.kind === "approve") return { approved: true, by };
-  if (reply.kind === "reject") return { approved: false, by, reason: reply.reason };
-  asked = reply;
-  return {
-    approved: false,
-    by,
-    reason: `${EDIT_REQUEST_PREFIX}${reply.kind === "path" ? `path ${reply.from} ${reply.to}` : reply.request}`,
-  };
+  return { approved: false, by, changes: answer.replace(/^change:\s*/i, "") };
 };
 
 const show = (e: RunEvent) => {
@@ -117,76 +78,27 @@ const show = (e: RunEvent) => {
   else if (e.type === "tool.denied") console.log(dim(`· denied ${e.data.tool}: ${e.data.reason}`));
   else if (e.type === "tool.completed" && !e.data.ok)
     console.log(dim(`· ${e.data.tool} failed: ${e.data.content}`));
+  else if (e.type === "approval.changes_requested")
+    console.log(dim(`· sent back for changes: ${e.data.changes}`));
 };
 
-const base: Input = {
-  brief: values.brief,
-  ...(values.sport?.length ? { sports: values.sport } : {}),
-};
-const saveDir = join(SITEMAPS_DIR, tenant.id);
+const result = await run({
+  tenantId: tenant.id,
+  input: { brief: values.brief, ...(values.sport?.length ? { sports: values.sport } : {}) },
+  approver,
+  sinks: [{ write: show }, ...(deps.tracing ? [deps.tracing.sink()] : [])],
+});
 
-let input: Input = base;
-let cost = 0;
-let steps = 0;
-let outcome = "";
-let lastRunId = "";
-
-for (;;) {
-  asked = undefined;
-  const result = await run({
-    tenantId: tenant.id,
-    input,
-    approver,
-    sinks: [{ write: show }, ...(deps.tracing ? [deps.tracing.sink()] : [])],
-  });
-  cost += result.usage.costUsd;
-  steps += result.usage.steps;
-  lastRunId = result.runId;
-  if (result.afterRunError) console.error(`memory consolidation failed: ${result.afterRunError}`);
-
-  if (result.status === "completed") {
-    outcome = `completed · saved to .runs/sitemaps/${tenant.id}/`;
-    break;
-  }
-  if (result.status === "failed") {
-    outcome = `failed (${result.reason}: ${result.message})`;
-    break;
-  }
-  if (!asked) {
-    outcome = "rejected · nothing saved";
-    break;
-  }
-
-  // The run ended on the editor's request. Apply it to the sitemap that was on screen.
-  let draft = result.output.input as Sitemap;
-  let next: Review | undefined = asked;
-  let finished = false;
-  while (next?.kind === "path") {
-    const edited = renamePath(draft, next.from, next.to);
-    if (edited.ok) {
-      draft = edited.sitemap;
-      console.log(dim(`· ${next.from} is now ${next.to}`));
-    } else {
-      console.log(`Not changed:\n${edited.issues.map((i) => `  - ${i}`).join("\n")}`);
-    }
-    const reply = await review(draft);
-    if (reply.kind === "approve") {
-      const { unchanged } = await writeSitemap(saveDir, draft, lastRunId);
-      outcome = `saved by hand-edit${unchanged ? " (no change)" : ""} · .runs/sitemaps/${tenant.id}/`;
-      finished = true;
-    } else if (reply.kind === "reject") {
-      outcome = "rejected · nothing saved";
-      finished = true;
-    }
-    next = finished ? undefined : reply;
-  }
-  if (finished) break;
-  if (next?.kind !== "change") break;
-  input = { ...base, revise: { sitemap: draft, request: next.request } };
-}
-
-console.log(`\n${outcome}`);
-console.log(dim(`cost $${cost.toFixed(4)} · ${steps} steps · .runs/${lastRunId}/events.jsonl`));
+console.log(
+  `\n${result.status}${result.status === "failed" ? ` (${result.reason}: ${result.message})` : ""}`,
+);
+console.log(
+  dim(
+    `cost $${result.usage.costUsd.toFixed(4)} · ${result.usage.steps} steps · .runs/${result.runId}/events.jsonl`,
+  ),
+);
+if (result.status === "completed") console.log(dim(`· saved to .runs/sitemaps/${tenant.id}/`));
+if (result.afterRunError) console.error(`memory consolidation failed: ${result.afterRunError}`);
 lines.return?.();
 await deps.tracing?.shutdown();
 await deps.pool.end();
