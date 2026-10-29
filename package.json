@@ -14,6 +14,8 @@
     "format": "biome check --write .",
     "db:migrate": "tsx packages/db/scripts/migrate.ts",
     "seed": "tsx agents/match-preview/scripts/seed.ts",
+    "sitemap": "tsx agents/sitemap/scripts/run.ts",
+    "sitemap:seed": "tsx agents/sitemap/scripts/seed.ts",
     "preview": "tsx agents/match-preview/scripts/run.ts",
     "memory:review": "tsx packages/memory/scripts/review.ts",
     "eval": "tsx packages/evals/scripts/eval.ts",
