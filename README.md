@@ -14,6 +14,7 @@ pnpm eval match-preview
 pnpm sitemap:seed
 pnpm sitemap --tenant demo-cricket --sport cricket --brief "T20 club: news, fixtures, squad, standings"
 pnpm eval sitemap
+# at the sitemap prompt: y to save, n to reject, `path /fan-zone /fanzone`, or `change: <what to change>`
 ```
 
 API:

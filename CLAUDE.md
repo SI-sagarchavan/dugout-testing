@@ -24,7 +24,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `pnpm preview --tenant demo-cricket --fixture c-101 [--fast]` — run the agent with a terminal approval prompt
 - `pnpm memory:review --tenant <id>` — approve or reject proposed facts
 - `pnpm eval match-preview [--scripted] [--fast] [--only id,id]` — eval suite; exits non-zero below the 90% gate (`pnpm eval sitemap` likewise)
-- `pnpm sitemap --tenant demo-cricket --brief "..." [--sport cricket] [--fast]` — run the sitemap agent with a terminal approval prompt; `pnpm sitemap:seed` loads its house facts
+- `pnpm sitemap --tenant demo-cricket --brief "..." [--sport cricket] [--fast]` — run the sitemap agent with a terminal approval prompt (answer `y`, `n`, `path /old /new` or `change: ...`); `pnpm sitemap:seed` loads its house facts
 - `pnpm api` / `pnpm token <tenant>` — API on :8787; a local dev token for it
 - `pnpm smoke [--fast]` — one minimal live run against the configured model
 
