@@ -4,7 +4,7 @@ Scope: harness core, memory, one sample agent (match preview writer), eval suite
 
 ## Locked decisions
 
-TypeScript (Python only as isolated MCP services) · own thin core, LangGraph only inside one agent behind `AgentRuntime` · Temporal (workflow per run, activity per model/tool call) · ECS Fargate · Valkey Streams (no-eviction) for live events · Aurora Postgres + pgvector, S3 · MCP as tool contract, typed tools only · official provider SDKs behind `ModelClient` · OpenTelemetry → Langfuse.
+TypeScript (Python only as isolated MCP services) · own thin core, LangGraph only inside one agent behind `AgentRuntime` · Temporal (workflow per run, activity per model/tool call) · ECS Fargate · Valkey Streams (no-eviction) for live events · Aurora Postgres + pgvector, S3 · MCP as tool contract, typed tools only · OpenAI-compatible Chat Completions client behind `ModelClient`, DeepSeek for testing (ADR 0001) · OpenTelemetry → Langfuse.
 
 ## Tool pipeline order
 
@@ -19,6 +19,21 @@ registry + spec check → tenant injection → policy check → approval (write/
 
 A phase ends when its gate is demonstrated, not when tasks close.
 
-## Open decision needed before M2
+## Status (2026-10-29)
 
-Embedding model (Voyage / Bedrock / local) behind an `EmbeddingClient` interface; vector dimension is fixed in the schema.
+Built and tested locally, except H7, which is parked while everything runs on a laptop.
+
+| Task  | State  | Notes                                                                                              |
+| ----- | ------ | -------------------------------------------------------------------------------------------------- |
+| H1–H5 | done   | H2 is an OpenAI-compatible client (ADR 0001); the loop runs over `Steps` (ADR 0002)                |
+| H6    | done   | Valkey stream per run, Postgres record, SSE resume; runs execute inside the API process (ADR 0004) |
+| H7    | parked | Temporal kept out for local work; `docker compose --profile temporal up` still starts it           |
+| H8    | done   | Langfuse via OpenTelemetry; off unless both keys are set                                           |
+| H9    | done   | `pnpm smoke`                                                                                       |
+| M1–M7 | done   | Consolidation runs right after each run, not as a workflow (ADR 0003)                              |
+| S1–S4 | done   | S4 is the approval prompt in `pnpm preview` and the API approval endpoint                          |
+| E1–E6 | done   | `pnpm eval match-preview`; the judge reports but does not gate                                     |
+
+## Embedding model
+
+Decided for now (ADR 0003): any OpenAI-compatible `/embeddings` endpoint at 1024 dimensions, set by `EMBEDDING_BASE_URL`. Without one, a word-hashing embedder keeps hybrid search working with lexical matching only. Choosing the production model is still open.
