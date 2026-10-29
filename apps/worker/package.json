@@ -9,5 +9,18 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@dugout/agent-match-preview": "workspace:^",
+    "@dugout/agent-sitemap": "workspace:^",
+    "@dugout/contracts": "workspace:^",
+    "@dugout/core": "workspace:^",
+    "@dugout/db": "workspace:^",
+    "@dugout/sdk": "workspace:^",
+    "iovalkey": "^0.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@dugout/memory": "workspace:^"
   }
 }

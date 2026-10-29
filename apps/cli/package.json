@@ -1,5 +1,5 @@
 {
-  "name": "@dugout/api",
+  "name": "@dugout/cli",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,17 +11,17 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@dugout/agent-match-preview": "workspace:^",
-    "@dugout/agent-sitemap": "workspace:^",
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",
     "@dugout/db": "workspace:^",
-    "@dugout/memory": "workspace:^",
     "@dugout/sdk": "workspace:^",
-    "@hono/node-server": "^2.1.5",
-    "hono": "^4.13.14",
+    "@dugout/worker": "workspace:^",
     "iovalkey": "^0.4.0",
-    "jose": "^6.2.13",
     "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@dugout/agent-match-preview": "workspace:^",
+    "@dugout/agent-sitemap": "workspace:^",
+    "@dugout/memory": "workspace:^"
   }
 }

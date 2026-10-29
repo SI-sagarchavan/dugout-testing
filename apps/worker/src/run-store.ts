@@ -8,7 +8,8 @@ import { type Pool, withTenant } from "@dugout/db";
  *
  * Every save is fenced by the run's lease. It renews the lease only when `owner` still holds it,
  * and otherwise throws `RunInterrupted` before writing anything, so a process that lost a run (it
- * stalled, and another process picked the run up) can never overwrite the new owner's state.
+ * stalled, and another process picked the run up) can never overwrite the new owner's state. A save
+ * also clears the approval decision the run was queued with: once saved, the checkpoint holds it.
  */
 export function createPostgresRunStore(
   pool: Pool,
@@ -35,7 +36,7 @@ export function createPostgresRunStore(
         const waiting = checkpoint.waiting !== undefined;
         const lease = await db.query(
           `update runs
-           set status = $3,
+           set status = $3, decision = null,
                lease_until = case when $4 then null else now() + make_interval(secs => $5) end,
                updated_at = now()
            where id = $1 and lease_owner = $2 and status in ('running', 'waiting')`,

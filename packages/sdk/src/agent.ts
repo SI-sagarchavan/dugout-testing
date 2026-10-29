@@ -49,14 +49,14 @@ export interface RunOptions<Input> {
 
 export type AgentResult = Awaited<ReturnType<typeof runLocal>>;
 
-/** How the terminal runner (`pnpm agent <id>`) shows this agent. All optional. */
+/** How the terminal (`pnpm agent <id>`, apps/cli) shows this agent. All optional. */
 export interface AgentCli {
   /** Other command-line names for input fields, e.g. `{ fixture: "fixtureId" }`. */
   flags?: Record<string, string>;
   /** The approval request as a reviewer reads it. Defaults to the tool name and its input as JSON. */
-  present?: (req: ApprovalRequest) => string;
+  present?: (req: Pick<ApprovalRequest, "tool" | "input">) => string;
   /** A closing line after the run, e.g. where the result was saved. */
-  done?: (result: AgentResult, tenantId: string) => string | undefined;
+  done?: (result: Pick<AgentResult, "status">, tenantId: string) => string | undefined;
 }
 
 export interface AgentConfig<Input extends z.ZodType, Options extends object> {
@@ -74,12 +74,6 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
   tools: (options: Options) => Tool[];
   /** Tool outputs longer than this are stored and replaced by a reference. */
   maxInlineChars?: number;
-  /**
-   * Whether hosts stream its responses by default (the API's `stream` flag decides per request).
-   * Defaults to true for agents that answer in text, false for agents with an `output` schema,
-   * whose callers usually want the checked result in one piece.
-   */
-  stream?: boolean;
   cli?: AgentCli;
 }
 
@@ -90,8 +84,6 @@ export interface Agent<Input extends z.ZodType = z.ZodType, Options extends obje
   readonly definition: AgentDefinition;
   readonly skillsDir: string;
   readonly dataDir: string;
-  /** Whether hosts stream its responses by default. */
-  readonly stream: boolean;
   readonly cli: AgentCli;
   /** Binds the host's deps and returns the function that runs the agent. */
   create(deps: AgentDeps & Options): (opts: RunOptions<z.input<Input>>) => Promise<AgentResult>;
@@ -127,7 +119,6 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
     definition,
     skillsDir,
     dataDir,
-    stream: config.stream ?? !config.output,
     cli: config.cli ?? {},
 
     create(deps) {

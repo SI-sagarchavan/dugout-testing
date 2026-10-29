@@ -6,17 +6,21 @@ export const LOCAL_VALKEY_URL = "redis://localhost:56379";
 /** Live streams are kept this long after a run ends; Postgres has the permanent record. */
 const RETAIN_SECONDS = 7 * 24 * 3600;
 
-const streamKey = (runId: string) => `run:${runId}:events`;
-const isTerminal = (e: RunEvent) => e.type === "run.completed" || e.type === "run.failed";
+/** The run is over. */
+export const isTerminal = (e: RunEvent) => e.type === "run.completed" || e.type === "run.failed";
+/** The invocation is over: the run ended, or it waits for a person to decide an approval. */
+export const endsInvocation = (e: RunEvent) => e.type === "approval.requested" || isTerminal(e);
 /** Streamed fragments: only the live stream has them; the finished messages are in the record. */
 const LIVE_ONLY = new Set<RunEvent["type"]>(["token", "tool.input.delta"]);
 const parse = (fields: string[]) => JSON.parse(fields[1] ?? "null") as RunEvent;
 
 /**
  * Each run's events in a Valkey stream whose entry ids are `0-<seq>`, so a client that has seen
- * `seq` resumes with an exclusive range from that id: no gaps and no duplicates.
+ * `seq` resumes with an exclusive range from that id: no gaps and no duplicates. `keyPrefix` puts
+ * the keys in a namespace on a shared cluster (`fanos:prod:dugout:`).
  */
-export function createValkeyEventLog(valkey: Valkey) {
+export function createValkeyEventLog(valkey: Valkey, opts: { keyPrefix?: string } = {}) {
+  const streamKey = (runId: string) => `${opts.keyPrefix ?? ""}run:${runId}:events`;
   const read = async (runId: string, afterSeq: number) => {
     const entries = await valkey.xrange(streamKey(runId), `(0-${afterSeq}`, "+");
     return entries.map(([, fields]) => parse(fields));
@@ -41,13 +45,22 @@ export function createValkeyEventLog(valkey: Valkey) {
 
     read,
 
-    /** Backlog after `afterSeq`, then the live tail until the run ends or `signal` aborts. */
-    async *follow(runId: string, afterSeq: number, signal: AbortSignal): AsyncGenerator<RunEvent> {
+    /**
+     * Backlog after `afterSeq`, then the live tail until the run ends, `stopAt` matches an event
+     * (`endsInvocation` follows one invocation), or `signal` aborts.
+     */
+    async *follow(
+      runId: string,
+      afterSeq: number,
+      signal: AbortSignal,
+      stopAt: (e: RunEvent) => boolean = isTerminal,
+    ): AsyncGenerator<RunEvent> {
+      const stops = (e: RunEvent) => isTerminal(e) || stopAt(e);
       let last = afterSeq;
       for (const event of await read(runId, last)) {
         yield event;
         last = event.seq;
-        if (isTerminal(event)) return;
+        if (stops(event)) return;
       }
       // Nothing after `last`: if the newest entry ends the run, the client has seen everything.
       const [newest] = await valkey.xrevrange(streamKey(runId), "+", "-", "COUNT", 1);
@@ -70,7 +83,7 @@ export function createValkeyEventLog(valkey: Valkey) {
               if (event.seq <= last) continue;
               yield event;
               last = event.seq;
-              if (isTerminal(event)) return;
+              if (stops(event)) return;
             }
           }
         }
