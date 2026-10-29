@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { defineTool } from "@dugout/contracts";
 import { z } from "zod";
 import { describeCatalog } from "./catalog.ts";
-import { type NavItem, SitemapSchema, SitemapShape, sitemapIssues } from "./validation.ts";
+import {
+  type NavItem,
+  type Sitemap,
+  SitemapSchema,
+  SitemapShape,
+  sitemapIssues,
+} from "./validation.ts";
 
 /** A menu item in the backend's navigation format (`wnm-fanxp-backend` `NavigationNode`). */
 export interface NavigationNode {
@@ -33,6 +39,35 @@ export function toNavigationNodes(items: NavItem[]): NavigationNode[] {
 }
 
 export const HEADER_NAVIGATION_NAME = "Header";
+
+/**
+ * Writes one tenant's sitemap files. `pages.json` is what the admin app's AI import takes as it is;
+ * `meta.json` goes last, so a half-written save is never taken for a finished one.
+ */
+export async function writeSitemap(
+  dir: string,
+  sitemap: Sitemap,
+  runId: string,
+): Promise<{ unchanged: boolean }> {
+  const hash = createHash("sha256").update(JSON.stringify(sitemap)).digest("hex").slice(0, 12);
+  const existing = await readFile(join(dir, "meta.json"), "utf8")
+    .then((s) => JSON.parse(s) as { hash: string })
+    .catch(() => undefined);
+  if (existing?.hash === hash) return { unchanged: true };
+
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "pages.json"), JSON.stringify({ pages: sitemap.pages }, null, 2));
+  await writeFile(
+    join(dir, "navigation.json"),
+    JSON.stringify(
+      { name: HEADER_NAVIGATION_NAME, nodes: toNavigationNodes(sitemap.navigation) },
+      null,
+      2,
+    ),
+  );
+  await writeFile(join(dir, "meta.json"), JSON.stringify({ hash, runId }, null, 2));
+  return { unchanged: false };
+}
 
 export function createSitemapTools(opts: { sitemapsDir: string }) {
   const pagesCatalog = defineTool({
@@ -69,27 +104,12 @@ export function createSitemapTools(opts: { sitemapsDir: string }) {
     timeoutMs: 5_000,
     retries: 1, // idempotent by content hash
     async run(sitemap, ctx) {
-      const dir = join(opts.sitemapsDir, ctx.tenantId);
-      const hash = createHash("sha256").update(JSON.stringify(sitemap)).digest("hex").slice(0, 12);
-      const existing = await readFile(join(dir, "meta.json"), "utf8")
-        .then((s) => JSON.parse(s) as { hash: string })
-        .catch(() => undefined);
-      if (existing?.hash === hash) return { saved: true, unchanged: true };
-
-      await mkdir(dir, { recursive: true });
-      // pages.json is what the admin app's AI import takes as it is
-      await writeFile(join(dir, "pages.json"), JSON.stringify({ pages: sitemap.pages }, null, 2));
-      await writeFile(
-        join(dir, "navigation.json"),
-        JSON.stringify(
-          { name: HEADER_NAVIGATION_NAME, nodes: toNavigationNodes(sitemap.navigation) },
-          null,
-          2,
-        ),
+      const { unchanged } = await writeSitemap(
+        join(opts.sitemapsDir, ctx.tenantId),
+        sitemap,
+        ctx.runId,
       );
-      // last, so a half-written save is never taken for a finished one
-      await writeFile(join(dir, "meta.json"), JSON.stringify({ hash, runId: ctx.runId }, null, 2));
-      return { saved: true, unchanged: false };
+      return { saved: true, unchanged };
     },
   });
 
