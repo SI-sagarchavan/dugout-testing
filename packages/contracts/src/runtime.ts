@@ -39,9 +39,14 @@ export interface ApprovalRequest {
   input: unknown;
 }
 
+/**
+ * `reason` rejects the call and ends the run. `changes` sends the reviewer's request back to the
+ * model in the same run, which keeps its transcript and calls the tool again.
+ */
 export type ApprovalDecision =
   | { approved: true; by: string }
-  | { approved: false; by: string; reason: string };
+  | { approved: false; by: string; reason: string }
+  | { approved: false; by: string; changes: string };
 
 /**
  * Everything the loop does that touches the outside world. In-process it calls functions directly;

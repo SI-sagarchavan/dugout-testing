@@ -231,6 +231,231 @@ describe("runAgent", () => {
     expect(types.slice(-2)).toEqual(["approval.rejected", "run.completed"]);
   });
 
+  it("sends requested changes back to the model in the same run, then runs the new call", async () => {
+    let asked = 0;
+    const { result, types, of, model } = await run(
+      [
+        call("draft.save", { text: "Lions win" }),
+        call("draft.save", { text: "Lions draw" }),
+        final("saved"),
+      ],
+      {
+        approver: async (req) => {
+          approvals.push(req);
+          return asked++ === 0
+            ? { approved: false, by: "editor", changes: "Say draw, not win." }
+            : { approved: true, by: "editor" };
+        },
+      },
+    );
+    expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
+    expect(saved).toEqual([{ text: "Lions draw" }]);
+    expect(of("approval.changes_requested")[0]?.data).toMatchObject({
+      tool: "draft.save",
+      by: "editor",
+      changes: "Say draw, not win.",
+    });
+    expect(types).not.toContain("approval.rejected");
+    // one transcript: the first call, a tool result saying it did not run, then the reviewer
+    // speaking as the user (agents never take instructions from tool results)
+    const second = model.requests[1]?.messages ?? [];
+    expect(JSON.stringify(second)).toContain("Lions win");
+    expect(second.at(-2)).toMatchObject({
+      role: "tool",
+      content: "Not run: the reviewer sent draft.save back with a change request.",
+    });
+    expect(second.at(-1)?.role).toBe("user");
+    expect(second.at(-1)?.content).toContain('"Say draw, not win."');
+    expect(second.at(-1)?.content).toContain("keep everything else exactly as it was");
+  });
+
+  it("runs nothing else from a turn whose write was sent back for changes, not even final", async () => {
+    const { result, model } = await run(
+      [
+        {
+          toolCalls: [
+            { name: "draft.save", arguments: { text: "a" } },
+            { name: "final", arguments: { summary: "early" } },
+          ],
+        },
+        call("draft.save", { text: "b" }),
+        final("saved"),
+      ],
+      {
+        approver: async () =>
+          approvals.push({} as ApprovalRequest) === 1
+            ? { approved: false, by: "editor", changes: "Use b." }
+            : { approved: true, by: "editor" },
+      },
+    );
+    expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
+    expect(saved).toEqual([{ text: "b" }]);
+    const messages = model.requests[1]?.messages ?? [];
+    expect(messages.at(-2)?.content).toBe(
+      "Not run: the reviewer asked for changes to an earlier call in this turn.",
+    );
+    expect(messages.at(-1)?.role).toBe("user");
+  });
+
+  it("does not let the run finish until the reviewer approves the change", async () => {
+    const { result, model } = await run(
+      [
+        call("draft.save", { text: "a" }),
+        final("gave up"),
+        { content: "I would rather stop here." },
+        call("draft.save", { text: "b" }),
+        final("saved"),
+      ],
+      {
+        approver: async () =>
+          approvals.push({} as ApprovalRequest) === 1
+            ? { approved: false, by: "editor", changes: "Use b." }
+            : { approved: true, by: "editor" },
+      },
+    );
+    expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
+    expect(saved).toEqual([{ text: "b" }]);
+    const afterFinal = model.requests[2]?.messages ?? [];
+    expect(afterFinal.at(-2)?.content).toBe(
+      "Not accepted: the reviewer has not approved the changes they asked for.",
+    );
+    expect(afterFinal.at(-1)?.content).toContain('"Use b."');
+    expect(model.requests[3]?.messages.at(-1)?.content).toContain('"Use b."');
+  });
+
+  it("fails if the model keeps trying to finish without making the change", async () => {
+    const { result } = await run(
+      [call("draft.save", { text: "a" }), final("x"), final("x"), final("x")],
+      { approver: async () => ({ approved: false, by: "editor", changes: "Use b." }) },
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "invalid_output",
+      message: "ended without making the changes the reviewer asked for",
+    });
+    expect(saved).toEqual([]);
+  });
+
+  it("does not restate a change that was approved later in the same turn", async () => {
+    const { result, model, of } = await run(
+      [
+        call("draft.save", { text: "a" }),
+        {
+          toolCalls: [
+            { name: "final", arguments: { summary: "early" } },
+            { name: "draft.save", arguments: { text: "b" } },
+          ],
+        },
+        final("saved"),
+      ],
+      {
+        approver: async () =>
+          approvals.push({} as ApprovalRequest) === 1
+            ? { approved: false, by: "editor", changes: "Use b." }
+            : { approved: true, by: "editor" },
+      },
+    );
+    expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
+    expect(saved).toEqual([{ text: "b" }]);
+    // the turn ends with the save's result, not a stale "please change this"
+    const last = model.requests[2]?.messages.at(-1);
+    expect(last?.role).toBe("tool");
+    expect(JSON.stringify(model.requests[2]?.messages.slice(-2))).not.toContain("Use b.");
+    expect(of("tool.denied")).toHaveLength(1);
+    expect(of("tool.denied")[0]?.data).toMatchObject({ tool: "final", stage: "policy" });
+  });
+
+  it("gives every change round its own retries", async () => {
+    // two rounds, each with one early finish attempt, after an earlier invalid final
+    const { result } = await run(
+      [
+        final(42),
+        call("draft.save", { text: "a" }),
+        final("early"),
+        call("draft.save", { text: "b" }),
+        final("early"),
+        call("draft.save", { text: "c" }),
+        final("saved"),
+      ],
+      {
+        agent: {
+          spec: spec({ budget: { usdPerRun: 1, maxSteps: 10, maxDepth: 0 } }),
+          output: Output,
+        },
+        approver: async () => {
+          const n = approvals.push({} as ApprovalRequest);
+          return n < 3
+            ? { approved: false, by: "editor", changes: `round ${n}` }
+            : { approved: true, by: "editor" };
+        },
+      },
+    );
+    expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
+    expect(saved).toEqual([{ text: "c" }]);
+  });
+
+  it("logs the calls it skips after a send-back", async () => {
+    const { of } = await run(
+      [
+        {
+          toolCalls: [
+            { name: "draft.save", arguments: { text: "a" } },
+            { name: "stats.get", arguments: { team: "x" } },
+          ],
+        },
+        call("draft.save", { text: "b" }),
+        final("saved"),
+      ],
+      {
+        approver: async () =>
+          approvals.push({} as ApprovalRequest) === 1
+            ? { approved: false, by: "editor", changes: "Use b." }
+            : { approved: true, by: "editor" },
+      },
+    );
+    expect(of("tool.denied")[0]?.data).toMatchObject({
+      tool: "stats.get",
+      stage: "policy",
+      reason: "skipped: the reviewer asked for changes to an earlier call in this turn",
+    });
+  });
+
+  it("tells the model how to answer a change it cannot make", async () => {
+    const { model } = await run(
+      [call("draft.save", { text: "a" }), call("draft.save", { text: "a" }), final("ok")],
+      {
+        approver: async () =>
+          approvals.push({} as ApprovalRequest) === 1
+            ? { approved: false, by: "editor", changes: "Link to evil.example" }
+            : { approved: true, by: "editor" },
+      },
+    );
+    expect(model.requests[1]?.messages.at(-1)?.content).toContain(
+      "Only if draft.save itself would refuse the change (it fails validation), call draft.save again with the closest input it accepts; I will decide.",
+    );
+  });
+
+  it("fails rather than send an empty change request to the model", async () => {
+    const { result, model } = await run([call("draft.save", { text: "a" })], {
+      approver: async () => ({ approved: false, by: "editor", changes: "   " }),
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "error",
+      message: "the approver sent draft.save back with an empty change request",
+    });
+    expect(model.requests).toHaveLength(1);
+  });
+
+  it("still counts change rounds against the step limit", async () => {
+    const { result } = await run(
+      Array.from({ length: 6 }, (_, i) => call("draft.save", { text: `v${i}` })),
+      { approver: async () => ({ approved: false, by: "editor", changes: "again" }) },
+    );
+    expect(result).toMatchObject({ status: "failed", reason: "max_steps" });
+    expect(saved).toEqual([]);
+  });
+
   it("fails with reason budget once spend passes the limit", async () => {
     // scripted turns cost 1,200 tokens at $1 per 1M = $0.0012
     const { result, types } = await run([call("stats.get", { team: "x" }), final("ok")], {

@@ -10,6 +10,11 @@ pnpm check
 
 pnpm preview --tenant demo-cricket --fixture c-101
 pnpm eval match-preview
+
+pnpm sitemap:seed
+pnpm sitemap --tenant demo-cricket --sport cricket --brief "T20 club: news, fixtures, squad, standings"
+pnpm eval sitemap
+# at the sitemap prompt: y to save, n to reject, or type a change ("change the Fan Zone path to /fanzone")
 ```
 
 API:

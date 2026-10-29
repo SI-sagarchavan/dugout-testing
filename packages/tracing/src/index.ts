@@ -102,10 +102,14 @@ export function createTracingSink(tracer: Tracer, onRunEnd?: () => Promise<void>
           );
           break;
         case "approval.granted":
-        case "approval.rejected": {
+        case "approval.rejected":
+        case "approval.changes_requested": {
           const span = run.open.get(`approval:${event.data.callId}`);
           span?.setAttribute("dugout.approved", event.type === "approval.granted");
           span?.setAttribute("dugout.approver", event.data.by);
+          if (event.type === "approval.changes_requested") {
+            span?.setAttribute("dugout.changes", event.data.changes);
+          }
           span?.end(at);
           run.open.delete(`approval:${event.data.callId}`);
           break;

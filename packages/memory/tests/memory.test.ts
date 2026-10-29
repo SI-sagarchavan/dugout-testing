@@ -228,6 +228,42 @@ describe("consolidation", () => {
       'A reviewer rejected a draft.save draft: "no betting language"',
     );
   });
+
+  it("remembers a change request like a rejection, with the draft it was about", async () => {
+    const runId = randomUUID();
+    const seen: unknown[] = [];
+    const out = await consolidateRun({
+      writer: store,
+      tenantId: a,
+      agentId: AGENT,
+      runId,
+      events: [
+        events[0] as RunEvent,
+        ev(2, "approval.changes_requested", {
+          step: 1,
+          callId: "c1",
+          tool: "draft.save",
+          by: "editor",
+          changes: "Put Fixtures before News",
+        }),
+      ],
+      lessons: async (r) => {
+        seen.push(r);
+        throw new Error("model down");
+      },
+    });
+    expect(seen).toEqual([
+      {
+        tool: "draft.save",
+        input: { body: "Bet now on the Lions!" },
+        reason: "Put Fixtures before News",
+      },
+    ]);
+    expect(out.episodes[0]?.content).toBe(
+      'A reviewer asked for a change to a draft.save draft: "Put Fixtures before News"',
+    );
+    expect(await store.deleteBySourceRun(a, runId)).toBe(1);
+  });
 });
 
 describe("context builder", () => {
