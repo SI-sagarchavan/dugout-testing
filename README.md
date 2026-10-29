@@ -23,14 +23,26 @@ API:
 ```sh
 pnpm api
 TOKEN=$(pnpm -s token demo-cricket)
-curl -s -X POST localhost:8787/runs -H "authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' -d '{"agent":"match-preview","input":{"fixtureId":"c-101"}}'
-# or {"agent":"sitemap","input":{"brief":"T20 club: news, fixtures, squad","sports":["cricket"]}}
-curl -N localhost:8787/runs/<runId>/stream -H "authorization: Bearer $TOKEN"
-curl -X POST localhost:8787/runs/<runId>/approvals/<callId> -H "authorization: Bearer $TOKEN" \
+
+# wait for the result as JSON (the sitemap agent's default): it comes back "waiting" with the sitemap
+curl -s -X POST localhost:8787/runs -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"agent":"sitemap","input":{"brief":"T20 club: news, fixtures, squad","sports":["cricket"]}}'
+# decide; the answer is the run's next state: waiting again after a change, or completed with the output
+curl -s -X POST localhost:8787/runs/<runId>/approvals/<callId> -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"approved":false,"changes":"Use /fanzone for the Fan Zone."}'
+curl -s -X POST localhost:8787/runs/<runId>/approvals/<callId> -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"approved":true}'
-# or send it back: -d '{"approved":false,"changes":"Name both captains."}'
+
+# or stream the events in the response (match-preview's default), up to the approval or the end
+curl -N -X POST localhost:8787/runs -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"agent":"match-preview","input":{"fixtureId":"c-101"},"stream":true}'
+
+# or start in the background and follow the run's stream, from any event id
+curl -s -X POST localhost:8787/runs ... -d '{"agent":"match-preview","input":{"fixtureId":"c-101"},"background":true}'
+curl -N localhost:8787/runs/<runId>/stream -H "authorization: Bearer $TOKEN"
 ```
+
+Every request that starts or resumes a run takes `stream` (SSE) or `background`; without them the agent's default applies (ADR 0008). Tool-call arguments stream as `tool.input.delta` events, so structured output streams too.
 
 New agents are written with `defineAgent` from `@dugout/sdk` (ADR 0007); `agents/sitemap` is a compact example.
 

@@ -13,7 +13,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `packages/sdk` — `defineAgent` (what agent packages are written with), live deps, the terminal runner (`pnpm agent`), seeding, agent discovery (ADR 0007)
 - `agents/match-preview` — sample agent: tools, skill, spec, demo data, eval cases
 - `agents/sitemap` — second agent: club brief to import-ready pages plus header menu; ported importer rules, skill, eval cases
-- `apps/api` — HTTP/SSE API; runs agents in-process (Valkey stream + Postgres record). Runs' working memory (transcript + checkpoint) is saved in Postgres, so approvals and restarts resume them (ADR 0006)
+- `apps/api` — HTTP/SSE API; runs agents in-process (Valkey stream + Postgres record). Runs' working memory (transcript + checkpoint) is saved in Postgres, so approvals and restarts resume them (ADR 0006). Starting a run or deciding an approval answers with SSE (`stream: true`), JSON once it ends or waits (`stream: false`), or the run id (`background: true`); the agent's default otherwise (ADR 0008)
 - `apps/worker` — Temporal worker, parked until durability is needed
 
 ## Commands
