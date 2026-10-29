@@ -25,6 +25,14 @@ let runsDir: string;
 
 function writer(): Array<(req: ModelRequest) => ScriptedTurn> {
   let f: { home: string; away: string };
+  const save = (body: string): ScriptedTurn => ({
+    toolCalls: [
+      {
+        name: "draft.save",
+        arguments: { fixtureId: "c-101", title: "Mariners v Chargers", body },
+      },
+    ],
+  });
   return [
     () => ({
       content: "Looking up the fixture.",
@@ -34,18 +42,12 @@ function writer(): Array<(req: ModelRequest) => ScriptedTurn> {
       f = JSON.parse(req.messages.at(-1)?.content ?? "{}");
       return { toolCalls: [{ name: "team.stats", arguments: { teamId: f.home } }] };
     },
-    () => ({
-      toolCalls: [
-        {
-          name: "draft.save",
-          arguments: {
-            fixtureId: "c-101",
-            title: "Mariners v Chargers",
-            body: "A measured preview of both sides.",
-          },
-        },
-      ],
-    }),
+    () => save("A measured preview of both sides."),
+    // when the reviewer asks for changes (a user message), save again with them
+    (req) =>
+      req.messages.at(-1)?.role === "user"
+        ? save("A measured preview of both sides, naming both captains.")
+        : { content: "Saved." },
     () => ({ content: "Saved." }),
   ];
 }
@@ -250,6 +252,47 @@ describe("api", () => {
     expect(stored.length).toBeGreaterThan(3);
     expect(stored.every((e) => e.type !== "token" && e.seq > 2)).toBe(true);
     expect(stored.at(-1)?.type).toBe("run.completed");
+  });
+
+  it("sends requested changes back into the same run", async () => {
+    const runId = await start();
+    const seen = await readStream(
+      `/runs/${runId}/stream`,
+      auth(cricket),
+      (e) => e.type === "approval.requested",
+    );
+    const request = seen.events.at(-1) as Extract<RunEvent, { type: "approval.requested" }>;
+    const decide = (body: unknown) =>
+      app.request(`/runs/${runId}/approvals/${request.data.callId}`, {
+        method: "POST",
+        headers: { ...auth(cricket), "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await decide({ approved: false })).status).toBe(400);
+    expect((await decide({ approved: false, changes: "Name both captains." })).status).toBe(200);
+
+    const rest = await readStream(
+      `/runs/${runId}/stream`,
+      { ...auth(cricket), "last-event-id": String(request.seq) },
+      (e) => e.type === "approval.requested",
+    );
+    expect(rest.events.find((e) => e.type === "approval.changes_requested")).toMatchObject({
+      data: { by: "editor-1", changes: "Name both captains.", callId: request.data.callId },
+    });
+    // the same run asks again with the changed draft
+    const again = rest.events.at(-1) as Extract<RunEvent, { type: "approval.requested" }>;
+    expect(again.type).toBe("approval.requested");
+    expect(again.data.input).toMatchObject({ body: expect.stringContaining("captains") });
+    expect((await approve(runId, again.data.callId)).status).toBe(200);
+    const end = await readStream(`/runs/${runId}/stream`, {
+      ...auth(cricket),
+      "last-event-id": String(again.seq),
+    });
+    expect(end.events.some((e) => e.type === "approval.rejected")).toBe(false);
+    expect(end.events.at(-1)).toMatchObject({
+      type: "run.completed",
+      data: { status: "completed" },
+    });
   });
 
   it("validates the agent and its input", async () => {

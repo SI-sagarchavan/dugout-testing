@@ -110,6 +110,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   }
 
   let invalidOutputs = 0;
+  // the latest change a reviewer asked for, by tool, until a call to that tool is approved
+  const pendingChanges = new Map<string, string>();
+  const pendingNote = () =>
+    [...pendingChanges].map(([tool, changes]) => changesMessage(tool, changes)).join("\n\n");
+  const UNMADE = "ended without making the changes the reviewer asked for";
   try {
     for (let step = 1; step <= spec.budget.maxSteps; step++) {
       const turn = await steps.model({ step, tier: spec.model.tier, messages, tools });
@@ -134,6 +139,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
 
       const calls = turn.message.toolCalls ?? [];
       if (calls.length === 0) {
+        if (pendingChanges.size > 0) {
+          if (++invalidOutputs > MAX_INVALID_OUTPUTS) return fail("invalid_output", UNMADE);
+          messages.push({ role: "user", content: pendingNote() });
+          continue;
+        }
         if (!output) return complete(turn.message.content);
         if (++invalidOutputs > MAX_INVALID_OUTPUTS) {
           return fail("invalid_output", `ended without calling ${FINAL_TOOL}`);
@@ -142,8 +152,31 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         continue;
       }
 
+      // set when a reviewer asks for changes: the rest of the turn (even `final`) was planned
+      // before the request, so none of it runs
+      let changesRequested = false;
+      // the reviewer's words, sent as a user message once this turn's tool results are in
+      let feedback: string | undefined;
       for (const call of calls) {
+        if (changesRequested) {
+          messages.push({
+            role: "tool",
+            toolCallId: call.id,
+            content: "Not run: the reviewer asked for changes to an earlier call in this turn.",
+          });
+          continue;
+        }
         if (output && call.name === FINAL_TOOL) {
+          if (pendingChanges.size > 0) {
+            if (++invalidOutputs > MAX_INVALID_OUTPUTS) return fail("invalid_output", UNMADE);
+            messages.push({
+              role: "tool",
+              toolCallId: call.id,
+              content: "Not accepted: the reviewer has not approved the changes they asked for.",
+            });
+            feedback = pendingNote();
+            continue;
+          }
           const result = parseFinal(call, output);
           if (result.ok) return complete(result.value);
           if (++invalidOutputs > MAX_INVALID_OUTPUTS) return fail("invalid_output", result.error);
@@ -181,6 +214,19 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           });
           await log.emit({ type: "approval.requested", data: { ...ids, input: checked.input } });
           const decision = await pendingDecision;
+          if (!decision.approved && "changes" in decision) {
+            const { by, changes } = decision;
+            await log.emit({ type: "approval.changes_requested", data: { ...ids, by, changes } });
+            pendingChanges.set(call.name, changes);
+            messages.push({
+              role: "tool",
+              toolCallId: call.id,
+              content: `Not run: the reviewer sent ${call.name} back with a change request.`,
+            });
+            feedback = changesMessage(call.name, changes);
+            changesRequested = true;
+            continue;
+          }
           if (!decision.approved) {
             const { by, reason } = decision;
             await log.emit({ type: "approval.rejected", data: { ...ids, by, reason } });
@@ -192,6 +238,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
             return { status: "rejected", output: rejected, usage };
           }
           await log.emit({ type: "approval.granted", data: { ...ids, by: decision.by } });
+          pendingChanges.delete(call.name);
         }
 
         await log.emit({ type: "tool.started", data: { ...ids, input: checked.input } });
@@ -204,11 +251,22 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         });
         messages.push({ role: "tool", toolCallId: call.id, content });
       }
+      // The reviewer is the person the run works for, so their request comes as a user message,
+      // not inside a tool result, which agents are told never to take instructions from.
+      if (feedback) messages.push({ role: "user", content: feedback });
     }
     return fail("max_steps", `no result after ${spec.budget.maxSteps} steps`);
   } catch (err) {
     return fail("error", err instanceof Error ? err.message : String(err));
   }
+}
+
+/** What the reviewer says, as the user, when they send a call back for changes. */
+export function changesMessage(tool: string, changes: string): string {
+  return [
+    `I reviewed your ${tool} call and did not approve it yet. Please change this: ${JSON.stringify(changes)}`,
+    `Make only that change and keep everything else exactly as it was, then call ${tool} again with the full updated input.`,
+  ].join("\n");
 }
 
 /** Rejects specs that use features the harness doesn't have yet, instead of ignoring them. */

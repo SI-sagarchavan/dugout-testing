@@ -24,6 +24,7 @@ const StartRun = z.object({ agent: z.string(), input: z.unknown() });
 const Decision = z.union([
   z.object({ approved: z.literal(true) }),
   z.object({ approved: z.literal(false), reason: z.string().min(1).max(500) }),
+  z.object({ approved: z.literal(false), changes: z.string().min(1).max(2_000) }),
 ]);
 
 export function createApp(deps: AppDeps) {
@@ -115,7 +116,12 @@ export function createApp(deps: AppDeps) {
 
   app.post("/runs/:id/approvals/:callId", async (c) => {
     const decision = Decision.safeParse(await c.req.json().catch(() => undefined));
-    if (!decision.success) return c.json({ error: "expected { approved, reason? }" }, 400);
+    if (!decision.success) {
+      return c.json(
+        { error: "expected { approved: true } or { approved: false, reason | changes }" },
+        400,
+      );
+    }
     const { tenantId, subject } = c.get("identity");
     const ok = deps.runs.decide(
       tenantId,
@@ -123,7 +129,9 @@ export function createApp(deps: AppDeps) {
       c.req.param("callId"),
       decision.data.approved
         ? { approved: true, by: subject }
-        : { approved: false, by: subject, reason: decision.data.reason },
+        : "changes" in decision.data
+          ? { approved: false, by: subject, changes: decision.data.changes }
+          : { approved: false, by: subject, reason: decision.data.reason },
     );
     return ok ? c.json({ ok: true }) : c.json({ error: "no pending approval" }, 404);
   });

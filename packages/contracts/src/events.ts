@@ -65,6 +65,7 @@ export const RunEvent = z.discriminatedUnion("type", [
   event("approval.requested", z.object({ ...call, input: z.unknown() })),
   event("approval.granted", z.object({ ...call, by: z.string() })),
   event("approval.rejected", z.object({ ...call, by: z.string(), reason: z.string() })),
+  event("approval.changes_requested", z.object({ ...call, by: z.string(), changes: z.string() })),
   event(
     "run.completed",
     z.object({
