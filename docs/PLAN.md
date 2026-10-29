@@ -23,17 +23,18 @@ A phase ends when its gate is demonstrated, not when tasks close.
 
 Built and tested locally, except H7, which is parked while everything runs on a laptop.
 
-| Task  | State  | Notes                                                                                              |
-| ----- | ------ | -------------------------------------------------------------------------------------------------- |
-| H1–H5 | done   | H2 is an OpenAI-compatible client (ADR 0001); the loop runs over `Steps` (ADR 0002)                |
-| H6    | done   | Valkey stream per run, Postgres record, SSE resume; runs execute inside the API process (ADR 0004) |
-| H7    | parked | Temporal kept out for local work; `docker compose --profile temporal up` still starts it           |
-| H8    | done   | Langfuse via OpenTelemetry; off unless both keys are set                                           |
-| H9    | done   | `pnpm smoke`                                                                                       |
-| M1–M7 | done   | Consolidation runs right after each run, not as a workflow (ADR 0003)                              |
-| S1–S4 | done   | S4 is the approval prompt in `pnpm preview` and the API approval endpoint                          |
-| E1–E6 | done   | `pnpm eval match-preview`; the judge reports but does not gate                                     |
-| A2    | done   | Sitemap agent (`agents/sitemap`): first live use of `final` structured output; `pnpm eval sitemap` |
+| Task  | State  | Notes                                                                                                    |
+| ----- | ------ | -------------------------------------------------------------------------------------------------------- |
+| H1–H5 | done   | H2 is an OpenAI-compatible client (ADR 0001); the loop runs over `Steps` (ADR 0002)                      |
+| H6    | done   | Valkey stream per run, Postgres record, SSE resume; runs execute inside the API process (ADR 0004)       |
+| H7    | parked | Temporal kept out for local work; `docker compose --profile temporal up` still starts it                 |
+| H8    | done   | Langfuse via OpenTelemetry; off unless both keys are set                                                 |
+| H9    | done   | `pnpm smoke`                                                                                             |
+| M1–M7 | done   | Consolidation runs right after each run, not as a workflow (ADR 0003)                                    |
+| S1–S4 | done   | S4 is the approval prompt in `pnpm preview` and the API approval endpoint                                |
+| E1–E6 | done   | `pnpm eval match-preview`; the judge reports but does not gate                                           |
+| D1    | done   | Runs' working memory saved in Postgres; approvals end the invocation; crash recovery by lease (ADR 0006) |
+| A2    | done   | Sitemap agent (`agents/sitemap`): first live use of `final` structured output; `pnpm eval sitemap`       |
 
 ## Embedding model
 

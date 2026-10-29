@@ -12,7 +12,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `packages/tracing` — run events → OpenTelemetry spans → Langfuse
 - `agents/match-preview` — sample agent: tools, skill, spec, demo data, eval cases
 - `agents/sitemap` — second agent: club brief to import-ready pages plus header menu; ported importer rules, skill, eval cases
-- `apps/api` — HTTP/SSE API; runs agents in-process (Valkey stream + Postgres record)
+- `apps/api` — HTTP/SSE API; runs agents in-process (Valkey stream + Postgres record). Runs' working memory (transcript + checkpoint) is saved in Postgres, so approvals and restarts resume them (ADR 0006)
 - `apps/worker` — Temporal worker, parked until durability is needed
 
 ## Commands
