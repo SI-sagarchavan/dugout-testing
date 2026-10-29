@@ -6,11 +6,14 @@ import {
   absent,
   bannedTerms,
   endedGracefully,
+  forbiddenClaims,
   kickoffTime,
   mentionsAll,
   numbersFromData,
   runSuite,
   spelling,
+  teamAttribution,
+  toolOutputs,
   wordLimit,
   writesGated,
 } from "../src/index.ts";
@@ -48,6 +51,11 @@ describe("deterministic graders", () => {
     expect(numbersFromData("A 55% win rate", data)).toMatchObject({
       pass: false,
       detail: "not in data: 55",
+    });
+    expect(numbersFromData("Won twenty-two of forty", data).pass).toBe(true);
+    expect(numbersFromData("Both keepers have six clean sheets", data)).toMatchObject({
+      pass: false,
+      detail: "not in data: 6",
     });
   });
 
@@ -108,12 +116,115 @@ describe("event graders", () => {
   });
 });
 
+describe("team-attribution", () => {
+  const teams = [
+    {
+      names: ["Austin Armadillos", "Austin", "Armadillos"],
+      numbers: [34, 17, 11, 6, 62, 9],
+      form: ["W", "D", "W", "D", "D"],
+    },
+    {
+      names: ["Boston Beacons", "Boston", "Beacons"],
+      numbers: [34, 16, 9, 57, 14],
+      form: ["D", "L", "W", "W", "W"],
+    },
+  ];
+
+  it("passes when form and numbers sit next to their own team", () => {
+    const text =
+      "Austin's form is W, D, W, D, D and they have 62 points. Boston's is D, L, W, W, W with 57 points; Marcus Reed has 14 goals.";
+    expect(teamAttribution(text, teams).pass).toBe(true);
+  });
+
+  it("fails when a team's numbers or form are written next to the other team", () => {
+    const swapped = "Austin have 57 points. Boston come in with form W, D, W, D, D.";
+    const result = teamAttribution(swapped, teams);
+    expect(result.pass).toBe(false);
+    expect(result.detail).toContain("57 is Boston Beacons's, written next to Austin Armadillos");
+    expect(result.detail).toContain(
+      "form WDWDD is Austin Armadillos's, written next to Boston Beacons",
+    );
+  });
+
+  it("accepts a team or player named after the number, as the live drafts write it", () => {
+    const cricket = [
+      {
+        names: ["Kolkata Comets", "Kolkata", "Comets", "Rohan Iyer"],
+        numbers: [19, 21, 426, 150.5],
+        form: [],
+      },
+      {
+        names: ["Bengaluru Blazers", "Bengaluru", "Blazers", "Dev Malhotra"],
+        numbers: [23, 17, 517, 162],
+        form: [],
+      },
+    ];
+    const text =
+      "Kolkata have won 19 of 40, and Bengaluru 23. Rohan Iyer has 426 runs at a strike rate of 150.5 for Kolkata. Dev Malhotra leads Bengaluru with 517 runs at 162.";
+    expect(teamAttribution(text, cricket).pass).toBe(true);
+    expect(teamAttribution("Rohan Iyer has 517 runs for Kolkata.", cricket).pass).toBe(false);
+    expect(
+      teamAttribution("Kolkata have nineteen wins; Bengaluru seventeen losses.", cricket).pass,
+    ).toBe(true);
+    expect(teamAttribution("Bengaluru have nineteen wins.", cricket).pass).toBe(false);
+  });
+
+  it("fails on a form line that belongs to neither team", () => {
+    expect(teamAttribution("Austin: W-W-W-W-W", teams).detail).toBe(
+      "form WWWWW matches neither team",
+    );
+  });
+
+  it("skips shared numbers, times, dates and fixture numbers", () => {
+    const text = "Boston kick off at 6:00 PM on November 17, 2026; both have played 34. Boston 62";
+    expect(teamAttribution(text, teams, [2026, 62]).pass).toBe(true);
+  });
+});
+
+describe("no-unsupported-claims", () => {
+  it.each([
+    ["Austin will win this one.", "prediction"],
+    ["Boston are favourites to win.", "prediction"],
+    ["Reed is doubtful with a hamstring problem.", "injury"],
+    ['The captain said "we are ready for a big night out there".', "quote"],
+    ["Rain is forecast for the evening.", "weather"],
+  ])("flags %j", (text, label) => {
+    expect(forbiddenClaims(text, "").detail).toContain(label);
+  });
+
+  it("allows words that come from the fixture notes", () => {
+    expect(
+      forbiddenClaims("An early kickoff in the heat.", "Early afternoon kickoff in the heat.").pass,
+    ).toBe(true);
+  });
+
+  it("leaves ordinary preview copy alone", () => {
+    expect(
+      forbiddenClaims("Both sides will want a strong start in front of a home crowd.", "").pass,
+    ).toBe(true);
+  });
+});
+
+describe("toolOutputs", () => {
+  it("joins successful tool results only", () => {
+    const call = { step: 1, callId: "c", tool: "t", durationMs: 1 };
+    expect(
+      toolOutputs([
+        ev(1, "tool.completed", { ...call, ok: true, content: "seen 17" }),
+        ev(2, "tool.completed", { ...call, ok: false, content: "Error: 99" }),
+      ]),
+    ).toBe("seen 17");
+  });
+});
+
 describe("runSuite gate", () => {
-  const suite = (outcomes: Array<{ pass: boolean } | "skip" | "throw">) => ({
+  type O = { pass: boolean } | "skip" | "throw";
+  /** `outcomes[i][n]` is case i's attempt n. */
+  const suite = (outcomes: O[][]) => ({
     agentId: "t",
     cases: outcomes.map((_, i) => ({ id: `c${i}`, kind: "standard" as const, tenant: "x" })),
-    runCase: async (c: { id: string }) => {
-      const o = outcomes[Number(c.id.slice(1))];
+    runCase: async (c: { id: string }, n: number) => {
+      const o = outcomes[Number(c.id.slice(1))]?.[n];
       if (o === "throw") throw new Error("boom");
       if (o === "skip")
         return { grades: [], runIds: [], costUsd: 0, servedModels: [], skipped: "no" };
@@ -125,36 +236,53 @@ describe("runSuite gate", () => {
       };
     },
   });
-  const opts = async () => ({
+  const opts = async (repeat = 1) => ({
     concurrency: 2,
     threshold: 0.9,
+    repeat,
     outDir: await mkdtemp(`${tmpdir()}/evals-`),
   });
+  const ok = { pass: true };
+  const bad = { pass: false };
 
-  it("fails when zero cases are graded", async () => {
-    const report = await runSuite(suite(["skip", "skip"]), await opts());
-    expect(report.summary).toMatchObject({ graded: 0, gatePassed: false });
+  it("fails when zero attempts are graded", async () => {
+    const report = await runSuite(suite([["skip"], ["skip"]]), await opts());
+    expect(report.summary).toMatchObject({ attempts: 0, skipped: 2, gatePassed: false });
   });
 
-  it("fails when the pass rate drops below the threshold, counting errors as failures", async () => {
-    const report = await runSuite(
-      suite([...Array(8).fill({ pass: true }), { pass: false }, "throw"]),
-      await opts(),
-    );
+  it("fails below the threshold, counting errors as failures", async () => {
+    const report = await runSuite(suite([...Array(8).fill([ok]), [bad], ["throw"]]), await opts());
     expect(report.summary).toMatchObject({
-      graded: 10,
-      passed: 8,
+      attempts: 10,
+      attemptsPassed: 8,
       passRate: 0.8,
       gatePassed: false,
     });
-    expect(report.results.find((r) => r.id === "c9")?.error).toBe("boom");
+    expect(report.results.find((r) => r.id === "c9")?.attempts[0]?.error).toBe("boom");
   });
 
   it("passes at the threshold", async () => {
-    const report = await runSuite(
-      suite([...Array(9).fill({ pass: true }), { pass: false }]),
-      await opts(),
-    );
+    const report = await runSuite(suite([...Array(9).fill([ok]), [bad]]), await opts());
     expect(report.summary.gatePassed).toBe(true);
+  });
+
+  it("runs each case `repeat` times and counts a case as consistent only if every attempt passed", async () => {
+    const report = await runSuite(
+      suite([
+        [ok, ok, ok],
+        [ok, bad, ok],
+      ]),
+      await opts(3),
+    );
+    expect(report.summary).toMatchObject({
+      repeat: 3,
+      attempts: 6,
+      attemptsPassed: 5,
+      consistentCases: 1,
+    });
+    expect(report.results.map((r) => [r.id, r.passed, r.pass])).toEqual([
+      ["c0", 3, true],
+      ["c1", 2, false],
+    ]);
   });
 });

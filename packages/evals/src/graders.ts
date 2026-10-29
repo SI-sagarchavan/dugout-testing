@@ -76,10 +76,33 @@ export function spelling(text: string, variant: "en-GB" | "en-US"): Grade {
 const numbersIn = (text: string) =>
   new Set((text.match(/\d+(?:\.\d+)?/g) ?? []).map((n) => Number.parseFloat(n)));
 
-/** Every number in the draft must appear somewhere in the data the agent was given. */
+const NUMBER_WORDS: Record<string, number> = Object.fromEntries([
+  ..."zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty"
+    .split(" ")
+    .map((w, i) => [w, i] as const),
+  ...["thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"].map(
+    (w, i) => [w, (i + 3) * 10] as const,
+  ),
+]);
+
+const TENS = "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety";
+const UNITS = "one|two|three|four|five|six|seven|eight|nine";
+const wordValue = (w: string) => NUMBER_WORDS[w.toLowerCase()] ?? 0;
+
+/** "six clean sheets" -> "6 clean sheets", "twenty-two" -> "22", so spelled-out numbers are checked. */
+export const withDigits = (text: string) =>
+  text
+    .replace(new RegExp(`\\b(${TENS})[- ](${UNITS})\\b`, "gi"), (_, t: string, u: string) =>
+      String(wordValue(t) + wordValue(u)),
+    )
+    .replace(new RegExp(`\\b(${Object.keys(NUMBER_WORDS).join("|")})\\b`, "gi"), (w) =>
+      String(wordValue(w)),
+    );
+
+/** Every number in the draft, written as digits or words, must appear in the given data. */
 export function numbersFromData(text: string, data: unknown): Grade {
-  const allowed = numbersIn(JSON.stringify(data));
-  const invented = [...numbersIn(text)].filter((n) => !allowed.has(n));
+  const allowed = numbersIn(typeof data === "string" ? data : JSON.stringify(data));
+  const invented = [...numbersIn(withDigits(text))].filter((n) => !allowed.has(n));
   return grade(
     "no-invented-numbers",
     invented.length === 0,
@@ -148,5 +171,140 @@ export function endedGracefully(events: RunEvent[]): Grade {
 export function deniedTools(events: RunEvent[]): string[] {
   return events.flatMap((e) =>
     e.type === "tool.denied" ? [`${e.data.tool} (${e.data.stage})`] : [],
+  );
+}
+
+/** Everything the tools returned during the run: the only data the agent actually saw. */
+export function toolOutputs(events: RunEvent[]): string {
+  return events
+    .flatMap((e) => (e.type === "tool.completed" && e.data.ok ? [e.data.content] : []))
+    .join("\n");
+}
+
+export interface TeamFacts {
+  /** Ways the copy may refer to the team: full name, city, nickname, and its players' names. */
+  names: string[];
+  /** Season summary numbers (record, points, player stats); not the match log. */
+  numbers: number[];
+  form: string[];
+}
+
+const MONTHS =
+  /^(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)$/i;
+
+/** Sentence spans; a period only ends a sentence before whitespace or the end, so 150.5 survives. */
+function sentences(text: string): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  let start = 0;
+  for (const m of text.matchAll(/[.!?;](?=\s|$)|\n/g)) {
+    spans.push({ start, end: m.index + 1 });
+    start = m.index + 1;
+  }
+  if (start < text.length) spans.push({ start, end: text.length });
+  return spans;
+}
+
+/**
+ * Each team's form and season numbers must be attributed to that team. A claim belongs to the
+ * nearest team named before it in the same sentence, or, if none, the nearest named after it
+ * ("426 runs for Kolkata"). Players count as their team. Numbers both teams share,
+ * and numbers that also appear in the fixture (dates, times), are skipped as ambiguous.
+ */
+export function teamAttribution(
+  copy: string,
+  teams: TeamFacts[],
+  fixtureNumbers: number[] = [],
+): Grade {
+  const text = withDigits(copy); // "six clean sheets" is checked like "6 clean sheets"
+  const mentions = teams.flatMap((team, i) =>
+    team.names.flatMap((name) =>
+      [...text.matchAll(new RegExp(`\\b${escapeRegExp(name)}\\b`, "gi"))].map((m) => ({
+        at: m.index,
+        team: i,
+      })),
+    ),
+  );
+  const spans = sentences(text);
+  /** The team a claim at `pos` is written about, or undefined when its sentence names no team. */
+  const ownerAt = (pos: number) => {
+    const span = spans.find((s) => pos >= s.start && pos < s.end);
+    const inSentence = mentions.filter((m) => span && m.at >= span.start && m.at < span.end);
+    const before = inSentence.filter((m) => m.at < pos).sort((a, b) => b.at - a.at);
+    const after = inSentence.filter((m) => m.at > pos).sort((a, b) => a.at - b.at);
+    return (before[0] ?? after[0])?.team;
+  };
+  const label = (i: number) => teams[i]?.names[0] ?? `team ${i}`;
+  const errors: string[] = [];
+
+  for (const m of text.matchAll(/\b[WDL](?:[\s,/-]+[WDL]){4}\b|\b[WDL]{5}\b/g)) {
+    const seq = (m[0].match(/[WDL]/g) ?? []).join("");
+    const actual = teams.findIndex((t) => t.form.join("") === seq);
+    const owner = ownerAt(m.index);
+    if (actual === -1) errors.push(`form ${seq} matches neither team`);
+    else if (owner !== undefined && owner !== actual) {
+      errors.push(`form ${seq} is ${label(actual)}'s, written next to ${label(owner)}`);
+    }
+  }
+
+  const fixtureSet = new Set(fixtureNumbers);
+  for (const m of text.matchAll(/\d+(?:\.\d+)?/g)) {
+    const value = Number.parseFloat(m[0]);
+    if (fixtureSet.has(value)) continue;
+    const before = text.slice(0, m.index);
+    const after = text.slice(m.index + m[0].length);
+    if (/:$/.test(before) || /^:/.test(after)) continue; // part of a time
+    const prevWord = before.match(/(\w+)\W*$/)?.[1] ?? "";
+    const nextWord = after.match(/^\W*(\w+)/)?.[1] ?? "";
+    if (MONTHS.test(prevWord) || MONTHS.test(nextWord)) continue; // part of a date
+    const holders = teams.flatMap((t, i) => (t.numbers.includes(value) ? [i] : []));
+    if (holders.length !== 1) continue;
+    const owner = ownerAt(m.index);
+    const actual = holders[0] as number;
+    if (owner !== undefined && owner !== actual) {
+      errors.push(`${m[0]} is ${label(actual)}'s, written next to ${label(owner)}`);
+    }
+  }
+
+  return grade(
+    "team-attribution",
+    errors.length === 0,
+    errors.length ? errors.join("; ") : "form and numbers match their teams",
+  );
+}
+
+const FORBIDDEN: Array<{ label: string; pattern: RegExp }> = [
+  {
+    label: "prediction",
+    pattern:
+      /\b(?:will|should|expected to|likely to|tipped to|bound to|going to)\s+(?:win|beat|triumph|prevail|edge|dominate)\b|\bpredict\w*|\bfavou?rites? to win\b/gi,
+  },
+  {
+    label: "injury",
+    pattern:
+      /\b(?:injur\w*|ruled out|doubtful|sidelined|hamstring|fitness (?:concerns?|doubts?|tests?))\b/gi,
+  },
+  { label: "quote", pattern: /["“][^"”]{15,}["”]/g },
+  {
+    label: "weather",
+    pattern:
+      /\b(?:rain\w*|forecast|weather|humid\w*|drizzle|monsoon|heat|sunny|windy|temperatures?)\b/gi,
+  },
+];
+
+/**
+ * Claims the skill forbids because the data can't support them: predictions, injuries, quotes and
+ * weather. A word that appears in `allowedText` (the fixture notes) is fine.
+ */
+export function forbiddenClaims(text: string, allowedText: string): Grade {
+  const allowed = allowedText.toLowerCase();
+  const found = FORBIDDEN.flatMap(({ label, pattern }) =>
+    [...text.matchAll(pattern)]
+      .filter((m) => !allowed.includes(m[0].toLowerCase()))
+      .map((m) => `${label}: "${m[0]}"`),
+  );
+  return grade(
+    "no-unsupported-claims",
+    found.length === 0,
+    found.length ? found.join(", ") : "none",
   );
 }

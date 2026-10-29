@@ -80,6 +80,8 @@ const preview = (
     models: scriptedModelConfig(),
     draftsDir,
     runsDir,
+    // only the memory test writes memory; anything else would pile up in the shared test database
+    consolidate: lessons !== undefined,
     ...(lessons ? { lessons } : {}),
   });
   return { run, client };

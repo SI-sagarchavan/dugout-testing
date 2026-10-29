@@ -18,12 +18,16 @@ import {
   createJudge,
   type EvalSuite,
   endedGracefully,
+  forbiddenClaims,
   type Grade,
   type Judge,
   kickoffTime,
   mentionsAll,
   numbersFromData,
   spelling,
+  type TeamFacts,
+  teamAttribution,
+  toolOutputs,
   wordLimit,
   writesGated,
 } from "@dugout/evals";
@@ -136,7 +140,12 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
     return { result, drafts, events: sink.events };
   };
 
-  const draftGrades = async (tenant: Tenant, fixtureId: string, draft: Draft | undefined) => {
+  const draftGrades = async (
+    tenant: Tenant,
+    fixtureId: string,
+    draft: Draft | undefined,
+    events: RunEvent[],
+  ) => {
     if (!draft) return [{ grader: "draft-produced", pass: false, detail: "no draft.save call" }];
     const rules = RULES[tenant];
     const { fixtures, teams } = await readTenantData(DATA_DIR, tenant);
@@ -153,8 +162,12 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
       },
       wordLimit(draft.body, rules.maxWords),
       spelling(text, rules.spelling),
-      numbersFromData(text, { fixture, home, away }),
+      // only numbers the tools actually returned in this run; a truncated stats output hides the
+      // season log unless the agent read it back
+      numbersFromData(text, toolOutputs(events)),
       mentionsAll(text, [String(home.name), String(away.name)]),
+      teamAttribution(text, [teamFacts(home), teamFacts(away)], numbersOf(fixture)),
+      forbiddenClaims(text, fixture.notes),
     ];
     if (rules.banned.length) grades.push(bannedTerms(text, [...rules.banned]));
     if (rules.kickoff) grades.push(kickoffTime(text, fixture.kickoffLocal, fixture.timezone));
@@ -177,7 +190,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
     ],
   });
 
-  const runCase = async (c: PreviewCase): Promise<CaseOutcome> => {
+  const runCase = async (c: PreviewCase, _attempt: number): Promise<CaseOutcome> => {
     const tenant = c.tenant as Tenant;
     if (c.kind === "memory") {
       if (!live || !c.memory) {
@@ -253,7 +266,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
     const grades: Grade[] = [
       writesGated(run.events, ["draft.save"]),
       endedGracefully(run.events),
-      ...(await draftGrades(tenant, c.fixtureId, draft)),
+      ...(await draftGrades(tenant, c.fixtureId, draft, run.events)),
     ];
     if (c.injected?.length && draft)
       grades.push(absent(`${draft.title}\n${draft.body}`, c.injected));
@@ -272,6 +285,30 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
 
   return { agentId: spec.id, cases, runCase };
 }
+
+/**
+ * How the copy may refer to a team ("Mumbai Mariners", "Mumbai", "Mariners", or one of its
+ * players by full name or surname) and its season numbers.
+ */
+export function teamFacts(team: Record<string, unknown>): TeamFacts {
+  const name = String(team.name);
+  const words = name.split(" ");
+  const { seasonLog: _, ...summary } = team;
+  // full names and surnames: drafts write "Rohan Iyer", then "Iyer"
+  const players = Object.values(summary).flatMap((v) =>
+    v && typeof v === "object" && "name" in v
+      ? [String(v.name), String(v.name).split(" ").at(-1) ?? ""]
+      : [],
+  );
+  return {
+    names: [name, words.slice(0, -1).join(" "), words.at(-1) ?? name, ...players].filter(Boolean),
+    numbers: numbersOf(summary),
+    form: (team.form as string[]) ?? [],
+  };
+}
+
+export const numbersOf = (value: unknown): number[] =>
+  (JSON.stringify(value).match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
 
 /**
  * Offline stand-in for the model: follows the agent's workflow and writes a template preview from
