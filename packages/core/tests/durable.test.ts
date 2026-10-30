@@ -58,6 +58,7 @@ const spec = (overrides: Partial<AgentSpec> = {}): AgentSpec => ({
   instructions: "You are a test agent.",
   tools: ["draft.save", "email.send"],
   skills: [],
+  onDemandSkills: [],
   model: { tier: "smart" },
   memory: { read: [], write: [] },
   budget: { usdPerRun: 1, maxSteps: 8, maxDepth: 0 },

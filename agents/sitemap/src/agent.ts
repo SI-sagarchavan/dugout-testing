@@ -7,7 +7,6 @@ import { createSitemapTools } from "./tools.ts";
 import { type NavItem, type PageNode, type Sitemap, SitemapSchema } from "./validation.ts";
 
 export const SITEMAPS_DIR = join(REPO_ROOT, ".runs", "sitemaps");
-export const DATA_DIR = join(import.meta.dirname, "..", "data");
 
 export const spec: AgentSpec = {
   id: "sitemap",
@@ -29,6 +28,7 @@ export const spec: AgentSpec = {
   ].join("\n"),
   tools: ["pages.catalog", "sitemap.validate", "sitemap.save", "memory.search", "memory.propose"],
   skills: ["sitemap"],
+  onDemandSkills: [],
   model: { tier: "smart" },
   memory: { read: ["procedural", "semantic"], write: ["semantic"] },
   budget: { usdPerRun: 0.15, maxSteps: 20, maxDepth: 0 },

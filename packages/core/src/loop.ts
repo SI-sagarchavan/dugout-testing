@@ -461,7 +461,8 @@ export function assertSupportedSpec(
   registry: ToolRegistry,
   { hasContext }: { hasContext: boolean },
 ): void {
-  if ((spec.memory.read.length > 0 || spec.skills.length > 0) && !hasContext) {
+  const skills = spec.skills.length + spec.onDemandSkills.length;
+  if ((spec.memory.read.length > 0 || skills > 0) && !hasContext) {
     throw new SpecError(`${spec.id}: reads memory or skills but the run has no memory context`);
   }
   if (spec.budget.maxDepth > 0) throw new SpecError(`${spec.id}: sub-agents are not supported yet`);

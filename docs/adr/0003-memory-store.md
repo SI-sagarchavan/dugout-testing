@@ -1,6 +1,6 @@
 # 0003 — Memory store, embeddings and consolidation
 
-Date: 2026-10-29 · Status: accepted
+Date: 2026-10-29 · Status: accepted; tenant overrides of skills are gone, and what differs by tenant is house facts (ADR 0010); skills can be loaded on demand (ADR 0011); the full memory model, with tenant-wide facts, is ADR 0013
 
 ## Decision
 

@@ -103,13 +103,7 @@ export function createLocalSteps(opts: LocalStepsOptions): Steps {
       let turn: ModelTurn;
       try {
         turn = await opts.client.complete(
-          {
-            model: config.model,
-            messages,
-            tools,
-            ...(config.reasoningEffort ? { reasoningEffort: config.reasoningEffort } : {}),
-            ...(config.extraBody ? { extraBody: config.extraBody } : {}),
-          },
+          { model: config.model, messages, tools },
           fragments.token,
           fragments.toolInput,
         );

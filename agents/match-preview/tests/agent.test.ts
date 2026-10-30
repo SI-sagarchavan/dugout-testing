@@ -12,13 +12,14 @@ import {
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
+import { seedHouseFacts } from "@dugout/sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
 import { agent, spec } from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
 const store = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
-beforeAll(() => agent.seed(store, ["demo-cricket", "demo-football"]));
+beforeAll(() => seedHouseFacts(store, ["demo-cricket", "demo-football"]));
 
 const lastTool = (req: ModelRequest) => JSON.parse(req.messages.at(-1)?.content ?? "{}");
 
@@ -107,7 +108,7 @@ describe("match-preview", () => {
     }
   });
 
-  it("loads the skill, tenant override and house facts into the instructions", async () => {
+  it("loads the skill and the tenant's house facts into the instructions", async () => {
     const { run, client } = preview(writerScript("c-101"));
     const sink = createMemorySink();
     await run({
@@ -118,7 +119,7 @@ describe("match-preview", () => {
     });
     const system = client.requests[0]?.messages[0]?.content ?? "";
     expect(system).toContain("## Skill: match-preview");
-    expect(system).toContain("Mention the format (T20)");
+    expect(system).toContain("mention the format (T20)");
     expect(system).toContain("British English");
     expect(system).not.toContain("US English");
     expect(sink.events.find((e) => e.type === "context.built")).toBeDefined();

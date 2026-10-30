@@ -30,20 +30,16 @@ export function priceTokens(pricing: Pricing, model: string, tokens: TokenUsage,
 }
 
 /**
- * DeepSeek list prices (api-docs.deepseek.com/quick_start/pricing, checked 2026-10-29). Peak is
- * 01:00–04:00 and 06:00–10:00 UTC on weekdays; off-peak is half price. Chinese public holidays are
- * also off-peak but not modelled, so reported cost can run high on those days.
+ * Amazon Bedrock on-demand list prices in ap-south-1 (Mumbai), from the AWS Price List API
+ * (pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrock/current/ap-south-1/index.json,
+ * published 2026-10-29, checked 2026-10-30). Cross-region inference profiles (`apac.*`) are billed
+ * at the price of the region the request is sent from. Bedrock has no off-peak rate.
  */
-export const DEEPSEEK_PRICING: Pricing = {
+export const BEDROCK_PRICING: Pricing = {
   prices: {
-    "deepseek-flash": { inputCacheHit: 0.006, inputCacheMiss: 0.3, output: 1.2 },
-    "deepseek-v4-pro": { inputCacheHit: 0.044, inputCacheMiss: 1.32, output: 3.96 },
+    "apac.amazon.nova-micro-v1:0": { inputCacheHit: 0.01025, inputCacheMiss: 0.041, output: 0.164 },
+    "apac.amazon.nova-lite-v1:0": { inputCacheHit: 0.01775, inputCacheMiss: 0.071, output: 0.284 },
+    "apac.amazon.nova-pro-v1:0": { inputCacheHit: 0.235, inputCacheMiss: 0.94, output: 3.76 },
   },
-  rateAt(at) {
-    const day = at.getUTCDay();
-    const hour = at.getUTCHours();
-    const weekday = day >= 1 && day <= 5;
-    const peak = weekday && ((hour >= 1 && hour < 4) || (hour >= 6 && hour < 10));
-    return peak ? 1 : 0.5;
-  },
+  rateAt: () => 1,
 };

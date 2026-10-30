@@ -1,4 +1,5 @@
-// pnpm memory:review --tenant demo-cricket — approve or reject proposed facts.
+// pnpm memory:review --tenant demo-cricket — approve or reject the tenant's proposed facts. Every
+// agent of the tenant reads an approved fact.
 import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
@@ -21,8 +22,11 @@ const rl = createInterface({ input: process.stdin, output: process.stdout });
 const proposals = await store.listProposals(tenant.id);
 if (proposals.length === 0) console.log(`${tenant.id}: nothing to review`);
 for (const p of proposals) {
-  const current = (await store.activeFacts(tenant.id, p.agentId)).find((f) => f.key === p.key);
-  console.log(`\n[${p.agentId}] ${p.key} (confidence ${p.confidence}, from run ${p.sourceRunId})`);
+  const current = (await store.activeFacts(tenant.id)).find((f) => f.key === p.key);
+  console.log(
+    `\n${p.key} (proposed by ${p.agentId ?? "seed"}, confidence ${p.confidence}, from run ${p.sourceRunId})`,
+  );
+  console.log("  every agent of this tenant will read it");
   if (current) console.log(`  now:      ${current.content}`);
   console.log(`  proposed: ${p.content}`);
   const answer = (await rl.question("  (a)pprove, (r)eject, (s)kip? ")).trim().toLowerCase();

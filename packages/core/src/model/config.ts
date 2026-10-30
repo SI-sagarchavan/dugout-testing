@@ -1,51 +1,30 @@
 import type { ModelTier } from "@dugout/contracts";
-import { DEEPSEEK_PRICING, type Pricing } from "./pricing.ts";
+import { BEDROCK_PRICING, type Pricing } from "./pricing.ts";
 
 export interface TierConfig {
   model: string;
   contextWindow: number;
-  reasoningEffort?: string;
-  extraBody?: Record<string, unknown>;
 }
 
 export interface ModelConfig {
-  baseURL: string;
-  apiKey: string;
-  /** Send assistant reasoning back on later turns (DeepSeek requires it with tools). */
-  replayReasoning: boolean;
   tiers: Record<ModelTier, TierConfig>;
   pricing: Pricing;
 }
 
-const THINKING = { thinking: { type: "enabled" } };
-
 /**
- * DeepSeek defaults (ADR 0001): both tiers use `deepseek-flash` with thinking, differing only in
- * effort. Base URL and model ids can be overridden from the environment.
+ * Amazon Bedrock (ADR 0012): Nova Micro and Nova Lite through their APAC inference profiles, since
+ * ap-south-1 accepts only inference profile ids, not bare ids like `amazon.nova-micro-v1:0`. Callers
+ * override the ids with LLM_MODEL_FAST and LLM_MODEL_SMART. An override needs a price in
+ * `BEDROCK_PRICING`, and keeps the default's context window.
  */
 export function loadModelConfig(
   env: Record<string, string | undefined> = process.env,
 ): ModelConfig {
-  const apiKey = env.LLM_API_KEY;
-  if (!apiKey) throw new Error("LLM_API_KEY is not set; see .env.example");
   return {
-    baseURL: env.LLM_BASE_URL || "https://api.deepseek.com",
-    apiKey,
-    replayReasoning: true,
     tiers: {
-      fast: {
-        model: env.LLM_MODEL_FAST || "deepseek-flash",
-        contextWindow: 1_000_000,
-        reasoningEffort: "low",
-        extraBody: THINKING,
-      },
-      smart: {
-        model: env.LLM_MODEL_SMART || "deepseek-flash",
-        contextWindow: 1_000_000,
-        reasoningEffort: "high",
-        extraBody: THINKING,
-      },
+      fast: { model: env.LLM_MODEL_FAST || "apac.amazon.nova-micro-v1:0", contextWindow: 128_000 },
+      smart: { model: env.LLM_MODEL_SMART || "apac.amazon.nova-lite-v1:0", contextWindow: 300_000 },
     },
-    pricing: DEEPSEEK_PRICING,
+    pricing: BEDROCK_PRICING,
   };
 }

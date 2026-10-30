@@ -8,6 +8,7 @@ import { createScriptedModel, RunInterrupted, scriptedModelConfig } from "@dugou
 import { createPool, withTenant } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
+import { seedHouseFacts } from "@dugout/sdk";
 import { Valkey } from "iovalkey";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import {
@@ -31,7 +32,7 @@ const errors: unknown[] = [];
 
 beforeAll(async () => {
   runsDir = await mkdtemp(join(tmpdir(), "runs-worker-"));
-  await matchPreview.seed(memory, [TENANT]);
+  await seedHouseFacts(memory, [TENANT]);
 });
 afterAll(async () => {
   await pool.end();

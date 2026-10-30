@@ -15,7 +15,7 @@ export const UserMessage = z.object({ role: z.literal("user"), content: z.string
 export const AssistantMessage = z.object({
   role: z.literal("assistant"),
   content: z.string(),
-  reasoning: z.string().optional(), // thinking output; some providers require it replayed
+  reasoning: z.string().optional(), // thinking output, kept in the transcript; never sent back
   toolCalls: z.array(ToolCall).optional(),
 });
 export const ToolMessage = z.object({

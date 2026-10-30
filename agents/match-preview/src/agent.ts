@@ -23,6 +23,7 @@ export const spec: AgentSpec = {
   ].join("\n"),
   tools: ["fixtures.get", "team.stats", "draft.save", "memory.search", "memory.propose"],
   skills: ["match-preview"],
+  onDemandSkills: [],
   model: { tier: "smart" },
   memory: { read: ["procedural", "semantic", "episodic"], write: ["episodic", "semantic"] },
   budget: { usdPerRun: 0.1, maxSteps: 12, maxDepth: 0 },

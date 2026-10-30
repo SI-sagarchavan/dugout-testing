@@ -11,6 +11,11 @@ export type Tenant = z.infer<typeof Tenant>;
 
 export const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
 const DEFAULT_FILE = join(REPO_ROOT, "config", "tenants.json");
+/**
+ * Each demo tenant's own data, in `<tenant>/`: `facts.json`, the house facts `pnpm seed` starts
+ * memory from, and the sample sports data that stands in for its feed.
+ */
+export const TENANTS_DIR = join(REPO_ROOT, "config", "tenants");
 
 export interface TenantRegistry {
   list(): Tenant[];

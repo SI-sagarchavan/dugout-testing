@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
+import { type BedrockRuntime, bedrockRegion } from "@dugout/core";
 import OpenAI from "openai";
 
 /** Fixed by the `memory_items.embedding` column; changing it means a migration and re-embedding. */
@@ -38,6 +40,48 @@ export function createOpenAICompatibleEmbeddings(opts: {
   };
 }
 
+export const TITAN_EMBED_V2 = "amazon.titan-embed-text-v2:0";
+
+/**
+ * Titan Text Embeddings V2 on Amazon Bedrock, one text per InvokeModel call, at 1024 dimensions.
+ * Credentials and region as for the Bedrock chat client: the AWS SDK's default chain, no API key.
+ */
+export function createBedrockEmbeddings(
+  opts: { region?: string; runtime?: BedrockRuntime } = {},
+): EmbeddingClient {
+  const runtime: BedrockRuntime =
+    opts.runtime ?? new BedrockRuntimeClient({ region: opts.region ?? bedrockRegion });
+  return {
+    model: TITAN_EMBED_V2,
+    embed: (texts) =>
+      Promise.all(
+        texts.map(async (text) => {
+          const res = (await runtime.send(
+            new InvokeModelCommand({
+              modelId: TITAN_EMBED_V2,
+              contentType: "application/json",
+              accept: "application/json",
+              body: JSON.stringify({
+                inputText: text,
+                dimensions: EMBEDDING_DIMENSIONS,
+                normalize: true,
+              }),
+            }),
+          )) as { body: Uint8Array };
+          const { embedding } = JSON.parse(new TextDecoder().decode(res.body)) as {
+            embedding?: number[];
+          };
+          if (embedding?.length !== EMBEDDING_DIMENSIONS) {
+            throw new Error(
+              `${TITAN_EMBED_V2} returned ${embedding?.length ?? 0} dimensions, need ${EMBEDDING_DIMENSIONS}`,
+            );
+          }
+          return embedding;
+        }),
+      ),
+  };
+}
+
 /**
  * Feature hashing of words into a unit vector. No model and no network, so similarity is lexical
  * only. The default until an embedding provider is configured, and what tests use.
@@ -60,8 +104,17 @@ export function createHashEmbeddings(): EmbeddingClient {
   };
 }
 
-/** EMBEDDING_BASE_URL selects a provider; without it, the hash embedder is used. */
-export function loadEmbeddings(env: Record<string, string | undefined> = process.env) {
+/**
+ * EMBEDDING_PROVIDER=bedrock selects Titan V2 on Bedrock; otherwise EMBEDDING_BASE_URL selects an
+ * OpenAI-compatible provider; with neither, the hash embedder is used. Switching means re-embedding.
+ */
+export function loadEmbeddings(
+  env: Record<string, string | undefined> = process.env,
+): EmbeddingClient {
+  if (env.EMBEDDING_PROVIDER === "bedrock") return createBedrockEmbeddings();
+  if (env.EMBEDDING_PROVIDER) {
+    throw new Error(`EMBEDDING_PROVIDER must be bedrock or unset, not "${env.EMBEDDING_PROVIDER}"`);
+  }
   if (!env.EMBEDDING_BASE_URL) return createHashEmbeddings();
   if (!env.EMBEDDING_MODEL) throw new Error("EMBEDDING_MODEL is required with EMBEDDING_BASE_URL");
   return createOpenAICompatibleEmbeddings({

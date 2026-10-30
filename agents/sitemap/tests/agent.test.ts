@@ -6,13 +6,14 @@ import { createMemorySink, createScriptedModel, scriptedModelConfig } from "@dug
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
+import { seedHouseFacts } from "@dugout/sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
 import { agent, type Sitemap } from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
 const store = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
-beforeAll(() => agent.seed(store, ["demo-cricket", "demo-football"]));
+beforeAll(() => seedHouseFacts(store, ["demo-cricket", "demo-football"]));
 
 const sitemap: Sitemap = {
   pages: [
@@ -164,13 +165,13 @@ describe("sitemap agent", () => {
     }
   });
 
-  it("loads the skill, the tenant override and the house facts into the instructions", async () => {
+  it("loads the skill and the tenant's house facts into the instructions", async () => {
     const { run, client } = build(writerScript());
     await run({ tenantId: "demo-football", input, approver: approve });
     const system = client.requests[0]?.messages[0]?.content ?? "";
     expect(system).toContain("## Skill: sitemap");
     expect(system).toContain("US soccer fans");
-    expect(system).toContain("Header menu order: Home, News, Fixtures, Standings");
+    expect(system).toContain("header menu order: Home, News, Fixtures, Standings");
     expect(system).not.toContain("T20 cricket followers");
   });
 

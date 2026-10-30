@@ -114,7 +114,7 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
           const content = redactor.text(
             typeof output === "string" ? output : JSON.stringify(output ?? null),
           );
-          if (content.length <= maxInline) return { ok: true, content };
+          if (tool.alwaysInline || content.length <= maxInline) return { ok: true, content };
           const ref = await opts.outputs.put(ctx.runId, content);
           return {
             ok: true,

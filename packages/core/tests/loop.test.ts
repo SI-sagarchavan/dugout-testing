@@ -72,6 +72,16 @@ const bigRead = defineTool({
   run: async () => `${"x".repeat(20_000)}END`,
 });
 
+const wholeRead = defineTool({
+  name: "whole.read",
+  description: "Large output the model needs whole",
+  input: z.object({}),
+  effect: "read",
+  timeoutMs: 1_000,
+  alwaysInline: true,
+  run: async () => `${"x".repeat(20_000)}END`,
+});
+
 const spec = (overrides: Partial<AgentSpec> = {}): AgentSpec => ({
   id: "test-agent",
   version: 1,
@@ -79,6 +89,7 @@ const spec = (overrides: Partial<AgentSpec> = {}): AgentSpec => ({
   instructions: "You are a test agent.",
   tools: ["stats.get", "draft.save", "slow.read", "big.read"],
   skills: [],
+  onDemandSkills: [],
   model: { tier: "smart" },
   memory: { read: [], write: [] },
   budget: { usdPerRun: 1, maxSteps: 6, maxDepth: 0 },
@@ -115,7 +126,7 @@ async function run(
     agent: opts.agent ?? { spec: spec(), output: Output },
     input: opts.input ?? "Write a preview",
     tenantId: "demo-cricket",
-    tools: [statsGet, draftSave, slowRead, bigRead],
+    tools: [statsGet, draftSave, slowRead, bigRead, wholeRead],
     client: model,
     models: scriptedModelConfig(),
     approver: opts.approver ?? approveAll,
@@ -513,6 +524,12 @@ describe("runAgent", () => {
     expect(model.requests[2]?.messages.at(-1)?.content).toBe("xxEND");
   });
 
+  it("keeps a large output whole when its tool needs it all", async () => {
+    const agent = { spec: spec({ tools: ["whole.read"] }), output: Output };
+    const { model } = await run([call("whole.read"), final("ok")], { agent });
+    expect(model.requests[1]?.messages.at(-1)?.content).toBe(`${"x".repeat(20_000)}END`);
+  });
+
   it("redacts PII in tool output before the model and the event log see it", async () => {
     const { model, of } = await run([call("stats.get", { team: "x" }), final("ok")]);
     const toolMessage = model.requests[1]?.messages.at(-1)?.content ?? "";
@@ -540,6 +557,7 @@ describe("runAgent", () => {
   it.each([
     ["memory without context", spec({ memory: { read: ["semantic"], write: [] } })],
     ["skills without context", spec({ skills: ["x"] })],
+    ["skills to load without context", spec({ onDemandSkills: ["x"] })],
     ["sub-agents", spec({ budget: { usdPerRun: 1, maxSteps: 3, maxDepth: 1 } })],
     ["unknown tool", spec({ tools: ["missing.tool"] })],
     ["reserved", spec({ tools: ["final"] })],
@@ -561,7 +579,7 @@ describe("runLocal hooks", () => {
       },
       input: "go",
       tenantId: "demo-cricket",
-      tools: [statsGet, draftSave, slowRead, bigRead],
+      tools: [statsGet, draftSave, slowRead, bigRead, wholeRead],
       client: model,
       models: scriptedModelConfig(),
       approver: approveAll,
@@ -595,7 +613,7 @@ describe("runLocal hooks", () => {
       agent: { spec: spec(), output: Output },
       input: "go",
       tenantId: "demo-cricket",
-      tools: [statsGet, draftSave, slowRead, bigRead],
+      tools: [statsGet, draftSave, slowRead, bigRead, wholeRead],
       client: createScriptedModel([final("ok")]),
       models: scriptedModelConfig(),
       approver: approveAll,

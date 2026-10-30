@@ -45,7 +45,7 @@ How others do it (official docs, checked 2026-10-30):
 - A chat-style client gets the stream on the request it makes, with no second connection.
 - `POST /runs` no longer answers 202 by default. Clients that start a run and then follow its stream route pass `background: true`.
 - Behind a load balancer or CDN with a 60 s idle timeout, a waited request can be cut before `MAX_WAIT_MS`. Use `stream` (heartbeats keep it open) or `background`, or raise the timeout.
-- When the model client retries a call the provider dropped (DeepSeek under load), that step's fragments are sent again. Clients should treat the validated value as the truth.
+- If a model call is retried after its stream started, that step's fragments are sent again. Clients should treat the validated value as the truth.
 - Not yet:
   - an async-iterator form for in-process callers (OpenAI's `StreamedRunResult`);
   - a helper that turns fragments into partial objects for UIs;

@@ -16,6 +16,8 @@ export interface Tool<I = unknown, O = unknown> {
   timeoutMs: number;
   /** Extra attempts after a failure or timeout. Defaults to 0; only safe for idempotent tools. */
   retries?: number;
+  /** Output is never swapped for a reference, however long: the model needs all of it (a skill). */
+  alwaysInline?: boolean;
   run(input: I, ctx: ToolContext): Promise<O>;
 }
 

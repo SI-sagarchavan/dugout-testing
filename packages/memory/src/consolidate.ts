@@ -23,19 +23,29 @@ export interface ConsolidateOptions {
 }
 
 /**
- * The only path from a run into long-term memory. Rejections and change requests become episodes;
- * `memory.propose` calls become proposed facts that wait for review.
+ * The only path from a run into long-term memory (ADR 0013):
+ * - each rejection and change request becomes a lesson, or strengthens the same lesson;
+ * - a run that ended leaves one run record;
+ * - `memory.propose` calls become proposed facts that wait for review.
  */
-export async function consolidateRun(
-  opts: ConsolidateOptions,
-): Promise<{ episodes: MemoryItem[]; proposals: MemoryItem[] }> {
+export async function consolidateRun(opts: ConsolidateOptions): Promise<{
+  episodes: MemoryItem[];
+  proposals: MemoryItem[];
+  run: MemoryItem | undefined;
+}> {
   const { writer, tenantId, agentId, runId, events } = opts;
   const episodes: MemoryItem[] = [];
   const proposals: MemoryItem[] = [];
 
   const requested = new Map<string, unknown>();
   const proposed = new Map<string, unknown>();
+  const feedback: string[] = [];
+  let input: unknown;
+  let ending: string | undefined;
   for (const event of events) {
+    if (event.type === "run.started") input = event.data.input;
+    if (event.type === "run.completed") ending = event.data.status;
+    if (event.type === "run.failed") ending = `failed (${event.data.reason})`;
     if (event.type === "approval.requested") requested.set(event.data.callId, event.data.input);
     if (event.type === "tool.started" && event.data.tool === PROPOSE_TOOL) {
       proposed.set(event.data.callId, event.data.input);
@@ -45,6 +55,7 @@ export async function consolidateRun(
     if (event.type === "approval.rejected" || event.type === "approval.changes_requested") {
       const rejected = event.type === "approval.rejected";
       const reason = rejected ? event.data.reason : event.data.changes;
+      feedback.push(`${rejected ? "rejected" : "asked for a change"}: "${reason}"`);
       const rejection = { tool: event.data.tool, input: requested.get(event.data.callId), reason };
       const lesson = await opts.lessons?.(rejection).catch(() => undefined);
       const content = lesson
@@ -56,6 +67,7 @@ export async function consolidateRun(
         await writer.addEpisode({
           tenantId,
           agentId,
+          episodeType: "lesson",
           content,
           confidence: lesson ? 0.9 : 0.7,
           sourceRunId: runId,
@@ -64,16 +76,43 @@ export async function consolidateRun(
       );
     }
     if (event.type === "tool.completed" && event.data.ok && proposed.has(event.data.callId)) {
-      const input = proposed.get(event.data.callId) as {
+      const { key, content, confidence } = proposed.get(event.data.callId) as {
         key: string;
         content: string;
         confidence: number;
       };
-      proposals.push(await writer.proposeFact({ tenantId, agentId, ...input, sourceRunId: runId }));
+      proposals.push(
+        await writer.proposeFact({
+          tenantId,
+          agentId,
+          key,
+          content,
+          confidence,
+          sourceRunId: runId,
+        }),
+      );
     }
   }
-  return { episodes, proposals };
+
+  // what was asked and how it ended, in the reviewer's words; built from the events, no model call
+  const run = ending
+    ? await writer.addEpisode({
+        tenantId,
+        agentId,
+        episodeType: "run",
+        content: [
+          `Input ${clip(JSON.stringify(input ?? null), 300)}: ${ending}.`,
+          ...feedback.map((f) => `Reviewer ${f}.`),
+        ].join(" "),
+        confidence: 1,
+        sourceRunId: runId,
+        ttlDays: EPISODE_TTL_DAYS,
+      })
+    : undefined;
+  return { episodes, proposals, run };
 }
+
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
 /** A `LessonWriter` that asks a model for one imperative sentence. */
 export function createModelLessonWriter(client: ModelClient, model: string): LessonWriter {

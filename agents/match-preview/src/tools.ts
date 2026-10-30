@@ -2,9 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { defineTool, type ToolContext } from "@dugout/contracts";
+import { TENANTS_DIR } from "@dugout/core";
 import { z } from "zod";
-
-export const DATA_DIR = join(import.meta.dirname, "..", "data");
 
 export interface Fixture {
   fixtureId: string;
@@ -24,7 +23,10 @@ export interface Draft {
   body: string;
 }
 
-/** Reads one tenant's sample data. The tenant always comes from the verified tool context. */
+/**
+ * Reads one tenant's sample sports data, the stand-in for its feed. The tenant always comes from
+ * the verified tool context.
+ */
 export async function readTenantData(dataDir: string, tenantId: string) {
   const dir = join(dataDir, tenantId);
   const [fixtures, teams] = await Promise.all([
@@ -38,7 +40,7 @@ export async function readTenantData(dataDir: string, tenantId: string) {
 }
 
 export function createMatchPreviewTools(opts: { dataDir?: string; draftsDir: string }) {
-  const dataDir = opts.dataDir ?? DATA_DIR;
+  const dataDir = opts.dataDir ?? TENANTS_DIR;
   const data = (ctx: ToolContext) => readTenantData(dataDir, ctx.tenantId);
 
   const fixturesGet = defineTool({

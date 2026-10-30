@@ -5,7 +5,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 ## Layout
 
 - `packages/contracts` — zod contracts (AgentSpec, Tool, RunEvent, Steps, ModelClient). No framework types cross these.
-- `packages/core` — loop over `Steps`, tool pipeline, redactor, OpenAI-compatible model client, run log, `runLocal`
+- `packages/core` — loop over `Steps`, tool pipeline, redactor, Bedrock model client (ADR 0012), run log, `runLocal`
 - `packages/db` — Postgres pool, `withTenant` (row-level security), SQL migrations
 - `packages/memory` — semantic/episodic store, hybrid search, skills loader, context builder, consolidation
 - `packages/evals` — graders, model judge, suite runner and pass-rate gate
@@ -21,7 +21,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `pnpm check` — lint + typecheck + test (what CI runs)
 - `pnpm format` — Biome autofix
 - `pnpm infra:up` / `infra:down` / `infra:reset` — Postgres+pgvector (:55432) and Valkey (:56379). Tests need these up.
-- `pnpm db:migrate` / `pnpm seed [agent...]` — apply migrations; load every agent's house facts for each tenant
+- `pnpm db:migrate` / `pnpm seed` — apply migrations; load each tenant's house facts (`config/tenants/<tenant>/facts.json`) into memory. Every agent of a tenant reads all of its memory (ADR 0013)
 - `pnpm worker` — runs the agents; `pnpm agent` needs one running. `AGENTS=sitemap` limits it to some agents
 - `pnpm agent <id> --tenant <tenant> --<input field> <value> [--input json]` — queue a run for the worker and follow it, with an approval prompt: `y`, `n`, or type a change (it goes back to the agent in the same run). Ctrl-C leaves the run going; `pnpm agent --run <runId> --tenant <tenant>` attaches again
 - `pnpm preview --tenant demo-cricket --fixture c-101` — `pnpm agent match-preview`
@@ -35,7 +35,9 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - Internal packages export `src/index.ts` directly; no build step. Run TS with `tsx`.
 - Tenant id comes from verified run context, never from the model or tool input.
 - Typed tools only — no generic shell. Write-effect tools go behind approval.
-- An agent is `agents/<id>/`: `src/agent.ts` calls `defineAgent`, `src/index.ts` exports `agent`, plus `skills/`, `data/<tenant>/style.json` and `evals/suite.ts`. Add it to the worker's list in `apps/worker/scripts/work.ts` for the worker to run it.
+- An agent is `agents/<id>/`: `src/agent.ts` calls `defineAgent`, `src/index.ts` exports `agent`, plus `skills/` and `evals/suite.ts`. Add it to the worker's list in `apps/worker/scripts/work.ts` for the worker to run it.
+- A skill in `skills/` is in the spec's `skills` (always in the instructions) or `onDemandSkills` (listed by its frontmatter `description`, loaded with `skill.load`; ADR 0011).
+- Nothing in an agent folder is per tenant (ADR 0010). What differs by tenant is house facts in memory, or data a tool reads with the verified tenant id. Demo tenants keep theirs in `config/tenants/<tenant>/`.
 - Only the consolidation workflow writes long-term memory; agents propose.
 - Config is read live through a tool, never copied into memory.
 - Public npm registry is pinned in `.npmrc` (the global CodeArtifact token expires).
