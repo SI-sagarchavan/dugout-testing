@@ -11,8 +11,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1160.0",
     "@dugout/contracts": "workspace:^",
-    "openai": "^7.45.1",
     "zod": "^4.6.7"
   }
 }

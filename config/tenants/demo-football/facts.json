@@ -1,0 +1,46 @@
+{
+  "shared": [
+    {
+      "key": "audience",
+      "content": "Readers are US soccer fans."
+    },
+    {
+      "key": "style.spelling",
+      "content": "Use US English spelling (color, favorite, center, organize, defense)."
+    },
+    {
+      "key": "style.sport-name",
+      "content": "Call the sport soccer, not football."
+    }
+  ],
+  "agents": {
+    "match-preview": [
+      {
+        "key": "style.competition",
+        "content": "Use the competition name from the fixture."
+      },
+      {
+        "key": "style.length",
+        "content": "Keep the preview body to at most 80 words."
+      },
+      {
+        "key": "style.kickoff",
+        "content": "Always state the kickoff time with its time zone, for example 7:00 PM CT."
+      },
+      {
+        "key": "style.tone",
+        "content": "Energetic and direct; short sentences."
+      }
+    ],
+    "sitemap": [
+      {
+        "key": "site.menu-order",
+        "content": "Header menu order: Home, News, Fixtures, Standings, Squad, Videos."
+      },
+      {
+        "key": "site.sports-pages",
+        "content": "When the club has a soccer team, give it Fixtures, Squad and Standings pages. Skip Statistics unless the brief asks for it."
+      }
+    ]
+  }
+}

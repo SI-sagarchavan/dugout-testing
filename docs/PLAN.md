@@ -4,7 +4,7 @@ Scope: harness core, memory, one sample agent (match preview writer), eval suite
 
 ## Locked decisions
 
-TypeScript (Python only as isolated MCP services) · own thin core, LangGraph only inside one agent behind `AgentRuntime` · Temporal (workflow per run, activity per model/tool call) · ECS Fargate · Valkey Streams (no-eviction) for live events · Aurora Postgres + pgvector, S3 · MCP as tool contract, typed tools only · OpenAI-compatible Chat Completions client behind `ModelClient`, DeepSeek for testing (ADR 0001) · OpenTelemetry → Langfuse.
+TypeScript (Python only as isolated MCP services) · own thin core, LangGraph only inside one agent behind `AgentRuntime` · Temporal (workflow per run, activity per model/tool call) · ECS Fargate · Valkey Streams (no-eviction) for live events · Aurora Postgres + pgvector, S3 · MCP as tool contract, typed tools only · Amazon Bedrock (ConverseStream) behind `ModelClient` (ADR 0012) · OpenTelemetry → Langfuse.
 
 ## Tool pipeline order
 
@@ -25,7 +25,7 @@ Built and tested locally, except H7, which is parked: Temporal replaces the work
 
 | Task  | State  | Notes                                                                                                    |
 | ----- | ------ | -------------------------------------------------------------------------------------------------------- |
-| H1–H5 | done   | H2 is an OpenAI-compatible client (ADR 0001); the loop runs over `Steps` (ADR 0002)                      |
+| H1–H5 | done   | H2 is a Bedrock client (ADR 0012, replacing ADR 0001); the loop runs over `Steps` (ADR 0002)             |
 | H6    | done   | Valkey stream per run, Postgres record, SSE resume (ADR 0004)                                            |
 | H7    | parked | Temporal kept out for local work; `docker compose --profile temporal up` still starts it                 |
 | H8    | done   | Langfuse via OpenTelemetry; off unless both keys are set                                                 |

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRedactor, DEEPSEEK_PRICING, policyViolation, priceTokens } from "../src/index.ts";
+import { BEDROCK_PRICING, createRedactor, policyViolation, priceTokens } from "../src/index.ts";
 
 describe("redactor", () => {
   const redact = createRedactor();
@@ -57,27 +57,25 @@ describe("pricing", () => {
     reasoningTokens: 0,
   };
 
-  it("charges the list rate at peak and half off-peak, but budgets at list", () => {
-    const peak = priceTokens(
-      DEEPSEEK_PRICING,
-      "deepseek-flash",
-      tokens,
-      new Date("2026-10-28T07:00:00Z"),
-    );
-    const offPeak = priceTokens(
-      DEEPSEEK_PRICING,
-      "deepseek-flash",
-      tokens,
-      new Date("2026-10-31T07:00:00Z"),
-    );
-    // 0.5M hits * 0.006 + 0.5M misses * 0.30 + 0.1M out * 1.20 = 0.003 + 0.15 + 0.12
-    expect(peak.costUsd).toBeCloseTo(0.273);
-    expect(peak.budgetCostUsd).toBeCloseTo(0.273);
-    expect(offPeak.costUsd).toBeCloseTo(0.1365);
-    expect(offPeak.budgetCostUsd).toBeCloseTo(0.273);
+  it("prices cache hits, misses and output at the list rate", () => {
+    const cost = priceTokens(BEDROCK_PRICING, "apac.amazon.nova-micro-v1:0", tokens, new Date());
+    // 0.5M hits * 0.01025 + 0.5M misses * 0.041 + 0.1M out * 0.164 = 0.005125 + 0.0205 + 0.0164
+    expect(cost.costUsd).toBeCloseTo(0.042025);
+    expect(cost.budgetCostUsd).toBeCloseTo(0.042025);
+  });
+
+  it("charges the rate at the time of the call, but budgets at list", () => {
+    const halfAfterNoon = {
+      ...BEDROCK_PRICING,
+      rateAt: (at: Date) => (at.getUTCHours() >= 12 ? 0.5 : 1),
+    };
+    const at = new Date("2026-10-30T13:00:00Z");
+    const cost = priceTokens(halfAfterNoon, "apac.amazon.nova-micro-v1:0", tokens, at);
+    expect(cost.costUsd).toBeCloseTo(0.0210125);
+    expect(cost.budgetCostUsd).toBeCloseTo(0.042025);
   });
 
   it("refuses to price an unknown model", () => {
-    expect(() => priceTokens(DEEPSEEK_PRICING, "mystery", tokens, new Date())).toThrow("no price");
+    expect(() => priceTokens(BEDROCK_PRICING, "mystery", tokens, new Date())).toThrow("no price");
   });
 });

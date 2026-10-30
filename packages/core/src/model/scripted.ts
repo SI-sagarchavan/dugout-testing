@@ -60,9 +60,6 @@ export function createScriptedModel(script: ScriptStep[]): ModelClient & {
 export function scriptedModelConfig(): ModelConfig {
   const price = { inputCacheHit: 1, inputCacheMiss: 1, output: 1 };
   return {
-    baseURL: "scripted://",
-    apiKey: "scripted",
-    replayReasoning: true,
     tiers: {
       fast: { model: "scripted-fast", contextWindow: 100_000 },
       smart: { model: "scripted-smart", contextWindow: 100_000 },

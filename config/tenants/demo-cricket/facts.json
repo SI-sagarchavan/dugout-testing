@@ -1,0 +1,46 @@
+{
+  "shared": [
+    {
+      "key": "audience",
+      "content": "Readers are T20 cricket followers."
+    },
+    {
+      "key": "style.spelling",
+      "content": "Use British English spelling (colour, favourite, centre, organise, defence)."
+    }
+  ],
+  "agents": {
+    "match-preview": [
+      {
+        "key": "style.length",
+        "content": "Keep the preview body to at most 120 words."
+      },
+      {
+        "key": "style.opening",
+        "content": "Mention the format (T20) in the opening sentence and give the start time with its time zone, as in \"19:30 IST\"."
+      },
+      {
+        "key": "style.betting",
+        "content": "Never use betting language: no odds, bets, wagers, tips, punts or bookmakers."
+      },
+      {
+        "key": "style.tone",
+        "content": "Measured, knowledgeable tone; no hype words such as 'epic' or 'mouth-watering'."
+      }
+    ],
+    "sitemap": [
+      {
+        "key": "site.menu-order",
+        "content": "Header menu order: Home, News, Fixtures, Squad, Standings, Videos, Photos."
+      },
+      {
+        "key": "site.sports-pages",
+        "content": "When the club has a cricket team, give it Fixtures, Squad, Standings and Statistics pages, with the standard slugs."
+      },
+      {
+        "key": "site.fan-zone",
+        "content": "The club site has a Fan Zone page only when the brief asks for one."
+      }
+    ]
+  }
+}

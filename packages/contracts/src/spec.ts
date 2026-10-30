@@ -10,7 +10,9 @@ export const AgentSpec = z.object({
   owner: z.string(),
   instructions: z.string(),
   tools: z.array(z.string()), // names in the tool registry
-  skills: z.array(z.string()).default([]), // procedural memory loaded into instructions
+  skills: z.array(z.string()).default([]), // procedural memory, in full in the instructions
+  // listed by name and description only; the agent loads one with `skill.load` when it needs it
+  onDemandSkills: z.array(z.string()).default([]),
   model: z.object({ tier: ModelTier }),
   memory: z.object({ read: z.array(MemoryScope), write: z.array(MemoryScope) }),
   budget: z.object({

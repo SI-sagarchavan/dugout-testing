@@ -29,9 +29,6 @@ export interface ModelRequest {
   model: string;
   messages: Message[];
   tools: ToolDefinition[];
-  reasoningEffort?: string;
-  /** Provider-specific request fields, e.g. DeepSeek's `thinking`. */
-  extraBody?: Record<string, unknown>;
   signal?: AbortSignal;
 }
 

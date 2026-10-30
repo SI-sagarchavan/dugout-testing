@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ModelClient, RunEvent } from "@dugout/contracts";
 import {
   type Approver,
+  createBedrockClient,
   createMemorySink,
-  createOpenAICompatibleClient,
   createScriptedModel,
   loadModelConfig,
   type ModelConfig,
@@ -19,15 +18,8 @@ import {
   writesGated,
 } from "@dugout/evals";
 import type { MemoryStore } from "@dugout/memory";
-import {
-  agent,
-  DATA_DIR,
-  type NavItem,
-  type PageNode,
-  type Sitemap,
-  sitemapOf,
-  spec,
-} from "../src/index.ts";
+import { houseFactsFor, seedHouseFacts } from "@dugout/sdk";
+import { agent, type NavItem, type PageNode, type Sitemap, sitemapOf, spec } from "../src/index.ts";
 import { cases, type SitemapCase } from "./cases.ts";
 import {
   hasPages,
@@ -68,7 +60,7 @@ export interface SuiteOptions {
 }
 
 export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<SitemapCase>> {
-  await agent.seed(opts.store, Object.keys(RULES));
+  await seedHouseFacts(opts.store, Object.keys(RULES), [spec.id]);
   const live = opts.mode === "live";
 
   let models: ModelConfig;
@@ -77,19 +69,15 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
   if (live) {
     models = loadModelConfig();
     if (opts.fast) models.tiers.smart = models.tiers.fast;
-    client = createOpenAICompatibleClient(models);
+    client = createBedrockClient();
     // the judge always uses the smart tier's model, so --fast doesn't change how sitemaps are scored
     judge = createFitJudge(client, loadModelConfig().tiers.smart.model);
   } else {
     models = scriptedModelConfig();
   }
 
-  const houseFacts = async (tenant: string) => {
-    const { facts } = JSON.parse(await readFile(join(DATA_DIR, tenant, "style.json"), "utf8")) as {
-      facts: Array<{ content: string }>;
-    };
-    return facts.map((f) => `- ${f.content}`).join("\n");
-  };
+  const factLines = async (tenant: string) =>
+    (await houseFactsFor(tenant, spec.id)).map((f) => `- ${f.content}`).join("\n");
 
   const runCase = async (c: SitemapCase, _attempt: number): Promise<CaseOutcome> => {
     const tenant = c.tenant as Tenant;
@@ -161,7 +149,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
     if (judge && final && c.kind === "standard" && !c.revise) {
       outcome.judge = await judge({
         brief: c.brief,
-        houseFacts: await houseFacts(tenant),
+        houseFacts: await factLines(tenant),
         outline: outline(final),
       });
     }

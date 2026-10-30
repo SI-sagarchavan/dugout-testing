@@ -1,6 +1,6 @@
 # 0007 — Agents are written with `defineAgent`; hosts run them
 
-Date: 2026-10-29 · Status: accepted; the terminal runner moved to `apps/cli`, the API is gone, and the stream default with it (ADR 0009)
+Date: 2026-10-29 · Status: accepted; the terminal runner moved to `apps/cli`, the API is gone, and the stream default with it (ADR 0009); house facts and seeding left the agent folder (ADR 0010)
 
 ## Context
 

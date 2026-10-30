@@ -1,15 +1,15 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ModelClient, ModelRequest, RunEvent } from "@dugout/contracts";
 import {
   type Approver,
+  createBedrockClient,
   createMemorySink,
-  createOpenAICompatibleClient,
   createScriptedModel,
   loadModelConfig,
   type ModelConfig,
   type ScriptedTurn,
   scriptedModelConfig,
+  TENANTS_DIR,
 } from "@dugout/core";
 import {
   absent,
@@ -32,15 +32,8 @@ import {
   writesGated,
 } from "@dugout/evals";
 import { createModelLessonWriter, type LessonWriter, type MemoryStore } from "@dugout/memory";
-import {
-  agent,
-  DATA_DIR,
-  type Draft,
-  draftOf,
-  type Fixture,
-  readTenantData,
-  spec,
-} from "../src/index.ts";
+import { houseFactsFor, seedHouseFacts } from "@dugout/sdk";
+import { agent, type Draft, draftOf, type Fixture, readTenantData, spec } from "../src/index.ts";
 import { cases, type PreviewCase } from "./cases.ts";
 
 /**
@@ -78,7 +71,7 @@ export interface SuiteOptions {
 }
 
 export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<PreviewCase>> {
-  await agent.seed(opts.store, Object.keys(RULES));
+  await seedHouseFacts(opts.store, Object.keys(RULES), [spec.id]);
   const live = opts.mode === "live";
 
   let models: ModelConfig;
@@ -88,7 +81,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
   if (live) {
     models = loadModelConfig();
     if (opts.fast) models.tiers.smart = models.tiers.fast;
-    client = createOpenAICompatibleClient(models);
+    client = createBedrockClient();
     // the judge always uses the smart tier's model, so --fast doesn't change how drafts are scored
     judge = createJudge(client, loadModelConfig().tiers.smart.model);
     lessons = createModelLessonWriter(client, models.tiers.fast.model);
@@ -96,12 +89,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
     models = scriptedModelConfig();
   }
 
-  const style = async (tenant: string) => {
-    const { facts } = JSON.parse(await readFile(join(DATA_DIR, tenant, "style.json"), "utf8")) as {
-      facts: Array<{ key: string; content: string }>;
-    };
-    return facts;
-  };
+  const style = (tenant: string) => houseFactsFor(tenant, spec.id);
 
   /** One agent run; returns the drafts it asked to save and its events. */
   const runOnce = async (
@@ -147,7 +135,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
   ) => {
     if (!draft) return [{ grader: "draft-produced", pass: false, detail: "no draft.save call" }];
     const rules = RULES[tenant];
-    const { fixtures, teams } = await readTenantData(DATA_DIR, tenant);
+    const { fixtures, teams } = await readTenantData(TENANTS_DIR, tenant);
     const fixture = fixtures.find((f) => f.fixtureId === fixtureId) as Fixture;
     const home = teams[fixture.home] ?? {};
     const away = teams[fixture.away] ?? {};
@@ -343,7 +331,7 @@ function scriptedWriter(tenant: string, fixtureId: string): ModelClient {
 }
 
 async function templateDraft(tenant: string, fixture: Fixture): Promise<Draft> {
-  const { teams } = await readTenantData(DATA_DIR, tenant);
+  const { teams } = await readTenantData(TENANTS_DIR, tenant);
   const home = teams[fixture.home] as Record<string, unknown> & {
     name: string;
     won: number;

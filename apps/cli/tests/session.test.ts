@@ -8,7 +8,7 @@ import { createScriptedModel, scriptedModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
-import type { AnyAgent } from "@dugout/sdk";
+import { type AnyAgent, seedHouseFacts } from "@dugout/sdk";
 import {
   type AgentEntry,
   createRunQueue,
@@ -59,8 +59,7 @@ const worker = createWorker({ pool, events, agents, onError: (id, err) => consol
 
 beforeAll(async () => {
   runsDir = await mkdtemp(join(tmpdir(), "cli-runs-"));
-  await matchPreview.seed(store, [TENANT]);
-  await sitemap.seed(store, [TENANT]);
+  await seedHouseFacts(store, [TENANT], [matchPreview.spec.id, sitemap.spec.id]);
   worker.start(20);
 });
 afterAll(async () => {

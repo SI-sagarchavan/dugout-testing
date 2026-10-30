@@ -9,7 +9,7 @@ import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { z } from "zod";
-import { defineAgent } from "../src/index.ts";
+import { defineAgent, seedHouseFacts } from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
@@ -18,27 +18,37 @@ const store = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
 // a tenant of its own, so facts seeded here don't meet other tests' facts
 const tenant = `sdk-${randomUUID().slice(0, 6)}`;
 let dir: string;
+let tenantsDir: string;
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "sdk-agent-"));
   await mkdir(join(dir, "skills"));
   await writeFile(join(dir, "skills", "notes.md"), "Keep titles under five words.");
-  await mkdir(join(dir, "data", tenant), { recursive: true });
   await writeFile(
-    join(dir, "data", tenant, "style.json"),
-    JSON.stringify({ facts: [{ key: "notes.case", content: "Titles use sentence case." }] }),
+    join(dir, "skills", "headlines.md"),
+    "---\ndescription: How to write a headline\n---\nPut the team first.",
+  );
+  tenantsDir = await mkdtemp(join(tmpdir(), "sdk-tenants-"));
+  await mkdir(join(tenantsDir, tenant));
+  await writeFile(
+    join(tenantsDir, tenant, "facts.json"),
+    JSON.stringify({
+      shared: [{ key: "style.case", content: "Titles use sentence case." }],
+      agents: { notes: [{ key: "notes.topic", content: "Name the topic in the title." }] },
+    }),
   );
 });
 
 /** The smallest useful agent: saves a note after approval and ends with its title. */
-const notes = () =>
+const notes = (extra: { tools?: string[]; onDemandSkills?: string[] } = {}) =>
   defineAgent({
     spec: {
       id: "notes",
       version: 1,
       owner: "test",
       instructions: "Save one note for the topic, then call final with its title.",
-      tools: ["notes.save"],
+      tools: ["notes.save", ...(extra.tools ?? [])],
       skills: ["notes"],
+      onDemandSkills: extra.onDemandSkills ?? [],
       model: { tier: "smart" },
       memory: { read: ["procedural", "semantic"], write: [] },
       budget: { usdPerRun: 1, maxSteps: 5, maxDepth: 0 },
@@ -71,8 +81,14 @@ const script = () =>
 describe("defineAgent", () => {
   it("runs an agent from its definition: skill and house facts in, approval, output out", async () => {
     const agent = notes();
-    expect(await agent.seed(store, [tenant, "no-data-tenant"])).toEqual({ [tenant]: 1 });
-    expect(await agent.seed(store, [tenant])).toEqual({ [tenant]: 0 });
+    expect(await seedHouseFacts(store, [tenant, "no-data-tenant"], ["notes"], tenantsDir)).toEqual([
+      { tenantId: tenant, agentId: null, changed: 1 },
+      { tenantId: tenant, agentId: "notes", changed: 1 },
+    ]);
+    expect(await seedHouseFacts(store, [tenant], ["notes"], tenantsDir)).toEqual([
+      { tenantId: tenant, agentId: null, changed: 0 },
+      { tenantId: tenant, agentId: "notes", changed: 0 },
+    ]);
 
     const notesDir = await mkdtemp(join(tmpdir(), "notes-"));
     const client = script();
@@ -98,10 +114,50 @@ describe("defineAgent", () => {
     expect(await readFile(join(notesDir, `${tenant}.txt`), "utf8")).toBe("Season opener");
     const system = client.requests[0]?.messages[0]?.content ?? "";
     expect(system).toContain("Keep titles under five words.");
+    // the tenant's shared fact and the agent's own
     expect(system).toContain("Titles use sentence case.");
+    expect(system).toContain("Name the topic in the title.");
     expect(sink.events.map((e) => e.type)).toContain("approval.granted");
     // the host's tracing sink sees the same run
     expect(traced.map((e) => e.seq)).toEqual(sink.events.map((e) => e.seq));
+  });
+
+  it("lists the skills there are to load, and the agent loads one when it needs it", async () => {
+    const client = createScriptedModel([
+      { toolCalls: [{ name: "skill.load", arguments: { name: "headlines" } }] },
+      { toolCalls: [{ name: "final", arguments: { title: "Lions first" } }] },
+    ]);
+    const run = notes({ tools: ["skill.load"], onDemandSkills: ["headlines"] }).create({
+      store,
+      client,
+      models: scriptedModelConfig(),
+      runsDir: await mkdtemp(join(tmpdir(), "runs-")),
+      consolidate: false,
+      notesDir: dir,
+    });
+    const result = await run({
+      tenantId: tenant,
+      input: { topic: "the opener" },
+      approver: async () => ({ approved: true, by: "editor" }),
+    });
+
+    expect(result.status).toBe("completed");
+    const system = client.requests[0]?.messages[0]?.content ?? "";
+    expect(system).toContain("## Skills you can load");
+    expect(system).toContain("- headlines: How to write a headline");
+    expect(system).not.toContain("Put the team first.");
+    expect(client.requests[1]?.messages.at(-1)?.content).toBe(
+      "## Skill: headlines\n\nPut the team first.",
+    );
+  });
+
+  it("needs skill.load for skills on demand, and each skill in one list only", () => {
+    expect(() => notes({ onDemandSkills: ["headlines"] })).toThrow(
+      "onDemandSkills needs skill.load",
+    );
+    expect(() => notes({ tools: ["skill.load"], onDemandSkills: ["notes"] })).toThrow(
+      "notes in both",
+    );
   });
 
   it("refuses input that doesn't match the agent's schema", async () => {

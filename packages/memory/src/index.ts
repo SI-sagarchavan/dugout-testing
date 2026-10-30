@@ -3,7 +3,7 @@ import type { CompletedRun } from "@dugout/core";
 import { consolidateRun, type LessonWriter } from "./consolidate.ts";
 import { buildContext, MEMORY_SHARE } from "./context.ts";
 import type { MemoryStore } from "./store.ts";
-import { createMemoryTools } from "./tools.ts";
+import { createMemoryTools, createSkillTool } from "./tools.ts";
 
 export * from "./consolidate.ts";
 export * from "./context.ts";
@@ -25,13 +25,17 @@ export interface MemoryHooksOptions {
 /** Everything `runLocal` needs to give an agent memory: tools, a context builder, consolidation. */
 export function memoryHooks(opts: MemoryHooksOptions) {
   const { store, spec } = opts;
+  const skills = {
+    skillsDir: opts.skillsDir,
+    skills: spec.skills,
+    onDemandSkills: spec.onDemandSkills,
+  };
   return {
-    tools: createMemoryTools({ reader: store, agentId: spec.id }),
+    tools: [...createMemoryTools({ reader: store, agentId: spec.id }), createSkillTool(skills)],
     context: (ctx: RunContext, input: unknown): Promise<RunMemoryContext> =>
       buildContext({
         reader: store,
-        skillsDir: opts.skillsDir,
-        skills: spec.skills,
+        ...skills,
         tenantId: ctx.tenantId,
         agentId: spec.id,
         query: typeof input === "string" ? input : JSON.stringify(input),

@@ -1,9 +1,9 @@
-// Live smoke run against the configured provider: one read tool, then `final`. Exercises streaming,
-// tool calls, reasoning replay and usage. Run with `pnpm smoke` (reads .env if present).
+// Live smoke run against Bedrock: one read tool, then `final`. Exercises streaming, tool calls and
+// usage. Run with `pnpm smoke` (reads .env if present, for AWS_PROFILE and AWS_REGION).
 import { existsSync } from "node:fs";
 import { defineTool } from "@dugout/contracts";
 import { z } from "zod";
-import { createOpenAICompatibleClient, loadModelConfig, runLocal } from "../src/index.ts";
+import { createBedrockClient, loadModelConfig, runLocal } from "../src/index.ts";
 
 if (existsSync(".env")) process.loadEnvFile(".env");
 
@@ -31,6 +31,7 @@ const result = await runLocal({
         "Look up the fixture with the fixture.get tool, then call final with a one-line headline and the kickoff time.",
       tools: ["fixture.get"],
       skills: [],
+      onDemandSkills: [],
       model: { tier },
       memory: { read: [], write: [] },
       budget: { usdPerRun: 0.05, maxSteps: 4, maxDepth: 0 },
@@ -41,7 +42,7 @@ const result = await runLocal({
   input: "Preview fixture f-1",
   tenantId: "smoke",
   tools: [fixtureGet],
-  client: createOpenAICompatibleClient(models),
+  client: createBedrockClient(),
   models,
   approver: async () => ({ approved: false, by: "smoke", reason: "smoke runs never write" }),
   sinks: [{ write: (e) => void (e.type !== "token" && console.log(`${e.seq} ${e.type}`)) }],

@@ -4,7 +4,7 @@ FanOS agent harness, agents and evals. See `CLAUDE.md` for layout/commands and `
 
 ```sh
 nvm use && pnpm install
-cp .env.example .env          # add LLM_API_KEY
+cp .env.example .env          # set AWS_PROFILE and AWS_REGION for Bedrock
 pnpm infra:up && pnpm db:migrate && pnpm seed
 pnpm check
 

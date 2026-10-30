@@ -1,4 +1,4 @@
-import { createOpenAICompatibleClient, loadEnv, loadModelConfig } from "@dugout/core";
+import { createBedrockClient, loadEnv, loadModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import { createMemoryStore, createModelLessonWriter, loadEmbeddings } from "@dugout/memory";
 import { loadTracing } from "@dugout/tracing";
@@ -8,7 +8,7 @@ export function liveDeps(opts: { fast?: boolean } = {}) {
   loadEnv();
   const models = loadModelConfig();
   if (opts.fast) models.tiers.smart = models.tiers.fast;
-  const client = createOpenAICompatibleClient(models);
+  const client = createBedrockClient();
   const pool = createPool();
   const store = createMemoryStore({ pool, embeddings: loadEmbeddings() });
   const lessons = createModelLessonWriter(client, models.tiers.fast.model);

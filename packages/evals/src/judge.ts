@@ -22,14 +22,13 @@ export function createModelJudge(client: ModelClient, model: string, system: str
       const turn = await client.complete({
         model,
         tools: [],
-        extraBody: { response_format: { type: "json_object" } },
         messages: [
           { role: "system", content: system },
           { role: "user", content },
         ],
       });
       try {
-        const verdict = JudgeVerdict.parse(JSON.parse(turn.message.content));
+        const verdict = JudgeVerdict.parse(JSON.parse(jsonIn(turn.message.content)));
         return { ...verdict, servedModel: turn.servedModel };
       } catch (err) {
         lastError = (err as Error).message;
@@ -37,6 +36,12 @@ export function createModelJudge(client: ModelClient, model: string, system: str
     }
     throw new Error(`judge returned invalid json: ${lastError}`);
   };
+}
+
+/** The JSON object in a reply, which a model may wrap in a code fence or a sentence. */
+function jsonIn(reply: string): string {
+  const start = reply.indexOf("{");
+  return start === -1 ? reply : reply.slice(start, reply.lastIndexOf("}") + 1);
 }
 
 export type Judge = (input: {

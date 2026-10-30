@@ -1,9 +1,11 @@
 import { defineTool } from "@dugout/contracts";
 import { z } from "zod";
+import { loadSkill, SKILL_NAME } from "./skills.ts";
 import type { MemoryReader } from "./store.ts";
 
 export const SEARCH_TOOL = "memory.search";
 export const PROPOSE_TOOL = "memory.propose";
+export const SKILL_TOOL = "skill.load";
 
 /** Read-only memory tools for one agent. The tenant comes from the tool context. */
 export function createMemoryTools(opts: { reader: MemoryReader; agentId: string }) {
@@ -29,7 +31,13 @@ export function createMemoryTools(opts: { reader: MemoryReader; agentId: string 
         kinds,
         limit,
       });
-      return items.map(({ kind, key, content, createdAt }) => ({ kind, key, content, createdAt }));
+      return items.map(({ kind, key, content, createdAt, agentId }) => ({
+        kind,
+        ...(kind === "semantic" ? { scope: agentId ? "agent" : "tenant" } : {}),
+        key,
+        content,
+        createdAt,
+      }));
     },
   });
 
@@ -37,11 +45,12 @@ export function createMemoryTools(opts: { reader: MemoryReader; agentId: string 
   const propose = defineTool({
     name: PROPOSE_TOOL,
     description:
-      "Propose a new or corrected house fact for this tenant. A human reviews it before any run uses it.",
+      "Propose a new or corrected house fact for this tenant. A human reviews it before any run uses it. Use scope 'tenant' only for a fact that holds for every kind of work for this tenant (its audience, its spelling), 'agent' for one about your own work.",
     input: z.object({
       key: z.string().regex(/^[a-z][a-z0-9.-]*$/, "dotted lower-case key, e.g. style.spelling"),
       content: z.string().min(5).max(500),
       confidence: z.number().min(0).max(1),
+      scope: z.enum(["agent", "tenant"]).default("agent"),
     }),
     effect: "read",
     timeoutMs: 1_000,
@@ -49,4 +58,32 @@ export function createMemoryTools(opts: { reader: MemoryReader; agentId: string 
   });
 
   return [search, propose];
+}
+
+export interface SkillToolOptions {
+  skillsDir: string;
+  /** Already in the instructions. */
+  skills: string[];
+  onDemandSkills: string[];
+}
+
+/** Loads one of the agent's on-demand skills, as listed under "Skills you can load". */
+export function createSkillTool(opts: SkillToolOptions) {
+  return defineTool({
+    name: SKILL_TOOL,
+    description:
+      "Load the full instructions of a skill listed under 'Skills you can load'. Load one when the task needs it, before doing that part of the work.",
+    input: z.object({ name: z.string().regex(SKILL_NAME) }),
+    effect: "read",
+    timeoutMs: 5_000,
+    alwaysInline: true,
+    async run({ name }) {
+      if (opts.skills.includes(name)) return `Skill ${name} is already in your instructions.`;
+      if (!opts.onDemandSkills.includes(name)) {
+        throw new Error(`no skill ${name}: load one listed under "Skills you can load"`);
+      }
+      const skill = await loadSkill(opts.skillsDir, name);
+      return `## Skill: ${name}\n\n${skill.content}`;
+    },
+  });
 }
