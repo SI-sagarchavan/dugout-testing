@@ -1,6 +1,6 @@
 # 11 · Agents' input and output schemas for hosts
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 
 ## What
