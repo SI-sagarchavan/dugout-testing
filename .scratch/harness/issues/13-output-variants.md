@@ -1,6 +1,6 @@
 # 13 · Outputs with variants
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 
 ## What
