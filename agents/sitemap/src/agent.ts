@@ -55,6 +55,8 @@ export const agent = defineAgent({
   dir: join(import.meta.dirname, ".."),
   tools: (opts: { sitemapsDir?: string }) =>
     createSitemapTools({ sitemapsDir: opts.sitemapsDir ?? SITEMAPS_DIR }),
+  // a club site for some sports reads what was learned for those sports
+  sportsOf: (input) => input.sports,
   cli: {
     flags: { sport: "sports" },
     present: (req) => {

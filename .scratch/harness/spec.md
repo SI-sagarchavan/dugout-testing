@@ -30,18 +30,18 @@ What the harness is missing for agents that work with images, run for a long tim
 
 | #   | Ticket                                                                       | Status          | Blocked by |
 | --- | ---------------------------------------------------------------------------- | --------------- | ---------- |
-| 08  | [Cancel a run](issues/08-cancel-a-run.md)                                    | ready-for-agent |            |
+| 08  | [Cancel a run](issues/08-cancel-a-run.md)                                    | resolved        |            |
 | 09  | [Cache code steps by their inputs](issues/09-cache-code-steps.md)            | ready-for-agent | 02, 04     |
 | 10  | [Tools from MCP servers](issues/10-mcp-tools.md)                             | needs-triage    |            |
-| 11  | [Agents' input and output schemas for hosts](issues/11-schemas-for-hosts.md) | ready-for-agent |            |
+| 11  | [Agents' input and output schemas for hosts](issues/11-schemas-for-hosts.md) | resolved        |            |
 
 ### Tier 3: when the numbers ask for them
 
-| #   | Ticket                                                                                   | Status          | Blocked by |
-| --- | ---------------------------------------------------------------------------------------- | --------------- | ---------- |
-| 12  | [Strict tool schemas where the provider supports them](issues/12-strict-tool-schemas.md) | needs-triage    | 03         |
-| 13  | [Outputs with variants](issues/13-output-variants.md)                                    | ready-for-agent |            |
-| 14  | [Worker and host operations](issues/14-worker-and-host-operations.md)                    | needs-triage    |            |
+| #   | Ticket                                                                                   | Status       | Blocked by |
+| --- | ---------------------------------------------------------------------------------------- | ------------ | ---------- |
+| 12  | [Strict tool schemas where the provider supports them](issues/12-strict-tool-schemas.md) | needs-triage | 03         |
+| 13  | [Outputs with variants](issues/13-output-variants.md)                                    | resolved     |            |
+| 14  | [Worker and host operations](issues/14-worker-and-host-operations.md)                    | needs-triage |            |
 
 ## Order of work
 

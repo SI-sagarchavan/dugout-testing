@@ -10,12 +10,20 @@ import {
 } from "@dugout/contracts";
 import {
   type Approver,
+  loadTenants,
   type ModelConfig,
   REPO_ROOT,
   type RunLocalOptions,
   runLocal,
+  type Tenant,
 } from "@dugout/core";
-import { type LessonWriter, type MemoryStore, memoryHooks, SKILL_TOOL } from "@dugout/memory";
+import {
+  type LessonWriter,
+  type MemoryStore,
+  memoryGroups,
+  memoryHooks,
+  SKILL_TOOL,
+} from "@dugout/memory";
 import type { z } from "zod";
 
 /** What the host (CLI, API, evals, tests) supplies: the model, memory, and where runs are written. */
@@ -31,6 +39,12 @@ export interface AgentDeps {
   lessons?: LessonWriter | undefined;
   /** Adds its sink to every run (Langfuse). */
   tracing?: { sink(): EventSink } | undefined;
+  /**
+   * The shared memory scopes a run reads too (ADR 0014): what every tenant reads, and its sports.
+   * Defaults to the tenant's sports in `config/tenants.json`, or the `sports` given when the run's
+   * input names them.
+   */
+  memoryGroups?: (tenantId: string, sports?: string[]) => string[];
 }
 
 /** One run of an agent. */
@@ -71,6 +85,8 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
    * standard deps (e.g. a folder for tests to write into). Memory tools are added.
    */
   tools: (options: Options) => Tool[];
+  /** The sports a run is about, when its input says (ADR 0014); its shared memory narrows to them. */
+  sportsOf?: (input: z.output<Input>) => string[] | undefined;
   /** Tool outputs longer than this are stored and replaced by a reference. */
   maxInlineChars?: number;
   cli?: AgentCli;
@@ -130,6 +146,11 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
         contextWindow: deps.models.tiers[spec.model.tier].contextWindow,
         ...(deps.lessons ? { lessons: deps.lessons } : {}),
         ...(deps.consolidate === false ? { consolidate: false } : {}),
+        groupsOf: (tenantId, input) =>
+          (deps.memoryGroups ?? registryGroups)(
+            tenantId,
+            input === undefined ? undefined : config.sportsOf?.(input as z.output<Input>),
+          ),
       });
       const tools = [...config.tools(deps), ...memory.tools];
       const missing = spec.tools.filter((name) => !tools.some((t) => t.name === name));
@@ -157,4 +178,16 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
         });
     },
   };
+}
+
+let registry: Map<string, Tenant> | undefined;
+
+/** A run's shared memory scopes from the tenant registry; what every tenant reads for one it lacks. */
+function registryGroups(tenantId: string, sports?: string[]): string[] {
+  registry ??= new Map(
+    loadTenants()
+      .list()
+      .map((t) => [t.id, t]),
+  );
+  return memoryGroups(registry.get(tenantId), sports);
 }

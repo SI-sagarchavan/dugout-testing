@@ -2,11 +2,11 @@
   {
     "id": "demo-cricket",
     "name": "Demo Cricket",
-    "sport": "cricket"
+    "sports": ["cricket"]
   },
   {
     "id": "demo-football",
     "name": "Demo Football",
-    "sport": "football"
+    "sports": ["football"]
   }
 ]

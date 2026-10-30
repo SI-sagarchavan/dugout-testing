@@ -7,12 +7,18 @@ export const SEARCH_TOOL = "memory.search";
 export const PROPOSE_TOOL = "memory.propose";
 export const SKILL_TOOL = "skill.load";
 
-/** Read-only memory tools. The tenant comes from the tool context; every agent reads all of it. */
-export function createMemoryTools(opts: { reader: MemoryReader }) {
+/**
+ * Read-only memory tools. The tenant comes from the tool context; every agent reads all of its
+ * memory, and the shared memory of its groups.
+ */
+export function createMemoryTools(opts: {
+  reader: MemoryReader;
+  groupsOf?: (tenantId: string) => string[];
+}) {
   const search = defineTool({
     name: SEARCH_TOOL,
     description:
-      "Search this tenant's reviewed facts and past feedback. Use it when you need a house rule or lesson that isn't already in your instructions.",
+      "Search this tenant's reviewed facts and past feedback, and those shared across clients. Use it when you need a house rule or lesson that isn't already in your instructions.",
     input: z.object({
       query: z.string().min(2),
       kinds: z
@@ -24,8 +30,20 @@ export function createMemoryTools(opts: { reader: MemoryReader }) {
     effect: "read",
     timeoutMs: 10_000,
     async run({ query, kinds, limit }, ctx) {
-      const items = await opts.reader.search({ tenantId: ctx.tenantId, query, kinds, limit });
-      return items.map(({ kind, key, content, createdAt }) => ({ kind, key, content, createdAt }));
+      const items = await opts.reader.search({
+        tenantId: ctx.tenantId,
+        groups: opts.groupsOf?.(ctx.tenantId) ?? [],
+        query,
+        kinds,
+        limit,
+      });
+      return items.map(({ kind, key, content, createdAt, sharedScope }) => ({
+        kind,
+        ...(sharedScope ? { shared: sharedScope } : {}),
+        key,
+        content,
+        createdAt,
+      }));
     },
   });
 

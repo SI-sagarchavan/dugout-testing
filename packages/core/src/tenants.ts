@@ -5,7 +5,8 @@ import { z } from "zod";
 const Tenant = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
   name: z.string(),
-  sport: z.string(),
+  /** Every sport the tenant covers; shared memory is grouped by sport (ADR 0014). */
+  sports: z.array(z.string().min(1)).min(1),
 });
 export type Tenant = z.infer<typeof Tenant>;
 
