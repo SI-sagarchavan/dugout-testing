@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "fixtureId": {
+      "type": "string",
+      "pattern": "^[a-z]-\\d{3}$"
+    },
+    "channels": {
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "social",
+          "push",
+          "headline"
+        ]
+      }
+    },
+    "preview": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "body": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "title",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "social": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 280
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "push": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "headline": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "fixtureId",
+    "channels",
+    "preview",
+    "social",
+    "push",
+    "headline"
+  ],
+  "additionalProperties": false
+}

@@ -1,7 +1,7 @@
 import { agentIds, loadAgent } from "@dugout/sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { inputFlags, parseCliArgs, usage } from "../src/flags.ts";
+import { inputFields, inputFlags, parseCliArgs, usage } from "../src/flags.ts";
 
 const brief = {
   spec: { id: "brief-writer" },
@@ -57,6 +57,36 @@ describe("command line", () => {
 
   it("refuses a flag the agent doesn't take", () => {
     expect(() => parseCliArgs(brief as never, ["--tenant", "x", "--colour", "red"])).toThrow();
+  });
+
+  it("keeps a description and enum options for prompts and help", () => {
+    const fields = inputFields(
+      z.object({
+        format: z.enum(["T20", "ODI"]).describe("Match format"),
+        tags: z.array(z.enum(["news", "squad"])).optional(),
+        note: z.string().optional(),
+      }),
+    );
+    expect(fields).toEqual([
+      {
+        field: "format",
+        flag: "format",
+        names: ["format"],
+        kind: "string",
+        required: true,
+        description: "Match format",
+        options: ["T20", "ODI"],
+      },
+      {
+        field: "tags",
+        flag: "tags",
+        names: ["tags"],
+        kind: "strings",
+        required: false,
+        options: ["news", "squad"],
+      },
+      { field: "note", flag: "note", names: ["note"], kind: "string", required: false },
+    ]);
   });
 
   it("writes a usage line from the input", () => {

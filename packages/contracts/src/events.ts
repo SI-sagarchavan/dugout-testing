@@ -47,7 +47,15 @@ export const RunEvent = z.discriminatedUnion("type", [
     "context.built",
     z.object({
       tokens: z.number(),
-      sources: z.array(z.object({ id: z.string(), kind: z.string(), tokens: z.number() })),
+      sources: z.array(
+        z.object({
+          id: z.string(),
+          kind: z.string(),
+          tokens: z.number(),
+          /** What was put in the prompt, so a host can show it. */
+          text: z.string().optional(),
+        }),
+      ),
     }),
   ),
   event("token", z.object({ step: z.number(), text: z.string() })),

@@ -32,7 +32,7 @@ LangGraph calls this time travel. It lets you look at a bad step in context, try
 
 ## Outcome
 
-Built as ADR 0016 records: save points with `savedAfter`, `forkRun` and `queue.history` and `queue.fork`, and retention through `prune_run_history`. A fork's usage starts at 0. A corrected input is refused inside a turn. Still open: the CLI flags (`--history`, `--fork`), because another session is changing the CLI; and comparing a run with its fork, which moves to harness 07.
+Built as ADR 0016 records: save points with `savedAfter`, `forkRun` and `queue.history` and `queue.fork`, and retention through `prune_run_history`. A fork's usage starts at 0. A corrected input is refused inside a turn. The CLI lists save points (`pnpm agent history`, or `--history`) and forks from one (`pnpm agent fork --from <version>`, or `--fork`), then follows the new run. Comparing a run with its fork stays with harness 07.
 
 ## Pointers
 

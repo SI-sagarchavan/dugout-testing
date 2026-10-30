@@ -18,6 +18,7 @@
     "agent": "tsx apps/cli/scripts/agent.ts",
     "preview": "tsx apps/cli/scripts/agent.ts match-preview",
     "sitemap": "tsx apps/cli/scripts/agent.ts sitemap",
+    "matchday": "tsx apps/cli/scripts/agent.ts matchday",
     "memory:review": "tsx packages/memory/scripts/review.ts",
     "memory:promote": "tsx packages/memory/scripts/promote.ts",
     "eval": "tsx packages/evals/scripts/eval.ts",

@@ -69,6 +69,8 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
           agentId,
           episodeType: "lesson",
           content,
+          // Same string a later run uses as its recall query, so this lesson can be found then.
+          situation: JSON.stringify(input ?? null),
           confidence: lesson ? 0.9 : 0.7,
           sourceRunId: runId,
           ttlDays: EPISODE_TTL_DAYS,

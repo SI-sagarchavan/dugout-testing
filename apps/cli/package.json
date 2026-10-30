@@ -11,12 +11,14 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.1",
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",
     "@dugout/db": "workspace:^",
     "@dugout/sdk": "workspace:^",
     "@dugout/worker": "workspace:^",
     "iovalkey": "^0.4.0",
+    "picocolors": "^1.1.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

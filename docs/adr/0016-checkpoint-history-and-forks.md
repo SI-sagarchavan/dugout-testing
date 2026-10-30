@@ -36,5 +36,5 @@ Measured on 2026-10-30 with the scripted match-preview run (three tool calls, on
 ## Consequences
 
 - **Hosts can show a run step by step and fork it.** `queue.history` and `queue.fork` are the reference (ADR 0009).
-- **The CLI has no `--history` or `--fork` yet.** Another session is changing the CLI, so its flags come once that work has landed.
+- **The CLI lists save points and forks from one.** `pnpm agent history [run] --tenant <id>` and `pnpm agent fork [run] --from <version> --tenant <id>`, also as `--history` and `--fork`. A fork takes one change: the decision on the approval that save point waits for, another model, or a corrected input. It then follows the new run.
 - **Not yet:** comparing a run with its fork (harness 07).

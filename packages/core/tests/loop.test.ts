@@ -205,6 +205,30 @@ describe("runAgent", () => {
     expect(result.status).toBe("completed");
   });
 
+  it("stops when a refused call is sent again unchanged", async () => {
+    const { result, of } = await run([
+      call("stats.get", { team: 3, note: "a" }),
+      call("stats.get", { note: "a", team: 3 }),
+      final("ok"),
+    ]);
+    expect(of("tool.denied")).toHaveLength(2);
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "invalid_output",
+      message: "stats.get was refused, and the same call was sent again unchanged",
+    });
+  });
+
+  it("accepts a corrected call after a refusal", async () => {
+    const { result, of } = await run([
+      call("stats.get", { team: 3 }),
+      call("stats.get", { team: "Lions" }),
+      final("ok"),
+    ]);
+    expect(of("tool.denied")).toHaveLength(1);
+    expect(result.status).toBe("completed");
+  });
+
   it("denies a registered tool the spec does not allow", async () => {
     const { of } = await run([call("big.read"), final("ok")], {
       agent: { spec: spec({ tools: ["stats.get"] }), output: Output },

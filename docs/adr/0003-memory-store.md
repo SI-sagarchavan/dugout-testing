@@ -10,7 +10,7 @@ Date: 2026-10-29 · Status: accepted; tenant overrides of skills are gone, and w
 - **Hybrid search** combines full-text rank and pgvector cosine rank with reciprocal rank fusion. It searches only active, unexpired rows.
 - **Embeddings**: an `EmbeddingClient` for any OpenAI-compatible `/embeddings` endpoint, fixed at 1024 dimensions by the column. With no endpoint configured, a word-hashing embedder is used, so similarity is lexical until a real model is chosen. Changing the model means re-embedding.
 - **Procedural memory** is markdown in the agent package: `skills/<name>.md`, plus `skills/tenants/<tenant>/<name>.md` appended as that tenant's override.
-- **The context builder** adds skills, then active facts, then the top 5 similar episodes. It stops when the next item would exceed 12% of the model's context window, and items are dropped whole.
+- **The context builder** adds skills, then active facts, then episodes whose embedding is similar to the run input. A weak match stays out. At most five lessons and three run records are added, and the builder stops when the next item would exceed 12% of the model's context window. Items are dropped whole.
 - **Consolidation is a function called after each run**, not a Temporal workflow. It turns approval rejections into episodes (with a one-line lesson from the fast model) and `memory.propose` calls into proposed facts. Agents get `memory.search` (read) and `memory.propose`, which writes nothing itself.
 
 ## Consequences

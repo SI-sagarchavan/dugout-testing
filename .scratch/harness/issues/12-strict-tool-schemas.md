@@ -22,7 +22,7 @@ Fewer turns are spent fixing malformed arguments and outputs. That matters most 
 
 ## Outcome
 
-Built with harness 03 (ADR 0015) as `strictTools` per model in `config/models.json`, on for the Claude models. Claude takes optional fields, so nothing is turned into required-and-nullable. Every object is closed, and the constraints strict mode can't express are left out for zod to check. A tool with a record goes without strict. Nova rejects `strict`, so the model list refuses it there. Not measured against invalid-argument turns yet; that waits for harness 07.
+Built with harness 03 (ADR 0015) as `strictTools` per model in `config/models.json`, on for the Claude models. Claude takes optional fields, so nothing is turned into required-and-nullable. Every object is closed, and the constraints strict mode can't express are left out for zod to check. A tool with a record, or a schema that refers to itself, goes without strict. Nova rejects `strict`, so the model list refuses it there. Not measured against invalid-argument turns yet; that waits for harness 07.
 
 ## Pointers
 

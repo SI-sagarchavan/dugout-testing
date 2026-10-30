@@ -143,6 +143,8 @@ describe("the CLI", () => {
     const ending = await follow(sitemap, runId, terminal);
 
     expect(asked).toHaveLength(2);
+    expect(text()).toContain("skill sitemap (loaded in full)");
+    expect(text()).toContain("Readers are T20 cricket followers.");
     expect(text()).toContain("· sent back for changes: Use /fanzone for the Fan Zone.");
     expect(ending).toMatchObject({
       type: "run.completed",
@@ -200,6 +202,20 @@ describe("the CLI", () => {
     expect(await queue.matching(TENANT, "1zz")).toEqual([]);
     expect(await queue.matching(TENANT, "%")).toEqual([]);
     expect(await queue.matching("demo-football", runId)).toEqual([]);
+  });
+
+  it("asks with a menu when the terminal offers choices", async () => {
+    const runId = await queue.start(TENANT, "match-preview", { fixtureId: "c-101" });
+    const { terminal, asked } = scripted([]);
+    const seen: string[] = [];
+    terminal.choose = async (message, options) => {
+      seen.push(message, ...options.map((option) => option.value));
+      return "approve";
+    };
+    const ending = await follow(matchPreview, runId, terminal);
+    expect(ending).toMatchObject({ type: "run.completed", data: { status: "completed" } });
+    expect(asked).toEqual([]);
+    expect(seen).toEqual(["This step needs a decision", "approve", "reject", "change"]);
   });
 
   it("says when no worker has picked the run up", async () => {

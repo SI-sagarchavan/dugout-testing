@@ -11,15 +11,22 @@ pnpm check
 pnpm worker                   # terminal 1: runs the agents, as the ECS service does in production
 
 # terminal 2: queue a run, follow it, answer its approvals
+pnpm agent                          # menu: run, attach, cancel, list, history, fork
+pnpm agent --help
+pnpm agent history <runId> --tenant <tenant>
+pnpm agent fork <runId> --from <version> --tenant <tenant>
 pnpm preview --tenant demo-cricket --fixture c-101
 pnpm sitemap --tenant demo-cricket --sport cricket --brief "T20 club: news, fixtures, squad, standings"
+pnpm matchday --tenant demo-cricket --fixture c-101 --channel social --brief "Season opener"
 pnpm agent <id> --tenant <tenant> --<input field> <value>   # any agent in agents/
-# at an approval prompt: y to approve, n to reject, or type a change ("change the Fan Zone path to /fanzone")
+# at an approval: Approve, Reject, or Request a change
+# a pipe answers y, n, or the change ("change the Fan Zone path to /fanzone")
 # Ctrl-C leaves the run going in the worker; attach again with:
-pnpm agent --run <runId> --tenant <tenant>
+pnpm agent attach --run <runId> --tenant <tenant>
 
 pnpm eval match-preview
 pnpm eval sitemap
+pnpm eval matchday
 ```
 
 `pnpm agent` does what wnm-fanxp-backend will do in production (ADR 0009): it queues the run in Postgres, follows its events from Valkey as the worker writes them, and queues your decision at each approval for a worker to resume the run. The worker and the CLI never talk to each other directly.

@@ -198,10 +198,11 @@ const UNCONSTRAINED = new Set([
 
 /**
  * A tool's schema the way strict mode takes it: every object closed and the constraints it can't
- * express left out. Undefined when the schema has an open object (a record), which strict mode
- * can't take; that tool goes without strict.
+ * express left out. Undefined when strict mode can't take the schema, so that tool goes without
+ * strict: an open object (a record), or a definition that refers to itself (a page tree).
  */
 export function strictSchema(schema: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (hasCircularRef(schema)) return undefined;
   const walk = (node: unknown): unknown => {
     if (Array.isArray(node)) return node.map(walk);
     if (!node || typeof node !== "object") return node;
@@ -227,6 +228,32 @@ export function strictSchema(schema: Record<string, unknown>): Record<string, un
   }
 }
 const OPEN = new Error("open object");
+
+/** True when a `$ref` reaches a definition already being expanded, including through another one. */
+function hasCircularRef(schema: unknown): boolean {
+  const defs =
+    schema && typeof schema === "object"
+      ? ((schema as { $defs?: unknown }).$defs as Record<string, unknown> | undefined)
+      : undefined;
+  const seeing = new Set<string>();
+  const walk = (node: unknown): boolean => {
+    if (Array.isArray(node)) return node.some(walk);
+    if (!node || typeof node !== "object") return false;
+    const record = node as Record<string, unknown>;
+    const ref = record.$ref;
+    if (typeof ref === "string" && ref.startsWith("#/$defs/")) {
+      const name = decodeURIComponent(ref.slice("#/$defs/".length));
+      if (!defs || !(name in defs)) return false;
+      if (seeing.has(name)) return true;
+      seeing.add(name);
+      const cycle = walk(defs[name]);
+      seeing.delete(name);
+      return cycle;
+    }
+    return Object.entries(record).some(([key, value]) => key !== "$defs" && walk(value));
+  };
+  return walk(schema);
+}
 
 function reasoningContent(block: ReasoningBlock): ContentBlock {
   return {

@@ -145,6 +145,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   const { usage } = state;
   let savedMessages = saved?.messages.length ?? 0;
   let decision = resume?.decision;
+  /** The last refused call. A second copy of it ends the run. */
+  let refused: { tool: string; args: string } | undefined;
   if (decision && !state.waiting) throw new Error("the run is not waiting for an approval");
 
   /** Saves the checkpoint and the messages added since the last save, as a new save point. */
@@ -278,6 +280,20 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       const ids = { step, callId: call.id, tool: call.name };
       const checked = preflight(call, spec, registry);
       if (!checked.ok) {
+        const args = stableArgs(call.arguments);
+        // One refusal is feedback. The same call again is the model stuck, so the run stops
+        // instead of spending the rest of its steps on copies.
+        if (refused?.tool === call.name && refused.args === args) {
+          const message = `${call.name} was refused, and the same call was sent again unchanged`;
+          await log.emit({
+            type: "tool.denied",
+            data: { ...ids, stage: checked.stage, reason: message },
+          });
+          messages.push({ role: "tool", toolCallId: call.id, content: message });
+          await save("tool");
+          return fail("invalid_output", message);
+        }
+        refused = { tool: call.name, args };
         await log.emit({
           type: "tool.denied",
           data: { ...ids, stage: checked.stage, reason: checked.reason },
@@ -290,6 +306,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         await save("tool");
         continue;
       }
+      refused = undefined;
 
       // approved before a crash: the reviewer is not asked twice
       if (checked.needsApproval && !turn.approved.includes(call.id)) {
@@ -498,6 +515,27 @@ function finalSchema(output: z.ZodType) {
     wrapped: true,
     unwrap: (v: unknown) => (v as { result: unknown }).result,
   };
+}
+
+/** Stable JSON so key order does not make two copies of a call look different. */
+function stableArgs(raw: string): string {
+  try {
+    return JSON.stringify(sortJson(JSON.parse(raw)));
+  } catch {
+    return raw;
+  }
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [key, sortJson(item)]),
+    );
+  }
+  return value;
 }
 
 function parseFinal(

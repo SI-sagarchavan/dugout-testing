@@ -55,8 +55,9 @@ export interface MemoryReader {
   /** Ranked by text and vector relevance alone. */
   search(q: SearchQuery): Promise<Array<MemoryItem & { score: number }>>;
   /**
-   * Episodes of one type for the prompt, ranked by relevance, recency and strength, with a small
-   * lift for those the reading agent's own runs produced.
+   * Episodes of one type for the prompt, nearest by the cosine similarity of the stored embedding.
+   * `agentId` records who is reading; it does not change the order. Items below
+   * {@link MIN_EPISODE_SIMILARITY} are left out, and `limit` is only how many may fit.
    */
   recallEpisodes(
     q: Omit<SearchQuery, "kinds"> & { episodeType: EpisodeType; agentId: string },
@@ -74,6 +75,11 @@ export interface MemoryWriter {
     agentId: string;
     episodeType: EpisodeType;
     content: string;
+    /**
+     * The run input this episode was learned on. It is part of the embedding, so a later run with
+     * a similar input can find the lesson, and it is not part of the stored text.
+     */
+    situation?: string;
     confidence: number;
     sourceRunId: string;
     ttlDays: number;
@@ -130,33 +136,11 @@ export const toItem = (r: Row): MemoryItem => ({
   sources: (r.sources as string[] | null) ?? [],
 });
 
-/** Days for a memory's recency weight to halve. */
-const RECENCY_HALF_LIFE_DAYS = 30;
-
 /**
- * Orders episodes the way Generative Agents does: relevance (scaled to the best match), recency
- * since last seen, and strength, plus a small lift for the reading agent's own. Each is 0..1;
- * relevance counts most.
+ * Cosine similarity below this is a different subject, so the episode stays out of the prompt.
+ * The closest item in a small set is not treated as a perfect match.
  */
-export function rankEpisodes<
-  T extends Pick<MemoryItem, "lastSeenAt" | "strength"> & { agentId?: string | null },
->(
-  items: Array<T & { score: number }>,
-  opts: { now?: Date; agentId?: string } = {},
-): Array<T & { score: number }> {
-  const now = opts.now ?? new Date();
-  const best = Math.max(...items.map((i) => i.score), Number.EPSILON);
-  return items
-    .map((item) => {
-      const days = (now.getTime() - new Date(item.lastSeenAt).getTime()) / 86_400_000;
-      const recency = 0.5 ** (Math.max(days, 0) / RECENCY_HALF_LIFE_DAYS);
-      const strength = 1 - 1 / item.strength;
-      const own = opts.agentId !== undefined && item.agentId === opts.agentId ? 1 : 0;
-      const score = 0.55 * (item.score / best) + 0.25 * recency + 0.1 * strength + 0.1 * own;
-      return { ...item, score };
-    })
-    .sort((x, y) => y.score - x.score);
-}
+export const MIN_EPISODE_SIMILARITY = 0.2;
 
 /** Words OR-ed into a tsquery; anything that isn't a word is dropped, so input can't break it. */
 const orQuery = (text: string) =>
@@ -229,14 +213,27 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
 
     search,
 
-    // a wider pool by relevance, then re-ranked with recency, strength and whose they are
-    recallEpisodes: async ({ limit = 5, agentId, ...q }) =>
-      rankEpisodes(await search({ ...q, kinds: ["episodic"], limit: limit * 4 }), {
-        agentId,
-      }).slice(0, limit),
+    recallEpisodes: async ({ limit = 5, ...q }) => {
+      const vector = await embedOne(q.query);
+      return tx(q.tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select ${COLUMNS}, 1 - (embedding <=> $4::vector) as score
+           from memory_items
+           where (tenant_id = $1 or (tenant_id is null and shared_scope = any($2::text[])))
+             and kind = 'episodic' and episode_type = $3 and ${LIVE}
+             and 1 - (embedding <=> $4::vector) >= $5
+           order by embedding <=> $4::vector, created_at desc
+           limit $6`,
+          [q.tenantId, q.groups ?? [], q.episodeType, vector, MIN_EPISODE_SIMILARITY, limit],
+        );
+        return rows.map((r) => ({ ...toItem(r), score: Number(r.score) }));
+      });
+    },
 
     async addEpisode(e) {
-      const vector = await embedOne(e.content);
+      // A lesson's words rarely repeat the next run's input, so the embedding also carries the
+      // input it was learned on. The stored text stays the lesson.
+      const vector = await embedOne(e.situation ? `${e.situation}\n${e.content}` : e.content);
       return tx(e.tenantId, async (db) => {
         // the same lesson from any agent of the tenant strengthens the one already there
         if (e.episodeType === "lesson") {

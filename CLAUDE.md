@@ -13,6 +13,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `packages/sdk` — `defineAgent` (what agent packages are written with), live deps, seeding, agent discovery (ADR 0007)
 - `agents/match-preview` — sample agent: tools, skill, spec, demo data, eval cases
 - `agents/sitemap` — second agent: club brief to import-ready pages plus header menu; ported importer rules, skill, eval cases
+- `agents/matchday` — matchday pack for one fixture: preview plus any of social, push and headline; always-on skill, channel skills loaded with `skill.load`
 - `apps/worker` — runs agents (ADR 0009): claims queued, decided and orphaned runs from Postgres, holds a lease per run, saves its working memory (ADR 0006), writes events to the Valkey stream + Postgres record, hands runs over on SIGTERM; no port; `Dockerfile` for ECS. Also the queue a host uses to hand it runs. Temporal replaces the claiming before production (H7)
 - `apps/cli` — the terminal host for the worker, doing what wnm-fanxp-backend will: queues a run, follows its events, asks at each approval and queues the decision
 
@@ -23,12 +24,13 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `pnpm infra:up` / `infra:down` / `infra:reset` — Postgres+pgvector (:55432) and Valkey (:56379). Tests need these up.
 - `pnpm db:migrate` / `pnpm seed` — apply migrations; load each tenant's house facts (`config/tenants/<tenant>/facts.json`) into memory. Every agent of a tenant reads all of its memory (ADR 0013)
 - `pnpm worker` — runs the agents; `pnpm agent` needs one running. `AGENTS=sitemap` limits it to some agents
-- `pnpm agent` — menu of commands when a terminal is attached; `pnpm agent --help` lists them. `pnpm agent <id> --tenant <tenant> --<input field> <value> [--input json]` queues a run and follows it (flags left off are asked). At an approval, a terminal offers Approve, Reject, or Request a change; a pipe answers `y`, `n`, or the change. Ctrl-C leaves the run going; `pnpm agent attach --run <runId> --tenant <tenant>` (or `--run`) attaches again; `pnpm agent cancel <runId> --tenant <tenant> [--reason <why>]` (or `--cancel`) stops it. `pnpm agent runs --tenant <tenant>` lists recent runs; `pnpm agent agents` lists agents
+- `pnpm agent` — menu of commands when a terminal is attached; `pnpm agent --help` lists them. `pnpm agent <id> --tenant <tenant> --<input field> <value> [--input json]` queues a run and follows it (flags left off are asked). At an approval, a terminal offers Approve, Reject, or Request a change; a pipe answers `y`, `n`, or the change. Ctrl-C leaves the run going; `pnpm agent attach --run <runId> --tenant <tenant>` (or `--run`) attaches again; `pnpm agent cancel <runId> --tenant <tenant> [--reason <why>]` (or `--cancel`) stops it. `pnpm agent runs --tenant <tenant>` lists recent runs; `pnpm agent history [run] --tenant <tenant>` (or `--history`) lists a run's save points; `pnpm agent fork [run] --from <version> --tenant <tenant>` (or `--fork`) starts a new run from one. `pnpm agent agents` lists agents
 - `pnpm preview --tenant demo-cricket --fixture c-101` — `pnpm agent match-preview`
 - `pnpm memory:review --tenant <id>` — approve or reject proposed facts; `--shared` for proposed shared memory
 - `pnpm memory:promote` — propose facts and lessons that several tenants hold as shared memory, for their sport or for every tenant (ADR 0014)
-- `pnpm eval match-preview [--scripted] [--model <name>] [--only id,id]` — eval suite; exits non-zero below the 90% gate (`pnpm eval sitemap` likewise). `--model` runs the agent on another model in `config/models.json`
+- `pnpm eval match-preview [--scripted] [--model <name>] [--only id,id]` — eval suite; exits non-zero below the 90% gate (`pnpm eval sitemap` and `pnpm eval matchday` likewise). `--model` runs the agent on another model in `config/models.json`
 - `pnpm sitemap --tenant demo-cricket --brief "..." [--sport cricket]` — `pnpm agent sitemap`
+- `pnpm matchday --tenant demo-cricket --fixture c-101 [--channel social] [--brief "..."]` — `pnpm agent matchday`
 - `pnpm smoke [--model <name>]` — one minimal live run, on `nova-lite` unless named
 - `pnpm schemas` — write each agent's input and output JSON Schema to `schemas/` for hosts; a test fails when they are out of date
 

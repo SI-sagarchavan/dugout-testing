@@ -32,7 +32,7 @@ None of them queues proposed memories for a person to approve.
   - The tenant comes from the verified run, never from the model. No user-level memory until hosts send a verified user id.
 - **People make facts live.** Agents propose with `memory.propose`; the after-run extractor proposes; only `pnpm memory:review` (or seeding) activates. Proposals are checked against similar facts first, so they arrive as a new key, a new version of an existing key, or not at all.
 - **Two tiers of facts.** Pinned facts are always in the prompt; the rest are searched with `memory.search`.
-- **Episodes reinforce.** A repeat strengthens the existing episode. Retrieval ranks by relevance, recency and importance.
+- **Episodes reinforce.** A repeat strengthens the existing episode. Retrieval is the cosine similarity of the stored embedding to the run input. A lesson's embedding also includes the input of the run that produced it, so a later run with a similar input can find it; the stored text is still the lesson. A lesson below the minimum similarity stays out. At most five lessons and three run records are put in the prompt.
 - **Long runs compact.** Older turns are sent as a summary and recent ones as they are, after a warning. The saved transcript keeps everything, and the notes block survives.
 - **Skills change only by pull request.** A job suggests edits from repeated lessons.
 

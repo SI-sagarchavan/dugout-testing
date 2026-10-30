@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@dugout/agent-match-preview": "workspace:^",
+    "@dugout/agent-matchday": "workspace:^",
     "@dugout/agent-sitemap": "workspace:^",
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",

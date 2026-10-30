@@ -3,13 +3,14 @@
 // no port. AGENTS=sitemap,... limits it to some agents, so an agent can have workers of its own.
 
 import { agent as matchPreview } from "@dugout/agent-match-preview";
+import { agent as matchday } from "@dugout/agent-matchday";
 import { agent as sitemap } from "@dugout/agent-sitemap";
 import { liveDeps } from "@dugout/sdk";
 import { Valkey } from "iovalkey";
 import { createValkeyEventLog, createWorker, hostAgents, LOCAL_VALKEY_URL } from "../src/index.ts";
 
 // every agent a worker can run, by id
-const all = [matchPreview, sitemap];
+const all = [matchPreview, matchday, sitemap];
 const only = process.env.AGENTS?.split(",").map((id) => id.trim());
 const unknown = only?.filter((id) => !all.some((a) => a.spec.id === id)) ?? [];
 if (unknown.length) {

@@ -17,7 +17,6 @@ import {
   type EpisodeType,
   estimateTokens,
   type MemoryStore,
-  rankEpisodes,
 } from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
@@ -187,7 +186,7 @@ describe("episodes", () => {
     ]);
   });
 
-  it("reach every agent of the tenant, each agent's own ranked a little higher", async () => {
+  it("returns the same lessons to every agent, ordered by similarity", async () => {
     await episode(a, "Keep headlines short", 30, randomUUID(), "lesson", "sitemap");
     await episode(a, "Keep headlines tight", 30, randomUUID(), "lesson", AGENT);
     // the same lesson from another agent strengthens the one already there
@@ -196,26 +195,53 @@ describe("episodes", () => {
 
     const recall = (agentId: string) =>
       store.recallEpisodes({ tenantId: a, agentId, query: "headlines", episodeType: "lesson" });
-    expect((await recall(AGENT)).map((l) => l.content)).toEqual([
-      "Keep headlines tight",
-      "Keep headlines short",
-    ]);
+    const forAgent = (await recall(AGENT)).map((l) => l.content);
     const forSitemap = (await recall("sitemap")).map((l) => l.content);
-    expect(forSitemap).toHaveLength(2);
-    expect(forSitemap[0]).toBe("Keep headlines short");
+    expect(forSitemap).toEqual(forAgent);
+    expect(forAgent).toEqual(["Keep headlines tight", "Keep headlines short"]);
   });
 
-  it("rank a recent, strengthened lesson above an older one that matches as well", () => {
-    const now = new Date("2026-10-30T00:00:00Z");
-    const ranked = rankEpisodes(
-      [
-        { id: "old", score: 0.03, strength: 1, lastSeenAt: "2026-07-01T00:00:00Z" },
-        { id: "recent", score: 0.029, strength: 3, lastSeenAt: "2026-10-29T00:00:00Z" },
-        { id: "irrelevant", score: 0.005, strength: 5, lastSeenAt: "2026-10-30T00:00:00Z" },
-      ],
-      { now },
-    );
-    expect(ranked.map((r) => r.id)).toEqual(["recent", "old", "irrelevant"]);
+  it("finds a lesson by the input of the run it was learned on", async () => {
+    const situation = JSON.stringify({ fixtureId: "c-103" });
+    await store.addEpisode({
+      tenantId: a,
+      agentId: AGENT,
+      episodeType: "lesson",
+      content: "Never call a match a clash",
+      situation,
+      confidence: 0.9,
+      sourceRunId: randomUUID(),
+      ttlDays: 30,
+    });
+    await store.addEpisode({
+      tenantId: a,
+      agentId: AGENT,
+      episodeType: "lesson",
+      content: "Include only static pages in the sitemap",
+      situation: JSON.stringify({ brief: "only static pages" }),
+      confidence: 0.9,
+      sourceRunId: randomUUID(),
+      ttlDays: 30,
+    });
+    const found = await store.recallEpisodes({
+      tenantId: a,
+      agentId: AGENT,
+      query: situation,
+      episodeType: "lesson",
+    });
+    expect(found.map((l) => l.content)).toEqual(["Never call a match a clash"]);
+  });
+
+  it("leaves out a lesson whose embedding is not about the query", async () => {
+    await episode(a, "Never use betting language in previews");
+    await episode(a, "Include only static pages in the draft next time.");
+    const found = await store.recallEpisodes({
+      tenantId: a,
+      agentId: AGENT,
+      query: "betting language",
+      episodeType: "lesson",
+    });
+    expect(found.map((l) => l.content)).toEqual(["Never use betting language in previews"]);
   });
 
   it("leave a run record of how each run ended, alongside its lessons", async () => {
@@ -501,6 +527,8 @@ describe("context builder", () => {
     expect(full.text).toContain("## Skill: preview\n\nWrite a preview.");
     expect(full.text).toContain("## Similar past runs");
     expect(full.text).toContain("Input preview headline: completed.");
+    expect(full.sources[0]?.text).toBe("skill preview (loaded in full): Write a preview.");
+    expect(full.sources.find((s) => s.kind === "semantic")?.text).toBe("Fact one about spelling");
     expect(full.sources.map((s) => s.kind)).toEqual([
       "procedural",
       "semantic",

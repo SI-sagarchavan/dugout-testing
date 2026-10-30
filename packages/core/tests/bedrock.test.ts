@@ -425,6 +425,22 @@ describe("bedrock client", () => {
     });
     expect(specs(inputs[1]).some((t) => "strict" in t)).toBe(false);
     expect(strictSchema(tools[1]?.parameters as Record<string, unknown>)).toBeUndefined();
+    // a page tree refers to itself; strict mode rejects that, so the tool goes without
+    expect(
+      strictSchema({
+        type: "object",
+        properties: { pages: { type: "array", items: { $ref: "#/$defs/__schema0" } } },
+        $defs: {
+          __schema0: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              children: { type: "array", items: { $ref: "#/$defs/__schema0" } },
+            },
+          },
+        },
+      }),
+    ).toBeUndefined();
   });
 
   it("turns a service error into an error named for its code", async () => {

@@ -14,7 +14,7 @@ export interface RunContext {
 export interface RunMemoryContext {
   text: string;
   tokens: number;
-  sources: Array<{ id: string; kind: string; tokens: number }>;
+  sources: Array<{ id: string; kind: string; tokens: number; text?: string }>;
 }
 
 export interface ModelStepRequest {

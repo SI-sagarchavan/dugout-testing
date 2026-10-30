@@ -11,6 +11,17 @@ export interface InputFlag {
   required: boolean;
 }
 
+/** One input field, named the way the command line and the prompts show it. */
+export interface InputField extends InputFlag {
+  /** The name used in help. The last alias, or the field name when it has none. */
+  flag: string;
+  /** Every command-line name: the field, then its aliases. */
+  names: readonly string[];
+  description?: string;
+  /** Set when the field is an enum, or a list of one. The prompts offer these. */
+  options?: readonly string[];
+}
+
 /**
  * The command-line flags for an input schema: one per top-level field of a plain type (string,
  * enum, number, boolean, or a list of strings), under its own name and any alias. Other fields
@@ -18,23 +29,60 @@ export interface InputFlag {
  */
 export function inputFlags(schema: z.ZodType, aliases: Record<string, string> = {}) {
   const flags = new Map<string, InputFlag>();
-  if (!(schema instanceof z.ZodObject)) return flags;
-  for (const [field, type] of Object.entries(schema.shape as Record<string, z.ZodType>)) {
-    let inner = type;
-    let required = true;
-    while (inner instanceof z.ZodOptional || inner instanceof z.ZodDefault) {
-      required = false;
-      inner = inner.unwrap() as z.ZodType;
-    }
-    const kind = kindOf(inner);
-    if (!kind || RESERVED.has(field)) continue;
-    flags.set(field, { field, kind, required });
-  }
-  for (const [alias, field] of Object.entries(aliases)) {
-    const flag = flags.get(field);
-    if (flag && !RESERVED.has(alias)) flags.set(alias, flag);
+  for (const field of inputFields(schema, aliases)) {
+    const flag: InputFlag = { field: field.field, kind: field.kind, required: field.required };
+    for (const name of field.names) flags.set(name, flag);
   }
   return flags;
+}
+
+/** One entry per input field, with the description and enum options a prompt or a help screen uses. */
+export function inputFields(schema: z.ZodType, aliases: Record<string, string> = {}): InputField[] {
+  const aliasNames = new Map<string, string[]>();
+  for (const [alias, field] of Object.entries(aliases)) {
+    if (RESERVED.has(alias) || RESERVED.has(field)) continue;
+    const names = aliasNames.get(field) ?? [];
+    names.push(alias);
+    aliasNames.set(field, names);
+  }
+  if (!(schema instanceof z.ZodObject)) return [];
+  const fields: InputField[] = [];
+  for (const [field, type] of Object.entries(schema.shape as Record<string, z.ZodType>)) {
+    if (RESERVED.has(field)) continue;
+    const { inner, required, description } = unwrap(type);
+    const kind = kindOf(inner);
+    if (!kind) continue;
+    const names = [field, ...(aliasNames.get(field) ?? [])];
+    const options = optionsOf(inner);
+    fields.push({
+      field,
+      flag: names.at(-1) ?? field,
+      names,
+      kind,
+      required,
+      ...(description ? { description } : {}),
+      ...(options ? { options } : {}),
+    });
+  }
+  return fields;
+}
+
+/** Walks optional and default wrappers. A default makes the field optional on the command line. */
+function unwrap(type: z.ZodType) {
+  let inner = type;
+  let required = true;
+  let description = described(type);
+  while (inner instanceof z.ZodOptional || inner instanceof z.ZodDefault) {
+    required = false;
+    description = description ?? described(inner);
+    inner = inner.unwrap() as z.ZodType;
+  }
+  return { inner, required, description: description ?? described(inner) };
+}
+
+function described(type: z.ZodType): string | undefined {
+  const description = type.description;
+  return typeof description === "string" && description.trim() ? description : undefined;
 }
 
 function kindOf(type: z.ZodType): InputFlag["kind"] | undefined {
@@ -44,6 +92,15 @@ function kindOf(type: z.ZodType): InputFlag["kind"] | undefined {
   if (type instanceof z.ZodArray) {
     const element = type.element as z.ZodType;
     if (element instanceof z.ZodString || element instanceof z.ZodEnum) return "strings";
+  }
+  return undefined;
+}
+
+function optionsOf(type: z.ZodType): string[] | undefined {
+  if (type instanceof z.ZodEnum) return type.options.map(String);
+  if (type instanceof z.ZodArray) {
+    const element = type.element as z.ZodType;
+    if (element instanceof z.ZodEnum) return element.options.map(String);
   }
   return undefined;
 }
