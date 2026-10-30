@@ -63,7 +63,10 @@ Scale:
 Judge tone and voice only. Do not judge factual accuracy, length or spelling; other checks cover those.`;
 
 /** The sports-copy judge: grades tone against the house style. */
-export function createJudge(client: ModelClient, model: string): Judge {
+/** The model judges score with, whatever model the agent under test runs on. */
+export const JUDGE_MODEL = "nova-lite";
+
+export function createJudge(client: ModelClient, model: string = JUDGE_MODEL): Judge {
   const judge = createModelJudge(client, model, SYSTEM);
   return ({ rubric, styleGuide, text }) =>
     judge(`House style:\n${styleGuide}\n\nRubric:\n${rubric}\n\nCopy to grade:\n${text}`);

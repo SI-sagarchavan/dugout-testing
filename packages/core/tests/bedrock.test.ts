@@ -1,26 +1,73 @@
-import type { Message, ModelRequest, ToolInputDelta } from "@dugout/contracts";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  defineTool,
+  type Message,
+  type ModelRequest,
+  type ToolInputDelta,
+} from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
-import { createBedrockClient } from "../src/index.ts";
+import { z } from "zod";
+import { createBedrockClient, parseModelConfig, runLocal, strictSchema } from "../src/index.ts";
 
-/** Stands in for the SDK client: records each command's input and streams the given events. */
-function fakeRuntime(events: unknown[] | Error) {
+const price = { input: 1, cacheRead: 0.1, output: 2 };
+const models = parseModelConfig({
+  models: {
+    micro: {
+      id: "apac.amazon.nova-micro-v1:0",
+      contextWindow: 128_000,
+      maxOutputTokens: 10_000,
+      price,
+    },
+    "nova-2": {
+      id: "global.amazon.nova-2-lite-v1:0",
+      effort: "medium",
+      contextWindow: 1_000_000,
+      maxOutputTokens: 65_535,
+      price,
+    },
+    "nova-2-high": {
+      id: "global.amazon.nova-2-lite-v1:0",
+      effort: "high",
+      contextWindow: 1_000_000,
+      maxOutputTokens: 65_535,
+      price,
+    },
+    opus: {
+      id: "global.anthropic.claude-opus-5-5",
+      effort: "high",
+      contextWindow: 1_000_000,
+      maxOutputTokens: 128_000,
+      strictTools: true,
+      price,
+    },
+  },
+});
+
+/**
+ * Stands in for the SDK client: records each command's input and streams the given events, the
+ * same ones every call or one list per call.
+ */
+function fakeRuntime(events: unknown[] | unknown[][] | Error) {
   const inputs: Array<Record<string, unknown>> = [];
   const runtime = {
     async send(command: unknown) {
       inputs.push((command as { input: Record<string, unknown> }).input);
       if (events instanceof Error) throw events;
+      const turn = Array.isArray(events[0]) ? (events[inputs.length - 1] as unknown[]) : events;
       return {
         stream: (async function* () {
-          yield* events;
+          yield* turn;
         })(),
       };
     },
   };
-  return { runtime, inputs };
+  return { runtime, inputs, client: createBedrockClient({ runtime, models }) };
 }
 
 const request = (overrides: Partial<ModelRequest> = {}): ModelRequest => ({
-  model: "apac.amazon.nova-micro-v1:0",
+  model: "micro",
   messages: [
     { role: "system", content: "sys" },
     { role: "user", content: "go" },
@@ -38,23 +85,33 @@ const request = (overrides: Partial<ModelRequest> = {}): ModelRequest => ({
 const text = (index: number, value: string) => ({
   contentBlockDelta: { contentBlockIndex: index, delta: { text: value } },
 });
+const thought = (index: number, delta: Record<string, unknown>) => ({
+  contentBlockDelta: { contentBlockIndex: index, delta: { reasoningContent: delta } },
+});
+const ended = (stopReason: string) => ({ messageStop: { stopReason } });
 
 describe("bedrock client", () => {
-  it("streams a text turn and reports the requested model", async () => {
-    const { runtime, inputs } = fakeRuntime([
+  it("streams a text turn, sending the named model's id and output limit", async () => {
+    const { client, inputs } = fakeRuntime([
       { messageStart: { role: "assistant" } },
       text(0, "Hel"),
       text(0, "lo"),
       { contentBlockStop: { contentBlockIndex: 0 } },
-      { messageStop: { stopReason: "end_turn" } },
+      ended("end_turn"),
       { metadata: { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }, metrics: {} } },
     ]);
     const tokens: string[] = [];
-    const turn = await createBedrockClient({ runtime }).complete(request(), (t) => tokens.push(t));
+    const turn = await client.complete(request(), (t) => tokens.push(t));
 
     expect(turn).toEqual({
       message: { role: "assistant", content: "Hello" },
-      tokens: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 5, reasoningTokens: 0 },
+      tokens: {
+        inputTokens: 10,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 0,
+      },
       servedModel: "apac.amazon.nova-micro-v1:0",
       finishReason: "end_turn",
     });
@@ -63,6 +120,7 @@ describe("bedrock client", () => {
       modelId: "apac.amazon.nova-micro-v1:0",
       system: [{ text: "sys" }],
       messages: [{ role: "user", content: [{ text: "go" }] }],
+      inferenceConfig: { maxTokens: 10_000 },
       toolConfig: {
         tools: [
           {
@@ -79,21 +137,57 @@ describe("bedrock client", () => {
     });
   });
 
+  it("refuses a name the model list doesn't have", async () => {
+    const { client } = fakeRuntime([]);
+    await expect(client.complete(request({ model: "gpt" }))).rejects.toThrow(
+      "no model named gpt; the list has micro, nova-2, nova-2-high, opus",
+    );
+  });
+
+  it("sends effort the way each family takes it", async () => {
+    const { client, inputs } = fakeRuntime([ended("end_turn")]);
+    for (const model of ["opus", "nova-2", "nova-2-high", "micro"]) {
+      await client.complete(request({ model }));
+    }
+    const sent = inputs.map(({ outputConfig, additionalModelRequestFields, inferenceConfig }) => ({
+      outputConfig,
+      additionalModelRequestFields,
+      inferenceConfig,
+    }));
+    expect(sent).toEqual([
+      { outputConfig: { effort: "high" }, inferenceConfig: { maxTokens: 128_000 } },
+      {
+        additionalModelRequestFields: {
+          reasoningConfig: { type: "enabled", maxReasoningEffort: "medium" },
+        },
+        inferenceConfig: { maxTokens: 65_535 },
+      },
+      // Nova 2 refuses maxTokens at high effort
+      {
+        additionalModelRequestFields: {
+          reasoningConfig: { type: "enabled", maxReasoningEffort: "high" },
+        },
+        inferenceConfig: {},
+      },
+      { inferenceConfig: { maxTokens: 10_000 } },
+    ]);
+  });
+
   it("assembles a tool call streamed in fragments, back under its dotted name", async () => {
-    const { runtime } = fakeRuntime([
+    const { client } = fakeRuntime([
       { messageStart: { role: "assistant" } },
-      { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: "hmm" } } } },
-      text(0, "Saving"),
+      thought(0, { text: "hmm" }),
+      text(1, "Saving"),
       {
         contentBlockStart: {
-          contentBlockIndex: 1,
+          contentBlockIndex: 2,
           start: { toolUse: { toolUseId: "t2", name: "draft__save" } },
         },
       },
-      { contentBlockDelta: { contentBlockIndex: 1, delta: { toolUse: { input: '{"te' } } } },
-      { contentBlockDelta: { contentBlockIndex: 1, delta: { toolUse: { input: 'xt":"hi"}' } } } },
-      { contentBlockStop: { contentBlockIndex: 1 } },
-      { messageStop: { stopReason: "tool_use" } },
+      { contentBlockDelta: { contentBlockIndex: 2, delta: { toolUse: { input: '{"te' } } } },
+      { contentBlockDelta: { contentBlockIndex: 2, delta: { toolUse: { input: 'xt":"hi"}' } } } },
+      { contentBlockStop: { contentBlockIndex: 2 } },
+      ended("tool_use"),
       {
         metadata: {
           usage: {
@@ -101,6 +195,7 @@ describe("bedrock client", () => {
             outputTokens: 25,
             totalTokens: 125,
             cacheReadInputTokens: 60,
+            cacheWriteInputTokens: 20,
           },
           metrics: {},
           trace: { promptRouter: { invokedModelId: "arn:aws:bedrock:nova-lite" } },
@@ -109,12 +204,13 @@ describe("bedrock client", () => {
     ]);
     const tokens: string[] = [];
     const deltas: ToolInputDelta[] = [];
-    const turn = await createBedrockClient({ runtime }).complete(
+    const turn = await client.complete(
       request(),
       (t) => tokens.push(t),
       (d) => deltas.push(d),
     );
 
+    // reasoning with no signature is kept to read, but can't go back to the model
     expect(turn.message).toEqual({
       role: "assistant",
       content: "Saving",
@@ -127,10 +223,11 @@ describe("bedrock client", () => {
       { index: 0, callId: "t2", tool: "draft.save", text: '{"te' },
       { index: 0, callId: "t2", tool: "draft.save", text: 'xt":"hi"}' },
     ]);
-    // cache reads count as input, as in TokenUsage
+    // cache reads and writes count as input, as in TokenUsage
     expect(turn.tokens).toEqual({
-      inputTokens: 100,
+      inputTokens: 120,
       cachedInputTokens: 60,
+      cacheWriteInputTokens: 20,
       outputTokens: 25,
       reasoningTokens: 0,
     });
@@ -138,83 +235,302 @@ describe("bedrock client", () => {
     expect(turn.finishReason).toBe("tool_use");
   });
 
+  it("keeps signed and encrypted reasoning blocks in order, to send back", async () => {
+    const { client } = fakeRuntime([
+      thought(0, { text: "Look up " }),
+      thought(0, { text: "the fixture." }),
+      thought(0, { signature: "sig-1" }),
+      thought(1, { redactedContent: new Uint8Array([1, 2, 3]) }),
+      text(2, "Done"),
+      ended("end_turn"),
+    ]);
+    const turn = await client.complete(request({ model: "opus" }));
+    expect(turn.message).toEqual({
+      role: "assistant",
+      content: "Done",
+      reasoning: "Look up the fixture.",
+      reasoningBlocks: [{ text: "Look up the fixture.", signature: "sig-1" }, { redacted: "AQID" }],
+    });
+  });
+
   it("reports zero usage when the stream has none, and {} for a tool with no input", async () => {
-    const { runtime } = fakeRuntime([
+    const { client } = fakeRuntime([
       {
         contentBlockStart: {
           contentBlockIndex: 0,
           start: { toolUse: { toolUseId: "t1", name: "run__readOutput" } },
         },
       },
-      { messageStop: { stopReason: "tool_use" } },
+      ended("tool_use"),
     ]);
-    const turn = await createBedrockClient({ runtime }).complete(request());
+    const turn = await client.complete(request());
     expect(turn.message.toolCalls).toEqual([{ id: "t1", name: "run.readOutput", arguments: "{}" }]);
     expect(turn.tokens).toEqual({
       inputTokens: 0,
       cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
       outputTokens: 0,
       reasoningTokens: 0,
     });
   });
 
-  it("sends tool calls and results back as Converse blocks, in alternating turns", async () => {
-    const { runtime, inputs } = fakeRuntime([{ messageStop: { stopReason: "end_turn" } }]);
-    const messages: Message[] = [
-      { role: "system", content: "sys" },
-      { role: "user", content: "go" },
-      {
-        role: "assistant",
-        content: "",
-        reasoning: "never replayed",
-        toolCalls: [
-          { id: "t1", name: "fixtures.get", arguments: '{"id":"f1"}' },
-          { id: "t2", name: "team.stats", arguments: "not json" },
-        ],
-      },
-      { role: "tool", toolCallId: "t1", content: '{"home":"Lions"}' },
-      { role: "tool", toolCallId: "t2", content: "" },
-      { role: "user", content: "Change the title" },
-    ];
-    await createBedrockClient({ runtime }).complete(request({ messages }));
+  const toolTurns: Message[] = [
+    { role: "system", content: "sys" },
+    { role: "user", content: "go" },
+    {
+      role: "assistant",
+      content: "",
+      reasoning: "Fetch both.",
+      reasoningBlocks: [{ text: "Fetch both.", signature: "sig-1" }, { redacted: "AQID" }],
+      toolCalls: [
+        { id: "t1", name: "fixtures.get", arguments: '{"id":"f1"}' },
+        { id: "t2", name: "team.stats", arguments: "not json" },
+      ],
+    },
+    { role: "tool", toolCallId: "t1", content: '{"home":"Lions"}' },
+    { role: "tool", toolCallId: "t2", content: "" },
+    { role: "user", content: "Change the title" },
+  ];
+  const calls = [
+    { toolUse: { toolUseId: "t1", name: "fixtures__get", input: { id: "f1" } } },
+    { toolUse: { toolUseId: "t2", name: "team__stats", input: {} } },
+  ];
+  const results = {
+    role: "user",
+    content: [
+      { toolResult: { toolUseId: "t1", content: [{ text: '{"home":"Lions"}' }] } },
+      { toolResult: { toolUseId: "t2", content: [{ text: "(empty)" }] } },
+      { text: "Change the title" },
+    ],
+  };
 
+  it("sends tool calls and results back as Converse blocks, in alternating turns", async () => {
+    const { client, inputs } = fakeRuntime([ended("end_turn")]);
+    await client.complete(request({ messages: toolTurns }));
+    // Nova is never sent reasoning back
+    expect(inputs[0]?.messages).toEqual([
+      { role: "user", content: [{ text: "go" }] },
+      { role: "assistant", content: calls },
+      results,
+    ]);
+  });
+
+  it("sends Claude its signed reasoning back first in the turn, unchanged", async () => {
+    const { client, inputs } = fakeRuntime([ended("end_turn")]);
+    await client.complete(request({ model: "opus", messages: toolTurns, tools: [] }));
     expect(inputs[0]?.messages).toEqual([
       { role: "user", content: [{ text: "go" }] },
       {
         role: "assistant",
         content: [
-          { toolUse: { toolUseId: "t1", name: "fixtures__get", input: { id: "f1" } } },
-          { toolUse: { toolUseId: "t2", name: "team__stats", input: {} } },
+          { reasoningContent: { reasoningText: { text: "Fetch both.", signature: "sig-1" } } },
+          { reasoningContent: { redactedContent: Buffer.from([1, 2, 3]) } },
+          ...calls,
         ],
+      },
+      results,
+    ]);
+  });
+
+  it("puts cache points after the system prompt and at the end of the newest turn that takes one", async () => {
+    const { client, inputs } = fakeRuntime([ended("end_turn")]);
+    const point = { cachePoint: { type: "default" } };
+    await client.complete(request({ model: "opus", messages: toolTurns, cache: true }));
+    await client.complete(request({ messages: toolTurns, cache: true }));
+    await client.complete(request({ messages: toolTurns }));
+
+    // Claude: any turn
+    expect(inputs[0]?.system).toEqual([{ text: "sys" }, point]);
+    expect((inputs[0]?.messages as unknown[] | undefined)?.at(-1)).toEqual({
+      ...results,
+      content: [...results.content, point],
+    });
+    // Nova: only a turn of text alone, here the first
+    expect(inputs[1]?.system).toEqual([{ text: "sys" }, point]);
+    expect(inputs[1]?.messages).toEqual([
+      { role: "user", content: [{ text: "go" }, point] },
+      { role: "assistant", content: calls },
+      results,
+    ]);
+    // none unless asked
+    expect(JSON.stringify(inputs[2])).not.toContain("cachePoint");
+  });
+
+  it("sends strict tools to a model that takes them, with every object closed", async () => {
+    const { client, inputs } = fakeRuntime([ended("end_turn")]);
+    const tools = [
+      {
+        name: "page.add",
+        description: "Adds a page",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", minLength: 1, maxLength: 60 },
+            // a property named like a keyword is kept
+            minLength: { type: "number", minimum: 0 },
+            sections: {
+              type: "array",
+              minItems: 1,
+              items: { type: "object", properties: { id: { type: "string" } } },
+            },
+          },
+          required: ["title"],
+        },
       },
       {
-        role: "user",
-        content: [
-          { toolResult: { toolUseId: "t1", content: [{ text: '{"home":"Lions"}' }] } },
-          { toolResult: { toolUseId: "t2", content: [{ text: "(empty)" }] } },
-          { text: "Change the title" },
-        ],
+        name: "meta.set",
+        description: "Sets any keys",
+        parameters: {
+          type: "object",
+          properties: { values: { type: "object", additionalProperties: { type: "string" } } },
+        },
       },
-    ]);
+    ];
+    await client.complete(request({ model: "opus", tools }));
+    await client.complete(request({ tools }));
+
+    type Sent = { toolConfig: { tools: Array<{ toolSpec: Record<string, unknown> }> } };
+    const specs = (input?: Record<string, unknown>) =>
+      (input as Sent).toolConfig.tools.map((t) => t.toolSpec);
+    const [page, meta] = specs(inputs[0]);
+    expect(page).toEqual({
+      name: "page__add",
+      description: "Adds a page",
+      inputSchema: {
+        json: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            minLength: { type: "number" },
+            sections: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: { id: { type: "string" } },
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["title"],
+          additionalProperties: false,
+        },
+      },
+      strict: true,
+    });
+    // an open object (a record) can't be strict, so that tool goes without
+    expect(meta).toEqual({
+      name: "meta__set",
+      description: "Sets any keys",
+      inputSchema: { json: tools[1]?.parameters },
+    });
+    expect(specs(inputs[1]).some((t) => "strict" in t)).toBe(false);
+    expect(strictSchema(tools[1]?.parameters as Record<string, unknown>)).toBeUndefined();
   });
 
   it("turns a service error into an error named for its code", async () => {
     const denied = Object.assign(new Error("The provided model identifier is invalid."), {
       name: "ValidationException",
     });
-    const { runtime } = fakeRuntime(denied);
-    await expect(createBedrockClient({ runtime }).complete(request())).rejects.toThrow(
+    const { client } = fakeRuntime(denied);
+    await expect(client.complete(request())).rejects.toThrow(
       "Bedrock ValidationException: The provided model identifier is invalid.",
     );
   });
 
   it("fails on an error event in the stream", async () => {
-    const { runtime } = fakeRuntime([
+    const { client } = fakeRuntime([
       text(0, "Hel"),
       { throttlingException: { name: "ThrottlingException", message: "Too many requests" } },
     ]);
-    await expect(createBedrockClient({ runtime }).complete(request())).rejects.toThrow(
+    await expect(client.complete(request())).rejects.toThrow(
       "Bedrock ThrottlingException: Too many requests",
     );
   });
 });
+
+describe("a run on Claude", () => {
+  it("replays signed reasoning across a tool call, unchanged and with the transcript append-only", async () => {
+    const call = (id: string, name: string, input: string, index: number) => [
+      {
+        contentBlockStart: {
+          contentBlockIndex: index,
+          start: { toolUse: { toolUseId: id, name } },
+        },
+      },
+      { contentBlockDelta: { contentBlockIndex: index, delta: { toolUse: { input } } } },
+    ];
+    const { runtime, inputs } = fakeRuntime([
+      [
+        thought(0, { text: "Need the fixture first." }),
+        thought(0, { signature: "sig-1" }),
+        ...call("t1", "fixture__get", '{"id":"f-1"}', 1),
+        ended("tool_use"),
+      ],
+      [
+        thought(0, { text: "Now the headline." }),
+        thought(0, { signature: "sig-2" }),
+        ...call("t2", "final", '{"headline":"Lions host Tigers"}', 1),
+        ended("tool_use"),
+      ],
+    ]);
+    const fixtureGet = defineTool({
+      name: "fixture.get",
+      description: "Look up a fixture.",
+      input: z.object({ id: z.string() }),
+      effect: "read",
+      timeoutMs: 1_000,
+      run: async () => ({ home: "Lions", away: "Tigers" }),
+    });
+    const result = await runLocal({
+      agent: {
+        spec: {
+          id: "headline",
+          version: 1,
+          owner: "test",
+          instructions: "Look up the fixture, then call final with a headline.",
+          tools: ["fixture.get"],
+          skills: [],
+          onDemandSkills: [],
+          model: "opus",
+          memory: { read: [], write: [] },
+          budget: { usdPerRun: 1, maxSteps: 4, maxDepth: 0 },
+          approvals: [],
+        },
+        output: z.object({ headline: z.string() }),
+      },
+      input: "f-1",
+      tenantId: "t",
+      tools: [fixtureGet],
+      client: createBedrockClient({ runtime, models }),
+      models,
+      approver: async () => ({ approved: true, by: "test" }),
+      runsDir: await mkdtemp(join(tmpdir(), "bedrock-run-")),
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      output: { headline: "Lions host Tigers" },
+    });
+    const [first, second] = inputs as Array<{ messages: Array<{ content: unknown[] }> }>;
+    // the second request starts with the first one's messages, unchanged
+    expect(second?.messages.slice(0, 1)).toEqual(
+      first?.messages.map((m) => ({ ...m, content: m.content.filter((b) => !isCachePoint(b)) })),
+    );
+    expect(second?.messages[1]).toEqual({
+      role: "assistant",
+      content: [
+        {
+          reasoningContent: {
+            reasoningText: { text: "Need the fixture first.", signature: "sig-1" },
+          },
+        },
+        { toolUse: { toolUseId: "t1", name: "fixture__get", input: { id: "f-1" } } },
+      ],
+    });
+    // a run asks for the cache; only the newest turn carries the moving cache point
+    expect(second?.messages[2]?.content.at(-1)).toEqual({ cachePoint: { type: "default" } });
+  });
+});
+
+const isCachePoint = (block: unknown) =>
+  typeof block === "object" && block !== null && "cachePoint" in block;

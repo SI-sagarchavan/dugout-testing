@@ -29,7 +29,7 @@ export const spec: AgentSpec = {
   tools: ["pages.catalog", "sitemap.validate", "sitemap.save", "memory.search", "memory.propose"],
   skills: ["sitemap"],
   onDemandSkills: [],
-  model: { tier: "smart" },
+  model: "nova-lite",
   memory: { read: ["procedural", "semantic"], write: ["semantic"] },
   budget: { usdPerRun: 0.15, maxSteps: 20, maxDepth: 0 },
   approvals: ["effect:write"],

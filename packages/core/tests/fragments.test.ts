@@ -30,7 +30,13 @@ const choppy: ModelClient = {
           { id: "c2", name: "draft.save", arguments: "{}" },
         ],
       },
-      tokens: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, reasoningTokens: 0 },
+      tokens: {
+        inputTokens: 1,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 1,
+        reasoningTokens: 0,
+      },
       servedModel: "choppy",
       finishReason: "tool_calls",
     };
@@ -54,7 +60,7 @@ describe("streamed fragments", () => {
       fragmentMs: 10,
     });
 
-    await steps.model({ step: 1, tier: "smart", messages: [], tools: [] });
+    await steps.model({ step: 1, model: "nova-lite", messages: [], tools: [] });
 
     // the first batch after 10 ms, the late fragment flushed when the call returned
     expect(sink.events.map((e) => [e.type, "text" in e.data ? e.data.text : ""])).toEqual([

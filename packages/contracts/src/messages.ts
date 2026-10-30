@@ -12,10 +12,21 @@ export type ToolCall = z.infer<typeof ToolCall>;
 
 export const SystemMessage = z.object({ role: z.literal("system"), content: z.string() });
 export const UserMessage = z.object({ role: z.literal("user"), content: z.string() });
+/**
+ * A block of reasoning as the model signed it: the text with its signature, or content the
+ * provider encrypted (base64). Sent back to the model unchanged on later turns.
+ */
+export const ReasoningBlock = z.union([
+  z.object({ text: z.string(), signature: z.string() }),
+  z.object({ redacted: z.string() }),
+]);
+export type ReasoningBlock = z.infer<typeof ReasoningBlock>;
+
 export const AssistantMessage = z.object({
   role: z.literal("assistant"),
   content: z.string(),
-  reasoning: z.string().optional(), // thinking output, kept in the transcript; never sent back
+  reasoning: z.string().optional(), // thinking text, for people to read
+  reasoningBlocks: z.array(ReasoningBlock).optional(), // what the model gets back, when it signs
   toolCalls: z.array(ToolCall).optional(),
 });
 export const ToolMessage = z.object({

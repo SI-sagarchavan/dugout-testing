@@ -23,7 +23,7 @@ After ADR 0013, memory belonged to tenants and the only knowledge every tenant s
   3. A model rewrites the group as one sentence naming no tenant. It replies NONE when the items describe each client, only share a topic, or set different values for the same thing.
   4. Code rejects any rewrite that names a tenant.
   5. Items already promoted are never proposed again.
-- **The promotion model.** It is `in.anthropic.claude-sonnet-5` by default (`MEMORY_PROMOTE_MODEL`), which keeps tenant data in India. In tests on 2026-10-30, Nova Lite confused a club's own facts with shared rules; Sonnet 5 got every case right in 12 runs.
+- **The promotion model.** It is `sonnet-india` (`in.anthropic.claude-sonnet-5`) by default (`MEMORY_PROMOTE_MODEL`, a name in the model list of ADR 0015), which keeps tenant data in India. In tests on 2026-10-30, Nova Lite confused a club's own facts with shared rules; Sonnet 5 got every case right in 12 runs.
 - **A person approves every shared item** with `pnpm memory:review --shared`, which shows the tenant items it came from.
 
 ## Consequences

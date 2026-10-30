@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BEDROCK_PRICING, createRedactor, policyViolation, priceTokens } from "../src/index.ts";
+import { createRedactor, policyViolation, priceTokens } from "../src/index.ts";
 
 describe("redactor", () => {
   const redact = createRedactor();
@@ -50,32 +50,28 @@ describe("policyViolation", () => {
 });
 
 describe("pricing", () => {
+  const nova = { input: 0.041, cacheRead: 0.01025, output: 0.164 };
   const tokens = {
     inputTokens: 1_000_000,
     cachedInputTokens: 500_000,
+    cacheWriteInputTokens: 0,
     outputTokens: 100_000,
     reasoningTokens: 0,
   };
 
-  it("prices cache hits, misses and output at the list rate", () => {
-    const cost = priceTokens(BEDROCK_PRICING, "apac.amazon.nova-micro-v1:0", tokens, new Date());
-    // 0.5M hits * 0.01025 + 0.5M misses * 0.041 + 0.1M out * 0.164 = 0.005125 + 0.0205 + 0.0164
+  it("prices cache reads, uncached input and output", () => {
+    const cost = priceTokens(nova, tokens);
+    // 0.5M read * 0.01025 + 0.5M uncached * 0.041 + 0.1M out * 0.164 = 0.005125 + 0.0205 + 0.0164
     expect(cost.costUsd).toBeCloseTo(0.042025);
-    expect(cost.budgetCostUsd).toBeCloseTo(0.042025);
+    expect(cost.budgetCostUsd).toBe(cost.costUsd);
   });
 
-  it("charges the rate at the time of the call, but budgets at list", () => {
-    const halfAfterNoon = {
-      ...BEDROCK_PRICING,
-      rateAt: (at: Date) => (at.getUTCHours() >= 12 ? 0.5 : 1),
-    };
-    const at = new Date("2026-10-30T13:00:00Z");
-    const cost = priceTokens(halfAfterNoon, "apac.amazon.nova-micro-v1:0", tokens, at);
-    expect(cost.costUsd).toBeCloseTo(0.0210125);
-    expect(cost.budgetCostUsd).toBeCloseTo(0.042025);
-  });
-
-  it("refuses to price an unknown model", () => {
-    expect(() => priceTokens(BEDROCK_PRICING, "mystery", tokens, new Date())).toThrow("no price");
+  it("prices cache writes at their own price, or at the input price when there is none", () => {
+    const sonnet = { input: 2, cacheRead: 0.1, cacheWrite: 2.5, output: 10 };
+    const written = { ...tokens, cachedInputTokens: 0, cacheWriteInputTokens: 400_000 };
+    // 0.6M uncached * 2 + 0.4M written * 2.5 + 0.1M out * 10 = 1.2 + 1 + 1
+    expect(priceTokens(sonnet, written).costUsd).toBeCloseTo(3.2);
+    // 0.6M * 0.041 + 0.4M * 0.041 + 0.1M * 0.164
+    expect(priceTokens(nova, written).costUsd).toBeCloseTo(0.041 + 0.0164);
   });
 });

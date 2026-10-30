@@ -1,0 +1,78 @@
+{
+  "$comment": "Models a spec can name. Prices are USD per 1M tokens, on-demand in ap-south-1, from the AWS Price List API (AmazonBedrock offer published 2026-10-29 for Nova; AmazonBedrockFoundationModels offer published 2026-10-12 for Claude; checked 2026-10-30). Output limits were tried on si-main on 2026-10-30. `global.*` profiles may process in any commercial region; `in.*` stays in India.",
+  "models": {
+    "nova-micro": {
+      "id": "apac.amazon.nova-micro-v1:0",
+      "contextWindow": 128000,
+      "maxOutputTokens": 10000,
+      "price": { "input": 0.041, "cacheRead": 0.01025, "output": 0.164 }
+    },
+    "nova-lite": {
+      "id": "apac.amazon.nova-lite-v1:0",
+      "contextWindow": 300000,
+      "maxOutputTokens": 10000,
+      "price": { "input": 0.071, "cacheRead": 0.01775, "output": 0.284 }
+    },
+    "nova-pro": {
+      "id": "apac.amazon.nova-pro-v1:0",
+      "contextWindow": 300000,
+      "maxOutputTokens": 10000,
+      "price": { "input": 0.94, "cacheRead": 0.235, "output": 3.76 }
+    },
+    "nova-2-lite": {
+      "id": "global.amazon.nova-2-lite-v1:0",
+      "effort": "low",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 65535,
+      "price": { "input": 0.35, "cacheRead": 0.0875, "cacheWrite": 0, "output": 2.95 }
+    },
+    "haiku": {
+      "id": "global.anthropic.claude-haiku-5-5",
+      "effort": "low",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "strictTools": true,
+      "price": { "input": 0.1, "cacheRead": 0.01, "cacheWrite": 0.125, "output": 0.5 }
+    },
+    "sonnet": {
+      "id": "global.anthropic.claude-sonnet-5-5",
+      "effort": "medium",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "strictTools": true,
+      "price": { "input": 2, "cacheRead": 0.1, "cacheWrite": 2.5, "output": 10 }
+    },
+    "sonnet-deep": {
+      "id": "global.anthropic.claude-sonnet-5-5",
+      "effort": "high",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "strictTools": true,
+      "price": { "input": 2, "cacheRead": 0.1, "cacheWrite": 2.5, "output": 10 }
+    },
+    "opus": {
+      "id": "global.anthropic.claude-opus-5-5",
+      "effort": "high",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "strictTools": true,
+      "price": { "input": 4, "cacheRead": 0.2, "cacheWrite": 5, "output": 20 }
+    },
+    "sonnet-india": {
+      "id": "in.anthropic.claude-sonnet-5",
+      "effort": "medium",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "strictTools": true,
+      "price": { "input": 2.2, "cacheRead": 0.22, "cacheWrite": 2.75, "output": 11 }
+    },
+    "opus-india": {
+      "id": "in.anthropic.claude-opus-5",
+      "effort": "high",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "strictTools": true,
+      "price": { "input": 5.5, "cacheRead": 0.55, "cacheWrite": 6.875, "output": 27.5 }
+    }
+  }
+}

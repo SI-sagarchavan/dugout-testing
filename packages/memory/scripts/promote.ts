@@ -17,7 +17,7 @@ const { values } = parseArgs({ options: { "min-tenants": { type: "string" } } })
 const pool = createPool(adminDatabaseUrl());
 // Nova Lite failed to tell a club's own facts from a shared instruction in tests on 2026-10-30;
 // Claude Sonnet 5 told them apart every time, and its India profile keeps tenant data in India
-const model = process.env.MEMORY_PROMOTE_MODEL || "in.anthropic.claude-sonnet-5";
+const model = process.env.MEMORY_PROMOTE_MODEL || "sonnet-india";
 try {
   const { proposed, skipped } = await promoteSharedMemory({
     shared: createSharedMemory({ pool, embeddings: loadEmbeddings() }),

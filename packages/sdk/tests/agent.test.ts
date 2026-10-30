@@ -3,7 +3,13 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineTool, type RunEvent } from "@dugout/contracts";
-import { createMemorySink, createScriptedModel, scriptedModelConfig } from "@dugout/core";
+import {
+  createBedrockClient,
+  createMemorySink,
+  createScriptedModel,
+  loadModelConfig,
+  scriptedModelConfig,
+} from "@dugout/core";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
@@ -51,7 +57,7 @@ const notes = (extra: { tools?: string[]; onDemandSkills?: string[] } = {}) =>
       tools: ["notes.save", ...(extra.tools ?? [])],
       skills: ["notes"],
       onDemandSkills: extra.onDemandSkills ?? [],
-      model: { tier: "smart" },
+      model: "nova-lite",
       memory: { read: ["procedural", "semantic"], write: [] },
       budget: { usdPerRun: 1, maxSteps: 5, maxDepth: 0 },
       approvals: ["effect:write"],
@@ -180,6 +186,87 @@ describe("defineAgent", () => {
       approver: async () => ({ approved: true, by: "editor" }),
     });
     expect(asked).toContainEqual([tenant, ["swimming"]]);
+  });
+
+  it("runs two agents on two named models through one client, each with its model's id and effort", async () => {
+    // stands in for Bedrock: every call ends the run through `final`
+    const sent: Array<Record<string, unknown>> = [];
+    const runtime = {
+      async send(command: unknown) {
+        sent.push((command as { input: Record<string, unknown> }).input);
+        const start = { toolUse: { toolUseId: `t${sent.length}`, name: "final" } };
+        const input = '{"title":"Opener"}';
+        return {
+          stream: (async function* () {
+            yield { contentBlockStart: { contentBlockIndex: 0, start } };
+            yield { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input } } } };
+            yield { messageStop: { stopReason: "tool_use" } };
+          })(),
+        };
+      },
+    };
+    const models = loadModelConfig();
+    const deps = {
+      store,
+      client: createBedrockClient({ runtime, models }),
+      models,
+      runsDir: await mkdtemp(join(tmpdir(), "runs-")),
+      consolidate: false,
+      notesDir: dir,
+    };
+    for (const model of ["opus", "nova-2-lite"]) {
+      const agent = defineAgent({
+        spec: { ...notes().spec, tools: [], model },
+        input: z.object({ topic: z.string() }),
+        output: z.object({ title: z.string() }),
+        dir,
+        tools: () => [],
+      });
+      const result = await agent.create(deps)({
+        tenantId: tenant,
+        input: { topic: "the opener" },
+        approver: async () => ({ approved: true, by: "editor" }),
+      });
+      expect(result.status).toBe("completed");
+    }
+
+    const [opus, nova] = sent;
+    expect(opus).toMatchObject({
+      modelId: "global.anthropic.claude-opus-5-5",
+      outputConfig: { effort: "high" },
+      inferenceConfig: { maxTokens: 128_000 },
+    });
+    expect(opus).not.toHaveProperty("additionalModelRequestFields");
+    expect(nova).toMatchObject({
+      modelId: "global.amazon.nova-2-lite-v1:0",
+      additionalModelRequestFields: {
+        reasoningConfig: { type: "enabled", maxReasoningEffort: "low" },
+      },
+      inferenceConfig: { maxTokens: 65_535 },
+    });
+    expect(nova).not.toHaveProperty("outputConfig");
+  });
+
+  it("runs on another model when the host names one, and refuses a name the list doesn't have", async () => {
+    const client = script();
+    const run = notes().create({
+      store,
+      client,
+      models: scriptedModelConfig(),
+      model: "haiku",
+      runsDir: await mkdtemp(join(tmpdir(), "runs-")),
+      consolidate: false,
+      notesDir: await mkdtemp(join(tmpdir(), "notes-")),
+    });
+    await run({
+      tenantId: tenant,
+      input: { topic: "the opener" },
+      approver: async () => ({ approved: true, by: "editor" }),
+    });
+    expect(client.requests.map((r) => r.model)).toEqual(["haiku", "haiku"]);
+    expect(() =>
+      notes().create({ store, client, models: scriptedModelConfig(), model: "gpt", notesDir: dir }),
+    ).toThrow("no model named gpt");
   });
 
   it("needs skill.load for skills on demand, and each skill in one list only", () => {

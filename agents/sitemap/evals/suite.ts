@@ -15,6 +15,7 @@ import {
   type EvalSuite,
   endedGracefully,
   type Grade,
+  JUDGE_MODEL,
   writesGated,
 } from "@dugout/evals";
 import type { MemoryStore } from "@dugout/memory";
@@ -54,7 +55,8 @@ type Tenant = keyof typeof RULES;
 
 export interface SuiteOptions {
   mode: "live" | "scripted";
-  fast?: boolean;
+  /** Runs the agent on this model instead of its spec's. */
+  model?: string;
   store: MemoryStore;
   runsDir: string;
 }
@@ -68,10 +70,9 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
   let judge: FitJudge | undefined;
   if (live) {
     models = loadModelConfig();
-    if (opts.fast) models.tiers.smart = models.tiers.fast;
-    client = createBedrockClient();
-    // the judge always uses the smart tier's model, so --fast doesn't change how sitemaps are scored
-    judge = createFitJudge(client, loadModelConfig().tiers.smart.model);
+    client = createBedrockClient({ models });
+    // the judge keeps its own model, so --model doesn't change how sitemaps are scored
+    judge = createFitJudge(client, JUDGE_MODEL);
   } else {
     models = scriptedModelConfig();
   }
@@ -96,6 +97,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
       store: opts.store,
       client: client ?? scriptedWriter(tenant, c),
       models,
+      ...(opts.model ? { model: opts.model } : {}),
       runsDir: opts.runsDir,
       // cases run in parallel, so each gets its own folder rather than sharing the tenant's
       sitemapsDir: join(opts.runsDir, "sitemaps", randomUUID()),

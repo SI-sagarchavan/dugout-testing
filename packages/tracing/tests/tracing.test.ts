@@ -36,7 +36,7 @@ describe("tracing sink", () => {
           tools: ["draft.save"],
           skills: [],
           onDemandSkills: [],
-          model: { tier: "fast" },
+          model: "nova-micro",
           memory: { read: [], write: [] },
           budget: { usdPerRun: 1, maxSteps: 4, maxDepth: 0 },
           approvals: [],
@@ -80,7 +80,7 @@ describe("tracing sink", () => {
     expect(step?.attributes).toMatchObject({
       "langfuse.observation.type": "generation",
       "gen_ai.usage.input_tokens": 1000,
-      "gen_ai.response.model": "scripted-fast",
+      "gen_ai.response.model": "nova-micro",
     });
     expect(spans.find((s) => s.name === "approval draft.save")?.attributes).toMatchObject({
       "dugout.approver": "editor",
@@ -98,7 +98,7 @@ describe("tracing sink", () => {
       tools: ["draft.save"],
       skills: [],
       onDemandSkills: [],
-      model: { tier: "fast" as const },
+      model: "nova-micro",
       memory: { read: [], write: [] },
       budget: { usdPerRun: 1, maxSteps: 4, maxDepth: 0 },
       approvals: [],

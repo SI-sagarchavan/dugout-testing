@@ -128,6 +128,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         usage: {
           inputTokens: 0,
           cachedInputTokens: 0,
+          cacheWriteInputTokens: 0,
           outputTokens: 0,
           reasoningTokens: 0,
           costUsd: 0,
@@ -387,7 +388,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           return fail("max_steps", `no result after ${spec.budget.maxSteps} steps`);
         }
         const step = state.step + 1;
-        const turn = await steps.model({ step, tier: spec.model.tier, messages, tools });
+        const turn = await steps.model({ step, model: spec.model, messages, tools });
         state.step = step;
         addUsage(usage, turn.usage);
         messages.push(turn.message);
@@ -513,6 +514,7 @@ function parseFinal(
 function addUsage(total: RunUsage, step: StepUsage): void {
   total.inputTokens += step.inputTokens;
   total.cachedInputTokens += step.cachedInputTokens;
+  total.cacheWriteInputTokens += step.cacheWriteInputTokens;
   total.outputTokens += step.outputTokens;
   total.reasoningTokens += step.reasoningTokens;
   total.costUsd += step.costUsd;

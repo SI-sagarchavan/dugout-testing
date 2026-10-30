@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { AssistantMessage, Message } from "./messages.ts";
 
-export const ModelTier = z.enum(["fast", "smart"]);
-export type ModelTier = z.infer<typeof ModelTier>;
+/** How hard a model thinks before it answers; which levels a model takes depends on its family. */
+export const Effort = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export type Effort = z.infer<typeof Effort>;
 
 /** A tool as the model sees it: name, description and a JSON schema for its arguments. */
 export interface ToolDefinition {
@@ -12,8 +13,9 @@ export interface ToolDefinition {
 }
 
 export const TokenUsage = z.object({
-  inputTokens: z.number(),
-  cachedInputTokens: z.number(),
+  inputTokens: z.number(), // includes cache reads and writes
+  cachedInputTokens: z.number(), // read from the prompt cache
+  cacheWriteInputTokens: z.number().default(0), // written to the prompt cache
   outputTokens: z.number(), // includes reasoning tokens
   reasoningTokens: z.number(),
 });
@@ -26,16 +28,19 @@ export const StepUsage = TokenUsage.extend({
 export type StepUsage = z.infer<typeof StepUsage>;
 
 export interface ModelRequest {
+  /** A name in the model list (`config/models.json`); the client sends its id, effort and limits. */
   model: string;
   messages: Message[];
   tools: ToolDefinition[];
+  /** Mark the prompt for the provider's cache, for a conversation that goes on for more turns. */
+  cache?: boolean;
   signal?: AbortSignal;
 }
 
 export interface ModelTurn {
   message: AssistantMessage;
   tokens: TokenUsage;
-  /** Model and fingerprint the provider reports, which can differ from the requested id. */
+  /** The provider's id for the model that answered, which can differ from the requested one. */
   servedModel: string;
   finishReason: string;
 }

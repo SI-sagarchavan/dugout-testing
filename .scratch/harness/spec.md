@@ -20,7 +20,7 @@ What the harness is missing for agents that work with images, run for a long tim
 | --- | -------------------------------------------------------------------------------------------------- | --------------- | ---------- |
 | 01  | [Images in messages and tool results](issues/01-images-in-messages.md)                             | ready-for-agent | 02         |
 | 02  | [Artifact store by content hash](issues/02-artifact-store.md)                                      | ready-for-agent |            |
-| 03  | [Model per agent](issues/03-model-per-agent.md)                                                    | ready-for-agent |            |
+| 03  | [Model per agent](issues/03-model-per-agent.md)                                                    | resolved        |            |
 | 04  | [Runs made of code steps and agent tasks](issues/04-runs-with-tasks.md)                            | needs-triage    |            |
 | 05  | [Context for long runs: shared part first, old rounds trimmed](issues/05-context-for-long-runs.md) | ready-for-agent | 01         |
 | 06  | [One review per run, decisions aimed at a task](issues/06-review-per-run.md)                       | needs-triage    | 04         |
@@ -35,11 +35,20 @@ What the harness is missing for agents that work with images, run for a long tim
 | 10  | [Tools from MCP servers](issues/10-mcp-tools.md)                             | needs-triage    |            |
 | 11  | [Agents' input and output schemas for hosts](issues/11-schemas-for-hosts.md) | resolved        |            |
 
+### Added 2026-10-30, from comparing with LangGraph
+
+| #   | Ticket                                                                                    | Status          | Blocked by |
+| --- | ----------------------------------------------------------------------------------------- | --------------- | ---------- |
+| 15  | [Threads: a follow-up run carries on from the last one](issues/15-threads.md)             | ready-for-agent | memory 04  |
+| 16  | [Checkpoint history: replay or fork a run from any step](issues/16-checkpoint-history.md) | ready-for-agent |            |
+
+Issue 04 also gained a typed run state with merge rules (LangGraph's state schema and reducers), and keeps control flow as code rather than a graph.
+
 ### Tier 3: when the numbers ask for them
 
 | #   | Ticket                                                                                   | Status       | Blocked by |
 | --- | ---------------------------------------------------------------------------------------- | ------------ | ---------- |
-| 12  | [Strict tool schemas where the provider supports them](issues/12-strict-tool-schemas.md) | needs-triage | 03         |
+| 12  | [Strict tool schemas where the provider supports them](issues/12-strict-tool-schemas.md) | resolved     | 03         |
 | 13  | [Outputs with variants](issues/13-output-variants.md)                                    | resolved     |            |
 | 14  | [Worker and host operations](issues/14-worker-and-host-operations.md)                    | needs-triage |            |
 

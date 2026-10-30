@@ -12,6 +12,8 @@ Today a run is one agent loop with one transcript. Complex agents need a run tha
   - Each task has its own transcript and save point, so contexts stay small however big the job.
   - Tasks run up to a limit at a time.
   - Code can end a task: a check passes, the score stops improving, or its budget runs out. The model doesn't decide that it's done.
+- **Typed run state.** A run declares its state as a zod schema, with a merge rule per key: replace, append, or merge by id. Code steps and tasks read it and write updates, and the run's checkpoint saves it after every change. This is LangGraph's state schema and reducers. An agent's own notes (memory 04) are the part of it one task writes.
+- **One engine; runs written as code first.** The engine is the steps, tasks, typed state, saves after every step (issue 16) and waits for a person. A run is written in TypeScript first: steps, tasks, loops and branches, as Temporal does (step = activity, task = child workflow). A declared graph (nodes, edges, conditional edges), as in LangGraph's Graph API, can run on the same engine later, each node a step or task. It is the way to go if agents are to be put together in a UI by people who don't write code. LangGraph offers both on one runtime.
 - **One budget and one lease** for the whole run, held by one worker.
 - **Events tagged** with the task they belong to, so a host can show progress per part.
 - **Resume after a crash or hand-over.** Finished steps and tasks stay finished, and unfinished tasks resume from their own last save.

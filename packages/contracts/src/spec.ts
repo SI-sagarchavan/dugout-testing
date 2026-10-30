@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { ModelTier } from "./model.ts";
 
 export const MemoryScope = z.enum(["episodic", "semantic", "procedural"]);
 export type MemoryScope = z.infer<typeof MemoryScope>;
@@ -13,7 +12,7 @@ export const AgentSpec = z.object({
   skills: z.array(z.string()).default([]), // procedural memory, in full in the instructions
   // listed by name and description only; the agent loads one with `skill.load` when it needs it
   onDemandSkills: z.array(z.string()).default([]),
-  model: z.object({ tier: ModelTier }),
+  model: z.string().min(1), // a name in the model list (`config/models.json`)
   memory: z.object({ read: z.array(MemoryScope), write: z.array(MemoryScope) }),
   budget: z.object({
     usdPerRun: z.number().positive(),

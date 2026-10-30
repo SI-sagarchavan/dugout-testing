@@ -1,9 +1,10 @@
 // Live smoke run against Bedrock: one read tool, then `final`. Exercises streaming, tool calls and
-// usage. Run with `pnpm smoke` (reads .env if present, for AWS_PROFILE and AWS_REGION).
+// usage. Run with `pnpm smoke [--model <name>]` (reads .env if present, for AWS_PROFILE and
+// AWS_REGION); the model is a name in config/models.json and defaults to nova-lite.
 import { existsSync } from "node:fs";
 import { defineTool } from "@dugout/contracts";
 import { z } from "zod";
-import { createBedrockClient, loadModelConfig, runLocal } from "../src/index.ts";
+import { createBedrockClient, loadModelConfig, modelEntry, runLocal } from "../src/index.ts";
 
 if (existsSync(".env")) process.loadEnvFile(".env");
 
@@ -19,7 +20,9 @@ const fixtureGet = defineTool({
 });
 
 const models = loadModelConfig();
-const tier = process.argv.includes("--fast") ? "fast" : "smart";
+const flag = process.argv.indexOf("--model");
+const model = flag === -1 ? "nova-lite" : (process.argv[flag + 1] ?? "");
+modelEntry(models, model);
 
 const result = await runLocal({
   agent: {
@@ -32,7 +35,7 @@ const result = await runLocal({
       tools: ["fixture.get"],
       skills: [],
       onDemandSkills: [],
-      model: { tier },
+      model,
       memory: { read: [], write: [] },
       budget: { usdPerRun: 0.05, maxSteps: 4, maxDepth: 0 },
       approvals: [],
@@ -42,7 +45,7 @@ const result = await runLocal({
   input: "Preview fixture f-1",
   tenantId: "smoke",
   tools: [fixtureGet],
-  client: createBedrockClient(),
+  client: createBedrockClient({ models }),
   models,
   approver: async () => ({ approved: false, by: "smoke", reason: "smoke runs never write" }),
   sinks: [{ write: (e) => void (e.type !== "token" && console.log(`${e.seq} ${e.type}`)) }],

@@ -12,6 +12,7 @@ import {
   type Approver,
   loadTenants,
   type ModelConfig,
+  modelEntry,
   REPO_ROOT,
   type RunLocalOptions,
   runLocal,
@@ -31,6 +32,8 @@ export interface AgentDeps {
   store: MemoryStore;
   client: ModelClient;
   models: ModelConfig;
+  /** Runs on this model, a name in `models`, instead of the one the spec names (`--model`). */
+  model?: string;
   /** Where run folders go. Defaults to `.runs` at the repo root. */
   runsDir?: string;
   /** False for eval and test runs that must not write memory. */
@@ -73,7 +76,7 @@ export interface AgentCli {
 }
 
 export interface AgentConfig<Input extends z.ZodType, Options extends object> {
-  /** Instructions, tool allow-list, skills, model tier, memory scopes, budget, approvals. */
+  /** Instructions, tool allow-list, skills, model name, memory scopes, budget, approvals. */
   spec: z.input<typeof AgentSpec>;
   input: Input;
   /** When set, the run ends through the `final` tool, its input checked against this schema. */
@@ -139,11 +142,15 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
     cli: config.cli ?? {},
 
     create(deps) {
+      const model = modelEntry(deps.models, deps.model ?? spec.model);
+      const run: AgentDefinition = deps.model
+        ? { ...definition, spec: { ...spec, model: deps.model } }
+        : definition;
       const memory = memoryHooks({
         store: deps.store,
         spec,
         skillsDir,
-        contextWindow: deps.models.tiers[spec.model.tier].contextWindow,
+        contextWindow: model.contextWindow,
         ...(deps.lessons ? { lessons: deps.lessons } : {}),
         ...(deps.consolidate === false ? { consolidate: false } : {}),
         groupsOf: (tenantId, input) =>
@@ -160,7 +167,7 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
 
       return (opts) =>
         runLocal({
-          agent: definition,
+          agent: run,
           input: config.input.parse(opts.input),
           tenantId: opts.tenantId,
           tools,

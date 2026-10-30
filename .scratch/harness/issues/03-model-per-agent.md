@@ -1,6 +1,6 @@
 # 03 · Named models, with effort, per agent and per task
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 
 ## What
@@ -47,6 +47,10 @@ The Figma-to-DSL agent wants Opus where judgement matters and Sonnet for the rep
 - A scripted test replays a signed reasoning block across a tool call unchanged.
 - Usage and cost are recorded per model.
 - A live smoke run on `opus` and on `sonnet` completes a tool call and `final`.
+
+## Outcome
+
+Built as ADR 0015 records, with two changes to the plan above. The family comes from the Bedrock id rather than a field, since a field could disagree with its id. The existing agents name `nova-lite`. Strict tools (issue 12) came with it, as `strictTools` per model.
 
 ## Pointers
 

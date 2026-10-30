@@ -32,7 +32,7 @@ import {
   writesGated,
 } from "@dugout/evals";
 import { createModelLessonWriter, type LessonWriter, type MemoryStore } from "@dugout/memory";
-import { houseFacts, seedHouseFacts } from "@dugout/sdk";
+import { houseFacts, LESSON_MODEL, seedHouseFacts } from "@dugout/sdk";
 import { agent, type Draft, draftOf, type Fixture, readTenantData, spec } from "../src/index.ts";
 import { cases, type PreviewCase } from "./cases.ts";
 
@@ -65,7 +65,8 @@ const REJECT_ALL = "eval run: drafts are graded, never saved";
 
 export interface SuiteOptions {
   mode: "live" | "scripted";
-  fast?: boolean;
+  /** Runs the agent on this model instead of its spec's. */
+  model?: string;
   store: MemoryStore;
   runsDir: string;
 }
@@ -80,11 +81,10 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
   let lessons: LessonWriter | undefined;
   if (live) {
     models = loadModelConfig();
-    if (opts.fast) models.tiers.smart = models.tiers.fast;
-    client = createBedrockClient();
-    // the judge always uses the smart tier's model, so --fast doesn't change how drafts are scored
-    judge = createJudge(client, loadModelConfig().tiers.smart.model);
-    lessons = createModelLessonWriter(client, models.tiers.fast.model);
+    client = createBedrockClient({ models });
+    // the judge keeps its own model, so --model doesn't change how drafts are scored
+    judge = createJudge(client);
+    lessons = createModelLessonWriter(client, LESSON_MODEL);
   } else {
     models = scriptedModelConfig();
   }
@@ -113,6 +113,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
       store: opts.store,
       client: client ?? scriptedWriter(tenant, fixtureId),
       models,
+      ...(opts.model ? { model: opts.model } : {}),
       runsDir: opts.runsDir,
       draftsDir: join(opts.runsDir, "drafts"),
       consolidate,

@@ -23,13 +23,13 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `pnpm infra:up` / `infra:down` / `infra:reset` — Postgres+pgvector (:55432) and Valkey (:56379). Tests need these up.
 - `pnpm db:migrate` / `pnpm seed` — apply migrations; load each tenant's house facts (`config/tenants/<tenant>/facts.json`) into memory. Every agent of a tenant reads all of its memory (ADR 0013)
 - `pnpm worker` — runs the agents; `pnpm agent` needs one running. `AGENTS=sitemap` limits it to some agents
-- `pnpm agent <id> --tenant <tenant> --<input field> <value> [--input json]` — queue a run for the worker and follow it, with an approval prompt: `y`, `n`, or type a change (it goes back to the agent in the same run). Ctrl-C leaves the run going; `pnpm agent --run <runId> --tenant <tenant>` attaches again; `pnpm agent --cancel <runId> --tenant <tenant> [--reason <why>]` stops it
+- `pnpm agent` — menu of commands when a terminal is attached; `pnpm agent --help` lists them. `pnpm agent <id> --tenant <tenant> --<input field> <value> [--input json]` queues a run and follows it (flags left off are asked). At an approval, a terminal offers Approve, Reject, or Request a change; a pipe answers `y`, `n`, or the change. Ctrl-C leaves the run going; `pnpm agent attach --run <runId> --tenant <tenant>` (or `--run`) attaches again; `pnpm agent cancel <runId> --tenant <tenant> [--reason <why>]` (or `--cancel`) stops it. `pnpm agent runs --tenant <tenant>` lists recent runs; `pnpm agent agents` lists agents
 - `pnpm preview --tenant demo-cricket --fixture c-101` — `pnpm agent match-preview`
 - `pnpm memory:review --tenant <id>` — approve or reject proposed facts; `--shared` for proposed shared memory
 - `pnpm memory:promote` — propose facts and lessons that several tenants hold as shared memory, for their sport or for every tenant (ADR 0014)
-- `pnpm eval match-preview [--scripted] [--fast] [--only id,id]` — eval suite; exits non-zero below the 90% gate (`pnpm eval sitemap` likewise)
+- `pnpm eval match-preview [--scripted] [--model <name>] [--only id,id]` — eval suite; exits non-zero below the 90% gate (`pnpm eval sitemap` likewise). `--model` runs the agent on another model in `config/models.json`
 - `pnpm sitemap --tenant demo-cricket --brief "..." [--sport cricket]` — `pnpm agent sitemap`
-- `pnpm smoke [--fast]` — one minimal live run against the configured model
+- `pnpm smoke [--model <name>]` — one minimal live run, on `nova-lite` unless named
 - `pnpm schemas` — write each agent's input and output JSON Schema to `schemas/` for hosts; a test fails when they are out of date
 
 ## Rules

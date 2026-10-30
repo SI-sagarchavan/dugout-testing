@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { type RunEvent, RunUsage } from "./events.ts";
 import type { Message, ToolCall } from "./messages.ts";
-import type { ModelTier, ModelTurn, StepUsage, ToolDefinition } from "./model.ts";
+import type { ModelTurn, StepUsage, ToolDefinition } from "./model.ts";
 import type { ToolOutcome } from "./tools.ts";
 
 /** Verified identity for one run. Built by the caller (CLI now, API later), never by the model. */
@@ -19,7 +19,8 @@ export interface RunMemoryContext {
 
 export interface ModelStepRequest {
   step: number;
-  tier: ModelTier;
+  /** A name in the model list. */
+  model: string;
   messages: Message[];
   tools: ToolDefinition[];
 }

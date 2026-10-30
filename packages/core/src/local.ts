@@ -19,7 +19,7 @@ import type {
 } from "@dugout/contracts";
 import { createJsonlSink, createMemorySink, createRunLog, type RunLog } from "./events.ts";
 import { type RunResult, runAgent } from "./loop.ts";
-import type { ModelConfig } from "./model/config.ts";
+import { type ModelConfig, modelEntry } from "./model/config.ts";
 import { priceTokens } from "./model/pricing.ts";
 import { createFileOutputStore, type OutputStore } from "./output-store.ts";
 import {
@@ -44,7 +44,6 @@ export interface LocalStepsOptions {
   log: RunLog;
   /** Keeps the run's working memory; without it the run cannot outlive this invocation. */
   store?: RunStore;
-  now?: () => Date;
   /** How often streamed fragments are sent; defaults to `FRAGMENT_MS`. */
   fragmentMs?: number;
 }
@@ -95,15 +94,15 @@ function batchFragments(log: RunLog, step: number, everyMs: number) {
 
 /** `Steps` that call the model, tools and approver directly in this process. */
 export function createLocalSteps(opts: LocalStepsOptions): Steps {
-  const now = opts.now ?? (() => new Date());
   return {
-    async model({ step, tier, messages, tools }) {
-      const config = opts.models.tiers[tier];
+    async model({ step, model, messages, tools }) {
+      const { price } = modelEntry(opts.models, model);
       const fragments = batchFragments(opts.log, step, opts.fragmentMs ?? FRAGMENT_MS);
       let turn: ModelTurn;
       try {
         turn = await opts.client.complete(
-          { model: config.model, messages, tools },
+          // the run goes on for more turns, so its prompt goes in the cache
+          { model, messages, tools, cache: true },
           fragments.token,
           fragments.toolInput,
         );
@@ -113,7 +112,7 @@ export function createLocalSteps(opts: LocalStepsOptions): Steps {
       }
       const usage = {
         ...turn.tokens,
-        ...priceTokens(opts.models.pricing, config.model, turn.tokens, now()),
+        ...priceTokens(price, turn.tokens),
       };
       return { ...turn, usage };
     },

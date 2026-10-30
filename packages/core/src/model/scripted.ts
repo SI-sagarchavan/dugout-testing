@@ -1,5 +1,5 @@
 import type { ModelClient, ModelRequest, TokenUsage } from "@dugout/contracts";
-import type { ModelConfig } from "./config.ts";
+import { loadModelConfig, type ModelConfig } from "./config.ts";
 
 export interface ScriptedTurn {
   content?: string;
@@ -45,6 +45,7 @@ export function createScriptedModel(script: ScriptStep[]): ModelClient & {
         tokens: {
           inputTokens: 1_000,
           cachedInputTokens: 0,
+          cacheWriteInputTokens: 0,
           outputTokens: 200,
           reasoningTokens: 0,
           ...turn.tokens,
@@ -56,14 +57,15 @@ export function createScriptedModel(script: ScriptStep[]): ModelClient & {
   };
 }
 
-/** Config for the scripted model: $1 per 1M tokens of any kind, at a constant rate. */
+/**
+ * Config for the scripted model: every name in the model list, so any spec runs against the
+ * script, each at $1 per 1M tokens of any kind and with a 100K context window.
+ */
 export function scriptedModelConfig(): ModelConfig {
-  const price = { inputCacheHit: 1, inputCacheMiss: 1, output: 1 };
-  return {
-    tiers: {
-      fast: { model: "scripted-fast", contextWindow: 100_000 },
-      smart: { model: "scripted-smart", contextWindow: 100_000 },
-    },
-    pricing: { prices: { "scripted-fast": price, "scripted-smart": price }, rateAt: () => 1 },
-  };
+  const price = { input: 1, cacheRead: 1, cacheWrite: 1, output: 1 };
+  const models = Object.entries(loadModelConfig().models).map(([name, model]) => [
+    name,
+    { ...model, contextWindow: 100_000, price },
+  ]);
+  return { models: Object.fromEntries(models) };
 }

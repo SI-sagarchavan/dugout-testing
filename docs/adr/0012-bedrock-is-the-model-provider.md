@@ -1,6 +1,6 @@
 # 0012 — Amazon Bedrock is the model provider
 
-Date: 2026-10-30 · Status: accepted · Supersedes ADR 0001
+Date: 2026-10-30 · Status: accepted · Supersedes ADR 0001 · Models and pricing superseded by ADR 0015
 
 ## Context
 
@@ -10,8 +10,8 @@ ADR 0001 built the model client on Chat Completions so DeepSeek could be used fo
 
 - **One model client: `createBedrockClient`**, over ConverseStream from `@aws-sdk/client-bedrock-runtime`. The worker, CLI, evals and smoke run all build it directly.
 - **AWS auth.** Requests are SigV4-signed with the AWS SDK's default credentials: `AWS_PROFILE` locally and the task role on ECS, with no API key. The region comes from `AWS_REGION`, then the profile's region, then ap-south-1.
-- **Models.** Tiers map to models in config, never in specs. The defaults are `apac.amazon.nova-micro-v1:0` (fast) and `apac.amazon.nova-lite-v1:0` (smart), and `LLM_MODEL_FAST` and `LLM_MODEL_SMART` override them. ap-south-1 accepts only inference profile ids, not bare ids such as `amazon.nova-micro-v1:0`.
-- **Pricing.** Prices are Bedrock's ap-south-1 list prices. `rateAt` stays and returns 1, so cost and budget cost are equal.
+- **Models** (superseded by ADR 0015, named models). Tiers map to models in config, never in specs. The defaults are `apac.amazon.nova-micro-v1:0` (fast) and `apac.amazon.nova-lite-v1:0` (smart), and `LLM_MODEL_FAST` and `LLM_MODEL_SMART` override them. ap-south-1 accepts only inference profile ids, not bare ids such as `amazon.nova-micro-v1:0`.
+- **Pricing.** Prices are Bedrock's ap-south-1 list prices. `rateAt` stays and returns 1, so cost and budget cost are equal (ADR 0015 moved prices into the model list and removed `rateAt`).
 - **Kept from ADR 0001:**
   - Transcript types in `@dugout/contracts` are shaped like Chat Completions, with no SDK type past the adapter.
   - Tool names are encoded as `.` to `__`.

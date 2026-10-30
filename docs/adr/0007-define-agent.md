@@ -18,7 +18,7 @@ The common shape: what an agent _is_ (instructions, tools, output schema) is dec
 
 - **A new package, `@dugout/sdk`**, above `core` and `memory`: what an agent package imports. It holds `defineAgent`, `liveDeps`, the terminal runner and agent discovery.
 - **`defineAgent({ spec, input, output?, dir, tools, maxInlineChars?, cli? })`** returns an `Agent`.
-  - `spec` stays the `AgentSpec` contract: the instructions, the tool allow-list, skills, model tier, memory scopes, budget and approvals. It is checked when the agent is defined.
+  - `spec` stays the `AgentSpec` contract: the instructions, the tool allow-list, skills, model name (ADR 0015), memory scopes, budget and approvals. It is checked when the agent is defined.
   - `dir` is the agent's folder, which gives the conventions: skills in `skills/`, house facts in `data/<tenant>/style.json`.
   - `tools(options)` builds the agent's own tools. `options` is whatever else the host passes to `create`, typed, e.g. a folder for tests to write into.
 - **Definition and deps are separate.** `agent.create(deps)` takes what only the host has: the model client and config, the memory store, a lesson writer, tracing, and where run folders go. It returns the function that runs the agent. Each run takes the tenant, input and approver, plus `store` and `resume` for runs that outlive their process (ADR 0006). The CLI, API, evals and tests differ only in the deps and approver they pass.

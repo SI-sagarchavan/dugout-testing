@@ -90,7 +90,7 @@ const spec = (overrides: Partial<AgentSpec> = {}): AgentSpec => ({
   tools: ["stats.get", "draft.save", "slow.read", "big.read"],
   skills: [],
   onDemandSkills: [],
-  model: { tier: "smart" },
+  model: "nova-lite",
   memory: { read: [], write: [] },
   budget: { usdPerRun: 1, maxSteps: 6, maxDepth: 0 },
   approvals: [],
@@ -162,7 +162,7 @@ describe("runAgent", () => {
     const second = model.requests[1]?.messages ?? [];
     expect(second.at(-2)).toMatchObject({ role: "assistant", reasoning: "need stats" });
     expect(second.at(-1)).toMatchObject({ role: "tool", toolCallId: "call_1_0" });
-    expect(model.requests[0]?.model).toBe("scripted-smart");
+    expect(model.requests[0]?.model).toBe("nova-lite");
     expect(model.requests[0]?.tools.map((t) => t.name)).toEqual([
       "stats.get",
       "draft.save",

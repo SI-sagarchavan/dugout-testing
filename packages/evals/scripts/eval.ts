@@ -1,4 +1,4 @@
-// pnpm eval <agent> [--scripted] [--fast] [--repeat 3] [--concurrency 8] [--threshold 0.9] [--only id,id]
+// pnpm eval <agent> [--scripted] [--model <name>] [--repeat 3] [--concurrency 8] [--threshold 0.9] [--only id,id]
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadEnv, REPO_ROOT } from "@dugout/core";
@@ -12,7 +12,7 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     scripted: { type: "boolean", default: false },
-    fast: { type: "boolean", default: false },
+    model: { type: "string" },
     repeat: { type: "string" },
     concurrency: { type: "string", default: "8" },
     threshold: { type: "string", default: "0.9" },
@@ -21,7 +21,7 @@ const { values, positionals } = parseArgs({
 });
 const agent = positionals[0];
 if (!agent || !/^[a-z0-9-]+$/.test(agent)) {
-  console.error("usage: pnpm eval <agent> [--scripted] [--fast] [--only id,id]");
+  console.error("usage: pnpm eval <agent> [--scripted] [--model <name>] [--only id,id]");
   process.exit(2);
 }
 
@@ -36,7 +36,7 @@ const mod = (await import(join(REPO_ROOT, "agents", agent, "evals", "suite.ts"))
 };
 const suite = await mod.createSuite({
   mode: values.scripted ? "scripted" : "live",
-  fast: values.fast,
+  ...(values.model ? { model: values.model } : {}),
   store,
   runsDir: join(REPO_ROOT, ".evals", "runs"),
 });
