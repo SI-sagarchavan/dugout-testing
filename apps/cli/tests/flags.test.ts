@@ -1,6 +1,7 @@
+import { agentIds, loadAgent } from "@dugout/sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { agentIds, inputFlags, loadAgent, parseCliArgs, usage } from "../src/index.ts";
+import { inputFlags, parseCliArgs, usage } from "../src/flags.ts";
 
 const brief = {
   spec: { id: "brief-writer" },
@@ -15,7 +16,7 @@ const brief = {
   cli: { flags: { sport: "sports" } },
 };
 
-describe("terminal runner", () => {
+describe("command line", () => {
   it("gives each plain input field a flag, plus its aliases", () => {
     const flags = inputFlags(brief.input, brief.cli.flags);
     expect(Object.fromEntries(flags)).toEqual({
@@ -24,7 +25,7 @@ describe("terminal runner", () => {
       sport: { field: "sports", kind: "strings", required: false },
       pages: { field: "pages", kind: "number", required: false },
       draft: { field: "draft", kind: "boolean", required: false },
-      // `tenant` is the runner's own flag and `layout` isn't plain: both go through --input
+      // `tenant` is the CLI's own flag and `layout` isn't plain: both go through --input
     });
   });
 
@@ -45,7 +46,6 @@ describe("terminal runner", () => {
     ]);
     expect(args).toEqual({
       tenant: "demo-cricket",
-      fast: false,
       input: {
         brief: "A T20 club",
         sports: ["cricket", "kabaddi"],
@@ -61,7 +61,7 @@ describe("terminal runner", () => {
 
   it("writes a usage line from the input", () => {
     expect(usage(brief as never, "pnpm brief")).toBe(
-      "pnpm brief --tenant <id> --brief <brief> [--sport <sports>]... [--pages <pages>] [--draft] [--input <json>] [--fast]",
+      "pnpm brief --tenant <id> --brief <brief> [--sport <sports>]... [--pages <pages>] [--draft] [--input <json>]",
     );
   });
 
@@ -70,10 +70,10 @@ describe("terminal runner", () => {
     const sitemap = await loadAgent("sitemap");
     expect(sitemap.spec.id).toBe("sitemap");
     expect(usage(sitemap)).toBe(
-      "pnpm agent sitemap --tenant <id> --brief <brief> [--sport <sports>]... [--input <json>] [--fast]",
+      "pnpm agent sitemap --tenant <id> --brief <brief> [--sport <sports>]... [--input <json>]",
     );
     expect(usage(await loadAgent("match-preview"), "pnpm preview")).toBe(
-      "pnpm preview --tenant <id> --fixture <fixtureId> [--brief <brief>] [--input <json>] [--fast]",
+      "pnpm preview --tenant <id> --fixture <fixtureId> [--brief <brief>] [--input <json>]",
     );
     await expect(loadAgent("nope")).rejects.toThrow('no agent "nope"');
   });

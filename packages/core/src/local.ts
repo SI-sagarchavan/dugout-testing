@@ -30,7 +30,7 @@ import {
 } from "./tools.ts";
 
 /**
- * Decides an approval request. An approver that can't decide now (the API waiting for a person)
+ * Decides an approval request. An approver that can't decide now (a worker waiting for a person)
  * answers `{ pending: true }`: the run saves its state and ends, and the decision resumes it.
  */
 export type Approver = (req: ApprovalRequest) => Promise<ApprovalDecision | ApprovalPending>;

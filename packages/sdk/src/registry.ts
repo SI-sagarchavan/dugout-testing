@@ -9,8 +9,8 @@ const entry = (id: string) => join(AGENTS_DIR, id, "src", "index.ts");
 
 /**
  * The agents in `agents/`, by the convention `pnpm eval` also uses: the folder name is the agent's
- * id and its `src/index.ts` exports `agent`. Dev tools (the terminal runner, seeding) find agents
- * this way; the API lists the agents it serves explicitly.
+ * id and its `src/index.ts` exports `agent`. Dev tools (the terminal, seeding) find agents this
+ * way; the worker lists the agents it runs explicitly.
  */
 export async function agentIds(): Promise<string[]> {
   const dirs = await readdir(AGENTS_DIR, { withFileTypes: true });

@@ -1,6 +1,6 @@
 # 0004 — API runs agents in-process; event log on Valkey and Postgres
 
-Date: 2026-10-29 · Status: accepted (local phase); restart behaviour superseded by ADR 0006
+Date: 2026-10-29 · Status: superseded by ADR 0009 (the API is gone; a worker runs agents). Restart behaviour was superseded first by ADR 0006
 
 ## Decision
 

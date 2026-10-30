@@ -19,24 +19,25 @@ registry + spec check → tenant injection → policy check → approval (write/
 
 A phase ends when its gate is demonstrated, not when tasks close.
 
-## Status (2026-10-29)
+## Status (2026-10-30)
 
-Built and tested locally, except H7, which is parked while everything runs on a laptop.
+Built and tested locally, except H7, which is parked: Temporal replaces the worker's claiming before production (ADR 0009).
 
 | Task  | State  | Notes                                                                                                    |
 | ----- | ------ | -------------------------------------------------------------------------------------------------------- |
 | H1–H5 | done   | H2 is an OpenAI-compatible client (ADR 0001); the loop runs over `Steps` (ADR 0002)                      |
-| H6    | done   | Valkey stream per run, Postgres record, SSE resume; runs execute inside the API process (ADR 0004)       |
+| H6    | done   | Valkey stream per run, Postgres record, SSE resume (ADR 0004)                                            |
 | H7    | parked | Temporal kept out for local work; `docker compose --profile temporal up` still starts it                 |
 | H8    | done   | Langfuse via OpenTelemetry; off unless both keys are set                                                 |
 | H9    | done   | `pnpm smoke`                                                                                             |
 | M1–M7 | done   | Consolidation runs right after each run, not as a workflow (ADR 0003)                                    |
-| S1–S4 | done   | S4 is the approval prompt in `pnpm preview` and the API approval endpoint                                |
+| S1–S4 | done   | S4 is the approval prompt in `pnpm preview`                                                              |
 | E1–E6 | done   | `pnpm eval match-preview`; the judge reports but does not gate                                           |
 | D1    | done   | Runs' working memory saved in Postgres; approvals end the invocation; crash recovery by lease (ADR 0006) |
 | A2    | done   | Sitemap agent (`agents/sitemap`): first live use of `final` structured output; `pnpm eval sitemap`       |
-| A3    | done   | `defineAgent` in `@dugout/sdk` (ADR 0007): both agents on it; `pnpm agent <id>`; the API serves both     |
-| H10   | done   | Responses stream, wait or run in the background, per request; tool-call arguments stream (ADR 0008)      |
+| A3    | done   | `defineAgent` in `@dugout/sdk` (ADR 0007): both agents on it; `pnpm agent <id>`                          |
+| H10   | done   | Tool-call arguments stream (ADR 0008); the per-request response modes left with the API (ADR 0009)       |
+| H11   | done   | `pnpm worker` runs agents, `pnpm agent` queues and follows runs; no HTTP API; Docker image (ADR 0009)    |
 
 ## Embedding model
 

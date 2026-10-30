@@ -37,6 +37,23 @@ export async function prepareDatabase(
   return { appUrl: appUrl.toString(), adminUrl: adminUrl.toString() };
 }
 
+/**
+ * A vitest globalSetup with a database of its own, emptied first: for tests that run workers, which
+ * would otherwise claim the runs other packages' tests queue. Tests read `inject("databaseUrl")`.
+ */
+export function ownDatabaseSetup(name: string) {
+  return async ({
+    provide,
+  }: {
+    provide: (key: "databaseUrl" | "adminDatabaseUrl", value: string) => void;
+  }) => {
+    const { appUrl, adminUrl } = await prepareDatabase(name);
+    await resetDatabase(adminUrl);
+    provide("databaseUrl", appUrl);
+    provide("adminDatabaseUrl", adminUrl);
+  };
+}
+
 /** Empties runs, events and memory. Admin only; for throwaway databases such as the eval one. */
 export async function resetDatabase(adminUrl: string): Promise<void> {
   const client = new pg.Client({ connectionString: adminUrl });

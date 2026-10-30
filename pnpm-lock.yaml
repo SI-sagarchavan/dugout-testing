@@ -72,7 +72,41 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
-  apps/api:
+  apps/cli:
+    dependencies:
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../../packages/db
+      '@dugout/sdk':
+        specifier: workspace:^
+        version: link:../../packages/sdk
+      '@dugout/worker':
+        specifier: workspace:^
+        version: link:../worker
+      iovalkey:
+        specifier: ^0.4.0
+        version: 0.4.0
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@dugout/agent-match-preview':
+        specifier: workspace:^
+        version: link:../../agents/match-preview
+      '@dugout/agent-sitemap':
+        specifier: workspace:^
+        version: link:../../agents/sitemap
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../../packages/memory
+
+  apps/worker:
     dependencies:
       '@dugout/agent-match-preview':
         specifier: workspace:^
@@ -89,29 +123,19 @@ importers:
       '@dugout/db':
         specifier: workspace:^
         version: link:../../packages/db
-      '@dugout/memory':
-        specifier: workspace:^
-        version: link:../../packages/memory
       '@dugout/sdk':
         specifier: workspace:^
         version: link:../../packages/sdk
-      '@hono/node-server':
-        specifier: ^2.1.5
-        version: 2.1.5(hono@4.13.14)
-      hono:
-        specifier: ^4.13.14
-        version: 4.13.14
       iovalkey:
         specifier: ^0.4.0
         version: 0.4.0
-      jose:
-        specifier: ^6.2.13
-        version: 6.2.13
       zod:
         specifier: ^4.6.7
         version: 4.6.7
-
-  apps/worker: {}
+    devDependencies:
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../../packages/memory
 
   packages/contracts:
     dependencies:
@@ -448,12 +472,6 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
-
-  '@hono/node-server@2.1.5':
-    resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      hono: ^4 || ^5.0.0-0
 
   '@iovalkey/commands@0.1.0':
     resolution: {integrity: sha512-/B9W4qKSSITDii5nkBCHyPkIkAi+ealUtr1oqBJsLxjSRLka4pxun2VvMNSmcwgAMxgXtQfl0qRv7TE+udPJzg==}
@@ -827,16 +845,9 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  hono@4.13.14:
-    resolution: {integrity: sha512-yhRLQ21U6qa9Hsu2N7Qcbh8tE+WKEcoErjIo56LeSGiGXGp9sA7UpE86Ui9uexb61KakiGwuHMn2QdV7w6i6kQ==}
-    engines: {node: '>=16.9.0'}
-
   iovalkey@0.4.0:
     resolution: {integrity: sha512-OSUKxJ+s44CLdUTaicX4+pVrBN/zHKIYwr2oKhRDuczr19FwcSCXEZHzcMUYWZNh1mNSCV9bNJHW/T6cHVm9Aw==}
     engines: {node: '>=18.12.0'}
-
-  jose@6.2.13:
-    resolution: {integrity: sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ==}
 
   lightningcss-android-arm64@1.33.0:
     resolution: {integrity: sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==}
@@ -1288,10 +1299,6 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@hono/node-server@2.1.5(hono@4.13.14)':
-    dependencies:
-      hono: 4.13.14
-
   '@iovalkey/commands@0.1.0': {}
 
   '@jridgewell/resolve-uri@3.1.2': {}
@@ -1557,8 +1564,6 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  hono@4.13.14: {}
-
   iovalkey@0.4.0:
     dependencies:
       '@iovalkey/commands': 0.1.0
@@ -1572,8 +1577,6 @@ snapshots:
       standard-as-callback: 2.1.0
     transitivePeerDependencies:
       - supports-color
-
-  jose@6.2.13: {}
 
   lightningcss-android-arm64@1.33.0:
     optional: true
