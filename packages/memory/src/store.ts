@@ -8,7 +8,8 @@ export type EpisodeType = "run" | "lesson";
 
 export interface MemoryItem {
   id: string;
-  tenantId: string;
+  /** Null for shared memory (ADR 0014). */
+  tenantId: string | null;
   /**
    * The agent whose run produced the item, or null (seeded facts). Every agent of the tenant reads
    * every item (ADR 0013); this only records where it came from and ranks an agent's own lessons.
@@ -29,19 +30,28 @@ export interface MemoryItem {
   createdAt: string;
   lastSeenAt: string;
   expiresAt: string | null;
+  /** For shared memory: `global` (every tenant) or `sport:<sport>` (every tenant of a sport). */
+  sharedScope: string | null;
+  /** For shared memory: the tenant items it was promoted from. */
+  sources: string[];
 }
 
 export interface SearchQuery {
   tenantId: string;
+  /** The shared scopes the tenant reads too, e.g. `["global", "sport:cricket"]` (`memoryGroups`). */
+  groups?: string[];
   query: string;
   kinds?: MemoryKind[];
   episodeType?: EpisodeType;
   limit?: number;
 }
 
-/** What agents and the context builder get: active, unexpired items of one tenant only. */
+/**
+ * What agents and the context builder get: active, unexpired items of one tenant, plus approved
+ * shared items of the groups it belongs to.
+ */
 export interface MemoryReader {
-  activeFacts(tenantId: string): Promise<MemoryItem[]>;
+  activeFacts(tenantId: string, groups?: string[]): Promise<MemoryItem[]>;
   /** Ranked by text and vector relevance alone. */
   search(q: SearchQuery): Promise<Array<MemoryItem & { score: number }>>;
   /**
@@ -89,18 +99,19 @@ export interface MemoryWriter {
 
 export type MemoryStore = MemoryReader & MemoryWriter;
 
-const COLUMNS = `id, tenant_id, agent_id, kind, key, episode_type, version, content, status,
-  confidence, strength, source_run_id, reviewed_by, created_at, last_seen_at, expires_at`;
+export const COLUMNS = `id, tenant_id, agent_id, kind, key, episode_type, version, content, status,
+  confidence, strength, source_run_id, reviewed_by, created_at, last_seen_at, expires_at,
+  shared_scope, sources`;
 
-const LIVE = `status = 'active' and (expires_at is null or expires_at > now())`;
+export const LIVE = `status = 'active' and (expires_at is null or expires_at > now())`;
 
 /** Cosine similarity above which a new lesson counts as one already remembered. */
 export const REINFORCE_SIMILARITY = 0.9;
 
 type Row = Record<string, unknown>;
-const toItem = (r: Row): MemoryItem => ({
+export const toItem = (r: Row): MemoryItem => ({
   id: r.id as string,
-  tenantId: r.tenant_id as string,
+  tenantId: (r.tenant_id as string | null) ?? null,
   agentId: (r.agent_id as string | null) ?? null,
   kind: r.kind as MemoryKind,
   key: (r.key as string | null) ?? null,
@@ -115,6 +126,8 @@ const toItem = (r: Row): MemoryItem => ({
   createdAt: new Date(r.created_at as string).toISOString(),
   lastSeenAt: new Date(r.last_seen_at as string).toISOString(),
   expiresAt: r.expires_at ? new Date(r.expires_at as string).toISOString() : null,
+  sharedScope: (r.shared_scope as string | null) ?? null,
+  sources: (r.sources as string[] | null) ?? [],
 });
 
 /** Days for a memory's recency weight to halve. */
@@ -163,6 +176,7 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
 
   const search: MemoryReader["search"] = async ({
     tenantId,
+    groups = [],
     query,
     kinds = ["semantic", "episodic"],
     episodeType,
@@ -175,8 +189,8 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
       const { rows } = await db.query(
         `with candidates as (
            select * from memory_items
-           where tenant_id = $1 and kind = any($2)
-             and ($6::text is null or episode_type = $6) and ${LIVE}
+           where (tenant_id = $1 or (tenant_id is null and shared_scope = any($7::text[])))
+             and kind = any($2) and ($6::text is null or episode_type = $6) and ${LIVE}
          ),
          text_rank as (
            select id, row_number() over (order by ts_rank_cd(tsv, q) desc) as r
@@ -194,20 +208,21 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
          left join vec_rank v using (id)
          order by score desc, created_at desc
          limit $5`,
-        [tenantId, kinds, orQuery(query), vector, limit, episodeType ?? null],
+        [tenantId, kinds, orQuery(query), vector, limit, episodeType ?? null, groups],
       );
       return rows.map((r) => ({ ...toItem(r), score: Number(r.score) }));
     });
   };
 
   return {
-    activeFacts: (tenantId) =>
+    activeFacts: (tenantId, groups = []) =>
       tx(tenantId, async (db) => {
         const { rows } = await db.query(
           `select ${COLUMNS} from memory_items
-           where tenant_id = $1 and kind = 'semantic' and ${LIVE}
+           where (tenant_id = $1 or (tenant_id is null and shared_scope = any($2::text[])))
+             and kind = 'semantic' and ${LIVE}
            order by key`,
-          [tenantId],
+          [tenantId, groups],
         );
         return rows.map(toItem);
       }),

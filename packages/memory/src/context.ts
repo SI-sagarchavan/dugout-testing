@@ -1,6 +1,7 @@
 import type { RunMemoryContext } from "@dugout/contracts";
+import { groupLabel } from "./shared.ts";
 import { loadSkill } from "./skills.ts";
-import type { MemoryReader } from "./store.ts";
+import type { MemoryItem, MemoryReader } from "./store.ts";
 import { SKILL_TOOL } from "./tools.ts";
 
 /** Share of the model's context window that retrieved memory may use. */
@@ -16,6 +17,8 @@ export interface BuildContextOptions {
   /** Listed by name and description, for the agent to load with `skill.load`. */
   onDemandSkills: string[];
   tenantId: string;
+  /** The shared scopes the tenant reads too, most general first (`memoryGroups`). */
+  groups?: string[];
   agentId: string;
   /** Text to find similar episodes with, usually the run input. */
   query: string;
@@ -87,28 +90,37 @@ export async function buildContext(opts: BuildContextOptions): Promise<RunMemory
     }
   };
 
+  const groups = opts.groups ?? [];
   if (opts.readSemantic) {
-    const facts = await opts.reader.activeFacts(opts.tenantId);
+    const facts = await opts.reader.activeFacts(opts.tenantId, groups);
+    const own = facts.filter((f) => f.tenantId !== null);
     addList(
       "## House facts\n\nThese are reviewed facts for this tenant. Follow them.",
-      facts.map((f) => ({ id: f.id, kind: "semantic", line: `- ${f.content}` })),
+      own.map((f) => ({ id: f.id, kind: "semantic", line: `- ${f.content}` })),
     );
+    // a key the tenant has is its own; a sport's rule wins over the rule for every tenant
+    const taken = new Set(own.map((f) => f.key));
+    for (const scope of [...groups].reverse()) {
+      const shared = facts.filter((f) => f.sharedScope === scope && !taken.has(f.key));
+      for (const f of shared) taken.add(f.key);
+      addList(
+        `## Shared with ${groupLabel(scope)}\n\nReviewed rules learned across clients. Where a house fact above disagrees, follow the house fact.`,
+        shared.map((f) => ({ id: f.id, kind: "semantic", line: `- ${f.content}` })),
+      );
+    }
   }
 
   if (opts.readEpisodic) {
     const recall = { tenantId: opts.tenantId, agentId: opts.agentId, query: opts.query };
     const lessons = await opts.reader.recallEpisodes({
       ...recall,
+      groups,
       episodeType: "lesson",
       limit: opts.episodes ?? 5,
     });
     addList(
-      "## Lessons from past runs\n\nReviewer feedback on earlier drafts for this tenant. Don't repeat these mistakes.",
-      lessons.map((e) => ({
-        id: e.id,
-        kind: "episodic",
-        line: `- (${e.lastSeenAt.slice(0, 10)}${e.strength > 1 ? `, ${e.strength} times` : ""}) ${e.content}`,
-      })),
+      "## Lessons from past runs\n\nReviewer feedback on earlier drafts, this tenant's and some learned across clients. Don't repeat these mistakes.",
+      lessons.map((e) => ({ id: e.id, kind: "episodic", line: lessonLine(e) })),
     );
     const runs = await opts.reader.recallEpisodes({ ...recall, episodeType: "run", limit: 3 });
     addList(
@@ -122,4 +134,10 @@ export async function buildContext(opts: BuildContextOptions): Promise<RunMemory
   }
 
   return { text: sections.join("\n\n"), tokens: used, sources };
+}
+
+function lessonLine(e: MemoryItem): string {
+  if (e.sharedScope) return `- (from ${e.strength} clients) ${e.content}`;
+  const times = e.strength > 1 ? `, ${e.strength} times` : "";
+  return `- (${e.lastSeenAt.slice(0, 10)}${times}) ${e.content}`;
 }

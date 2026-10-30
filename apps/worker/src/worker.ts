@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { ApprovalDecision, RunEvent } from "@dugout/contracts";
+import type { ApprovalDecision } from "@dugout/contracts";
 import { type Approver, RunInterrupted } from "@dugout/core";
 import { type Pool, withTenant } from "@dugout/db";
 import { z } from "zod";
 import type { AgentEntry, ResumeOptions } from "./agents.ts";
 import { createPostgresEventSink, readStoredEvents, type ValkeyEventLog } from "./event-log.ts";
-import { lastSeq, NO_USAGE, savedUsage } from "./records.ts";
+import { appendEnding, cancelledEvent, lastSeq } from "./records.ts";
 import { createPostgresRunStore } from "./run-store.ts";
 
 /** Approvals wait for a person: the run saves its state and ends; a decision queues it again. */
@@ -71,27 +71,59 @@ export function createWorker(opts: WorkerOptions) {
       ]),
     );
 
-  /** Ends a run that cannot go on, with a `run.failed` event so anyone following it sees it end. */
-  const giveUp = async (tenantId: string, runId: string, lease: string, message: string) => {
-    const [seq, usage] = await Promise.all([
-      lastSeq(opts.pool, opts.events, tenantId, runId),
-      savedUsage(opts.pool, tenantId, runId),
-    ]);
-    const event: RunEvent = {
-      runId,
-      seq: seq + 1,
-      at: new Date().toISOString(),
-      type: "run.failed",
-      data: { reason: "error", message, usage: usage ?? NO_USAGE },
-    };
-    await opts.events.sink().write(event);
-    await createPostgresEventSink(opts.pool, tenantId).write(event);
-    await withTenant(opts.pool, tenantId, (db) =>
+  const release = (tenantId: string, runId: string, lease: string) =>
+    withTenant(opts.pool, tenantId, (db) =>
       db.query(
         "update runs set lease_owner = null, lease_until = null where id = $1 and lease_owner = $2",
         [runId, lease],
       ),
     );
+
+  /** Ends a run that cannot go on, with a `run.failed` event so anyone following it sees it end. */
+  const giveUp = async (tenantId: string, runId: string, lease: string, message: string) => {
+    await appendEnding(opts.pool, opts.events, tenantId, runId, (seq, usage) => ({
+      runId,
+      seq,
+      at: new Date().toISOString(),
+      type: "run.failed",
+      data: { reason: "error", message, usage },
+    }));
+    await release(tenantId, runId, lease);
+  };
+
+  /**
+   * After a save was refused: if the run was cancelled while this invocation held it, writes
+   * `run.cancelled` after everything the run wrote, once.
+   */
+  const endIfCancelled = async (tenantId: string, runId: string, lease: string) => {
+    const { rows } = await withTenant(opts.pool, tenantId, (db) =>
+      db.query<{
+        status: string;
+        lease_owner: string | null;
+        cancelled_by: string | null;
+        cancel_reason: string | null;
+        ended: boolean;
+      }>(
+        `select status, lease_owner, cancelled_by, cancel_reason,
+           exists (select 1 from run_events e where e.run_id = r.id and e.type = 'run.cancelled')
+             as ended
+         from runs r where id = $1`,
+        [runId],
+      ),
+    );
+    const run = rows[0];
+    if (run?.status !== "cancelled" || run.lease_owner !== lease) return;
+    if (!run.ended) {
+      const by = run.cancelled_by ?? "unknown";
+      await appendEnding(
+        opts.pool,
+        opts.events,
+        tenantId,
+        runId,
+        cancelledEvent(runId, by, run.cancel_reason ?? undefined),
+      );
+    }
+    await release(tenantId, runId, lease);
   };
 
   /** One invocation of a run, holding `lease` until it ends, waits or is taken over. */
@@ -123,8 +155,11 @@ export function createWorker(opts: WorkerOptions) {
       .then(
         () => undefined,
         async (err: unknown) => {
-          // another worker holds the run now; this invocation just stops
-          if (err instanceof RunInterrupted) return;
+          // the run was cancelled, or another worker holds it now; this invocation stops
+          if (err instanceof RunInterrupted) {
+            await endIfCancelled(tenantId, runId, lease).catch((e) => report(runId, e));
+            return;
+          }
           report(runId, err);
           // the lease runs out, and the run is claimed again until it has had its attempts
           const message = err instanceof Error ? err.message : String(err);
@@ -152,16 +187,19 @@ export function createWorker(opts: WorkerOptions) {
         decision: ApprovalDecision | null;
         last_error: string | null;
         saved: boolean;
+        status: string;
       }>(
         `update runs r set lease_owner = $3
          where r.id = $1 and r.lease_owner = $2
-         returning r.agent_id, r.input, r.decision, r.last_error,
+         returning r.agent_id, r.input, r.decision, r.last_error, r.status,
            exists (select 1 from run_checkpoints where run_id = r.id) as saved`,
         [runId, owner, lease],
       );
       return rows[0];
     });
     if (!run) return;
+    // cancelled while a worker that has since died held it: end it, never run it
+    if (run.status === "cancelled") return endIfCancelled(tenantId, runId, lease);
     const agent = opts.agents[run.agent_id] as AgentEntry;
     if (attempts > maxAttempts) {
       const why = run.last_error ? `: ${run.last_error}` : "";

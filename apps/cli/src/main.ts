@@ -4,7 +4,12 @@ import { parseArgs } from "node:util";
 import { loadEnv, loadTenants } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import { type AnyAgent, loadAgent } from "@dugout/sdk";
-import { createRunQueue, createValkeyEventLog, LOCAL_VALKEY_URL } from "@dugout/worker";
+import {
+  createRunQueue,
+  createValkeyEventLog,
+  LOCAL_VALKEY_URL,
+  type RunQueue,
+} from "@dugout/worker";
 import { Valkey } from "iovalkey";
 import { z } from "zod";
 import { parseCliArgs, usage } from "./flags.ts";
@@ -12,13 +17,14 @@ import { dim, type Ending, followRun, type Terminal } from "./session.ts";
 
 /**
  * `pnpm agent <id> --tenant <t> [input flags]` queues a run and follows it; `pnpm agent --run <runId>
- * --tenant <t> [--after <seq>]` attaches to one already queued. Returns the exit code.
+ * --tenant <t> [--after <seq>]` attaches to one already queued; `pnpm agent --cancel <runId> --tenant
+ * <t> [--reason <why>]` cancels one. A run id can be its first characters. Returns the exit code.
  */
 export async function main(argv: string[], command?: string): Promise<number> {
   const [first, ...rest] = argv;
   if (!first) {
     console.error(
-      "usage: pnpm agent <id> --tenant <tenant> ... | pnpm agent --run <runId> --tenant <tenant>",
+      "usage: pnpm agent <id> --tenant <tenant> ... | pnpm agent --run <runId> --tenant <tenant> | pnpm agent --cancel <runId> --tenant <tenant>",
     );
     return 2;
   }
@@ -41,6 +47,7 @@ export async function main(argv: string[], command?: string): Promise<number> {
   };
 
   try {
+    if (first === "--cancel") return await cancel(argv, queue);
     let agent: AnyAgent;
     let tenantId: string;
     let runId: string;
@@ -70,27 +77,8 @@ export async function main(argv: string[], command?: string): Promise<number> {
         return 2;
       }
       tenantId = loadTenants().require(values.tenant).id;
-      // the whole id, or enough of its first characters to pick one run
-      const matches = await queue.matching(tenantId, values.run);
-      const run = matches.length === 1 ? matches[0] : undefined;
-      if (!run) {
-        const listed = matches.length ? matches : await queue.matching(tenantId, "");
-        console.error(
-          matches.length
-            ? `several runs of ${tenantId} start with ${values.run}:`
-            : `no run ${values.run} for tenant ${tenantId}${listed.length ? "; latest runs:" : ""}`,
-        );
-        for (const r of listed) {
-          const at = r.updated_at.toISOString().slice(0, 16).replace("T", " ");
-          console.error(`  ${r.id}  ${r.agent_id.padEnd(14)} ${r.status.padEnd(9)} ${at}`);
-        }
-        if (listed.length) {
-          console.error(
-            `attach with: pnpm agent --run <id, or its first characters> --tenant ${tenantId}`,
-          );
-        }
-        return 1;
-      }
+      const run = await pickRun(queue, tenantId, values.run, "--run");
+      if (!run) return 1;
       runId = run.id;
       agent = await loadAgent(run.agent_id);
       afterSeq = Number(values.after ?? 0);
@@ -143,16 +131,84 @@ export async function main(argv: string[], command?: string): Promise<number> {
 }
 
 function report(ending: Ending, agent: Pick<AnyAgent, "cli">, tenantId: string) {
+  const { usage } = ending.data;
+  const cost = dim(
+    `cost $${usage.costUsd.toFixed(4)} · ${usage.steps} steps · run ${ending.runId}`,
+  );
+  if (ending.type === "run.cancelled") {
+    const why = ending.data.reason ? `: ${ending.data.reason}` : "";
+    console.log(`\ncancelled by ${ending.data.by}${why}`);
+    console.log(cost);
+    return 1;
+  }
   const status = ending.type === "run.completed" ? ending.data.status : "failed";
   const failure =
     ending.type === "run.failed" ? ` (${ending.data.reason}: ${ending.data.message})` : "";
-  const { usage } = ending.data;
   console.log(`\n${status}${failure}`);
-  console.log(
-    dim(`cost $${usage.costUsd.toFixed(4)} · ${usage.steps} steps · run ${ending.runId}`),
-  );
+  console.log(cost);
   const note = agent.cli.done?.({ status }, tenantId);
   if (note) console.log(dim(`· ${note}`));
   if (status === "rejected") console.log(dim("· the reason is saved to this tenant's memory"));
   return status === "failed" ? 1 : 0;
+}
+
+/** The one run of the tenant whose id starts with `prefix`; lists candidates when there isn't one. */
+async function pickRun(queue: RunQueue, tenantId: string, prefix: string, flag: string) {
+  const matches = await queue.matching(tenantId, prefix);
+  if (matches.length === 1) return matches[0];
+  const listed = matches.length ? matches : await queue.matching(tenantId, "");
+  console.error(
+    matches.length
+      ? `several runs of ${tenantId} start with ${prefix}:`
+      : `no run ${prefix} for tenant ${tenantId}${listed.length ? "; latest runs:" : ""}`,
+  );
+  for (const r of listed) {
+    const at = r.updated_at.toISOString().slice(0, 16).replace("T", " ");
+    console.error(`  ${r.id}  ${r.agent_id.padEnd(14)} ${r.status.padEnd(9)} ${at}`);
+  }
+  if (listed.length) {
+    console.error(`try: pnpm agent ${flag} <id, or its first characters> --tenant ${tenantId}`);
+  }
+  return undefined;
+}
+
+/** `pnpm agent --cancel <runId> --tenant <t> [--reason <why>]`. */
+async function cancel(argv: string[], queue: RunQueue): Promise<number> {
+  const line = "usage: pnpm agent --cancel <runId> --tenant <tenant> [--reason <why>]";
+  let values: {
+    cancel?: string | undefined;
+    tenant?: string | undefined;
+    reason?: string | undefined;
+  };
+  try {
+    ({ values } = parseArgs({
+      args: argv,
+      options: {
+        cancel: { type: "string" },
+        tenant: { type: "string" },
+        reason: { type: "string" },
+      },
+    }));
+  } catch (err) {
+    console.error(`${(err as Error).message}\n${line}`);
+    return 2;
+  }
+  if (!values.cancel || !values.tenant) {
+    console.error(line);
+    return 2;
+  }
+  const tenantId = loadTenants().require(values.tenant).id;
+  const run = await pickRun(queue, tenantId, values.cancel, "--cancel");
+  if (!run) return 1;
+  const previous = await queue.cancel(tenantId, run.id, userInfo().username, values.reason);
+  if (!previous) {
+    console.error(`run ${run.id} had already ended (${run.status})`);
+    return 1;
+  }
+  console.log(
+    previous === "running"
+      ? `run ${run.id} cancelled; its worker stops it at its next step`
+      : `run ${run.id} cancelled (it was ${previous})`,
+  );
+  return 0;
 }

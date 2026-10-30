@@ -524,6 +524,35 @@ describe("runAgent", () => {
     expect(model.requests[2]?.messages.at(-1)?.content).toBe("xxEND");
   });
 
+  it("wraps an output of several shapes for the model and returns it unwrapped", async () => {
+    const Variant = z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("page"), slug: z.string() }),
+      z.object({ kind: z.literal("menu"), items: z.array(z.string()) }),
+    ]);
+    const agent = { spec: spec(), output: Variant };
+    const { result, model } = await run(
+      [
+        {
+          toolCalls: [{ name: "final", arguments: { result: { kind: "menu", items: ["Home"] } } }],
+        },
+      ],
+      { agent },
+    );
+    expect(result).toMatchObject({
+      status: "completed",
+      output: { kind: "menu", items: ["Home"] },
+    });
+    const finalTool = model.requests[0]?.tools.find((t) => t.name === "final");
+    expect(finalTool?.parameters).toMatchObject({ type: "object", required: ["result"] });
+
+    // a list is wrapped the same way
+    const list = await run(
+      [{ toolCalls: [{ name: "final", arguments: { result: ["a", "b"] } }] }],
+      { agent: { spec: spec(), output: z.array(z.string()) } },
+    );
+    expect(list.result).toMatchObject({ status: "completed", output: ["a", "b"] });
+  });
+
   it("keeps a large output whole when its tool needs it all", async () => {
     const agent = { spec: spec({ tools: ["whole.read"] }), output: Output };
     const { model } = await run([call("whole.read"), final("ok")], { agent });

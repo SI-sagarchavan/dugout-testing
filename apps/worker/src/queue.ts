@@ -2,19 +2,19 @@ import { randomUUID } from "node:crypto";
 import type { ApprovalDecision, RunEvent } from "@dugout/contracts";
 import { type Pool, withTenant } from "@dugout/db";
 import { readStoredEvents, type ValkeyEventLog } from "./event-log.ts";
-import { lastSeq } from "./records.ts";
+import { appendEnding, cancelledEvent, lastSeq } from "./records.ts";
 
 export interface RunRow {
   id: string;
   agent_id: string;
-  status: "queued" | "running" | "waiting" | "completed" | "rejected" | "failed";
+  status: "queued" | "running" | "waiting" | "completed" | "rejected" | "failed" | "cancelled";
   input: unknown;
   result: unknown;
   created_at: Date;
   updated_at: Date;
 }
 
-const ENDED = new Set<RunRow["status"]>(["completed", "rejected", "failed"]);
+const ENDED = new Set<RunRow["status"]>(["completed", "rejected", "failed", "cancelled"]);
 
 /**
  * How a host hands runs to the workers (ADR 0009): it queues runs and approval decisions in
@@ -80,6 +80,45 @@ export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
         return rowCount === 1;
       });
       return queued ? await lastSeq(opts.pool, opts.events, tenantId, runId) : undefined;
+    },
+
+    /**
+     * Cancels a queued, running or waiting run. A queued or waiting run, or a running one whose
+     * worker is gone, ends at once with `run.cancelled`. A running one stops at its worker's next
+     * save, and the worker writes `run.cancelled`. Returns the status the run had, or undefined
+     * when it had already ended (or is another tenant's).
+     */
+    async cancel(tenantId: string, runId: string, by: string, reason?: string) {
+      const row = await withTenant(opts.pool, tenantId, async (db) => {
+        const { rows } = await db.query<{ previous: RunRow["status"]; held: boolean }>(
+          `with old as (select id, status, lease_until from runs where id = $1 for update)
+           update runs r
+           set status = 'cancelled', cancelled_by = $2, cancel_reason = $3, decision = null,
+               updated_at = now(),
+               -- no worker holds it: this call ends it, and nothing should claim it after
+               lease_owner = case when old.status = 'running' and old.lease_until > now()
+                 then r.lease_owner end,
+               lease_until = case when old.status = 'running' and old.lease_until > now()
+                 then r.lease_until end
+           from old
+           where r.id = old.id and old.status in ('queued', 'running', 'waiting')
+           returning old.status as previous,
+             (old.status = 'running' and old.lease_until > now()) as held`,
+          [runId, by, reason ?? null],
+        );
+        return rows[0];
+      });
+      if (!row) return undefined;
+      if (!row.held) {
+        await appendEnding(
+          opts.pool,
+          opts.events,
+          tenantId,
+          runId,
+          cancelledEvent(runId, by, reason),
+        );
+      }
+      return row.previous;
     },
 
     /** The call the run waits for a decision on, if it is waiting. */

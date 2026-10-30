@@ -1,6 +1,6 @@
 # 0013 — The memory model: four types, two scopes, people approve facts
 
-Date: 2026-10-30 · Status: accepted · Extends ADR 0003 and ADR 0006
+Date: 2026-10-30 · Status: accepted; shared memory for every tenant and each sport is ADR 0014 · Extends ADR 0003 and ADR 0006
 
 ## Context
 
@@ -28,7 +28,7 @@ None of them queues proposed memories for a person to approve.
 - **Memory belongs to a tenant, or to every tenant.** An agent is one definition that every tenant's runs use; it owns no memory.
   - Tenant memory is the facts, lessons and run records in Postgres. Every agent of the tenant reads all of it, and row-level security keeps one tenant's rows from another's runs.
   - Each item records the agent whose run produced it. That is provenance and a small ranking lift for the agent's own lessons, never a filter.
-  - Global memory is what every tenant's runs read: the skills in git. It changes only through a pull request, because a tenant's lessons can hold that tenant's names, fixtures or editors' words. Repeated lessons reach it as suggested skill edits (the procedural point below).
+  - Global memory is what every tenant's runs read: the skills in git, changed only through a pull request, because a tenant's lessons can hold that tenant's names, fixtures or editors' words. ADR 0014 adds shared facts and lessons, for every tenant or for one sport, which a person approves.
   - The tenant comes from the verified run, never from the model. No user-level memory until hosts send a verified user id.
 - **People make facts live.** Agents propose with `memory.propose`; the after-run extractor proposes; only `pnpm memory:review` (or seeding) activates. Proposals are checked against similar facts first, so they arrive as a new key, a new version of an existing key, or not at all.
 - **Two tiers of facts.** Pinned facts are always in the prompt; the rest are searched with `memory.search`.

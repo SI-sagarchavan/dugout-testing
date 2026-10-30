@@ -40,10 +40,11 @@ With the backend serving requests, the HTTP API in this repo would only have bee
 
 What wnm-fanxp-backend does against the same database and Valkey (`apps/worker/src/queue.ts` is the reference):
 
-- **Start a run.** Insert into `runs` with status `queued`, the tenant, the agent id and the input, already checked against the agent's input schema.
+- **Start a run.** Insert into `runs` with status `queued`, the tenant, the agent id and the input, already checked against the agent's input schema. Each agent's input and output are JSON Schema files in `schemas/` (`<agent>.input.json`, `<agent>.output.json`), which `pnpm schemas` writes and a test keeps current.
 - **Decide an approval.** When the run is `waiting` and its checkpoint waits for that call, set it back to `queued` with the decision in `runs.decision` and `attempts` reset to 0. Check both in one statement, so two decisions can't both win.
-- **Follow a run.** Read the Valkey stream `run:<id>:events`, whose entry ids are `0-<seq>`; resume after a known `seq` with an exclusive range. An invocation ends at `approval.requested`, `run.completed` or `run.failed`. `run_events` in Postgres has every event except the streamed fragments (`token`, `tool.input.delta`).
-- **Run status.** The `runs` row says `queued`, `running`, `waiting`, `completed`, `rejected` or `failed`. A run is saved as `waiting` before its `approval.requested` is written, so a decision sent the moment the event arrives finds it.
+- **Follow a run.** Read the Valkey stream `run:<id>:events`, whose entry ids are `0-<seq>`; resume after a known `seq` with an exclusive range. An invocation ends at `approval.requested`, `run.completed`, `run.failed` or `run.cancelled`. `run_events` in Postgres has every event except the streamed fragments (`token`, `tool.input.delta`).
+- **Cancel a run.** Set it to `cancelled`, with `cancelled_by` and `cancel_reason`, when it is `queued`, `running` or `waiting` (`queue.cancel` in `apps/worker/src/queue.ts` is the reference). For a queued or waiting run, or a running one whose lease has run out, the host appends `run.cancelled` itself. A running run stops at its worker's next save, and the worker appends it; if that worker dies first, the next worker claims the run only to append it. `run.cancelled` ends the stream like `run.completed` and `run.failed`.
+- **Run status.** The `runs` row says `queued`, `running`, `waiting`, `completed`, `rejected`, `failed` or `cancelled`. A run is saved as `waiting` before its `approval.requested` is written, so a decision sent the moment the event arrives finds it.
 
 ## Consequences
 
@@ -56,6 +57,5 @@ What wnm-fanxp-backend does against the same database and Valkey (`apps/worker/s
 - This supersedes ADR 0004, and ADR 0006's recovery sweep (`claim_expired_runs` is replaced by `claim_runs`).
 - Not yet:
   - one Valkey reader per host process, instead of one per stream;
-  - a cancel command;
   - a queue-depth metric for autoscaling;
   - a smaller image (713 MB, with dev dependencies).

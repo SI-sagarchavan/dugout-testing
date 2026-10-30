@@ -134,12 +134,16 @@ export function createTracingSink(tracer: Tracer, onRunEnd?: () => Promise<void>
           break;
         }
         case "run.completed":
-        case "run.failed": {
+        case "run.failed":
+        case "run.cancelled": {
           for (const span of run.open.values()) span.end(at);
           run.root.setAttribute("dugout.cost_usd", event.data.usage.costUsd);
           if (event.type === "run.completed") {
             run.root.setAttribute("dugout.status", event.data.status);
             run.root.setAttribute("langfuse.trace.output", JSON.stringify(event.data.output));
+          } else if (event.type === "run.cancelled") {
+            run.root.setAttribute("dugout.status", "cancelled");
+            run.root.setAttribute("dugout.cancelled_by", event.data.by);
           } else {
             run.root.setAttribute("dugout.status", "failed");
             run.root.setStatus({

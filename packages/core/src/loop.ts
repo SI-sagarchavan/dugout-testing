@@ -77,6 +77,7 @@ const UNKNOWN_OUTCOME =
 export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   const { agent, registry, steps, log, resume } = opts;
   const { spec, output } = agent;
+  const final = output ? finalSchema(output) : undefined;
   // a resumed run keeps the instructions (memory included) it started with
   assertSupportedSpec(spec, registry, {
     hasContext: opts.context !== undefined || resume !== undefined,
@@ -92,12 +93,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   }
 
   const tools = registry.definitions([...spec.tools, ...BUILTIN_TOOLS]);
-  if (output) {
+  if (final) {
     tools.push(
       toolDefinition(
         FINAL_TOOL,
-        "Submit your final result. The run ends when this call is valid.",
-        output,
+        final.wrapped
+          ? "Submit your final result as `result`. The run ends when this call is valid."
+          : "Submit your final result. The run ends when this call is valid.",
+        final.schema,
       ),
     );
   }
@@ -239,7 +242,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         await save();
         continue;
       }
-      if (output && call.name === FINAL_TOOL) {
+      if (final && call.name === FINAL_TOOL) {
         if (hasPendingChanges()) {
           if (++state.blockedFinishes > MAX_INVALID_OUTPUTS) return fail("invalid_output", UNMADE);
           await skip(
@@ -252,8 +255,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           await save();
           continue;
         }
-        const result = parseFinal(call, output);
-        if (result.ok) return complete(result.value);
+        const result = parseFinal(call, final.schema);
+        if (result.ok) return complete(final.unwrap(result.value));
         if (++state.invalidOutputs > MAX_INVALID_OUTPUTS) {
           return fail("invalid_output", result.error);
         }
@@ -475,6 +478,20 @@ export function assertSupportedSpec(
       throw new SpecError(`${spec.id}: approval for ${entry}, which is not in tools`);
     }
   }
+}
+
+/**
+ * `final`'s parameters must be an object, so an output that isn't one (a union of variants, a
+ * list) is wrapped as `{ result }` for the model and unwrapped after the check.
+ */
+function finalSchema(output: z.ZodType) {
+  const json = z.toJSONSchema(output, { io: "input" }) as { type?: unknown };
+  if (json.type === "object") return { schema: output, wrapped: false, unwrap: (v: unknown) => v };
+  return {
+    schema: z.object({ result: output }),
+    wrapped: true,
+    unwrap: (v: unknown) => (v as { result: unknown }).result,
+  };
 }
 
 function parseFinal(

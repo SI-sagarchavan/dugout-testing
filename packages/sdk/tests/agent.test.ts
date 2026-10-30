@@ -151,6 +151,37 @@ describe("defineAgent", () => {
     );
   });
 
+  it("asks for the shared memory of the sports a run's input names", async () => {
+    const asked: Array<[string, string[] | undefined]> = [];
+    const agent = defineAgent({
+      spec: { ...notes().spec, tools: [] },
+      input: z.object({ topic: z.string(), sports: z.array(z.string()).optional() }),
+      output: z.object({ title: z.string() }),
+      dir,
+      tools: () => [],
+      sportsOf: (input) => input.sports,
+    });
+    const run = agent.create({
+      store,
+      client: createScriptedModel([
+        { toolCalls: [{ name: "final", arguments: { title: "Swim meet" } }] },
+      ]),
+      models: scriptedModelConfig(),
+      runsDir: await mkdtemp(join(tmpdir(), "runs-")),
+      consolidate: false,
+      memoryGroups: (tenantId, sports) => {
+        asked.push([tenantId, sports]);
+        return ["global"];
+      },
+    });
+    await run({
+      tenantId: tenant,
+      input: { topic: "the meet", sports: ["swimming"] },
+      approver: async () => ({ approved: true, by: "editor" }),
+    });
+    expect(asked).toContainEqual([tenant, ["swimming"]]);
+  });
+
   it("needs skill.load for skills on demand, and each skill in one list only", () => {
     expect(() => notes({ onDemandSkills: ["headlines"] })).toThrow(
       "onDemandSkills needs skill.load",

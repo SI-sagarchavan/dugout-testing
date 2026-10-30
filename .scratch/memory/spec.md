@@ -42,9 +42,11 @@ The four memory types as the CoALA paper defines them (arXiv 2309.02427), built 
 | 04  | [Working memory: compaction and notes](issues/04-working-memory.md)                | ready-for-agent |            |
 | 05  | [Skill-edit suggestions](issues/05-skill-suggestions.md)                           | ready-for-agent | 02         |
 | 06  | [Memory evals](issues/06-memory-evals.md)                                          | ready-for-agent | 02, 03, 04 |
+| 07  | [Shared memory for every tenant and each sport](issues/07-shared-memory.md)        | resolved        | 01, 02     |
 
 ## Not now
 
 - User-level memory (needs a verified user id from the host).
+- Groups beyond sport, and promotion on a schedule (ADR 0014).
 - Threads spanning runs (one request is one run).
 - A knowledge graph (Zep/Graphiti); versioned rows with provenance cover our needs.

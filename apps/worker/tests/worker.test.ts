@@ -370,3 +370,80 @@ describe("workers", () => {
     expect(await stale.load({ tenantId: TENANT, runId })).toBeUndefined();
   });
 });
+
+describe("cancelling a run", () => {
+  it("ends a queued run at once, and no worker ever claims it", async () => {
+    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    expect(await queue.cancel(TENANT, runId, "editor", "wrong fixture")).toBe("queued");
+    expect(await runRow(runId)).toMatchObject({ status: "cancelled" });
+    expect((await events.read(runId, 0)).at(-1)).toMatchObject({
+      type: "run.cancelled",
+      data: { by: "editor", reason: "wrong fixture" },
+    });
+    expect(await workerWith(writerModel).poll()).not.toContain(runId);
+    // an ended run can't be cancelled again
+    expect(await queue.cancel(TENANT, runId, "editor")).toBeUndefined();
+  });
+
+  it("ends a run waiting for an approval at once, and a later decision finds nothing", async () => {
+    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    await workerWith(writerModel).poll();
+    const waiting = await eventsUntil(runId, lastType("approval.requested"));
+    expect(await queue.cancel(TENANT, runId, "editor")).toBe("waiting");
+    contiguous(await eventsUntil(runId, lastType("run.cancelled")));
+    expect(await queue.decide(TENANT, runId, waitingCall(waiting), approve)).toBeUndefined();
+    expect(await runRow(runId)).toMatchObject({ status: "cancelled" });
+  });
+
+  it("stops a running run at its next save, with run.cancelled after its events", async () => {
+    // the model holds its second turn back until released, so the cancel lands mid-run
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holding = (): ModelClient => {
+      const inner = writerModel();
+      return {
+        async complete(req, onToken) {
+          if (req.messages.filter((m) => m.role === "assistant").length === 1) await held;
+          return inner.complete(req, onToken);
+        },
+      };
+    };
+    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    await workerWith(holding).poll();
+    await eventsUntil(runId, (es) => es.some((e) => e.type === "tool.completed"));
+    expect(await queue.cancel(TENANT, runId, "editor", "closed the job")).toBe("running");
+    release();
+
+    const all = await eventsUntil(runId, lastType("run.cancelled"));
+    contiguous(all);
+    expect(all.some((e) => e.type === "approval.requested")).toBe(false);
+    expect(all.filter((e) => e.type === "run.cancelled")).toHaveLength(1);
+    expect(await runRow(runId)).toMatchObject({ status: "cancelled", lease_owner: null });
+  });
+});
+
+describe("cancelling a run whose worker then died", () => {
+  it("leaves it to the next worker to write run.cancelled, and nobody runs it", async () => {
+    const runId = randomUUID();
+    // held by a worker whose lease is about to run out, and which never saves again
+    await withTenant(pool, TENANT, (db) =>
+      db.query(
+        `insert into runs (id, tenant_id, agent_id, status, input, lease_owner, lease_until)
+         values ($1, $2, 'match-preview', 'running', $3, 'dead-worker/x', now() + interval '300 milliseconds')`,
+        [runId, TENANT, INPUT],
+      ),
+    );
+    expect(await queue.cancel(TENANT, runId, "editor")).toBe("running");
+    expect(await events.read(runId, 0)).toEqual([]);
+    await sleep(400);
+
+    expect(await workerWith(writerModel).poll()).toContain(runId);
+    const all = await eventsUntil(runId, lastType("run.cancelled"));
+    expect(all.map((e) => e.type)).toEqual(["run.cancelled"]);
+    expect(await runRow(runId)).toMatchObject({ status: "cancelled", lease_owner: null });
+    // let go, it is never claimed again
+    expect(await workerWith(writerModel).poll()).not.toContain(runId);
+  });
+});

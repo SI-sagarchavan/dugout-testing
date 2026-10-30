@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "pages": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema0"
+      }
+    },
+    "navigation": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema1"
+      }
+    }
+  },
+  "required": [
+    "pages",
+    "navigation"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "slug": {
+          "description": "One url segment: lowercase letters, numbers and single dashes, e.g. \"fan-zone\". Omit for a dynamic page.",
+          "anyOf": [
+            {
+              "type": "string",
+              "const": ""
+            },
+            {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            }
+          ]
+        },
+        "dynamic": {
+          "description": "True for one template that renders many items. No slug, no children.",
+          "type": "boolean"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "__schema1": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^\\/(?:[a-z0-9]+(?:-[a-z0-9]+)*(?:\\/[a-z0-9]+(?:-[a-z0-9]+)*)*)?$"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema1"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "url"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

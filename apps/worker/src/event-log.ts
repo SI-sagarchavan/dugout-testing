@@ -7,7 +7,8 @@ export const LOCAL_VALKEY_URL = "redis://localhost:56379";
 const RETAIN_SECONDS = 7 * 24 * 3600;
 
 /** The run is over. */
-export const isTerminal = (e: RunEvent) => e.type === "run.completed" || e.type === "run.failed";
+export const isTerminal = (e: RunEvent) =>
+  e.type === "run.completed" || e.type === "run.failed" || e.type === "run.cancelled";
 /** The invocation is over: the run ended, or it waits for a person to decide an approval. */
 export const endsInvocation = (e: RunEvent) => e.type === "approval.requested" || isTerminal(e);
 /** Streamed fragments: only the live stream has them; the finished messages are in the record. */
@@ -109,7 +110,12 @@ export function createPostgresEventSink(pool: Pool, tenantId: string): EventSink
           [event.runId, event.seq, tenantId, event.type, event.data, event.at],
         );
         if (isTerminal(event)) {
-          const status = event.type === "run.completed" ? event.data.status : "failed";
+          const status =
+            event.type === "run.completed"
+              ? event.data.status
+              : event.type === "run.failed"
+                ? "failed"
+                : "cancelled";
           await db.query(
             "update runs set status = $2, result = $3, updated_at = now() where id = $1",
             [event.runId, status, event.data],
