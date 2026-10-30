@@ -55,6 +55,19 @@ export interface ApprovalPending {
   pending: true;
 }
 
+/** What a save point comes right after. Every one is kept, so a run can be forked from it. */
+export const SavedAfter = z.enum([
+  "start", // the run's instructions and input
+  "model", // a model turn
+  "call", // a call about to run
+  "tool", // a call's result, or why it didn't run
+  "waiting", // an approval asked for
+  "decision", // a reviewer's decision
+  "end", // the run's last save
+  "fork", // a fork's copy of its parent's save point
+]);
+export type SavedAfter = z.infer<typeof SavedAfter>;
+
 /**
  * Where a run is, saved after every change so a later invocation (after an approval, or after a
  * crash) carries on from here. The transcript is saved beside it, append-only.
@@ -89,6 +102,10 @@ export const RunCheckpoint = z.object({
   waiting: z
     .object({ step: z.number(), callId: z.string(), tool: z.string(), input: z.unknown() })
     .optional(),
+  /** Unset on checkpoints saved before save points were kept. */
+  savedAfter: SavedAfter.optional(),
+  /** The run and save point this run was forked from. */
+  forkedFrom: z.object({ runId: z.string(), version: z.number().int().positive() }).optional(),
 });
 export type RunCheckpoint = z.infer<typeof RunCheckpoint>;
 
@@ -98,11 +115,30 @@ export interface SavedRun {
   messages: Message[];
 }
 
-/** Keeps runs' working memory between invocations. */
+/** One save point of a run, as its history lists it. */
+export interface SavePoint {
+  /** 1 for the run's first save, counting up. */
+  version: number;
+  step: number;
+  savedAfter: SavedAfter | undefined;
+  /** Transcript messages at this point. */
+  messages: number;
+  /** The call it waited for a decision on, if it did. */
+  waiting?: { callId: string; tool: string };
+  savedAt: string;
+}
+
+/**
+ * Keeps runs' working memory between invocations. The transcript only grows, so any save point's
+ * transcript is the first `checkpoint.messages` of it.
+ */
 export interface RunStore {
-  load(ctx: RunContext): Promise<SavedRun | undefined>;
-  /** Appends `messages` to the transcript and replaces the checkpoint, in one write. */
+  /** The latest save point, or the one `version` names. */
+  load(ctx: RunContext, version?: number): Promise<SavedRun | undefined>;
+  /** Appends `messages` to the transcript and saves the checkpoint as a new save point, in one write. */
   save(ctx: RunContext, checkpoint: RunCheckpoint, messages: Message[]): Promise<void>;
+  /** Every save point kept, oldest first. */
+  history(ctx: RunContext): Promise<SavePoint[]>;
 }
 
 /**

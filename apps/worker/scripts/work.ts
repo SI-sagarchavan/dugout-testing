@@ -25,6 +25,7 @@ const worker = createWorker({
   events: createValkeyEventLog(valkey, { keyPrefix: process.env.VALKEY_KEY_PREFIX ?? "" }),
   agents: hostAgents(deps, ...served),
   concurrency: Number(process.env.WORKER_CONCURRENCY || 10),
+  historyDays: Number(process.env.RUN_HISTORY_DAYS || 30),
   onError: (runId, err) => console.error(`run ${runId}:`, err),
 });
 worker.start(Number(process.env.WORKER_POLL_MS || 1_000));

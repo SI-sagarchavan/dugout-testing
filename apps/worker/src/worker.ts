@@ -24,6 +24,8 @@ export interface WorkerOptions {
   concurrency?: number;
   /** Claims a run gets after it was queued before it is given up on, so a crash can't loop forever. */
   maxAttempts?: number;
+  /** How long save points other than a run's latest are kept; 30 days unless set. */
+  historyDays?: number;
   onError?: (runId: string, err: unknown) => void;
 }
 
@@ -51,6 +53,7 @@ export function createWorker(opts: WorkerOptions) {
   /** Invocations in progress, by lease. */
   const active = new Map<string, { tenantId: string; runId: string; ended: Promise<void> }>();
   let timer: ReturnType<typeof setInterval> | undefined;
+  let pruning: ReturnType<typeof setInterval> | undefined;
   let polling: Promise<string[]> | undefined;
   let stopped = false;
   const report = (runId: string, err: unknown) => opts.onError?.(runId, err);
@@ -133,6 +136,7 @@ export function createWorker(opts: WorkerOptions) {
     runId: string,
     agent: AgentEntry,
     input: unknown,
+    model: string | null,
     resume?: ResumeOptions,
   ) => {
     const heartbeat = setInterval(() => {
@@ -150,6 +154,7 @@ export function createWorker(opts: WorkerOptions) {
         runId,
         sinks: [opts.events.sink(), createPostgresEventSink(opts.pool, tenantId)],
         store: createPostgresRunStore(opts.pool, { owner: lease, leaseMs }),
+        ...(model ? { model } : {}),
         ...(resume ? { resume } : {}),
       }))()
       .then(
@@ -188,10 +193,11 @@ export function createWorker(opts: WorkerOptions) {
         last_error: string | null;
         saved: boolean;
         status: string;
+        model: string | null;
       }>(
         `update runs r set lease_owner = $3
          where r.id = $1 and r.lease_owner = $2
-         returning r.agent_id, r.input, r.decision, r.last_error, r.status,
+         returning r.agent_id, r.input, r.decision, r.last_error, r.status, r.model,
            exists (select 1 from run_checkpoints where run_id = r.id) as saved`,
         [runId, owner, lease],
       );
@@ -215,13 +221,13 @@ export function createWorker(opts: WorkerOptions) {
       if (!input.success) {
         return giveUp(tenantId, runId, lease, `invalid input: ${z.prettifyError(input.error)}`);
       }
-      return launch(lease, tenantId, runId, agent, run.input);
+      return launch(lease, tenantId, runId, agent, run.input, run.model);
     }
     const [startSeq, events] = await Promise.all([
       lastSeq(opts.pool, opts.events, tenantId, runId),
       readStoredEvents(opts.pool, tenantId, runId, 0),
     ]);
-    launch(lease, tenantId, runId, agent, run.input, {
+    launch(lease, tenantId, runId, agent, run.input, run.model, {
       // a decision stays on the run until the first save after it, so a crash before then repeats it
       reason: run.decision ? "approval" : "recovery",
       startSeq,
@@ -250,11 +256,23 @@ export function createWorker(opts: WorkerOptions) {
       return polling;
     },
 
-    /** Polls now and then every `pollMs`, until `stop`. */
+    /** Deletes save points older than `historyDays`, except each run's latest. Returns how many. */
+    async prune(): Promise<number> {
+      const { rows } = await opts.pool.query<{ pruned: number }>(
+        "select prune_run_history(make_interval(days => $1)) as pruned",
+        [opts.historyDays ?? 30],
+      );
+      return rows[0]?.pruned ?? 0;
+    },
+
+    /** Polls now and then every `pollMs`, and prunes old save points hourly, until `stop`. */
     start(pollMs = 1_000) {
       const tick = () => void worker.poll().catch((err) => report("poll", err));
+      const prune = () => void worker.prune().catch((err) => report("prune", err));
       tick();
+      prune();
       timer = setInterval(tick, pollMs);
+      pruning = setInterval(prune, 60 * 60_000);
     },
 
     /**
@@ -265,6 +283,7 @@ export function createWorker(opts: WorkerOptions) {
     async stop(graceMs = 20_000) {
       stopped = true;
       clearInterval(timer);
+      clearInterval(pruning);
       await polling?.catch(() => undefined);
       let grace: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([

@@ -59,7 +59,9 @@ export async function resetDatabase(adminUrl: string): Promise<void> {
   const client = new pg.Client({ connectionString: adminUrl });
   await client.connect();
   try {
-    await client.query("truncate runs, run_events, run_messages, run_checkpoints, memory_items");
+    await client.query(
+      "truncate runs, run_events, run_messages, run_checkpoints, run_checkpoint_history, memory_items",
+    );
   } finally {
     await client.end();
   }

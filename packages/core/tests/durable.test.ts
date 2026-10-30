@@ -15,10 +15,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   type Approver,
+  correctedInput,
   createMemoryOutputStore,
   createMemoryRunStore,
   createMemorySink,
   createScriptedModel,
+  forkRun,
   RunInterrupted,
   runLocal,
   type ScriptStep,
@@ -135,7 +137,7 @@ describe("working memory saved between invocations", () => {
       approval: { tool: "draft.save", input: { text: "a" } },
     });
     expect(written).toEqual([]);
-    const waiting = store.runs.get("demo-cricket/r1")?.checkpoint as RunCheckpoint;
+    const waiting = store.runs.get("demo-cricket/r1")?.points.at(-1)?.checkpoint as RunCheckpoint;
     expect(waiting.waiting?.callId).toBe(
       first.result.status === "waiting" && first.result.approval.callId,
     );
@@ -258,12 +260,160 @@ describe("working memory saved between invocations", () => {
   });
 });
 
+describe("save points and forks", () => {
+  const ctx = (runId: string) => ({ tenantId: "demo-cricket", runId });
+  /** Saves a fork of `runId` at `version` as run `forkId`, ready to be resumed. */
+  const fork = async (
+    store: RunStore,
+    runId: string,
+    version: number,
+    forkId: string,
+    change: Parameters<typeof forkRun>[2] = {},
+  ) => {
+    const saved = await store.load(ctx(runId), version);
+    if (!saved) throw new Error(`no save point ${version}`);
+    const forked = forkRun(saved, { runId, version }, change);
+    await store.save(ctx(forkId), forked.checkpoint, forked.messages);
+    return forked;
+  };
+
+  it("lists every save point with its step and what it came after", async () => {
+    const store = createMemoryRunStore();
+    await invoke({
+      runId: "r1",
+      store,
+      script: [call("draft.save", { text: "a" }), final("saved")],
+      approver: approve,
+    });
+    const history = await store.history(ctx("r1"));
+    expect(history.map((p) => [p.version, p.step, p.savedAfter])).toEqual([
+      [1, 0, "start"],
+      [2, 1, "model"],
+      // asked for the approval, even though the approver answers at once
+      [3, 1, "waiting"],
+      [4, 1, "decision"],
+      [5, 1, "call"],
+      [6, 1, "tool"],
+      // the turn answered
+      [7, 1, "tool"],
+      [8, 2, "model"],
+      [9, 2, "end"],
+    ]);
+    expect(history[2]?.waiting).toMatchObject({ tool: "draft.save" });
+    // each save point's transcript is the start of the run's
+    const second = await store.load(ctx("r1"), 2);
+    expect(second?.messages).toEqual(transcript(store, "r1").slice(0, 3));
+  });
+
+  it("forks a run at its approval with the other decision; both complete, neither changes the other", async () => {
+    const store = createMemoryRunStore();
+    await invoke({
+      runId: "parent",
+      store,
+      script: [call("draft.save", { text: "a" })],
+      approver: later,
+    });
+    const history = await store.history(ctx("parent"));
+    const waiting = history.findLast((p) => p.waiting) as (typeof history)[number];
+    const before = structuredClone(store.runs.get("demo-cricket/parent"));
+
+    await fork(store, "parent", waiting.version, "fork", {
+      decision: { approved: false, by: "editor", reason: "not this one" },
+    });
+    const forked = await invoke({
+      runId: "fork",
+      store,
+      script: [],
+      approver: later,
+      resume: {
+        reason: "approval",
+        decision: { approved: false, by: "editor", reason: "not this one" },
+      },
+    });
+    expect(forked.result).toMatchObject({ status: "rejected", output: { reason: "not this one" } });
+    expect(forked.events[0]).toMatchObject({
+      type: "run.resumed",
+      data: { reason: "fork", forkedFrom: { runId: "parent", version: waiting.version } },
+    });
+    // the fork wrote nothing to its parent
+    expect(store.runs.get("demo-cricket/parent")).toEqual(before);
+    expect(written).toEqual([]);
+
+    const parent = await invoke({
+      runId: "parent",
+      store,
+      script: [final("saved")],
+      approver: later,
+      resume: decided({ approved: true, by: "editor" }),
+    });
+    expect(parent.result).toMatchObject({ status: "completed", output: { summary: "saved" } });
+    expect(written).toEqual(["draft:a"]);
+    // and the parent's end changed nothing of the fork's
+    expect((await store.load(ctx("fork")))?.checkpoint.savedAfter).toBe("decision");
+  });
+
+  it("sends the model, from a fork, the same request its parent sent at that point", async () => {
+    const store = createMemoryRunStore();
+    const parent = await invoke({
+      runId: "parent",
+      store,
+      script: [call("draft.save", { text: "a" }), final("saved")],
+      approver: approve,
+    });
+    // the save point before the second model turn: the first turn answered in full
+    const history = await store.history(ctx("parent"));
+    const before = history.findLast((p) => p.step === 1) as (typeof history)[number];
+    await fork(store, "parent", before.version, "fork");
+
+    const forked = await invoke({
+      runId: "fork",
+      store,
+      script: [final("saved again")],
+      approver: approve,
+      resume: { reason: "recovery" },
+    });
+    expect(forked.result).toMatchObject({
+      status: "completed",
+      output: { summary: "saved again" },
+    });
+    expect(forked.model.requests[0]).toEqual(parent.model.requests[1]);
+    // the fork counts only what it spent
+    expect(forked.result.usage.steps).toBe(1);
+  });
+
+  it("brings a fork its corrected input after the transcript, never inside a turn", async () => {
+    const store = createMemoryRunStore();
+    await invoke({
+      runId: "parent",
+      store,
+      script: [call("draft.save", { text: "a" })],
+      approver: later,
+    });
+    const forked = await fork(store, "parent", 1, "fork", { input: { brief: "two drafts" } });
+    expect(forked.messages.at(-1)).toEqual({
+      role: "user",
+      content: correctedInput({ brief: "two drafts" }),
+    });
+    expect(forked.messages.slice(0, -1)).toEqual(transcript(store, "parent").slice(0, 2));
+
+    const history = await store.history(ctx("parent"));
+    const midTurn = history.findLast((p) => p.waiting) as (typeof history)[number];
+    await expect(fork(store, "parent", midTurn.version, "f2", { input: "x" })).rejects.toThrow(
+      "in the middle of a turn",
+    );
+    await expect(
+      fork(store, "parent", 1, "f3", { decision: { approved: true, by: "editor" } }),
+    ).rejects.toThrow("waits for no approval");
+  });
+});
+
 /** A store that dies (like a crashed process) on one save, after storing everything before it. */
 function crashingStore(crashWhen: (checkpoint: RunCheckpoint, appended: Message[]) => boolean) {
   const inner = createMemoryRunStore();
   let crashed = false;
   const store: RunStore = {
-    load: (ctx) => inner.load(ctx),
+    load: (ctx, version) => inner.load(ctx, version),
+    history: (ctx) => inner.history(ctx),
     async save(ctx, checkpoint, appended) {
       if (!crashed && crashWhen(checkpoint, appended)) {
         crashed = true;

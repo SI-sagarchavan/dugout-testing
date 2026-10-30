@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agent as matchPreview } from "@dugout/agent-match-preview";
 import type { ModelClient, RunCheckpoint, RunEvent } from "@dugout/contracts";
-import { createScriptedModel, RunInterrupted, scriptedModelConfig } from "@dugout/core";
+import {
+  correctedInput,
+  createScriptedModel,
+  RunInterrupted,
+  scriptedModelConfig,
+} from "@dugout/core";
 import { createPool, withTenant } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
@@ -446,5 +451,130 @@ describe("cancelling a run whose worker then died", () => {
     expect(await runRow(runId)).toMatchObject({ status: "cancelled", lease_owner: null });
     // let go, it is never claimed again
     expect(await workerWith(writerModel).poll()).not.toContain(runId);
+  });
+});
+
+describe("save points and forks", () => {
+  const reject = { approved: false as const, by: "editor", reason: "not this one" };
+  /** Runs `runId` until it waits for its approval, and returns its events. */
+  const untilWaiting = async (worker: ReturnType<typeof workerWith>, runId: string) => {
+    await worker.poll();
+    const es = await eventsUntil(runId, lastType("approval.requested"));
+    await worker.idle();
+    return es;
+  };
+  const stored = (runId: string) =>
+    withTenant(pool, TENANT, async (db) => {
+      const { rows } = await db.query<{ type: string; seq: number; data: unknown }>(
+        "select type, seq, data from run_events where run_id = $1 order by seq",
+        [runId],
+      );
+      return rows;
+    });
+
+  it("lists every save point, and forks a run at its approval with the other decision; both end, neither changes the other", async () => {
+    const worker = workerWith(writerModel);
+    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const parentEvents = await untilWaiting(worker, runId);
+
+    const history = await queue.history(TENANT, runId);
+    expect(history.map((p) => p.version)).toEqual(history.map((_, i) => i + 1));
+    expect(history[0]).toMatchObject({ step: 0, savedAfter: "start", messages: 2 });
+    const waiting = history.at(-1) as (typeof history)[number];
+    expect(waiting).toMatchObject({
+      step: 3,
+      savedAfter: "waiting",
+      waiting: { tool: "draft.save" },
+    });
+
+    const { runId: forkId, startSeq } = await queue.fork(TENANT, runId, waiting.version, {
+      decision: reject,
+    });
+    expect(await queue.find(TENANT, forkId)).toMatchObject({
+      status: "queued",
+      parent_run_id: runId,
+      parent_version: waiting.version,
+    });
+    expect(await worker.poll()).toEqual([forkId]);
+    const forkEvents = await eventsUntil(forkId, lastType("run.completed"));
+    await worker.idle();
+    // the parent's record up to the save point (tokens are never stored), then the fork's own
+    const upTo = (rows: Awaited<ReturnType<typeof stored>>) =>
+      rows.filter((e) => e.seq <= startSeq);
+    expect(upTo(await stored(forkId))).toEqual(upTo(await stored(runId)));
+    expect(upTo(await stored(forkId)).at(-1)?.type).toBe("approval.requested");
+    expect(forkEvents[0]).toMatchObject({
+      seq: startSeq + 1,
+      type: "run.resumed",
+      data: { reason: "fork", forkedFrom: { runId, version: waiting.version } },
+    });
+    expect(forkEvents.at(-1)).toMatchObject({ data: { status: "rejected" } });
+    // the parent still waits, as it was
+    expect(await runRow(runId)).toMatchObject({ status: "waiting" });
+    expect(await queue.history(TENANT, runId)).toEqual(history);
+
+    await queue.decide(TENANT, runId, waitingCall(parentEvents), approve);
+    await worker.poll();
+    await eventsUntil(runId, lastType("run.completed"));
+    await worker.idle();
+    expect((await queue.find(TENANT, runId))?.status).toBe("completed");
+    expect((await queue.find(TENANT, forkId))?.status).toBe("rejected");
+  });
+
+  it("forks onto another model, or with a corrected input between turns", async () => {
+    const sent: string[] = [];
+    const recording = (): ModelClient => {
+      const inner = writerModel();
+      return {
+        complete(req, onToken, onToolInput) {
+          sent.push(req.model);
+          return inner.complete(req, onToken, onToolInput);
+        },
+      };
+    };
+    const worker = workerWith(recording);
+    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    await untilWaiting(worker, runId);
+    const history = await queue.history(TENANT, runId);
+    const firstTurn = history.find((p) => p.step === 1 && p.savedAfter === "tool" && !p.waiting);
+
+    sent.length = 0;
+    const onHaiku = await queue.fork(TENANT, runId, firstTurn?.version ?? 0, { model: "haiku" });
+    await worker.poll();
+    await eventsUntil(onHaiku.runId, lastType("approval.requested"));
+    await worker.idle();
+    expect(sent.length).toBeGreaterThan(0);
+    expect(new Set(sent)).toEqual(new Set(["haiku"]));
+
+    const corrected = await queue.fork(TENANT, runId, 1, { input: { fixtureId: "c-102" } });
+    expect(await queue.find(TENANT, corrected.runId)).toMatchObject({
+      status: "queued",
+      input: { fixtureId: "c-102" },
+    });
+    const { rows } = await withTenant(pool, TENANT, (db) =>
+      db.query<{ message: { content: string } }>(
+        "select message from run_messages where run_id = $1 order by idx desc limit 1",
+        [corrected.runId],
+      ),
+    );
+    expect(rows[0]?.message.content).toBe(correctedInput({ fixtureId: "c-102" }));
+
+    await expect(queue.fork(TENANT, runId, 1, { model: "gpt" })).rejects.toThrow(
+      "no model named gpt",
+    );
+    await expect(queue.fork(TENANT, runId, 999)).rejects.toThrow("has no save point 999");
+    await expect(queue.fork("demo-football", runId, 1)).rejects.toThrow("has no save point 1");
+  });
+
+  it("prunes save points past their time, but never a run's latest", async () => {
+    const worker = createWorker({ pool, events, agents: {}, historyDays: 0 });
+    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    await untilWaiting(workerWith(writerModel), runId);
+    const before = await queue.history(TENANT, runId);
+    expect(before.length).toBeGreaterThan(1);
+    expect(await worker.prune()).toBeGreaterThanOrEqual(before.length - 1);
+    expect(await queue.history(TENANT, runId)).toEqual([before.at(-1)]);
+    // the latest is still there to fork from
+    expect((await queue.fork(TENANT, runId, before.length)).runId).toBeDefined();
   });
 });

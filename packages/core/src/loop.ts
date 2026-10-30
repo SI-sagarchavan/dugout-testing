@@ -7,6 +7,7 @@ import type {
   RunContext,
   RunMemoryContext,
   RunUsage,
+  SavedAfter,
   SavedRun,
   Steps,
   StepUsage,
@@ -146,8 +147,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   let decision = resume?.decision;
   if (decision && !state.waiting) throw new Error("the run is not waiting for an approval");
 
-  /** Saves the checkpoint and the messages added since the last save. */
-  const save = async () => {
+  /** Saves the checkpoint and the messages added since the last save, as a new save point. */
+  const save = async (after: SavedAfter) => {
+    state.savedAfter = after;
     state.messages = messages.length;
     state.lastSeq = log.lastSeq();
     await steps.checkpoint?.(structuredClone(state), messages.slice(savedMessages));
@@ -163,7 +165,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   // rather than losing it. A save that fails here does not stop the run from ending.
   const finalSave = async () => {
     try {
-      await save();
+      await save("end");
     } catch (err) {
       if (err instanceof RunInterrupted) throw err;
     }
@@ -190,7 +192,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         agentVersion: spec.version,
         tenantId: opts.ctx.tenantId,
         step: state.step,
-        reason: resume.reason,
+        // the first invocation of a fork carries on from its parent's save point
+        ...(state.savedAfter === "fork" && state.forkedFrom
+          ? { reason: "fork" as const, forkedFrom: state.forkedFrom }
+          : { reason: resume.reason }),
       },
     });
   } else {
@@ -207,7 +212,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       const { tokens, sources } = opts.context;
       await log.emit({ type: "context.built", data: { tokens, sources } });
     }
-    await save();
+    await save("start");
   }
 
   /**
@@ -240,7 +245,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           "skipped: the reviewer asked for changes to an earlier call in this turn",
           "Not run: the reviewer asked for changes to an earlier call in this turn.",
         );
-        await save();
+        await save("tool");
         continue;
       }
       if (final && call.name === FINAL_TOOL) {
@@ -253,7 +258,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
             "Not accepted: the reviewer has not approved the changes they asked for.",
           );
           turn.remind = true;
-          await save();
+          await save("tool");
           continue;
         }
         const result = parseFinal(call, final.schema);
@@ -266,7 +271,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           toolCallId: call.id,
           content: `Invalid result: ${result.error}`,
         });
-        await save();
+        await save("tool");
         continue;
       }
 
@@ -282,7 +287,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           toolCallId: call.id,
           content: `Denied (${checked.stage}): ${checked.reason}`,
         });
-        await save();
+        await save("tool");
         continue;
       }
 
@@ -297,7 +302,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           // Saved as waiting, and the wait registered, before the request is announced: a decision
           // sent the moment the event is seen always finds the run waiting for it.
           state.waiting = { step, callId: call.id, tool: call.name, input: checked.input };
-          await save();
+          await save("waiting");
           const pendingDecision = steps.approval(request);
           // an approver can fail before the request is announced; that error is raised by the
           // await below, not reported as unhandled meanwhile
@@ -305,7 +310,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           await log.emit({ type: "approval.requested", data: { ...ids, input: checked.input } });
           const got = await pendingDecision;
           if ("pending" in got) {
-            await save();
+            await save("waiting");
             return { status: "waiting", approval: state.waiting, usage } satisfies RunResult;
           }
           answer = got;
@@ -327,14 +332,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           });
           turn.remind = true;
           turn.changesRequested = true;
-          await save();
+          await save("decision");
           continue;
         }
         if (!answer.approved) {
           const { by, reason } = answer;
           await log.emit({ type: "approval.rejected", data: { ...ids, by, reason } });
           const rejected = { tool: call.name, input: checked.input, by, reason };
-          await save();
+          await save("decision");
           await log.emit({
             type: "run.completed",
             data: { status: "rejected", output: rejected, usage: { ...usage } },
@@ -347,7 +352,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           delete state.pendingChanges[call.name];
           state.blockedFinishes = 0;
         }
-        await save();
+        await save("decision");
       }
 
       // Started before a crash and never answered: run it again only if that is safe.
@@ -359,12 +364,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
             data: { ...ids, ok: false, content: UNKNOWN_OUTCOME, durationMs: 0 },
           });
           messages.push({ role: "tool", toolCallId: call.id, content: UNKNOWN_OUTCOME });
-          await save();
+          await save("tool");
           continue;
         }
       } else {
         turn.started.push(call.id);
-        await save();
+        await save("call");
       }
 
       await log.emit({ type: "tool.started", data: { ...ids, input: checked.input } });
@@ -376,7 +381,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         data: { ...ids, ok: outcome.ok, content, durationMs: Date.now() - started },
       });
       messages.push({ role: "tool", toolCallId: call.id, content });
-      await save();
+      await save("tool");
     }
     return undefined;
   };
@@ -425,11 +430,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
               content: `Call the ${FINAL_TOOL} tool with your result.`,
             });
           }
-          await save();
+          await save("model");
           continue;
         }
         state.turn = { changesRequested: false, remind: false, approved: [], started: [] };
-        await save();
+        await save("model");
       }
 
       const ended = await answerTurn(state.turn);
@@ -441,7 +446,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         messages.push({ role: "user", content: pendingNote() });
       }
       state.turn = undefined;
-      await save();
+      await save("tool");
     }
   } catch (err) {
     if (err instanceof RunInterrupted) throw err;

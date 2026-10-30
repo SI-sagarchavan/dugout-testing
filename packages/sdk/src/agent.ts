@@ -58,6 +58,8 @@ export interface RunOptions<Input> {
   approver: Approver;
   runId?: string;
   sinks?: EventSink[];
+  /** Runs on this model, a name in the deps' `models`, instead of the one the agent was created with. */
+  model?: string;
   /** Keeps the run's working memory, so it can wait for an approval or be resumed (ADR 0006). */
   store?: RunStore;
   resume?: RunLocalOptions["resume"];
@@ -165,9 +167,16 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
         throw new Error(`${spec.id}: spec.tools lists ${missing.join(", ")}, but no such tool`);
       }
 
+      /** The definition a run uses: the agent's, or on the model the run names. */
+      const definitionFor = (model?: string): AgentDefinition => {
+        if (!model) return run;
+        modelEntry(deps.models, model);
+        return { ...run, spec: { ...run.spec, model } };
+      };
+
       return (opts) =>
         runLocal({
-          agent: run,
+          agent: definitionFor(opts.model),
           input: config.input.parse(opts.input),
           tenantId: opts.tenantId,
           tools,

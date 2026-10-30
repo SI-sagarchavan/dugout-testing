@@ -38,7 +38,9 @@ export const RunEvent = z.discriminatedUnion("type", [
       agentVersion: z.number(),
       tenantId: z.string(),
       step: z.number(),
-      reason: z.enum(["approval", "recovery"]),
+      reason: z.enum(["approval", "recovery", "fork"]),
+      // set when a fork carries on from its parent's save point
+      forkedFrom: z.object({ runId: z.string(), version: z.number() }).optional(),
     }),
   ),
   event(

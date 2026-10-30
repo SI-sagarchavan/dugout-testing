@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { ApprovalDecision, RunEvent } from "@dugout/contracts";
+import { type ForkChange, forkRun, loadModelConfig, modelEntry } from "@dugout/core";
 import { type Pool, withTenant } from "@dugout/db";
 import { readStoredEvents, type ValkeyEventLog } from "./event-log.ts";
 import { appendEnding, cancelledEvent, lastSeq } from "./records.ts";
+import { loadRun, runHistory } from "./run-store.ts";
 
 export interface RunRow {
   id: string;
@@ -10,9 +12,17 @@ export interface RunRow {
   status: "queued" | "running" | "waiting" | "completed" | "rejected" | "failed" | "cancelled";
   input: unknown;
   result: unknown;
+  /** The run it was forked from, and at which save point. */
+  parent_run_id: string | null;
+  parent_version: number | null;
+  /** The model it runs on instead of its spec's. */
+  model: string | null;
   created_at: Date;
   updated_at: Date;
 }
+
+const COLUMNS =
+  "id, agent_id, status, input, result, parent_run_id, parent_version, model, created_at, updated_at";
 
 const ENDED = new Set<RunRow["status"]>(["completed", "rejected", "failed", "cancelled"]);
 
@@ -24,10 +34,7 @@ const ENDED = new Set<RunRow["status"]>(["completed", "rejected", "failed", "can
 export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
   const find = (tenantId: string, runId: string) =>
     withTenant(opts.pool, tenantId, async (db) => {
-      const { rows } = await db.query<RunRow>(
-        "select id, agent_id, status, input, result, created_at, updated_at from runs where id = $1",
-        [runId],
-      );
+      const { rows } = await db.query<RunRow>(`select ${COLUMNS} from runs where id = $1`, [runId]);
       return rows[0];
     });
 
@@ -40,8 +47,7 @@ export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
         // ids are UUIDs: anything else can't match, and can't carry a LIKE wildcard
         if (!/^[0-9a-f-]*$/i.test(prefix)) return [];
         const { rows } = await db.query<RunRow>(
-          `select id, agent_id, status, input, result, created_at, updated_at from runs
-           where id like $1 order by updated_at desc limit $2`,
+          `select ${COLUMNS} from runs where id like $1 order by updated_at desc limit $2`,
           [`${prefix.toLowerCase()}%`, limit],
         );
         return rows;
@@ -119,6 +125,73 @@ export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
         );
       }
       return row.previous;
+    },
+
+    /** Every save point of the run still kept, oldest first (harness 16). */
+    history: (tenantId: string, runId: string) => runHistory(opts.pool, { tenantId, runId }),
+
+    /**
+     * Queues a new run that carries on from save point `from` of run `runId`: the parent's
+     * transcript and events up to that point, then the change. The decision on the approval the
+     * save point waits for (perhaps the other one), a corrected input, or another model; with no
+     * change it simply runs again from there. A fork at an approval with no decision waits for
+     * one. The parent is left as it is. Returns the fork's id and the last `seq` it starts with.
+     */
+    async fork(
+      tenantId: string,
+      runId: string,
+      from: number,
+      change: ForkChange & { model?: string } = {},
+    ) {
+      if (change.model) modelEntry(loadModelConfig(), change.model);
+      const parent = await find(tenantId, runId);
+      const saved = parent && (await loadRun(opts.pool, { tenantId, runId }, from));
+      if (!parent || !saved) throw new Error(`run ${runId} has no save point ${from}`);
+      const forked = forkRun(saved, { runId, version: from }, change);
+      const fork = randomUUID();
+      const status = forked.checkpoint.waiting && !change.decision ? "waiting" : "queued";
+      await withTenant(opts.pool, tenantId, async (db) => {
+        await db.query(
+          `insert into runs (id, tenant_id, agent_id, status, input, decision, parent_run_id,
+             parent_version, model)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            fork,
+            tenantId,
+            parent.agent_id,
+            status,
+            JSON.stringify(change.input ?? parent.input),
+            change.decision ? JSON.stringify(change.decision) : null,
+            runId,
+            from,
+            change.model ?? parent.model,
+          ],
+        );
+        for (const [idx, message] of forked.messages.entries()) {
+          await db.query(
+            "insert into run_messages (run_id, idx, tenant_id, message) values ($1, $2, $3, $4)",
+            [fork, idx, tenantId, JSON.stringify(message)],
+          );
+        }
+        await db.query(
+          `insert into run_events (run_id, seq, tenant_id, type, data, at)
+           select $1, seq, tenant_id, type, data, at from run_events
+           where run_id = $2 and seq <= $3`,
+          [fork, runId, forked.checkpoint.lastSeq],
+        );
+        const checkpoint = JSON.stringify(forked.checkpoint);
+        await db.query(
+          `insert into run_checkpoints (run_id, tenant_id, checkpoint, version)
+           values ($1, $2, $3, 1)`,
+          [fork, tenantId, checkpoint],
+        );
+        await db.query(
+          `insert into run_checkpoint_history (run_id, version, tenant_id, checkpoint)
+           values ($1, 1, $2, $3)`,
+          [fork, tenantId, checkpoint],
+        );
+      });
+      return { runId: fork, startSeq: forked.checkpoint.lastSeq };
     },
 
     /** The call the run waits for a decision on, if it is waiting. */

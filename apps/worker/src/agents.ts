@@ -24,6 +24,8 @@ export interface AgentEntry {
     runId: string;
     sinks: EventSink[];
     store: RunStore;
+    /** Runs on this model instead of the spec's (a fork on another model). */
+    model?: string;
     resume?: ResumeOptions;
   }): Promise<RunResult>;
 }

@@ -1,6 +1,6 @@
 # 16 · Checkpoint history: replay or fork a run from any step
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 
 ## What
@@ -29,6 +29,10 @@ LangGraph calls this time travel. It lets you look at a bad step in context, try
 - A scripted test forks a run at its approval with the other decision; both runs complete, and neither changes the other.
 - History lists every version with its step and reason, and a fork from version N sends the model the same request R sent at that point.
 - The storage cost per checkpoint is measured and recorded in the ADR.
+
+## Outcome
+
+Built as ADR 0016 records: save points with `savedAfter`, `forkRun` and `queue.history` and `queue.fork`, and retention through `prune_run_history`. A fork's usage starts at 0. A corrected input is refused inside a turn. Still open: the CLI flags (`--history`, `--fork`), because another session is changing the CLI; and comparing a run with its fork, which moves to harness 07.
 
 ## Pointers
 

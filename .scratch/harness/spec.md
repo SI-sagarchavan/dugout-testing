@@ -40,7 +40,7 @@ What the harness is missing for agents that work with images, run for a long tim
 | #   | Ticket                                                                                    | Status          | Blocked by |
 | --- | ----------------------------------------------------------------------------------------- | --------------- | ---------- |
 | 15  | [Threads: a follow-up run carries on from the last one](issues/15-threads.md)             | ready-for-agent | memory 04  |
-| 16  | [Checkpoint history: replay or fork a run from any step](issues/16-checkpoint-history.md) | ready-for-agent |            |
+| 16  | [Checkpoint history: replay or fork a run from any step](issues/16-checkpoint-history.md) | resolved        |            |
 
 Issue 04 also gained a typed run state with merge rules (LangGraph's state schema and reducers), and keeps control flow as code rather than a graph.
 
