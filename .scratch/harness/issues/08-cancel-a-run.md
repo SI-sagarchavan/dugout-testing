@@ -1,6 +1,6 @@
 # 08 · Cancel a run
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 
 ## What

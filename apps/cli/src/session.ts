@@ -28,7 +28,7 @@ export interface SessionOptions {
 }
 
 /** The event a run ended with. */
-export type Ending = Extract<RunEvent, { type: "run.completed" | "run.failed" }>;
+export type Ending = Extract<RunEvent, { type: "run.completed" | "run.failed" | "run.cancelled" }>;
 
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const clip = (s: string, max = 100) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);

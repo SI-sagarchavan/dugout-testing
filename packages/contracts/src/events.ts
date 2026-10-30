@@ -105,6 +105,11 @@ export const RunEvent = z.discriminatedUnion("type", [
       usage: RunUsage,
     }),
   ),
+  // someone stopped the run: a host, before or while it ran
+  event(
+    "run.cancelled",
+    z.object({ by: z.string(), reason: z.string().optional(), usage: RunUsage }),
+  ),
 ]);
 export type RunEvent = z.infer<typeof RunEvent>;
 export type RunEventType = RunEvent["type"];
