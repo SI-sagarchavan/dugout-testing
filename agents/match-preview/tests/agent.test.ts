@@ -19,7 +19,7 @@ import { agent, spec } from "../src/index.ts";
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
 const store = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
-beforeAll(() => seedHouseFacts(store, ["demo-cricket", "demo-football"], [spec.id]));
+beforeAll(() => seedHouseFacts(store, ["demo-cricket", "demo-football"]));
 
 const lastTool = (req: ModelRequest) => JSON.parse(req.messages.at(-1)?.content ?? "{}");
 
@@ -119,7 +119,7 @@ describe("match-preview", () => {
     });
     const system = client.requests[0]?.messages[0]?.content ?? "";
     expect(system).toContain("## Skill: match-preview");
-    expect(system).toContain("Mention the format (T20)");
+    expect(system).toContain("mention the format (T20)");
     expect(system).toContain("British English");
     expect(system).not.toContain("US English");
     expect(sink.events.find((e) => e.type === "context.built")).toBeDefined();

@@ -31,7 +31,7 @@ export function memoryHooks(opts: MemoryHooksOptions) {
     onDemandSkills: spec.onDemandSkills,
   };
   return {
-    tools: [...createMemoryTools({ reader: store, agentId: spec.id }), createSkillTool(skills)],
+    tools: [...createMemoryTools({ reader: store }), createSkillTool(skills)],
     context: (ctx: RunContext, input: unknown): Promise<RunMemoryContext> =>
       buildContext({
         reader: store,

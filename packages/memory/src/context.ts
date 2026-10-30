@@ -88,7 +88,7 @@ export async function buildContext(opts: BuildContextOptions): Promise<RunMemory
   };
 
   if (opts.readSemantic) {
-    const facts = await opts.reader.activeFacts(opts.tenantId, opts.agentId);
+    const facts = await opts.reader.activeFacts(opts.tenantId);
     addList(
       "## House facts\n\nThese are reviewed facts for this tenant. Follow them.",
       facts.map((f) => ({ id: f.id, kind: "semantic", line: `- ${f.content}` })),

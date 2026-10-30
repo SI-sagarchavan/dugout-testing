@@ -9,7 +9,10 @@ export type EpisodeType = "run" | "lesson";
 export interface MemoryItem {
   id: string;
   tenantId: string;
-  /** Null for a fact that holds for every agent of the tenant (ADR 0013). */
+  /**
+   * The agent whose run produced the item, or null (seeded facts). Every agent of the tenant reads
+   * every item (ADR 0013); this only records where it came from and ranks an agent's own lessons.
+   */
   agentId: string | null;
   kind: MemoryKind;
   key: string | null;
@@ -30,25 +33,23 @@ export interface MemoryItem {
 
 export interface SearchQuery {
   tenantId: string;
-  agentId: string;
   query: string;
   kinds?: MemoryKind[];
   episodeType?: EpisodeType;
   limit?: number;
 }
 
-/** What agents and the context builder get: active, unexpired items only. */
+/** What agents and the context builder get: active, unexpired items of one tenant only. */
 export interface MemoryReader {
-  /**
-   * The tenant's facts plus the agent's own, its own winning on the same key. With a null agent,
-   * the tenant-wide facts only.
-   */
-  activeFacts(tenantId: string, agentId: string | null): Promise<MemoryItem[]>;
+  activeFacts(tenantId: string): Promise<MemoryItem[]>;
   /** Ranked by text and vector relevance alone. */
   search(q: SearchQuery): Promise<Array<MemoryItem & { score: number }>>;
-  /** Episodes of one type for the prompt, ranked by relevance, recency and strength. */
+  /**
+   * Episodes of one type for the prompt, ranked by relevance, recency and strength, with a small
+   * lift for those the reading agent's own runs produced.
+   */
   recallEpisodes(
-    q: Omit<SearchQuery, "kinds"> & { episodeType: EpisodeType },
+    q: Omit<SearchQuery, "kinds"> & { episodeType: EpisodeType; agentId: string },
   ): Promise<Array<MemoryItem & { score: number }>>;
 }
 
@@ -69,19 +70,19 @@ export interface MemoryWriter {
   }): Promise<MemoryItem & { reinforced: boolean }>;
   proposeFact(f: {
     tenantId: string;
-    /** Null proposes a tenant-wide fact. */
+    /** The agent that proposed it; null when seeded. */
     agentId: string | null;
     key: string;
     content: string;
     confidence: number;
     sourceRunId: string | null;
   }): Promise<MemoryItem>;
-  listProposals(tenantId: string, agentId?: string): Promise<MemoryItem[]>;
+  listProposals(tenantId: string): Promise<MemoryItem[]>;
   /** Makes a proposal the active version of its key and retires the previous one. */
   activateFact(tenantId: string, id: string, reviewer: string): Promise<MemoryItem>;
   rejectProposal(tenantId: string, id: string, reviewer: string): Promise<MemoryItem>;
-  /** Every version of one key in one scope (a null agent for tenant-wide). */
-  history(tenantId: string, agentId: string | null, key: string): Promise<MemoryItem[]>;
+  /** Every version of one of the tenant's fact keys. */
+  history(tenantId: string, key: string): Promise<MemoryItem[]>;
   /** Removes what one run wrote; used by evals to undo their own episodes. */
   deleteBySourceRun(tenantId: string, runId: string): Promise<number>;
 }
@@ -121,19 +122,25 @@ const RECENCY_HALF_LIFE_DAYS = 30;
 
 /**
  * Orders episodes the way Generative Agents does: relevance (scaled to the best match), recency
- * since last seen, and strength. Each is 0..1; relevance counts most.
+ * since last seen, and strength, plus a small lift for the reading agent's own. Each is 0..1;
+ * relevance counts most.
  */
-export function rankEpisodes<T extends Pick<MemoryItem, "lastSeenAt" | "strength">>(
+export function rankEpisodes<
+  T extends Pick<MemoryItem, "lastSeenAt" | "strength"> & { agentId?: string | null },
+>(
   items: Array<T & { score: number }>,
-  now: Date = new Date(),
+  opts: { now?: Date; agentId?: string } = {},
 ): Array<T & { score: number }> {
+  const now = opts.now ?? new Date();
   const best = Math.max(...items.map((i) => i.score), Number.EPSILON);
   return items
     .map((item) => {
       const days = (now.getTime() - new Date(item.lastSeenAt).getTime()) / 86_400_000;
       const recency = 0.5 ** (Math.max(days, 0) / RECENCY_HALF_LIFE_DAYS);
       const strength = 1 - 1 / item.strength;
-      return { ...item, score: 0.6 * (item.score / best) + 0.25 * recency + 0.15 * strength };
+      const own = opts.agentId !== undefined && item.agentId === opts.agentId ? 1 : 0;
+      const score = 0.55 * (item.score / best) + 0.25 * recency + 0.1 * strength + 0.1 * own;
+      return { ...item, score };
     })
     .sort((x, y) => y.score - x.score);
 }
@@ -156,7 +163,6 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
 
   const search: MemoryReader["search"] = async ({
     tenantId,
-    agentId,
     query,
     kinds = ["semantic", "episodic"],
     episodeType,
@@ -169,16 +175,16 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
       const { rows } = await db.query(
         `with candidates as (
            select * from memory_items
-           where tenant_id = $1 and (agent_id = $2 or (agent_id is null and kind = 'semantic'))
-             and kind = any($3) and ($7::text is null or episode_type = $7) and ${LIVE}
+           where tenant_id = $1 and kind = any($2)
+             and ($6::text is null or episode_type = $6) and ${LIVE}
          ),
          text_rank as (
            select id, row_number() over (order by ts_rank_cd(tsv, q) desc) as r
-           from candidates, to_tsquery('english', $4) q
-           where $4 <> '' and tsv @@ q
+           from candidates, to_tsquery('english', $3) q
+           where $3 <> '' and tsv @@ q
          ),
          vec_rank as (
-           select id, row_number() over (order by embedding <=> $5::vector) as r
+           select id, row_number() over (order by embedding <=> $4::vector) as r
            from candidates
          )
          select ${COLUMNS},
@@ -187,43 +193,43 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
          left join text_rank t using (id)
          left join vec_rank v using (id)
          order by score desc, created_at desc
-         limit $6`,
-        [tenantId, agentId, kinds, orQuery(query), vector, limit, episodeType ?? null],
+         limit $5`,
+        [tenantId, kinds, orQuery(query), vector, limit, episodeType ?? null],
       );
       return rows.map((r) => ({ ...toItem(r), score: Number(r.score) }));
     });
   };
 
   return {
-    activeFacts: (tenantId, agentId) =>
+    activeFacts: (tenantId) =>
       tx(tenantId, async (db) => {
-        // one row per key: the agent's own fact if it has one, else the tenant-wide one
         const { rows } = await db.query(
-          `select distinct on (key) ${COLUMNS} from memory_items
-           where tenant_id = $1 and (agent_id = $2::text or agent_id is null)
-             and kind = 'semantic' and ${LIVE}
-           order by key, agent_id nulls last`,
-          [tenantId, agentId],
+          `select ${COLUMNS} from memory_items
+           where tenant_id = $1 and kind = 'semantic' and ${LIVE}
+           order by key`,
+          [tenantId],
         );
         return rows.map(toItem);
       }),
 
     search,
 
-    // a wider pool by relevance, then re-ranked with recency and strength
-    recallEpisodes: async ({ limit = 5, ...q }) =>
-      rankEpisodes(await search({ ...q, kinds: ["episodic"], limit: limit * 4 })).slice(0, limit),
+    // a wider pool by relevance, then re-ranked with recency, strength and whose they are
+    recallEpisodes: async ({ limit = 5, agentId, ...q }) =>
+      rankEpisodes(await search({ ...q, kinds: ["episodic"], limit: limit * 4 }), {
+        agentId,
+      }).slice(0, limit),
 
     async addEpisode(e) {
       const vector = await embedOne(e.content);
       return tx(e.tenantId, async (db) => {
+        // the same lesson from any agent of the tenant strengthens the one already there
         if (e.episodeType === "lesson") {
           const { rows } = await db.query(
-            `select id, 1 - (embedding <=> $3::vector) as similarity from memory_items
-             where tenant_id = $1 and agent_id = $2 and kind = 'episodic'
-               and episode_type = 'lesson' and ${LIVE}
-             order by embedding <=> $3::vector limit 1`,
-            [e.tenantId, e.agentId, vector],
+            `select id, 1 - (embedding <=> $2::vector) as similarity from memory_items
+             where tenant_id = $1 and kind = 'episodic' and episode_type = 'lesson' and ${LIVE}
+             order by embedding <=> $2::vector limit 1`,
+            [e.tenantId, vector],
           );
           const nearest = rows[0];
           if (nearest && Number(nearest.similarity) >= REINFORCE_SIMILARITY) {
@@ -269,7 +275,7 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
              (tenant_id, agent_id, kind, key, version, content, embedding, status, confidence, source_run_id)
            values ($1, $2, 'semantic', $3,
              (select coalesce(max(version), 0) + 1 from memory_items
-              where tenant_id = $1 and agent_id is not distinct from $2::text and key = $3),
+              where tenant_id = $1 and kind = 'semantic' and key = $3),
              $4, $5, 'proposed', $6, $7)
            returning ${COLUMNS}`,
           [f.tenantId, f.agentId, f.key, f.content, vector, f.confidence, f.sourceRunId],
@@ -277,13 +283,12 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
       );
     },
 
-    listProposals: (tenantId, agentId) =>
+    listProposals: (tenantId) =>
       tx(tenantId, async (db) => {
         const { rows } = await db.query(
           `select ${COLUMNS} from memory_items
-           where tenant_id = $1 and status = 'proposed' and ($2::text is null or agent_id = $2)
-           order by created_at`,
-          [tenantId, agentId ?? null],
+           where tenant_id = $1 and status = 'proposed' order by created_at`,
+          [tenantId],
         );
         return rows.map(toItem);
       }),
@@ -295,11 +300,16 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
           `select ${COLUMNS} from memory_items where id = $1 and status = 'proposed' for update`,
           [id],
         );
+        // two activations of one key (two reviewers, two seeders) take turns, so the later one
+        // retires the earlier one's version instead of breaking the one-active-fact index
+        await db.query("select pg_advisory_xact_lock(hashtext($1 || '/' || $2))", [
+          tenantId,
+          proposal.key,
+        ]);
         await db.query(
           `update memory_items set status = 'retired'
-           where tenant_id = $1 and agent_id is not distinct from $2::text and key = $3
-             and kind = 'semantic' and status = 'active'`,
-          [tenantId, proposal.agentId, proposal.key],
+           where tenant_id = $1 and key = $2 and kind = 'semantic' and status = 'active'`,
+          [tenantId, proposal.key],
         );
         return one(
           db,
@@ -319,13 +329,12 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
         ),
       ),
 
-    history: (tenantId, agentId, key) =>
+    history: (tenantId, key) =>
       tx(tenantId, async (db) => {
         const { rows } = await db.query(
           `select ${COLUMNS} from memory_items
-           where tenant_id = $1 and agent_id is not distinct from $2::text and key = $3
-           order by version`,
-          [tenantId, agentId, key],
+           where tenant_id = $1 and kind = 'semantic' and key = $2 order by version`,
+          [tenantId, key],
         );
         return rows.map(toItem);
       }),

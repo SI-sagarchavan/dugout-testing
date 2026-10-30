@@ -37,11 +37,11 @@ const fact = async (
   tenantId: string,
   key: string,
   content: string,
-  agentId: string | null = AGENT,
+  proposedBy: string | null = null,
 ) => {
   const p = await store.proposeFact({
     tenantId,
-    agentId,
+    agentId: proposedBy,
     key,
     content,
     confidence: 1,
@@ -55,10 +55,11 @@ const episode = (
   ttlDays = 30,
   sourceRunId = randomUUID(),
   episodeType: EpisodeType = "lesson",
+  agentId = AGENT,
 ) =>
   store.addEpisode({
     tenantId,
-    agentId: AGENT,
+    agentId,
     episodeType,
     content,
     confidence: 0.9,
@@ -71,14 +72,10 @@ describe("tenant isolation", () => {
     const own = await fact(a, "style.spelling", "Use British English spelling");
     await episode(a, "Reviewer rejected a draft that mentioned betting odds");
 
-    const searchB = await store.search({
-      tenantId: b,
-      agentId: AGENT,
-      query: "betting odds British spelling",
-    });
+    const searchB = await store.search({ tenantId: b, query: "betting odds British spelling" });
     expect(searchB).toEqual([]);
-    expect(await store.activeFacts(b, AGENT)).toEqual([]);
-    expect(await store.history(b, AGENT, "style.spelling")).toEqual([]);
+    expect(await store.activeFacts(b)).toEqual([]);
+    expect(await store.history(b, "style.spelling")).toEqual([]);
     await expect(store.activateFact(b, own.id, "intruder")).rejects.toThrow("not found");
     await expect(store.rejectProposal(b, own.id, "intruder")).rejects.toThrow("not found");
     expect(await store.deleteBySourceRun(b, own.sourceRunId ?? "none")).toBe(0);
@@ -86,7 +83,7 @@ describe("tenant isolation", () => {
 
   it("scopes the memory.search tool by the run's tenant, not by its input", async () => {
     await episode(a, "Never mention the toss result");
-    const [search] = createMemoryTools({ reader: store, agentId: AGENT });
+    const [search] = createMemoryTools({ reader: store });
     const run = (tenantId: string) =>
       search?.run({ query: "toss result", kinds: ["episodic"], limit: 5 } as never, {
         tenantId,
@@ -98,56 +95,70 @@ describe("tenant isolation", () => {
   });
 });
 
-describe("tenant-wide facts", () => {
+describe("facts belong to the tenant", () => {
   const contents = (items: Array<{ key: string | null; content: string }>) =>
     items.map((f) => `${f.key}: ${f.content}`);
 
-  it("are shared by every agent, and an agent's own fact wins on its key", async () => {
-    await fact(a, "style.spelling", "Use British English", null);
-    await fact(a, "audience", "Cricket fans", null);
-    await fact(a, "audience", "Club members", AGENT);
+  it("are read the same way whichever agent proposed them", async () => {
+    await fact(a, "style.spelling", "Use British English");
+    await fact(a, "audience", "Cricket fans", "sitemap");
 
-    expect(contents(await store.activeFacts(a, AGENT))).toEqual([
-      "audience: Club members",
-      "style.spelling: Use British English",
-    ]);
-    expect(contents(await store.activeFacts(a, "sitemap"))).toEqual([
+    expect(contents(await store.activeFacts(a))).toEqual([
       "audience: Cricket fans",
       "style.spelling: Use British English",
     ]);
-    // the tenant's facts alone
-    expect(contents(await store.activeFacts(a, null))).toEqual([
-      "audience: Cricket fans",
-      "style.spelling: Use British English",
-    ]);
-    expect(await store.activeFacts(b, AGENT)).toEqual([]);
+    expect(await store.activeFacts(b)).toEqual([]);
   });
 
-  it("are versioned apart from an agent's fact with the same key", async () => {
-    await fact(a, "style.length", "At most 120 words", null);
-    await fact(a, "style.length", "At most 100 words", null);
-    await fact(a, "style.length", "At most 80 words", AGENT);
+  it("keep one active version per key, whoever proposed each version", async () => {
+    await fact(a, "style.length", "At most 120 words");
+    await fact(a, "style.length", "At most 100 words", AGENT);
+    await fact(a, "style.length", "At most 80 words", "sitemap");
 
     expect(
-      (await store.history(a, null, "style.length")).map((h) => [h.version, h.status]),
+      (await store.history(a, "style.length")).map((h) => [h.version, h.status, h.agentId]),
     ).toEqual([
-      [1, "retired"],
-      [2, "active"],
+      [1, "retired", null],
+      [2, "retired", AGENT],
+      [3, "active", "sitemap"],
     ]);
-    expect((await store.history(a, AGENT, "style.length")).map((h) => h.version)).toEqual([1]);
-    expect(contents(await store.activeFacts(a, null))).toEqual(["style.length: At most 100 words"]);
+    expect(contents(await store.activeFacts(a))).toEqual(["style.length: At most 80 words"]);
   });
 
-  it("are found by every agent's search, while episodes stay with their agent", async () => {
-    await fact(a, "style.spelling", "Use British English spelling", null);
-    await episode(a, "A reviewer asked for British spelling in the headline");
+  it("take turns when two versions of one key are activated at once", async () => {
+    const propose = (content: string) =>
+      store.proposeFact({
+        tenantId: a,
+        agentId: null,
+        key: "style.tone",
+        content,
+        confidence: 1,
+        sourceRunId: null,
+      });
+    const [one, two] = await Promise.all([propose("Measured"), propose("Energetic")]);
+    await Promise.all([
+      store.activateFact(a, one.id, "reviewer-1"),
+      store.activateFact(a, two.id, "reviewer-2"),
+    ]);
+    expect(await store.activeFacts(a)).toHaveLength(1);
+  });
 
-    const found = await store.search({
-      tenantId: a,
-      agentId: "sitemap",
-      query: "British spelling",
-    });
-    expect(found.map((f) => f.content)).toEqual(["Use British English spelling"]);
+  it("are found by search together with every agent's episodes", async () => {
+    await fact(a, "style.spelling", "Use British English spelling");
+    await episode(
+      a,
+      "A reviewer asked for British spelling",
+      30,
+      randomUUID(),
+      "lesson",
+      "sitemap",
+    );
+
+    const found = await store.search({ tenantId: a, query: "British spelling" });
+    expect(found.map((f) => f.content).sort()).toEqual([
+      "A reviewer asked for British spelling",
+      "Use British English spelling",
+    ]);
   });
 });
 
@@ -176,6 +187,24 @@ describe("episodes", () => {
     ]);
   });
 
+  it("reach every agent of the tenant, each agent's own ranked a little higher", async () => {
+    await episode(a, "Keep headlines short", 30, randomUUID(), "lesson", "sitemap");
+    await episode(a, "Keep headlines tight", 30, randomUUID(), "lesson", AGENT);
+    // the same lesson from another agent strengthens the one already there
+    const repeat = await episode(a, "Keep headlines tight", 30, randomUUID(), "lesson", "sitemap");
+    expect(repeat).toMatchObject({ reinforced: true, strength: 2, agentId: AGENT });
+
+    const recall = (agentId: string) =>
+      store.recallEpisodes({ tenantId: a, agentId, query: "headlines", episodeType: "lesson" });
+    expect((await recall(AGENT)).map((l) => l.content)).toEqual([
+      "Keep headlines tight",
+      "Keep headlines short",
+    ]);
+    const forSitemap = (await recall("sitemap")).map((l) => l.content);
+    expect(forSitemap).toHaveLength(2);
+    expect(forSitemap[0]).toBe("Keep headlines short");
+  });
+
   it("rank a recent, strengthened lesson above an older one that matches as well", () => {
     const now = new Date("2026-10-30T00:00:00Z");
     const ranked = rankEpisodes(
@@ -184,7 +213,7 @@ describe("episodes", () => {
         { id: "recent", score: 0.029, strength: 3, lastSeenAt: "2026-10-29T00:00:00Z" },
         { id: "irrelevant", score: 0.005, strength: 5, lastSeenAt: "2026-10-30T00:00:00Z" },
       ],
-      now,
+      { now },
     );
     expect(ranked.map((r) => r.id)).toEqual(["recent", "old", "irrelevant"]);
   });
@@ -231,7 +260,6 @@ describe("hybrid search", () => {
     await episode(a, "Old rule: no clash in a headline", -1);
     const results = await store.search({
       tenantId: a,
-      agentId: AGENT,
       query: "headline word clash",
     });
     expect(results[0]?.content).toBe("Avoid the word clash in headlines");
@@ -241,7 +269,7 @@ describe("hybrid search", () => {
 
   it("survives queries with tsquery syntax in them", async () => {
     await episode(a, "Mention the venue");
-    const results = await store.search({ tenantId: a, agentId: AGENT, query: "venue' & ! (:*" });
+    const results = await store.search({ tenantId: a, query: "venue' & ! (:*" });
     expect(results[0]?.content).toBe("Mention the venue");
   });
 });
@@ -257,17 +285,13 @@ describe("semantic facts", () => {
       confidence: 0.8,
       sourceRunId: "run-1",
     });
-    expect((await store.activeFacts(a, AGENT)).map((f) => f.content)).toEqual([
-      "At most 120 words",
-    ]);
-    const search = await store.search({ tenantId: a, agentId: AGENT, query: "100 words" });
+    expect((await store.activeFacts(a)).map((f) => f.content)).toEqual(["At most 120 words"]);
+    const search = await store.search({ tenantId: a, query: "100 words" });
     expect(search.map((s) => s.content)).not.toContain("At most 100 words");
 
     await store.activateFact(a, proposal.id, "editor");
-    expect((await store.activeFacts(a, AGENT)).map((f) => f.content)).toEqual([
-      "At most 100 words",
-    ]);
-    const history = await store.history(a, AGENT, "style.max-words");
+    expect((await store.activeFacts(a)).map((f) => f.content)).toEqual(["At most 100 words"]);
+    const history = await store.history(a, "style.max-words");
     expect(history.map((h) => [h.version, h.status, h.reviewedBy])).toEqual([
       [1, "retired", "seed"],
       [2, "active", "editor"],
@@ -285,7 +309,7 @@ describe("semantic facts", () => {
     });
     await store.rejectProposal(a, p.id, "editor");
     expect(await store.listProposals(a)).toEqual([]);
-    expect((await store.history(a, AGENT, "k"))[0]?.status).toBe("retired");
+    expect((await store.history(a, "k"))[0]?.status).toBe("retired");
   });
 });
 
@@ -361,7 +385,7 @@ describe("consolidation", () => {
     expect(await store.deleteBySourceRun(a, runId)).toBe(2);
   });
 
-  it("proposes a tenant-wide fact when the agent asks for that scope", async () => {
+  it("records which agent proposed a fact, for a reviewer to see", async () => {
     const out = await consolidateRun({
       writer: store,
       tenantId: a,
@@ -372,12 +396,7 @@ describe("consolidation", () => {
           step: 1,
           callId: "c9",
           tool: "memory.propose",
-          input: {
-            key: "audience",
-            content: "Readers are T20 fans",
-            confidence: 0.8,
-            scope: "tenant",
-          },
+          input: { key: "audience", content: "Readers are T20 fans", confidence: 0.8 },
         }),
         ev(2, "tool.completed", {
           step: 1,
@@ -389,7 +408,7 @@ describe("consolidation", () => {
         }),
       ],
     });
-    expect(out.proposals[0]).toMatchObject({ key: "audience", agentId: null, status: "proposed" });
+    expect(out.proposals[0]).toMatchObject({ key: "audience", agentId: AGENT, status: "proposed" });
   });
 
   it("falls back to the raw reason when the lesson writer fails", async () => {

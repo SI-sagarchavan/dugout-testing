@@ -59,7 +59,7 @@ const worker = createWorker({ pool, events, agents, onError: (id, err) => consol
 
 beforeAll(async () => {
   runsDir = await mkdtemp(join(tmpdir(), "cli-runs-"));
-  await seedHouseFacts(store, [TENANT], [matchPreview.spec.id, sitemap.spec.id]);
+  await seedHouseFacts(store, [TENANT]);
   worker.start(20);
 });
 afterAll(async () => {

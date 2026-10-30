@@ -25,7 +25,11 @@ None of them queues proposed memories for a person to approve.
   - Episodic: run records and lessons.
   - Semantic: versioned facts.
   - Procedural: skills in git.
-- **Scopes.** A fact is tenant-wide or belongs to one agent; an agent reads both, and its own wins on the same key. Episodes belong to one agent. Scopes come from the verified run, never from the model. No user-level memory until hosts send a verified user id.
+- **Memory belongs to a tenant, or to every tenant.** An agent is one definition that every tenant's runs use; it owns no memory.
+  - Tenant memory is the facts, lessons and run records in Postgres. Every agent of the tenant reads all of it, and row-level security keeps one tenant's rows from another's runs.
+  - Each item records the agent whose run produced it. That is provenance and a small ranking lift for the agent's own lessons, never a filter.
+  - Global memory is what every tenant's runs read: the skills in git. It changes only through a pull request, because a tenant's lessons can hold that tenant's names, fixtures or editors' words. Repeated lessons reach it as suggested skill edits (the procedural point below).
+  - The tenant comes from the verified run, never from the model. No user-level memory until hosts send a verified user id.
 - **People make facts live.** Agents propose with `memory.propose`; the after-run extractor proposes; only `pnpm memory:review` (or seeding) activates. Proposals are checked against similar facts first, so they arrive as a new key, a new version of an existing key, or not at all.
 - **Two tiers of facts.** Pinned facts are always in the prompt; the rest are searched with `memory.search`.
 - **Episodes reinforce.** A repeat strengthens the existing episode. Retrieval ranks by relevance, recency and importance.
@@ -34,7 +38,7 @@ None of them queues proposed memories for a person to approve.
 
 ## Consequences
 
-- `memory_items.agent_id` becomes nullable; the one-active-fact index treats null as one value (`nulls not distinct`, Postgres 15+).
-- Seed files gain a `shared` section.
+- `memory_items.agent_id` is nullable and means "produced by"; one fact per tenant and key is active (migration 006). Two activations of one key take turns under an advisory lock.
+- A seed file is one list per tenant. A fact that concerns one kind of work says so in its text ("Match previews: at most 120 words"), since every agent of the tenant reads it.
 - Compaction must respect Claude 5.5's rule that reasoning is bound to an unedited history (see `.scratch/memory/issues/04-working-memory.md`).
 - Work is tracked in `.scratch/memory/`.

@@ -1,20 +1,23 @@
-# 01 · Tenant-wide facts
+# 01 · Memory belongs to the tenant
 
 Status: resolved
 Type: task
 
 ## What
 
-A fact belongs to the whole tenant or to one agent.
+An agent is one definition that every tenant's runs use; it owns no memory.
 
-- `memory_items.agent_id` may be null for a tenant-wide fact. One active fact per tenant, scope and key (`nulls not distinct`).
-- An agent reads the tenant's facts plus its own; when both have a key, its own wins.
-- `memory.propose` takes `scope: "tenant" | "agent"` (default agent). The reviewer sees the scope.
-- Seed data: `config/tenants/<tenant>/facts.json` becomes `{ "shared": [...], "agents": { "<id>": [...] } }`. Facts that were copied per agent (audience, spelling) move to `shared`.
-- `memory.search` returns tenant-wide facts too. Episodes stay per agent.
+- Facts, lessons and run records belong to a tenant. Every agent of the tenant reads all of them; row-level security keeps other tenants' rows out.
+- `memory_items.agent_id` records which agent's run produced an item (null when seeded). It is shown to reviewers and gives an agent's own lessons a small ranking lift. It never hides an item.
+- One active fact per tenant and key (migration 006). Concurrent activations of a key take turns under an advisory lock.
+- `memory.propose` has no scope: every fact is the tenant's, so its text says what it applies to ("Match previews: at most 120 words").
+- Seed data: `config/tenants/<tenant>/facts.json` is `{ "facts": [...] }`.
+- Global memory is the skills in git. Lessons reach it as suggested skill edits (issue 05), through a pull request.
+
+First built as tenant-wide facts beside per-agent ones (migration 004); changed the same day on the decision that memory is never agent-owned.
 
 ## Done when
 
-- A fact seeded as shared reaches both agents' prompts; an agent fact with the same key overrides it for that agent only.
-- Isolation tests still hold across tenants.
-- `pnpm memory:review` shows `[tenant]` or `[<agent>]` for each proposal.
+- A fact proposed by one agent reaches every agent's prompt for that tenant, and no other tenant's.
+- A lesson from one agent reaches the others, ranked a little lower than their own.
+- Two activations of one key at once leave one active fact.

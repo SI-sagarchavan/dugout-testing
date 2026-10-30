@@ -32,7 +32,7 @@ import {
   writesGated,
 } from "@dugout/evals";
 import { createModelLessonWriter, type LessonWriter, type MemoryStore } from "@dugout/memory";
-import { houseFactsFor, seedHouseFacts } from "@dugout/sdk";
+import { houseFacts, seedHouseFacts } from "@dugout/sdk";
 import { agent, type Draft, draftOf, type Fixture, readTenantData, spec } from "../src/index.ts";
 import { cases, type PreviewCase } from "./cases.ts";
 
@@ -71,7 +71,7 @@ export interface SuiteOptions {
 }
 
 export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<PreviewCase>> {
-  await seedHouseFacts(opts.store, Object.keys(RULES), [spec.id]);
+  await seedHouseFacts(opts.store, Object.keys(RULES));
   const live = opts.mode === "live";
 
   let models: ModelConfig;
@@ -89,7 +89,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Preview
     models = scriptedModelConfig();
   }
 
-  const style = (tenant: string) => houseFactsFor(tenant, spec.id);
+  const style = (tenant: string) => houseFacts(tenant);
 
   /** One agent run; returns the drafts it asked to save and its events. */
   const runOnce = async (

@@ -21,7 +21,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `pnpm check` — lint + typecheck + test (what CI runs)
 - `pnpm format` — Biome autofix
 - `pnpm infra:up` / `infra:down` / `infra:reset` — Postgres+pgvector (:55432) and Valkey (:56379). Tests need these up.
-- `pnpm db:migrate` / `pnpm seed [agent...]` — apply migrations; load each tenant's house facts (`config/tenants/<tenant>/facts.json`) into memory
+- `pnpm db:migrate` / `pnpm seed` — apply migrations; load each tenant's house facts (`config/tenants/<tenant>/facts.json`) into memory. Every agent of a tenant reads all of its memory (ADR 0013)
 - `pnpm worker` — runs the agents; `pnpm agent` needs one running. `AGENTS=sitemap` limits it to some agents
 - `pnpm agent <id> --tenant <tenant> --<input field> <value> [--input json]` — queue a run for the worker and follow it, with an approval prompt: `y`, `n`, or type a change (it goes back to the agent in the same run). Ctrl-C leaves the run going; `pnpm agent --run <runId> --tenant <tenant>` attaches again
 - `pnpm preview --tenant demo-cricket --fixture c-101` — `pnpm agent match-preview`

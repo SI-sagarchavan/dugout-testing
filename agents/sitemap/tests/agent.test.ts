@@ -13,7 +13,7 @@ import { agent, type Sitemap } from "../src/index.ts";
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
 const store = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
-beforeAll(() => seedHouseFacts(store, ["demo-cricket", "demo-football"], [agent.spec.id]));
+beforeAll(() => seedHouseFacts(store, ["demo-cricket", "demo-football"]));
 
 const sitemap: Sitemap = {
   pages: [
@@ -171,7 +171,7 @@ describe("sitemap agent", () => {
     const system = client.requests[0]?.messages[0]?.content ?? "";
     expect(system).toContain("## Skill: sitemap");
     expect(system).toContain("US soccer fans");
-    expect(system).toContain("Header menu order: Home, News, Fixtures, Standings");
+    expect(system).toContain("header menu order: Home, News, Fixtures, Standings");
     expect(system).not.toContain("T20 cricket followers");
   });
 

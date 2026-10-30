@@ -18,7 +18,7 @@ import {
   writesGated,
 } from "@dugout/evals";
 import type { MemoryStore } from "@dugout/memory";
-import { houseFactsFor, seedHouseFacts } from "@dugout/sdk";
+import { houseFacts, seedHouseFacts } from "@dugout/sdk";
 import { agent, type NavItem, type PageNode, type Sitemap, sitemapOf, spec } from "../src/index.ts";
 import { cases, type SitemapCase } from "./cases.ts";
 import {
@@ -60,7 +60,7 @@ export interface SuiteOptions {
 }
 
 export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<SitemapCase>> {
-  await seedHouseFacts(opts.store, Object.keys(RULES), [spec.id]);
+  await seedHouseFacts(opts.store, Object.keys(RULES));
   const live = opts.mode === "live";
 
   let models: ModelConfig;
@@ -77,7 +77,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
   }
 
   const factLines = async (tenant: string) =>
-    (await houseFactsFor(tenant, spec.id)).map((f) => `- ${f.content}`).join("\n");
+    (await houseFacts(tenant)).map((f) => `- ${f.content}`).join("\n");
 
   const runCase = async (c: SitemapCase, _attempt: number): Promise<CaseOutcome> => {
     const tenant = c.tenant as Tenant;

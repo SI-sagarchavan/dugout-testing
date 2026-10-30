@@ -6,12 +6,12 @@ The four memory types as the CoALA paper defines them (arXiv 2309.02427), built 
 
 ## Decisions (2026-10-30)
 
-| Question              | Decision                                                                                                                                                                                   |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Scopes                | Facts are tenant-wide (every agent of the tenant) or belong to one agent. Episodes belong to one agent. No user-level memory yet. Scopes come from the verified run, never from the model. |
-| Who makes a fact live | A person, always. Agents and the after-run extractor only propose.                                                                                                                         |
-| Long runs             | Compaction (summary of older turns, recent turns as they are; the saved transcript keeps everything) plus a small notes block the agent writes, which survives compaction.                 |
-| Procedural learning   | A job suggests skill edits from repeated lessons; a person applies them through a pull request. Nothing changes a skill on its own.                                                        |
+| Question              | Decision                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scopes                | Memory belongs to a tenant or to every tenant; an agent owns none. Every agent of a tenant reads all of the tenant's facts, lessons and run records. Each item records which agent produced it, for provenance and a small ranking lift. Global memory is the skills in git, changed by pull request. The tenant comes from the verified run, never from the model. |
+| Who makes a fact live | A person, always. Agents and the after-run extractor only propose.                                                                                                                                                                                                                                                                                                  |
+| Long runs             | Compaction (summary of older turns, recent turns as they are; the saved transcript keeps everything) plus a small notes block the agent writes, which survives compaction.                                                                                                                                                                                          |
+| Procedural learning   | A job suggests skill edits from repeated lessons; a person applies them through a pull request. Nothing changes a skill on its own.                                                                                                                                                                                                                                 |
 
 ## The four types
 
@@ -19,7 +19,7 @@ The four memory types as the CoALA paper defines them (arXiv 2309.02427), built 
 | ---------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | Working    | The run's transcript, checkpoint and notes block                | The loop after every step (ADR 0006); the agent through `notes.write`          | Every model call: compacted transcript + notes                          |
 | Episodic   | One record per finished run, and lessons from reviewer feedback | Consolidation after the run                                                    | Top episodes ranked by relevance, recency and importance, in the prompt |
-| Semantic   | Versioned facts, tenant-wide or per agent; pinned or searchable | Proposals from agents (`memory.propose`) and the extractor; a person activates | Pinned facts in the prompt; the rest through `memory.search`            |
+| Semantic   | Versioned facts of the tenant; pinned or searchable             | Proposals from agents (`memory.propose`) and the extractor; a person activates | Pinned facts in the prompt; the rest through `memory.search`            |
 | Procedural | Skills in git (always loaded or on demand, ADR 0011)            | People; the suggestion job drafts edits                                        | The prompt, or `skill.load`                                             |
 
 ## What other harnesses do that we adopt
@@ -36,7 +36,7 @@ The four memory types as the CoALA paper defines them (arXiv 2309.02427), built 
 
 | #   | Ticket                                                                             | Status          | Blocked by |
 | --- | ---------------------------------------------------------------------------------- | --------------- | ---------- |
-| 01  | [Tenant-wide facts](issues/01-tenant-wide-facts.md)                                | resolved        |            |
+| 01  | [Memory belongs to the tenant](issues/01-tenant-wide-facts.md)                     | resolved        |            |
 | 02  | [Episodes: run records, reinforcement, ranking](issues/02-episodes.md)             | resolved        | 01         |
 | 03  | [Facts: pinned and searchable, extracted after runs](issues/03-fact-extraction.md) | ready-for-agent | 01         |
 | 04  | [Working memory: compaction and notes](issues/04-working-memory.md)                | ready-for-agent |            |

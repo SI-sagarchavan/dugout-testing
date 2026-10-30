@@ -7,8 +7,8 @@ export const SEARCH_TOOL = "memory.search";
 export const PROPOSE_TOOL = "memory.propose";
 export const SKILL_TOOL = "skill.load";
 
-/** Read-only memory tools for one agent. The tenant comes from the tool context. */
-export function createMemoryTools(opts: { reader: MemoryReader; agentId: string }) {
+/** Read-only memory tools. The tenant comes from the tool context; every agent reads all of it. */
+export function createMemoryTools(opts: { reader: MemoryReader }) {
   const search = defineTool({
     name: SEARCH_TOOL,
     description:
@@ -24,20 +24,8 @@ export function createMemoryTools(opts: { reader: MemoryReader; agentId: string 
     effect: "read",
     timeoutMs: 10_000,
     async run({ query, kinds, limit }, ctx) {
-      const items = await opts.reader.search({
-        tenantId: ctx.tenantId,
-        agentId: opts.agentId,
-        query,
-        kinds,
-        limit,
-      });
-      return items.map(({ kind, key, content, createdAt, agentId }) => ({
-        kind,
-        ...(kind === "semantic" ? { scope: agentId ? "agent" : "tenant" } : {}),
-        key,
-        content,
-        createdAt,
-      }));
+      const items = await opts.reader.search({ tenantId: ctx.tenantId, query, kinds, limit });
+      return items.map(({ kind, key, content, createdAt }) => ({ kind, key, content, createdAt }));
     },
   });
 
@@ -45,12 +33,11 @@ export function createMemoryTools(opts: { reader: MemoryReader; agentId: string 
   const propose = defineTool({
     name: PROPOSE_TOOL,
     description:
-      "Propose a new or corrected house fact for this tenant. A human reviews it before any run uses it. Use scope 'tenant' only for a fact that holds for every kind of work for this tenant (its audience, its spelling), 'agent' for one about your own work.",
+      "Propose a new or corrected house fact for this tenant. A human reviews it before any run uses it. Every agent working for this tenant will read it, so say what it applies to, e.g. 'Match previews: at most 120 words'.",
     input: z.object({
       key: z.string().regex(/^[a-z][a-z0-9.-]*$/, "dotted lower-case key, e.g. style.spelling"),
       content: z.string().min(5).max(500),
       confidence: z.number().min(0).max(1),
-      scope: z.enum(["agent", "tenant"]).default("agent"),
     }),
     effect: "read",
     timeoutMs: 1_000,

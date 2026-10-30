@@ -76,18 +76,18 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
       );
     }
     if (event.type === "tool.completed" && event.data.ok && proposed.has(event.data.callId)) {
-      const { scope, ...input } = proposed.get(event.data.callId) as {
+      const { key, content, confidence } = proposed.get(event.data.callId) as {
         key: string;
         content: string;
         confidence: number;
-        scope?: "agent" | "tenant";
       };
       proposals.push(
         await writer.proposeFact({
           tenantId,
-          // the scope is only a proposal: the reviewer sees it before anything is used
-          agentId: scope === "tenant" ? null : agentId,
-          ...input,
+          agentId,
+          key,
+          content,
+          confidence,
           sourceRunId: runId,
         }),
       );

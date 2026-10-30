@@ -32,8 +32,10 @@ beforeAll(async () => {
   await writeFile(
     join(tenantsDir, tenant, "facts.json"),
     JSON.stringify({
-      shared: [{ key: "style.case", content: "Titles use sentence case." }],
-      agents: { notes: [{ key: "notes.topic", content: "Name the topic in the title." }] },
+      facts: [
+        { key: "style.case", content: "Titles use sentence case." },
+        { key: "notes.topic", content: "Notes: name the topic in the title." },
+      ],
     }),
   );
 });
@@ -81,13 +83,11 @@ const script = () =>
 describe("defineAgent", () => {
   it("runs an agent from its definition: skill and house facts in, approval, output out", async () => {
     const agent = notes();
-    expect(await seedHouseFacts(store, [tenant, "no-data-tenant"], ["notes"], tenantsDir)).toEqual([
-      { tenantId: tenant, agentId: null, changed: 1 },
-      { tenantId: tenant, agentId: "notes", changed: 1 },
+    expect(await seedHouseFacts(store, [tenant, "no-data-tenant"], tenantsDir)).toEqual([
+      { tenantId: tenant, changed: 2 },
     ]);
-    expect(await seedHouseFacts(store, [tenant], ["notes"], tenantsDir)).toEqual([
-      { tenantId: tenant, agentId: null, changed: 0 },
-      { tenantId: tenant, agentId: "notes", changed: 0 },
+    expect(await seedHouseFacts(store, [tenant], tenantsDir)).toEqual([
+      { tenantId: tenant, changed: 0 },
     ]);
 
     const notesDir = await mkdtemp(join(tmpdir(), "notes-"));
@@ -114,9 +114,9 @@ describe("defineAgent", () => {
     expect(await readFile(join(notesDir, `${tenant}.txt`), "utf8")).toBe("Season opener");
     const system = client.requests[0]?.messages[0]?.content ?? "";
     expect(system).toContain("Keep titles under five words.");
-    // the tenant's shared fact and the agent's own
+    // every fact of the tenant
     expect(system).toContain("Titles use sentence case.");
-    expect(system).toContain("Name the topic in the title.");
+    expect(system).toContain("Notes: name the topic in the title.");
     expect(sink.events.map((e) => e.type)).toContain("approval.granted");
     // the host's tracing sink sees the same run
     expect(traced.map((e) => e.seq)).toEqual(sink.events.map((e) => e.seq));

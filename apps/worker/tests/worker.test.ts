@@ -32,7 +32,7 @@ const errors: unknown[] = [];
 
 beforeAll(async () => {
   runsDir = await mkdtemp(join(tmpdir(), "runs-worker-"));
-  await seedHouseFacts(memory, [TENANT], [matchPreview.spec.id]);
+  await seedHouseFacts(memory, [TENANT]);
 });
 afterAll(async () => {
   await pool.end();
