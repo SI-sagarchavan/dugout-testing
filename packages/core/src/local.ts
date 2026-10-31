@@ -182,7 +182,11 @@ export interface CompletedRun {
 export async function runLocal(opts: RunLocalOptions) {
   const runId = opts.runId ?? randomUUID();
   const runsDir = opts.runsDir ?? ".runs";
-  const ctx: RunContext = { runId, tenantId: opts.tenantId };
+  const ctx: RunContext = {
+    runId,
+    tenantId: opts.tenantId,
+    ...(opts.input !== undefined ? { input: opts.input } : {}),
+  };
   const outputs = opts.outputs ?? createFileOutputStore(runsDir);
   const registry = createToolRegistry([...opts.tools, createReadOutputTool(outputs)]);
   const saved = opts.resume ? await opts.store?.load(ctx) : undefined;

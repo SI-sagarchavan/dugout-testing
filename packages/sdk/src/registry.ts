@@ -14,10 +14,14 @@ const entry = (id: string) => join(AGENTS_DIR, id, "src", "index.ts");
  */
 export async function agentIds(): Promise<string[]> {
   const dirs = await readdir(AGENTS_DIR, { withFileTypes: true });
-  return dirs
-    .filter((d) => d.isDirectory() && existsSync(entry(d.name)))
-    .map((d) => d.name)
-    .sort();
+  const ids: string[] = [];
+  for (const dir of dirs) {
+    if (!dir.isDirectory() || !existsSync(entry(dir.name))) continue;
+    const { agent } = (await import(entry(dir.name))) as { agent?: { kind?: string } };
+    // A folder can hold a program (`defineProgram`) instead of a `defineAgent`.
+    if (agent?.kind === "agent") ids.push(dir.name);
+  }
+  return ids.sort();
 }
 
 export async function loadAgent(id: string): Promise<AnyAgent> {

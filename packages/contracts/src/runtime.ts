@@ -8,6 +8,8 @@ import type { ToolOutcome } from "./tools.ts";
 export interface RunContext {
   readonly runId: string;
   readonly tenantId: string;
+  /** The host's parsed run input. Tools may read it. The model cannot change it. */
+  readonly input?: unknown;
 }
 
 /** Memory and skills assembled for a run, appended to the agent's instructions. */

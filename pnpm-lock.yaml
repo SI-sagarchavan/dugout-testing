@@ -24,6 +24,30 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
 
+  agents/card:
+    dependencies:
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../../packages/db
+      '@dugout/evals':
+        specifier: workspace:^
+        version: link:../../packages/evals
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../../packages/memory
+      '@dugout/sdk':
+        specifier: workspace:^
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
   agents/match-preview:
     dependencies:
       '@dugout/contracts':
@@ -62,6 +86,30 @@ importers:
       '@dugout/evals':
         specifier: workspace:^
         version: link:../../packages/evals
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../../packages/memory
+      '@dugout/sdk':
+        specifier: workspace:^
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  agents/round:
+    dependencies:
+      '@dugout/agent-matchday':
+        specifier: workspace:^
+        version: link:../matchday
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../../packages/db
       '@dugout/memory':
         specifier: workspace:^
         version: link:../../packages/memory
@@ -138,6 +186,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@dugout/agent-card':
+        specifier: workspace:^
+        version: link:../../agents/card
       '@dugout/agent-match-preview':
         specifier: workspace:^
         version: link:../../agents/match-preview

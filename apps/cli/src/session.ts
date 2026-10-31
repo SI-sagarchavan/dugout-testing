@@ -129,19 +129,58 @@ async function askChoice(terminal: Terminal, by: string): Promise<ApprovalDecisi
   }
 }
 
+/** How much of a tool call to keep on the one live line while the model writes it. */
+const LIVE_TAIL = 64;
+
 /** Shows a run's events; streamed text as it comes, the rest as dim notes on lines of their own. */
 function shower(terminal: Terminal) {
   let midLine = false;
+  // The model writes a tool call for a long time before tool.started. That call's text stays on
+  // one line and the tail moves, instead of the terminal sitting still until the call is done.
+  let liveTool = "";
+  let liveStep = 0;
+  let liveText = "";
+  let liveDrawn = false;
+  const finishLive = () => {
+    if (!liveDrawn) return;
+    terminal.write("\n");
+    liveTool = "";
+    liveText = "";
+    liveDrawn = false;
+    midLine = false;
+  };
   const note = (text: string, tone: "dim" | "warn" | "bad" = "dim") => {
+    finishLive();
     if (midLine) terminal.write("\n");
     midLine = false;
     const paint = tone === "bad" ? pc.red : tone === "warn" ? pc.yellow : dim;
     terminal.line(paint(text));
   };
+  const drawLive = (tool: string, text: string, redraw: boolean) => {
+    const flat = text.replace(/\s+/g, " ");
+    const tail = flat.length > LIVE_TAIL ? `…${flat.slice(-(LIVE_TAIL - 1))}` : flat;
+    const line = dim(`· ${tool}  ${tail}`);
+    terminal.write(redraw ? `\r\x1b[K${line}` : line);
+    liveDrawn = true;
+    midLine = true;
+  };
   return (e: RunEvent) => {
     if (e.type === "token") {
+      finishLive();
       terminal.write(e.data.text);
       midLine = !e.data.text.endsWith("\n");
+    } else if (e.type === "tool.input.delta") {
+      if (liveTool && (liveTool !== e.data.tool || liveStep !== e.data.step)) finishLive();
+      liveTool = e.data.tool;
+      liveStep = e.data.step;
+      liveText += e.data.text;
+      // `{}` is card.figma and the other calls with no arguments. Leave those to tool.started.
+      if (liveText === "{}") {
+        liveTool = "";
+        liveText = "";
+        return;
+      }
+      drawLive(liveTool, liveText, liveDrawn);
     } else if (e.type === "context.built") {
       const count = e.data.sources.length;
       const items = count === 0 ? "none" : count === 1 ? "1 item" : `${count} items`;
@@ -152,16 +191,24 @@ function shower(terminal: Terminal) {
       }
     } else if (e.type === "run.resumed") note(`· resumed by a worker (${e.data.reason})`);
     else if (e.type === "tool.started") {
-      const input = JSON.stringify(e.data.input);
-      note(`· ${e.data.tool}${input && input !== "{}" ? ` ${clip(input)}` : ""}`);
+      // The call already streamed onto its line. Don't print the same JSON again, clipped.
+      if (liveDrawn && liveTool === e.data.tool && liveStep === e.data.step) {
+        finishLive();
+      } else {
+        const input = JSON.stringify(e.data.input);
+        note(`· ${e.data.tool}${input && input !== "{}" ? ` ${clip(input)}` : ""}`);
+      }
     } else if (e.type === "tool.denied") note(`· denied ${e.data.tool}: ${e.data.reason}`, "warn");
     else if (e.type === "tool.completed" && !e.data.ok)
       note(`· ${e.data.tool} failed: ${e.data.content}`, "bad");
     else if (e.type === "approval.changes_requested")
       note(`· sent back for changes: ${e.data.changes}`);
-    else if (e.type === "approval.requested" && midLine) {
-      terminal.write("\n");
-      midLine = false;
+    else if (e.type === "approval.requested") {
+      finishLive();
+      if (midLine) {
+        terminal.write("\n");
+        midLine = false;
+      }
     }
   };
 }

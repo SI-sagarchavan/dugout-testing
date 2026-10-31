@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "cardId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,40}$",
+      "description": "Id for this card. agent-card is the one the preview page shows"
+    },
+    "brief": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "What the card should show"
+    },
+    "figma": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Absolute path to the Figma-generated DSL JSON"
+    },
+    "screenshot": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Absolute path to the reference screenshot PNG, cropped to the card at 1x"
+    }
+  },
+  "required": [
+    "cardId",
+    "brief"
+  ]
+}

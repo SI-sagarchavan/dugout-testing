@@ -14,6 +14,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `agents/match-preview` — sample agent: tools, skill, spec, demo data, eval cases
 - `agents/sitemap` — second agent: club brief to import-ready pages plus header menu; ported importer rules, skill, eval cases
 - `agents/matchday` — matchday pack for one fixture: preview plus any of social, push and headline; always-on skill, channel skills loaded with `skill.load`
+- `agents/card` — one SDUI card in the trial repo's flat DSL. The host keeps the tree. `pnpm agent card` is one attempt: `card.figma` or `card.draft`, then `card.check`, `card.edit`, `card.diff` and `card.save` with `{}`. `pnpm card` is a graph: code loads, checks, diffs and saves, and a failed check or diff calls repair for edits only
 - `apps/worker` — runs agents (ADR 0009): claims queued, decided and orphaned runs from Postgres, holds a lease per run, saves its working memory (ADR 0006), writes events to the Valkey stream + Postgres record, hands runs over on SIGTERM; no port; `Dockerfile` for ECS. Also the queue a host uses to hand it runs. Temporal replaces the claiming before production (H7)
 - `apps/cli` — the terminal host for the worker, doing what wnm-fanxp-backend will: queues a run, follows its events, asks at each approval and queues the decision
 
@@ -28,9 +29,11 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `pnpm preview --tenant demo-cricket --fixture c-101` — `pnpm agent match-preview`
 - `pnpm memory:review --tenant <id>` — approve or reject proposed facts; `--shared` for proposed shared memory
 - `pnpm memory:promote` — propose facts and lessons that several tenants hold as shared memory, for their sport or for every tenant (ADR 0014)
-- `pnpm eval match-preview [--scripted] [--model <name>] [--only id,id]` — eval suite; exits non-zero below the 90% gate (`pnpm eval sitemap` and `pnpm eval matchday` likewise). `--model` runs the agent on another model in `config/models.json`
+- `pnpm eval match-preview [--scripted] [--model <name>] [--only id,id]` — eval suite; exits non-zero below the 90% gate (`pnpm eval sitemap`, `pnpm eval matchday` and `pnpm eval card` likewise). `--model` runs the agent on another model in `config/models.json`
 - `pnpm sitemap --tenant demo-cricket --brief "..." [--sport cricket]` — `pnpm agent sitemap`
 - `pnpm matchday --tenant demo-cricket --fixture c-101 [--channel social] [--brief "..."]` — `pnpm agent matchday`
+- `pnpm card --tenant demo-cricket --card agent-card --brief "..." [--figma <dsl.json> --screenshot <card.png>] [--attempts 3] [--yes] [--resume]` — a graph in this process, not the worker. Load, check, diff and save are code. Repair returns edits for the nodes the report names, at most `--attempts` times (default 3). A brief with no Figma file uses `card-draft`, which returns the first tree. `pnpm agent card` is still one full attempt, and the host keeps that tree. The saved card is on http://localhost:3415
+- `pnpm round --tenant demo-cricket [--fixture c-101 ...] [--channel social] [--brief "..."] [--yes] [--resume]` — a program: matchday for each fixture, two at a time with `--yes`
 - `pnpm smoke [--model <name>]` — one minimal live run, on `nova-lite` unless named
 - `pnpm schemas` — write each agent's input and output JSON Schema to `schemas/` for hosts; a test fails when they are out of date
 

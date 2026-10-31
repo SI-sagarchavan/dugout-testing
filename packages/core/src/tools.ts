@@ -4,6 +4,7 @@ import type {
   RunContext,
   Tool,
   ToolCall,
+  ToolContext,
   ToolDefinition,
   ToolOutcome,
   ToolStepRequest,
@@ -58,8 +59,14 @@ export type Preflight =
 /**
  * Pipeline stages that need no I/O: registry, spec allow-list, policy and schema check, and the
  * approval decision. The tenant is not an input here; the executor takes it from the run context.
+ * `ctx` is the verified run, so a tool can refuse before approval using the host's input.
  */
-export function preflight(call: ToolCall, spec: AgentSpec, registry: ToolRegistry): Preflight {
+export function preflight(
+  call: ToolCall,
+  spec: AgentSpec,
+  registry: ToolRegistry,
+  ctx?: Pick<ToolContext, "tenantId" | "runId" | "input">,
+): Preflight {
   const tool = registry.get(call.name);
   if (!tool) return { ok: false, stage: "registry", reason: `unknown tool ${call.name}` };
   if (!spec.tools.includes(tool.name) && !BUILTIN_TOOLS.includes(tool.name)) {
@@ -78,9 +85,34 @@ export function preflight(call: ToolCall, spec: AgentSpec, registry: ToolRegistr
   if (!parsed.success) {
     return { ok: false, stage: "policy", reason: z.prettifyError(parsed.error) };
   }
+  let value: unknown = parsed.data;
+  if (tool.resolve) {
+    if (!ctx) return { ok: false, stage: "policy", reason: `${tool.name} needs a run context` };
+    try {
+      value = tool.resolve(parsed.data, ctx);
+    } catch (err) {
+      return {
+        ok: false,
+        stage: "policy",
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+  if (tool.block && ctx) {
+    try {
+      const reason = tool.block(value, ctx);
+      if (reason) return { ok: false, stage: "policy", reason };
+    } catch (err) {
+      return {
+        ok: false,
+        stage: "policy",
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
 
   const needsApproval = tool.effect === "write" || spec.approvals.includes(tool.name);
-  return { ok: true, tool, input: parsed.data, needsApproval };
+  return { ok: true, tool, input: value, needsApproval };
 }
 
 export interface ToolExecutor {
@@ -145,7 +177,12 @@ async function runWithTimeout(tool: Tool, input: unknown, ctx: RunContext): Prom
     }, tool.timeoutMs);
   });
   try {
-    const toolCtx = { tenantId: ctx.tenantId, runId: ctx.runId, signal: controller.signal };
+    const toolCtx = {
+      tenantId: ctx.tenantId,
+      runId: ctx.runId,
+      signal: controller.signal,
+      ...(ctx.input !== undefined ? { input: ctx.input } : {}),
+    };
     return await Promise.race([tool.run(input, toolCtx), timedOut]);
   } finally {
     clearTimeout(timer);

@@ -21,7 +21,7 @@ What the harness is missing for agents that work with images, run for a long tim
 | 01  | [Images in messages and tool results](issues/01-images-in-messages.md)                             | ready-for-agent | 02         |
 | 02  | [Artifact store by content hash](issues/02-artifact-store.md)                                      | ready-for-agent |            |
 | 03  | [Model per agent](issues/03-model-per-agent.md)                                                    | resolved        |            |
-| 04  | [Runs made of code steps and agent tasks](issues/04-runs-with-tasks.md)                            | needs-triage    |            |
+| 04  | [Runs made of code steps and agent tasks](issues/04-runs-with-tasks.md)                            | started         |            |
 | 05  | [Context for long runs: shared part first, old rounds trimmed](issues/05-context-for-long-runs.md) | ready-for-agent | 01         |
 | 06  | [One review per run, decisions aimed at a task](issues/06-review-per-run.md)                       | needs-triage    | 04         |
 | 07  | [Evals with artifacts, images and recorded runs](issues/07-evals-with-artifacts.md)                | ready-for-agent | 01, 02     |

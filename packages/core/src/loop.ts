@@ -278,7 +278,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       }
 
       const ids = { step, callId: call.id, tool: call.name };
-      const checked = preflight(call, spec, registry);
+      const checked = preflight(call, spec, registry, {
+        tenantId: opts.ctx.tenantId,
+        runId: opts.ctx.runId,
+        ...(opts.ctx.input !== undefined ? { input: opts.ctx.input } : {}),
+      });
       if (!checked.ok) {
         const args = stableArgs(call.arguments);
         // One refusal is feedback. The same call again is the model stuck, so the run stops
