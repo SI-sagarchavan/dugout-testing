@@ -35,10 +35,11 @@
     "infra:reset": "docker compose down -v",
     "card-match:vision": "tsx agents/card-match/scripts/vision-bench.ts",
     "pipeline:build": "pnpm --filter \"./pipeline/**\" -r build",
-    "pipeline:infra:up": "docker compose --profile pipeline up -d --wait pipeline-postgres pipeline-electric",
-    "pipeline:infra:down": "docker compose --profile pipeline stop pipeline-postgres pipeline-electric",
+    "pipeline:infra:up": "scripts/pipeline-db.sh && docker compose --profile pipeline up -d --wait pipeline-electric",
+    "pipeline:infra:down": "docker compose --profile pipeline stop pipeline-electric",
     "pipeline:db:migrate": "pnpm --filter @fanos/api db:migrate",
-    "pipeline:dev": "pnpm --parallel --filter @fanos/surface-studio --filter @fanos/web --filter @fanos/api run \"/^dev(:worker)?$/\""
+    "pipeline:dev": "pnpm --parallel --filter @fanos/surface-studio --filter @fanos/web --filter @fanos/api run \"/^dev(:worker)?$/\"",
+    "pipeline:db:import": "scripts/pipeline-db.sh import"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.3",

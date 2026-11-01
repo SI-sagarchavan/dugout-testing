@@ -9,7 +9,7 @@ The pipeline is `pipeline/` in this repo: the `@fanos/*` packages (`tokens`, `ds
 - **One path.** `PIPELINE_ROOT` in `@dugout/core` replaces `trialRoot()` and `FANOS_TRIAL_ROOT`. The agents still import the built `dist` of the pipeline packages, so `pnpm pipeline:build` runs after install and after a change there.
 - **Own toolchain, not ours.** `pipeline/` keeps its tsup, vitest 2 and TypeScript 5 (each package pins its own), and `pnpm check` lints it with neither Biome nor dugout's TypeScript settings. Reformatting it was no part of the move.
 - **Nothing renamed.** The `@fanos/*` names do not clash with `@dugout/*`. The relative layout inside `pipeline/` is the one the apps already assume (the web app reads fixtures from `../../..`), so the card agent still writes its preview to `pipeline/packages/{dsl,renderer}/fixtures/preview/`.
-- **Separate infra.** The control plane's Postgres, Redis and Electric are services of the root `docker-compose.yml` (:5433, :3010; its job queue is dugout's Valkey), apart from dugout's Postgres (:55432); ADR 0021 says which parts run in Docker.
+- **Shared infra.** The control plane's database is `fanos` in dugout's Postgres server, its job queue is dugout's Valkey, and Electric is a service of the root `docker-compose.yml` (ADR 0021).
 
 ## Not moved
 

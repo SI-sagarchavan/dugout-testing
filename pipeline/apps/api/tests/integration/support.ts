@@ -13,8 +13,13 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, type Config } from "../../src/config.js";
 import { createDb, type Db, type DbHandle } from "../../src/platform/db/client.js";
 
+// A database of its own: `reset` below deletes every row, so this refuses any name that is not a
+// test database (the control plane's real one is `fanos`, in the same server).
 export const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgres://fanos:fanos@localhost:5433/fanos";
+  process.env.TEST_DATABASE_URL ?? "postgres://fanos:fanos@localhost:55432/fanos_test";
+if (!/\/[\w-]*_test(\?|$)/.test(DATABASE_URL)) {
+  throw new Error(`integration tests wipe their database, so its name must end in _test: ${DATABASE_URL.replace(/:[^:@/]*@/, ":***@")}`);
+}
 
 const MIGRATIONS = fileURLToPath(new URL("../../drizzle", import.meta.url));
 

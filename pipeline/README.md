@@ -54,7 +54,7 @@ Run from the dugout root:
 ```bash
 pnpm pipeline:build           # build every package and app
 pnpm infra:up                 # dugout's Valkey (the job queue, database 1) and Postgres
-pnpm pipeline:infra:up        # the control plane's Postgres :5433 and Electric :3010 (ADR 0021)
+pnpm pipeline:infra:up        # Electric :3010, and the `fanos` database in dugout's Postgres (ADR 0021)
 pnpm pipeline:db:migrate
 pnpm pipeline:dev             # studio :3000, web :3415, api :4100, and the worker
 pnpm -r --filter "./pipeline/**" test        # every pipeline package's tests

@@ -1,13 +1,13 @@
 # The databases, in Docker. The apps run on the host with pnpm (`pnpm worker`, `pnpm pipeline:dev`).
 #
-# By default `docker compose up` starts dugout's Postgres+pgvector and Valkey (no-eviction, like
-# prod streams): what `pnpm check` and the worker need. Host ports are offset (55432, 56379) so
-# they don't clash with a local Postgres or Redis; both can be moved with DUGOUT_PG_PORT and
-# DUGOUT_VALKEY_PORT.
+# One Postgres+pgvector server holds both databases: `harness` (dugout's memory and runs) and `fanos`
+# (the pipeline's control plane, with its own role). One Valkey (no-eviction, like prod streams)
+# holds dugout's event stream in database 0 and the pipeline's job queue in database 1. Host ports
+# are offset (55432, 56379) so they don't clash with a local Postgres or Redis; both can be moved
+# with DUGOUT_PG_PORT and DUGOUT_VALKEY_PORT.
 #
 # Profiles:
-#   pipeline  the control plane's Postgres and Electric (`pnpm pipeline:infra:up`). The pipeline
-#             also uses the Valkey above for its job queue (database 1), so there is no Redis here.
+#   pipeline  Electric, the control plane's live sync (`pnpm pipeline:infra:up`)
 #   temporal  parked: `docker compose --profile temporal up -d`.
 name: dugout
 services:
@@ -17,8 +17,15 @@ services:
       POSTGRES_USER: harness
       POSTGRES_PASSWORD: harness
       POSTGRES_DB: harness
+    # Electric reads the WAL through logical replication. The default `wal_level=replica` carries no
+    # row images, so shapes would come up empty with no error anywhere. Changing it restarts the server.
+    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=10, -c, max_wal_senders=10]
     ports: ["${DUGOUT_PG_PORT:-55432}:5432"]
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # creates the `fanos` role and database when the data directory is new; on an existing server
+      # run scripts/pipeline-db.sh
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U harness"]
       interval: 3s
@@ -33,36 +40,16 @@ services:
       interval: 3s
       retries: 20
 
-  # The control plane's database. Its data is the Docker volume `api_fanos-pg`, which the old
-  # `trial` stack created (container api-postgres-1): the same Sends, exports and artifact records,
-  # now served from here. Never run both at once: two Postgres servers on one data directory
-  # corrupt it. Stop the old one first (`docker stop api-postgres-1 api-electric-1`).
-  pipeline-postgres:
-    profiles: [pipeline]
-    image: postgres:16-alpine
-    # Electric reads the WAL through logical replication. The default `wal_level=replica` carries no
-    # row images, so shapes would come up empty with no error anywhere.
-    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=10, -c, max_wal_senders=10]
-    environment:
-      POSTGRES_USER: fanos
-      POSTGRES_PASSWORD: fanos
-      POSTGRES_DB: fanos
-    ports: ["${PIPELINE_PG_PORT:-5433}:5432"]
-    volumes: [pipeline-pg:/var/lib/postgresql/data]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fanos"]
-      interval: 3s
-      retries: 20
   # Postgres -> HTTP sync for the board. Never exposed to browsers: the API proxies it.
   pipeline-electric:
     profiles: [pipeline]
     image: electricsql/electric:latest
     environment:
-      DATABASE_URL: postgres://fanos:fanos@pipeline-postgres:5432/fanos
+      DATABASE_URL: postgres://fanos:fanos@postgres:5432/fanos
       ELECTRIC_INSECURE: "true" # local only
     ports: ["${PIPELINE_ELECTRIC_PORT:-3010}:3000"]
     depends_on:
-      pipeline-postgres: { condition: service_healthy }
+      postgres: { condition: service_healthy }
 
   temporal:
     profiles: [temporal]
@@ -74,7 +61,3 @@ volumes:
   pgdata:
   valkeydata:
   temporaldata:
-  # created by the old trial stack; `docker compose down -v` leaves an external volume alone
-  pipeline-pg:
-    external: true
-    name: api_fanos-pg

@@ -1,20 +1,25 @@
-# 21. Databases in Docker, apps on the host
+# 21. Databases in Docker, apps on the host, one Postgres
 
-After ADR 0020 one checkout holds everything. The question was how to run it: the databases need Docker, and the apps (API, worker, Studio, web, dugout's worker and watcher) could be containers or plain `node` processes.
+After ADR 0020 one checkout holds everything. The question was how to run it: the databases need Docker, and the apps (API, worker, Studio, web, dugout's worker and watcher) could be containers or plain `node` processes. And the two halves had brought a Postgres each.
 
 ## Decision
 
 Docker runs the databases only. The apps run on the host with the usual commands, so a code change is a restart, not an image build, and a debugger or `console.log` is where you expect it.
 
-`docker-compose.yml`:
+**One Postgres server, two databases.** Dugout's server (pgvector, Postgres 17, :55432) holds `harness` (agent memory, runs, approvals; roles `harness` and `dugout_app`, with row-level security) and `fanos` (the pipeline's control plane: Sends, exports, artifacts, pipeline runs; role `fanos`, which can log in and replicate but is not a superuser, so the pipeline cannot reach `harness`). Nothing queries across them; dugout's agents reach the control plane through its HTTP API. A third database, `fanos_test`, is for the API's integration tests, which delete every row they find: they refuse a database whose name does not end in `_test`. The server runs with `wal_level=logical` because Electric reads the WAL.
 
-| service                                                  | profile    | what                                                                             |
-| -------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------- |
-| `postgres` (:55432), `valkey` (:56379)                   | default    | dugout's memory, runs and event stream. `pnpm infra:up`; what `pnpm check` needs |
-| `pipeline-postgres` (:5433), `pipeline-electric` (:3010) | `pipeline` | the control plane's database and its sync service. `pnpm pipeline:infra:up`      |
-- **The control-plane database is the old one.** `pipeline-postgres` mounts the Docker volume `api_fanos-pg` as an external volume: the volume the `trial` stack created (container `api-postgres-1`), with every Send, export and artifact record in it. Nothing is migrated, and the eval frames (exports in that database) still resolve. The volume belongs to Docker, not to the `trial` folder, so deleting that folder does not touch it, and `docker compose down -v` leaves an external volume alone. Never run the old container and this one together: two Postgres servers on one data directory corrupt it. Stop the old stack first: `docker stop api-postgres-1 api-electric-1`.
-- **One queue server.** The API's job queue (BullMQ) uses dugout's Valkey, database 1 (`REDIS_URL=redis://localhost:56379/1`); dugout uses database 0. Valkey runs with `noeviction`, which BullMQ wants. The pipeline has no Redis of its own.
-- **Running it:** `pnpm infra:up && pnpm pipeline:infra:up`, `pnpm pipeline:build` once and after pipeline changes, then `pnpm pipeline:dev` (API :4100 and its worker, Studio :3000, web :3415), `pnpm worker` for the agents and `pnpm card:watch` for the Figma watcher.
+**One Valkey.** It runs with `noeviction`. Dugout's event stream is in database 0; the API's job queue (BullMQ) is in database 1 (`REDIS_URL=redis://localhost:56379/1`).
+
+| service                                | profile    | what                                                                                                                                                                        |
+| -------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres` (:55432), `valkey` (:56379) | default    | `pnpm infra:up`                                                                                                                                                             |
+| `pipeline-electric` (:3010)            | `pipeline` | the control plane's live sync, from `fanos`. `pnpm pipeline:infra:up` (it also creates the `fanos` role and databases on an existing server, with `scripts/pipeline-db.sh`) |
+
+A fresh server creates the role and databases itself, from `docker/postgres-init/`. On a server that already exists, `scripts/pipeline-db.sh` does the same, and the `wal_level` setting takes effect when the Postgres container is next recreated.
+
+**Moving the old data.** The `trial` stack kept its database in a Postgres 16 container (`api-postgres-1`, volume `api_fanos-pg`). `pnpm pipeline:db:import` copies it into `fanos` (a dump of the source, which is only read, restored into the new database); 50 exports, 296 artifacts and every other table matched row for row. It refuses to replace a `fanos` that already holds exports unless `--force` is given, and cannot replace one Electric is attached to. The old volume is not touched: keep it for a while as a backup, then remove it with `docker volume rm api_fanos-pg` once the shared server has served you for a few days.
+
+**Running it:** `pnpm infra:up && pnpm pipeline:infra:up`, `pnpm pipeline:build` once and after pipeline changes, then `pnpm pipeline:dev` (API :4100 and its worker, Studio :3000, web :3415), `pnpm worker` for the agents and `pnpm card:watch` for the Figma watcher.
 
 ## Tried and not adopted: the apps in containers
 
