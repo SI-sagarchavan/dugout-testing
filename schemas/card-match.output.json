@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "previewUrl": {
+      "type": "string"
+    },
+    "treeArtifactId": {
+      "type": "string"
+    },
+    "measured": {
+      "type": "boolean",
+      "description": "False when too little of the frame has a screenshot to compare"
+    },
+    "coverage": {
+      "type": "number",
+      "description": "Share of the frame a compared screenshot covers, 0 to 100"
+    },
+    "estimated": {
+      "type": "boolean",
+      "description": "A screenshot had padding of unknown side and was placed by search"
+    },
+    "unchecked": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Layers on show that no compared screenshot holds"
+    },
+    "placeholderIcons": {
+      "type": "number",
+      "description": "Icons on show with no art"
+    },
+    "before": {
+      "description": "Match before this run, 0 to 100",
+      "type": "number"
+    },
+    "match": {
+      "description": "Match of the published frame, 0 to 100",
+      "type": "number"
+    },
+    "unmeasuredBecause": {
+      "description": "Why nothing could be compared",
+      "type": "string"
+    },
+    "remaining": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What still differs and why, stand-ins and raw values"
+    },
+    "compilerFindings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What the compiler should have done"
+    }
+  },
+  "required": [
+    "previewUrl",
+    "treeArtifactId",
+    "measured",
+    "coverage",
+    "estimated",
+    "unchecked",
+    "placeholderIcons",
+    "remaining",
+    "compilerFindings"
+  ],
+  "additionalProperties": false
+}

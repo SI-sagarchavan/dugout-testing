@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "exportId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The export a designer's Send stored"
+    },
+    "project": {
+      "default": "default",
+      "description": "The control plane project the export is in",
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "receivedAt": {
+      "description": "When the control plane received the export",
+      "type": "string"
+    }
+  },
+  "required": [
+    "exportId"
+  ]
+}
