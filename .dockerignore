@@ -1,11 +1,18 @@
-# Secrets and local state never go into an image; ECS passes config as environment variables.
+# Secrets and local state never go into an image; compose and ECS pass config as environment
+# variables.
 .env
 .env.*
 !.env.example
+**/.env
+**/.env.*
+!**/.env.example
 .git
 **/node_modules
 **/dist
+**/.next
 **/coverage
+# the pipeline's local artifact store (hundreds of MB); compose mounts it
+**/.blobs
 .runs
 .evals
 .scratch

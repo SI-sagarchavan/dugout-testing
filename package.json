@@ -35,10 +35,15 @@
     "infra:reset": "docker compose down -v",
     "card-match:vision": "tsx agents/card-match/scripts/vision-bench.ts",
     "pipeline:build": "pnpm --filter \"./pipeline/**\" -r build",
-    "pipeline:infra:up": "docker compose -f pipeline/apps/api/docker-compose.yml up -d --wait",
-    "pipeline:infra:down": "docker compose -f pipeline/apps/api/docker-compose.yml down",
+    "pipeline:infra:up": "docker compose --profile pipeline-infra up -d --wait",
+    "pipeline:infra:down": "docker compose --profile pipeline-infra down",
     "pipeline:db:migrate": "pnpm --filter @fanos/api db:migrate",
-    "pipeline:dev": "pnpm --parallel --filter @fanos/surface-studio --filter @fanos/web --filter @fanos/api run \"/^dev(:worker)?$/\""
+    "pipeline:dev": "pnpm --parallel --filter @fanos/surface-studio --filter @fanos/web --filter @fanos/api run \"/^dev(:worker)?$/\"",
+    "stack:build": "docker compose --profile pipeline --profile agents build",
+    "stack:up": "docker compose --profile pipeline --profile agents up -d --build --wait",
+    "stack:watch": "docker compose --profile watch up -d --build watcher",
+    "stack:down": "docker compose --profile pipeline --profile agents --profile watch down",
+    "stack:logs": "docker compose --profile pipeline --profile agents --profile watch logs -f --tail 50"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.3",

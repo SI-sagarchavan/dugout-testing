@@ -184,7 +184,7 @@ artifact will fail identically on every attempt.
 ## Running it
 
 ```bash
-docker compose up -d          # postgres + redis + electric
+pnpm pipeline:infra:up         # from the dugout root: postgres + redis + electric
 cp .env.example .env
 pnpm build
 pnpm db:migrate

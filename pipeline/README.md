@@ -53,7 +53,8 @@ Run from the dugout root:
 
 ```bash
 pnpm pipeline:build           # build every package and app
-pnpm pipeline:infra:up        # Postgres :5433, Redis :6379, Electric :3010
+pnpm pipeline:infra:up        # Postgres :5433, Redis :6379, Electric :3010 (root docker-compose.yml)
+pnpm stack:up                 # or all of it in Docker: ADR 0021
 pnpm pipeline:db:migrate
 pnpm pipeline:dev             # studio :3000, web :3415, api :4100, and the worker
 pnpm -r --filter "./pipeline/**" test        # every pipeline package's tests
@@ -126,7 +127,6 @@ apps/
     public ->              symlink to packages/renderer/public (one copy of the bytes)
     next.config.ts         transpiles @fanos/renderer, @fanos/dsl, @fanos/tokens
   api/
-    docker-compose.yml     postgres (host :5433) + redis
     drizzle/               generated migration SQL
     src/
       index.ts             HTTP process

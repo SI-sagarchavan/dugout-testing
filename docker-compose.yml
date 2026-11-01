@@ -1,7 +1,67 @@
-# Local infra: Postgres+pgvector and Valkey (no-eviction, like prod streams).
+# Everything the repo runs, in Docker (ADR 0021). By default `docker compose up` starts only
+# dugout's Postgres+pgvector and Valkey (no-eviction, like prod streams): what `pnpm check` needs.
 # Host ports are offset (55432, 56379) so they don't clash with a local Postgres or Redis.
-# Temporal is parked behind a profile: `docker compose --profile temporal up -d`.
+#
+#   profile pipeline-infra  the pipeline's Postgres, Redis and Electric, for apps run on the host
+#   profile pipeline        those, plus its API, worker, Studio and web app
+#   profile agents          dugout's migration and seed, and its worker
+#   profile watch           `pnpm card:watch`: a Send from the Figma plugin starts a card-match run
+#   profile temporal        parked: `docker compose --profile temporal up -d`
+#
+# `pnpm stack:up` starts pipeline and agents. Every host port can be moved with the variable named
+# beside it, for a second stack or a machine where the default is taken.
 name: dugout
+
+x-stack: &stack
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: dugout-stack:dev
+  restart: unless-stopped
+  init: true
+
+# The pipeline's services reach each other by service name; only Studio's and the web app's
+# addresses are also the browser's, so those two are the ones spelled as localhost.
+x-pipeline-env: &pipeline-env
+  NODE_ENV: development
+  LOG_LEVEL: info
+  DATABASE_URL: postgres://fanos:fanos@pipeline-postgres:5432/fanos
+  REDIS_URL: redis://pipeline-redis:6379
+  BLOB_DRIVER: fs
+  BLOB_ROOT: /data/blobs
+  ELECTRIC_URL: http://pipeline-electric:3000
+  CORS_ORIGINS: http://localhost:${PIPELINE_WEB_PORT:-3415}
+  ASSET_BASE_URL: http://localhost:${PIPELINE_STUDIO_PORT:-3000}
+
+# Bedrock credentials come from the AWS SDK's chain: AWS_PROFILE and AWS_REGION from .env, and the
+# profile itself from ~/.aws on the host.
+x-agent-env: &agent-env
+  DATABASE_URL: postgres://dugout_app:dugout_app@postgres:5432/harness
+  DATABASE_ADMIN_URL: postgres://harness:harness@postgres:5432/harness
+  VALKEY_URL: redis://valkey:6379
+  FANOS_API_URL: http://pipeline-api:4100
+  FANOS_STUDIO_URL: http://localhost:${PIPELINE_STUDIO_PORT:-3000}
+  AWS_CONFIG_FILE: /home/node/.aws/config
+  AWS_SHARED_CREDENTIALS_FILE: /home/node/.aws/credentials
+
+x-agent-service: &agent-service
+  <<: *stack
+  env_file:
+    - path: .env
+      required: false
+  environment: *agent-env
+  volumes:
+    - ${HOME}/.aws:/home/node/.aws:ro
+    # approved cards and run files survive a rebuild
+    - ./.runs:/app/.runs
+    # the card agent writes the preview and the web app reads it
+    - ./pipeline/packages/dsl/fixtures/preview:/app/pipeline/packages/dsl/fixtures/preview
+    - ./pipeline/packages/renderer/fixtures/preview:/app/pipeline/packages/renderer/fixtures/preview
+  depends_on:
+    postgres: { condition: service_healthy }
+    valkey: { condition: service_healthy }
+    dugout-migrate: { condition: service_completed_successfully }
+
 services:
   postgres:
     image: pgvector/pgvector:pg17
@@ -9,7 +69,7 @@ services:
       POSTGRES_USER: harness
       POSTGRES_PASSWORD: harness
       POSTGRES_DB: harness
-    ports: ["55432:5432"]
+    ports: ["${DUGOUT_PG_PORT:-55432}:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U harness"]
@@ -18,12 +78,148 @@ services:
   valkey:
     image: valkey/valkey:8
     command: ["valkey-server", "--maxmemory-policy", "noeviction", "--appendonly", "yes"]
-    ports: ["56379:6379"]
+    ports: ["${DUGOUT_VALKEY_PORT:-56379}:6379"]
     volumes: [valkeydata:/data]
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 3s
       retries: 20
+
+  # --- the pipeline: Figma plugin -> Studio -> control plane -> compiler, renderer, preview ---
+  pipeline-postgres:
+    profiles: [pipeline-infra, pipeline]
+    image: postgres:16-alpine
+    # Electric reads the WAL through logical replication. The default `wal_level=replica` carries no
+    # row images, so shapes would come up empty with no error anywhere.
+    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=10, -c, max_wal_senders=10]
+    environment:
+      POSTGRES_USER: fanos
+      POSTGRES_PASSWORD: fanos
+      POSTGRES_DB: fanos
+    ports: ["${PIPELINE_PG_PORT:-5433}:5432"]
+    volumes: [pipeline-pg:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fanos"]
+      interval: 3s
+      retries: 20
+  pipeline-redis:
+    profiles: [pipeline-infra, pipeline]
+    image: redis:7-alpine
+    ports: ["${PIPELINE_REDIS_PORT:-6379}:6379"]
+    volumes: [pipeline-redis:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+  # Postgres -> HTTP sync for the board. Never exposed to browsers: the API proxies it.
+  pipeline-electric:
+    profiles: [pipeline-infra, pipeline]
+    image: electricsql/electric:latest
+    environment:
+      DATABASE_URL: postgres://fanos:fanos@pipeline-postgres:5432/fanos
+      ELECTRIC_INSECURE: "true" # local only
+    ports: ["${PIPELINE_ELECTRIC_PORT:-3010}:3000"]
+    depends_on:
+      pipeline-postgres: { condition: service_healthy }
+
+  pipeline-migrate:
+    <<: *stack
+    profiles: [pipeline]
+    restart: "no"
+    working_dir: /app/pipeline/apps/api
+    command: [node, dist/platform/db/migrate.js]
+    environment: *pipeline-env
+    depends_on:
+      pipeline-postgres: { condition: service_healthy }
+  pipeline-api:
+    <<: *stack
+    profiles: [pipeline]
+    working_dir: /app/pipeline/apps/api
+    command: [node, dist/index.js]
+    environment:
+      <<: *pipeline-env
+      PORT: "4100"
+      HOST: 0.0.0.0
+    ports: ["${PIPELINE_API_PORT:-4100}:4100"]
+    volumes:
+      - ./pipeline/apps/api/.blobs:/data/blobs
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:4100/v1/projects').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      retries: 20
+    depends_on:
+      pipeline-migrate: { condition: service_completed_successfully }
+      pipeline-redis: { condition: service_healthy }
+  pipeline-worker:
+    <<: *stack
+    profiles: [pipeline]
+    working_dir: /app/pipeline/apps/api
+    command: [node, dist/worker.js]
+    environment: *pipeline-env
+    volumes:
+      - ./pipeline/apps/api/.blobs:/data/blobs
+    depends_on:
+      pipeline-migrate: { condition: service_completed_successfully }
+      pipeline-redis: { condition: service_healthy }
+  # The Figma plugin's manifest allows exactly one origin, http://localhost:3000, so Studio keeps
+  # that port unless the plugin is rebuilt.
+  pipeline-studio:
+    <<: *stack
+    profiles: [pipeline]
+    working_dir: /app/pipeline/apps/surface-studio
+    command: [pnpm, exec, vite, preview, --host, 0.0.0.0]
+    environment:
+      FANOS_API_URL: http://pipeline-api:4100
+    ports: ["${PIPELINE_STUDIO_PORT:-3000}:3000"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/v1/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      retries: 20
+    depends_on:
+      pipeline-api: { condition: service_healthy }
+  pipeline-web:
+    <<: *stack
+    profiles: [pipeline]
+    working_dir: /app/pipeline/apps/web
+    command: [pnpm, exec, next, start, -p, "3415", -H, 0.0.0.0]
+    ports: ["${PIPELINE_WEB_PORT:-3415}:3415"]
+    volumes:
+      - ./pipeline/packages/dsl/fixtures/preview:/app/pipeline/packages/dsl/fixtures/preview
+      - ./pipeline/packages/renderer/fixtures/preview:/app/pipeline/packages/renderer/fixtures/preview
+
+  # --- dugout's agents ---
+  dugout-migrate:
+    <<: *stack
+    profiles: [agents]
+    restart: "no"
+    env_file:
+      - path: .env
+        required: false
+    environment: *agent-env
+    command: [sh, -c, "pnpm db:migrate && pnpm seed"]
+    depends_on:
+      postgres: { condition: service_healthy }
+  worker:
+    <<: *agent-service
+    profiles: [agents]
+    command: [node, --import, tsx, apps/worker/scripts/work.ts]
+  watcher:
+    <<: *agent-service
+    profiles: [watch]
+    command: [node, --import, tsx, apps/cli/scripts/figma-watch.ts, --tenant, demo-cricket]
+
   temporal:
     profiles: [temporal]
     image: temporalio/temporal:latest
@@ -34,3 +230,5 @@ volumes:
   pgdata:
   valkeydata:
   temporaldata:
+  pipeline-pg:
+  pipeline-redis:

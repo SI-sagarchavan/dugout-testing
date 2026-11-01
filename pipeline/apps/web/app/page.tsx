@@ -1,11 +1,15 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { flatTreeSchema } from "@fanos/dsl";
 import { type DataBag, Render } from "@fanos/renderer";
 import { emitCss, loadSurfaces, loadTheme } from "@fanos/tokens";
 
-const repo = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+// apps/web is the working directory under `next dev`, `next start` and the Docker image alike; the
+// path of this file is not (a production build moves it into .next/).
+const repo = join(process.cwd(), "../..");
+
+// The card agent rewrites the preview files, so every request reads them again.
+export const dynamic = "force-dynamic";
 
 function readJson(path: string): unknown | undefined {
   try {
