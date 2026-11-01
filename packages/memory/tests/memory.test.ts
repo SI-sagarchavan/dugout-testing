@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RunEvent } from "@dugout/contracts";
+import { AUTO_APPROVED, type RunEvent } from "@dugout/contracts";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { afterAll, beforeEach, describe, expect, inject, it } from "vitest";
@@ -16,6 +16,7 @@ import {
   createSkillTool,
   type EpisodeType,
   estimateTokens,
+  lessonScore,
   type MemoryStore,
 } from "../src/index.ts";
 
@@ -23,6 +24,7 @@ const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
 const store: MemoryStore = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
 const AGENT = "match-preview";
+const NOW = Date.parse("2026-11-01T00:00:00Z");
 
 let a: string;
 let b: string;
@@ -279,6 +281,48 @@ describe("episodes", () => {
   });
 });
 
+describe("lesson ranking", () => {
+  const recall = (query: string, limit?: number, agentId = AGENT) =>
+    store.recallEpisodes({
+      tenantId: a,
+      agentId,
+      query,
+      episodeType: "lesson",
+      ...(limit ? { limit } : {}),
+    });
+
+  it("puts the stronger of two equally similar lessons first", async () => {
+    // the stronger one is the older one, so creation order can't explain the result
+    await episode(a, "headline alpha");
+    await episode(a, "headline alpha");
+    await episode(a, "headline beta");
+    const found = await recall("headline");
+    expect(found.map((l) => [l.content, l.strength])).toEqual([
+      ["headline alpha", 2],
+      ["headline beta", 1],
+    ]);
+  });
+
+  it("recalls a lesson seen three times however little it resembles the input", async () => {
+    for (let i = 0; i < 3; i++) await episode(a, "zebra quokka wombat");
+    await episode(a, "ostrich emu cassowary");
+    const found = await recall("match preview headline");
+    expect(found.map((l) => l.content)).toEqual(["zebra quokka wombat"]);
+  });
+
+  it("scores by similarity, strength, recency and the reading agent", () => {
+    const base = { strength: 1, lastSeenAt: new Date(NOW).toISOString(), agentId: "other" };
+    const score = (over: Partial<typeof base>) =>
+      lessonScore({ ...base, ...over }, 0.5, AGENT, NOW);
+    expect(score({})).toBeCloseTo(0.5 + 0.05, 5); // seen just now
+    expect(score({ strength: 3 })).toBeCloseTo(0.5 + 0.1 + 0.05, 5);
+    expect(score({ strength: 99 })).toBeCloseTo(0.5 + 0.2 + 0.05, 5); // capped at 4 repeats
+    expect(score({ agentId: AGENT })).toBeCloseTo(0.5 + 0.05 + 0.05, 5);
+    const old = new Date(NOW - 60 * 86_400_000).toISOString();
+    expect(score({ lastSeenAt: old })).toBeCloseTo(0.5 + 0.05 * Math.exp(-1), 5);
+  });
+});
+
 describe("hybrid search", () => {
   it("ranks items matching on both text and vector first, and skips expired episodes", async () => {
     await episode(a, "Spell kickoff times in 24-hour format");
@@ -291,6 +335,12 @@ describe("hybrid search", () => {
     expect(results[0]?.content).toBe("Avoid the word clash in headlines");
     expect(results.map((r) => r.content)).not.toContain("Old rule: no clash in a headline");
     expect(results[0]?.score).toBeGreaterThan(results[1]?.score ?? 0);
+  });
+
+  it("returns nothing for a query unrelated to everything stored", async () => {
+    await episode(a, "Spell kickoff times in 24-hour format");
+    await fact(a, "style.max-words", "At most 120 words");
+    expect(await store.search({ tenantId: a, query: "quokka zebra wombat" })).toEqual([]);
   });
 
   it("survives queries with tsquery syntax in them", async () => {
@@ -488,6 +538,207 @@ describe("consolidation", () => {
     );
     expect(await store.deleteBySourceRun(a, runId)).toBe(1);
   });
+
+  it("proposes a lesson as a fact the third time it is repeated, and only once", async () => {
+    const rejection = events.slice(0, 2);
+    const repeat = () =>
+      consolidateRun({
+        writer: store,
+        tenantId: a,
+        agentId: AGENT,
+        runId: randomUUID(),
+        events: rejection,
+        lessons: async () => "Never use betting language.",
+      });
+    await repeat();
+    await repeat();
+    expect(await store.listProposals(a)).toEqual([]);
+    const third = await repeat();
+    expect(third.episodes[0]?.strength).toBe(3);
+    const proposals = await store.listProposals(a);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({
+      status: "proposed",
+      agentId: AGENT,
+      content: 'Never use betting language. (Reviewer: "no betting language")',
+    });
+    expect(proposals[0]?.key).toMatch(/^lesson\.[0-9a-f]{8}$/);
+    await repeat();
+    expect(await store.listProposals(a)).toHaveLength(1);
+  });
+
+  it("redacts what it stores from a run's input and a reviewer's words", async () => {
+    const out = await consolidateRun({
+      writer: store,
+      tenantId: a,
+      agentId: AGENT,
+      runId: randomUUID(),
+      events: [
+        ev(1, "run.started", {
+          agentId: AGENT,
+          agentVersion: 1,
+          tenantId: a,
+          input: { contact: "fan@example.com" },
+        }),
+        ...events.slice(0, 1),
+        ev(3, "approval.rejected", {
+          step: 1,
+          callId: "c1",
+          tool: "draft.save",
+          by: "editor",
+          reason: "mail jo@example.org first",
+        }),
+        ev(4, "run.completed", { status: "rejected", output: null, usage: {} }),
+      ],
+    });
+    const text = JSON.stringify([out.episodes, out.run]);
+    expect(text).not.toContain("example.com");
+    expect(text).not.toContain("example.org");
+    expect(text).toContain("[REDACTED:email]");
+  });
+});
+
+describe("approved examples", () => {
+  const ev = (seq: number, type: string, data: unknown) =>
+    ({ runId: "r", seq, at: "2026-11-01T00:00:00Z", type, data }) as RunEvent;
+  const input = { fixtureId: "c-101", note: "mail fan@example.com" };
+  const call = (callId: string, body: string) =>
+    ev(2, "approval.requested", { step: 1, callId, tool: "draft.save", input: { body } });
+  const granted = (callId: string) =>
+    ev(3, "approval.granted", { step: 1, callId, tool: "draft.save", by: "editor" });
+  const started = () =>
+    ev(1, "run.started", { agentId: AGENT, agentVersion: 1, tenantId: a, input });
+  const completed = ev(9, "run.completed", { status: "completed", output: null, usage: {} });
+  const consolidate = (events: RunEvent[]) =>
+    consolidateRun({ writer: store, tenantId: a, agentId: AGENT, runId: randomUUID(), events });
+
+  // examples are recalled memory, so they are in `recalled`, not the instructions
+  const text = async () => {
+    const dir = await mkdtemp(join(tmpdir(), "skills-"));
+    return (
+      await buildContext({
+        reader: store,
+        skillsDir: dir,
+        skills: [],
+        onDemandSkills: [],
+        tenantId: a,
+        agentId: AGENT,
+        query: JSON.stringify(input),
+        budgetTokens: 10_000,
+        readSemantic: true,
+        readEpisodic: true,
+      })
+    ).recalled;
+  };
+
+  it("stores the last approved call and shows it in the context", async () => {
+    await consolidate([
+      started(),
+      call("c1", "first draft"),
+      granted("c1"),
+      call("c2", "final draft"),
+      granted("c2"),
+      completed,
+    ]);
+    const stored = await store.recallEpisodes({
+      tenantId: a,
+      agentId: AGENT,
+      query: JSON.stringify(input),
+      episodeType: "example",
+    });
+    expect(stored.map((e) => e.content)).toEqual(['draft.save: {"body":"final draft"}']);
+    expect(stored[0]).toMatchObject({ confidence: 1, episodeType: "example" });
+
+    const shown = await text();
+    expect(shown).toContain(
+      "## Approved examples\n\nPast work an editor approved. Use it for style and structure only. Never copy its facts, names or numbers.",
+    );
+    expect(shown).toContain('draft.save: {"body":"final draft"}');
+    expect(shown).not.toContain("first draft");
+  });
+
+  it("stores none for a run an approval nobody made let through", async () => {
+    // `--yes` and the watcher record "<who> (auto)": output no editor looked at is not "past work
+    // an editor approved", and would teach later runs to imitate whatever the model produced
+    const auto = ev(3, "approval.granted", {
+      step: 1,
+      callId: "c1",
+      tool: "draft.save",
+      by: `sam${AUTO_APPROVED}`,
+    });
+    await consolidate([started(), call("c1", "unreviewed"), auto, completed]);
+    expect(await text()).not.toContain("Approved examples");
+    // an editor's later approval of another run still counts
+    await consolidate([started(), call("c2", "reviewed"), granted("c2"), completed]);
+    expect(await text()).toContain('draft.save: {"body":"reviewed"}');
+    expect(await text()).not.toContain("unreviewed");
+  });
+
+  it("stores none for a run that was rejected or did not complete", async () => {
+    const rejected = ev(4, "approval.rejected", {
+      step: 1,
+      callId: "c1",
+      tool: "draft.save",
+      by: "editor",
+      reason: "no",
+    });
+    await consolidate([
+      started(),
+      call("c1", "x"),
+      rejected,
+      ev(9, "run.completed", { status: "rejected", output: null, usage: {} }),
+    ]);
+    // approved, but the run failed afterwards
+    await consolidate([
+      started(),
+      call("c1", "x"),
+      granted("c1"),
+      ev(9, "run.failed", { reason: "error", message: "boom", usage: {} }),
+    ]);
+    expect(await text()).not.toContain("Approved examples");
+  });
+
+  it("keeps an email in the input out of stored text", async () => {
+    await consolidate([
+      started(),
+      call("c1", "write to fan@example.com"),
+      granted("c1"),
+      completed,
+    ]);
+    const { rows } = await pool.query("select content from memory_items where tenant_id = $1", [a]);
+    expect(JSON.stringify(rows)).not.toContain("example.com");
+    expect(await text()).toContain("[REDACTED:email]");
+  });
+
+  it("skips an example over 4,000 characters", async () => {
+    await consolidate([started(), call("c1", "x".repeat(4000)), granted("c1"), completed]);
+    expect(await text()).not.toContain("Approved examples");
+  });
+
+  it("shows an agent only its own examples", async () => {
+    await episode(a, "sitemap: pages for a club", 30, randomUUID(), "example", "sitemap");
+    const recall = (agentId: string) =>
+      store.recallEpisodes({
+        tenantId: a,
+        agentId,
+        query: "sitemap: pages for a club",
+        episodeType: "example",
+      });
+    expect(await recall("sitemap")).toHaveLength(1);
+    expect(await recall(AGENT)).toEqual([]);
+  });
+
+  it("recalls at most two, and memory.search returns none", async () => {
+    for (const body of ["one", "two", "three"]) {
+      await consolidate([started(), call("c1", body), granted("c1"), completed]);
+    }
+    expect((await text()).match(/draft\.save: /g)).toHaveLength(2);
+    const found = await store.search({ tenantId: a, query: "draft.save body fixtureId" });
+    expect(found.filter((i) => i.episodeType === "example")).toEqual([]);
+    expect(
+      await store.search({ tenantId: a, query: "draft save", episodeType: "example" }),
+    ).toEqual([]);
+  });
 });
 
 describe("context builder", () => {
@@ -525,15 +776,23 @@ describe("context builder", () => {
 
     const full = await context();
     expect(full.text).toContain("## Skill: preview\n\nWrite a preview.");
-    expect(full.text).toContain("## Similar past runs");
-    expect(full.text).toContain("Input preview headline: completed.");
+    // run records are still written but no longer shown
+    expect(full.text).not.toContain("Similar past runs");
+    expect(full.text).not.toContain("Input preview headline: completed.");
+    // lessons are recalled memory: in `recalled`, with the date, not in the instructions
+    expect(full.text).not.toContain("Lessons from past runs");
+    expect(full.text).not.toContain("Lesson 0");
+    expect(full.recalled).toMatch(
+      /^<recalled_memory>\nToday is \d{4}-\d{2}-\d{2}\.\n\n## Lessons from past runs\n\n/,
+    );
+    expect(full.recalled).toContain("Lesson 0 about the preview headline");
+    expect(full.recalled).toMatch(/<\/recalled_memory>$/);
     expect(full.sources[0]?.text).toBe("skill preview (loaded in full): Write a preview.");
     expect(full.sources.find((s) => s.kind === "semantic")?.text).toBe("Fact one about spelling");
     expect(full.sources.map((s) => s.kind)).toEqual([
       "procedural",
       "semantic",
       "semantic",
-      "episodic",
       "episodic",
       "episodic",
       "episodic",
@@ -546,6 +805,46 @@ describe("context builder", () => {
     expect(estimateTokens(tight.text)).toBeLessThanOrEqual(60);
     expect(tight.sources.length).toBeLessThan(full.sources.length);
     expect(tight.sources[0]?.kind).toBe("procedural");
+  });
+
+  it("builds the same instructions for any input, and dates the recalled memory from `now`", async () => {
+    await fact(a, "style.a", "Fact one about spelling");
+    await episode(a, "Lesson about the cup final preview");
+    await episode(a, "Lesson about a derby headline");
+    const first = await context({ query: "cup final", now: new Date("2026-03-04T23:30:00Z") });
+    const second = await context({ query: "derby headline" });
+    expect(second.text).toBe(first.text);
+    expect(first.recalled).toContain("Today is 2026-03-04.");
+    expect(first.recalled).not.toEqual(second.recalled);
+  });
+
+  it("stops adding lessons at the recalled cap, and facts at the facts cap, without counting skills", async () => {
+    const long = (n: number) => `Lesson ${n} about the preview headline ${"x".repeat(100)}`;
+    for (let i = 0; i < 5; i++) await episode(a, long(i));
+    for (let i = 0; i < 5; i++) await fact(a, `style.${i}`, `Fact ${i} ${"y".repeat(100)}`);
+
+    const all = await context();
+    const lessons = (c: { sources: Array<{ kind: string }> }) =>
+      c.sources.filter((s) => s.kind === "episodic").length;
+    const facts = (c: { sources: Array<{ kind: string }> }) =>
+      c.sources.filter((s) => s.kind === "semantic").length;
+    expect(lessons(all)).toBe(5);
+    expect(facts(all)).toBe(5);
+
+    // a line is about 35 tokens, the title another 40: room for two lessons, then no more
+    const capped = await context({ recalledBudgetTokens: 120, factsBudgetTokens: 120 });
+    expect(lessons(capped)).toBeGreaterThan(0);
+    expect(lessons(capped)).toBeLessThan(5);
+    expect(facts(capped)).toBeGreaterThan(0);
+    expect(facts(capped)).toBeLessThan(5);
+    expect(capped.recalled.match(/- \(.*\) Lesson \d/g)).toHaveLength(lessons(capped));
+    expect(capped.recalled).toContain("</recalled_memory>");
+    // the skill is in both and costs neither cap
+    expect(capped.sources[0]?.kind).toBe("procedural");
+    const nothing = await context({ recalledBudgetTokens: 0, factsBudgetTokens: 0 });
+    expect(lessons(nothing)).toBe(0);
+    expect(facts(nothing)).toBe(0);
+    expect(nothing.text).toContain("## Skill: preview");
   });
 
   it("lists skills to load by name and description, without their text", async () => {

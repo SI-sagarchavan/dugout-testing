@@ -12,9 +12,14 @@ export interface RunContext {
   readonly input?: unknown;
 }
 
-/** Memory and skills assembled for a run, appended to the agent's instructions. */
+/**
+ * Memory and skills assembled for a run. `text` is stable instructions-level material, appended to
+ * the agent's instructions. `recalled` depends on the run's input (lessons, approved examples, the
+ * date) and goes ahead of the input in the first user message; empty when there is none.
+ */
 export interface RunMemoryContext {
   text: string;
+  recalled: string;
   tokens: number;
   sources: Array<{ id: string; kind: string; tokens: number; text?: string }>;
 }
@@ -25,6 +30,8 @@ export interface ModelStepRequest {
   model: string;
   messages: Message[];
   tools: ToolDefinition[];
+  /** Ask the model to call this tool; dropped for a model that can't be forced. */
+  toolChoice?: { tool: string };
 }
 
 export type ModelStep = ModelTurn & { usage: StepUsage };
@@ -87,6 +94,14 @@ export const RunCheckpoint = z.object({
   lastSeq: z.number().int().nonnegative(),
   invalidOutputs: z.number().int().nonnegative(),
   blockedFinishes: z.number().int().nonnegative(),
+  /** The last call that was refused before it ran, so a resumed run still stops on a copy of it. */
+  refused: z.object({ tool: z.string(), args: z.string() }).optional(),
+  /** The last call whose tool failed, and how many times in a row with this same input. */
+  failedCall: z
+    .object({ tool: z.string(), args: z.string(), count: z.number().int().positive() })
+    .optional(),
+  /** The "turns left" warning is in the transcript. */
+  stepsWarned: z.boolean().optional(),
   /** Change requests not yet approved, by tool. */
   pendingChanges: z.record(z.string(), z.string()),
   /** Set while the calls of the last assistant message are being answered. */
@@ -98,6 +113,12 @@ export const RunCheckpoint = z.object({
       approved: z.array(z.string()),
       /** Calls whose tool started; after a crash only retry-safe tools run again. */
       started: z.array(z.string()),
+      /** A call in this turn was denied, failed or has an unknown outcome: the tool's name. */
+      failed: z.string().optional(),
+      /** The reply was cut off, so none of its calls run. */
+      cutOff: z.boolean().optional(),
+      /** The stop reason that cut it off, for the tool results a resumed run still owes. */
+      cutOffReason: z.string().optional(),
     })
     .optional(),
   /** The approval the run is waiting for. */

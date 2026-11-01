@@ -9,7 +9,14 @@ import {
 } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { createBedrockClient, parseModelConfig, runLocal, strictSchema } from "../src/index.ts";
+import {
+  createBedrockClient,
+  describeImage,
+  parseModelConfig,
+  runLocal,
+  strictSchema,
+  TransientModelError,
+} from "../src/index.ts";
 
 const price = { input: 1, cacheRead: 0.1, output: 2 };
 const models = parseModelConfig({
@@ -42,6 +49,20 @@ const models = parseModelConfig({
       strictTools: true,
       price,
     },
+    terra: {
+      id: "global.openai.gpt-6.1-terra",
+      effort: "low",
+      contextWindow: 400_000,
+      maxOutputTokens: 32_000,
+      price,
+    },
+    "with-status": {
+      id: "apac.amazon.nova-lite-v1:0",
+      contextWindow: 300_000,
+      maxOutputTokens: 10_000,
+      toolErrorStatus: true,
+      price,
+    },
   },
 });
 
@@ -65,6 +86,44 @@ function fakeRuntime(events: unknown[] | unknown[][] | Error) {
   };
   return { runtime, inputs, client: createBedrockClient({ runtime, models }) };
 }
+
+describe("describeImage", () => {
+  it("sends a png to a claude model and returns its text", async () => {
+    let sent = "";
+    const runtime = {
+      async send(command: unknown) {
+        sent = JSON.stringify((command as { input: unknown }).input);
+        return { output: { message: { content: [{ text: "white plate" }] } } };
+      },
+    };
+    const text = await describeImage({
+      png: Buffer.from([1, 2, 3]),
+      prompt: "look",
+      model: "opus",
+      models,
+      runtime,
+    });
+    expect(text).toBe("white plate");
+    expect(sent).toContain("image");
+    expect(sent).toContain("look");
+  });
+
+  it("refuses an image for a nova model", async () => {
+    await expect(
+      describeImage({
+        png: Buffer.from([1]),
+        prompt: "look",
+        model: "micro",
+        models,
+        runtime: {
+          async send() {
+            return {};
+          },
+        },
+      }),
+    ).rejects.toThrow(/image/);
+  });
+});
 
 const request = (overrides: Partial<ModelRequest> = {}): ModelRequest => ({
   model: "micro",
@@ -140,13 +199,13 @@ describe("bedrock client", () => {
   it("refuses a name the model list doesn't have", async () => {
     const { client } = fakeRuntime([]);
     await expect(client.complete(request({ model: "gpt" }))).rejects.toThrow(
-      "no model named gpt; the list has micro, nova-2, nova-2-high, opus",
+      "no model named gpt; the list has micro, nova-2, nova-2-high, opus, terra, with-status",
     );
   });
 
   it("sends effort the way each family takes it", async () => {
     const { client, inputs } = fakeRuntime([ended("end_turn")]);
-    for (const model of ["opus", "nova-2", "nova-2-high", "micro"]) {
+    for (const model of ["opus", "nova-2", "nova-2-high", "micro", "terra"]) {
       await client.complete(request({ model }));
     }
     const sent = inputs.map(({ outputConfig, additionalModelRequestFields, inferenceConfig }) => ({
@@ -170,6 +229,11 @@ describe("bedrock client", () => {
         inferenceConfig: {},
       },
       { inferenceConfig: { maxTokens: 10_000 } },
+      // Bedrock refuses `reasoning_effort` for OpenAI models; the nested form is the one it takes
+      {
+        additionalModelRequestFields: { reasoning: { effort: "low" } },
+        inferenceConfig: { maxTokens: 32_000 },
+      },
     ]);
   });
 
@@ -443,6 +507,38 @@ describe("bedrock client", () => {
     ).toBeUndefined();
   });
 
+  it("sends toolChoice for a forced tool, with the name encoded", async () => {
+    const { client, inputs } = fakeRuntime([text(0, "x"), ended("end_turn")]);
+    await client.complete(
+      request({
+        model: "opus",
+        tools: [{ name: "final.x", description: "d", parameters: { type: "object" } }],
+        toolChoice: { tool: "final.x" },
+      }),
+    );
+    await client.complete(request());
+    type Sent = { toolConfig: { toolChoice?: unknown } };
+    expect((inputs[0] as Sent).toolConfig.toolChoice).toEqual({ tool: { name: "final__x" } });
+    expect((inputs[1] as Sent).toolConfig.toolChoice).toBeUndefined();
+  });
+
+  it("sends status error on a failed tool result only for a model with toolErrorStatus", async () => {
+    const { client, inputs } = fakeRuntime([text(0, "x"), ended("end_turn")]);
+    const messages: Message[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "t1", name: "draft.save", arguments: "{}" }],
+      },
+      { role: "tool", toolCallId: "t1", content: "Error: no", isError: true },
+    ];
+    await client.complete(request({ model: "with-status", messages }));
+    await client.complete(request({ model: "micro", messages }));
+    expect(JSON.stringify(inputs[0]?.messages)).toContain('"status":"error"');
+    expect(JSON.stringify(inputs[1]?.messages)).not.toContain('"status"');
+  });
+
   it("turns a service error into an error named for its code", async () => {
     const denied = Object.assign(new Error("The provided model identifier is invalid."), {
       name: "ValidationException",
@@ -451,6 +547,42 @@ describe("bedrock client", () => {
     await expect(client.complete(request())).rejects.toThrow(
       "Bedrock ValidationException: The provided model identifier is invalid.",
     );
+  });
+
+  it("maps a throttle to a transient error that keeps its cause, and a validation error not", async () => {
+    const throttled = Object.assign(new Error("Too many requests"), {
+      name: "ThrottlingException",
+    });
+    const first = await fakeRuntime(throttled)
+      .client.complete(request())
+      .catch((e) => e);
+    expect(first).toBeInstanceOf(TransientModelError);
+    expect(first.cause).toBe(throttled);
+    const invalid = Object.assign(new Error("bad"), { name: "ValidationException" });
+    const second = await fakeRuntime(invalid)
+      .client.complete(request())
+      .catch((e) => e);
+    expect(second).toBeInstanceOf(Error);
+    expect(second).not.toBeInstanceOf(TransientModelError);
+  });
+
+  it.each([
+    "throttlingException",
+    "serviceUnavailableException",
+    "internalServerException",
+    "modelStreamErrorException",
+  ])("treats %s in the stream as transient, named or not", async (key) => {
+    const { client } = fakeRuntime([text(0, "Hel"), { [key]: { message: "later" } }]);
+    const err = await client.complete(request()).catch((e) => e);
+    expect(err).toBeInstanceOf(TransientModelError);
+    expect(err.message).toMatch(/^Bedrock \w+Exception: later$/);
+  });
+
+  it("does not treat a validation error in the stream as transient", async () => {
+    const { client } = fakeRuntime([{ validationException: { message: "bad" } }]);
+    const err = await client.complete(request()).catch((e) => e);
+    expect(err).not.toBeInstanceOf(TransientModelError);
+    expect(err.message).toBe("Bedrock ValidationException: bad");
   });
 
   it("fails on an error event in the stream", async () => {

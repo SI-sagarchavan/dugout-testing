@@ -4,12 +4,15 @@ import {
   AgentSpec,
   type ApprovalRequest,
   type EventSink,
+  type Message,
   type ModelClient,
+  type RunContext,
   type RunStore,
   type Tool,
 } from "@dugout/contracts";
 import {
   type Approver,
+  type CompletedRun,
   loadTenants,
   type ModelConfig,
   modelEntry,
@@ -36,6 +39,8 @@ export interface AgentDeps {
   model?: string;
   /** Where run folders go. Defaults to `.runs` at the repo root. */
   runsDir?: string;
+  /** Waits before each retry of a transient model error; tests pass a short one. */
+  retryDelayMs?: (attempt: number) => number;
   /** False for eval and test runs that must not write memory. */
   consolidate?: boolean;
   /** Turns a rejection or change request into a lesson; without it the reviewer's words are kept. */
@@ -83,6 +88,13 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
   input: Input;
   /** When set, the run ends through the `final` tool, its input checked against this schema. */
   output?: z.ZodType;
+  /** Sync check on the `final` result, no I/O; a string refuses it and goes back to the model. */
+  verifyFinal?: (
+    output: unknown,
+    run: { ctx: RunContext; messages: Message[] },
+  ) => string | undefined;
+  /** Sync, no I/O: fills `final` fields a tool already returned, before `verifyFinal` runs. */
+  completeFinal?: (output: unknown, run: { ctx: RunContext; messages: Message[] }) => unknown;
   /** The agent's folder: skills are read from `skills/`. Nothing in it is per tenant. */
   dir: string;
   /**
@@ -90,6 +102,11 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
    * standard deps (e.g. a folder for tests to write into). Memory tools are added.
    */
   tools: (options: Options) => Tool[];
+  /**
+   * Runs after the model has finished, in the same process, before memory consolidation.
+   * A failure is recorded on the result and does not change the run status.
+   */
+  afterRun?: (run: CompletedRun, deps: AgentDeps & Options) => Promise<void>;
   /** The sports a run is about, when its input says (ADR 0014); its shared memory narrows to them. */
   sportsOf?: (input: z.output<Input>) => string[] | undefined;
   /** Tool outputs longer than this are stored and replaced by a reference. */
@@ -132,7 +149,12 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
   if (both.length > 0) {
     throw new Error(`${spec.id}: ${both.join(", ")} in both skills and onDemandSkills`);
   }
-  const definition: AgentDefinition = { spec, ...(config.output ? { output: config.output } : {}) };
+  const definition: AgentDefinition = {
+    spec,
+    ...(config.output ? { output: config.output } : {}),
+    ...(config.verifyFinal ? { verifyFinal: config.verifyFinal } : {}),
+    ...(config.completeFinal ? { completeFinal: config.completeFinal } : {}),
+  };
   const skillsDir = join(config.dir, "skills");
 
   return {
@@ -184,12 +206,24 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
           models: deps.models,
           approver: opts.approver,
           context: memory.context,
-          afterRun: memory.afterRun,
+          afterRun: async (run) => {
+            // The agent's hook can fail (a disk, a missing checkout) and the run's lessons, examples
+            // and record must still be written; its failure is reported after, not instead.
+            let hookError: unknown;
+            try {
+              await config.afterRun?.(run, deps);
+            } catch (err) {
+              hookError = err;
+            }
+            await memory.afterRun(run);
+            if (hookError !== undefined) throw hookError;
+          },
           runsDir: deps.runsDir ?? join(REPO_ROOT, ".runs"),
           sinks: [...(opts.sinks ?? []), ...(deps.tracing ? [deps.tracing.sink()] : [])],
           ...(config.maxInlineChars ? { maxInlineChars: config.maxInlineChars } : {}),
           ...(opts.runId ? { runId: opts.runId } : {}),
           ...(opts.store ? { store: opts.store } : {}),
+          ...(deps.retryDelayMs ? { retryDelayMs: deps.retryDelayMs } : {}),
           ...(opts.resume ? { resume: opts.resume } : {}),
         });
     },

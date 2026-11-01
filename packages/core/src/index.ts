@@ -4,6 +4,7 @@ export * from "./local.ts";
 export * from "./loop.ts";
 export * from "./model/bedrock.ts";
 export * from "./model/config.ts";
+export * from "./model/errors.ts";
 export * from "./model/pricing.ts";
 export * from "./model/scripted.ts";
 export * from "./output-store.ts";

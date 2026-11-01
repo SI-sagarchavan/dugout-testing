@@ -32,6 +32,8 @@ export interface ProgramCheckpoint<S> {
   done: Record<string, ProgramDone>;
   /** Attempts a task has already returned, when code has not ended it yet. */
   attempts: Record<string, number>;
+  /** Where the program was when it stopped. A graph keeps its position here. Older files have none. */
+  cursor?: unknown;
 }
 
 export interface TaskRequest {
@@ -81,6 +83,10 @@ export interface ProgramContext<S> {
   all(concurrency: number, jobs: Array<() => Promise<unknown>>): Promise<void>;
   /** The output of a finished step or task, including one skipped on resume. */
   result(id: string): unknown;
+  /** The saved cursor, or undefined on a fresh run or an older checkpoint. */
+  cursor<T>(): T | undefined;
+  /** Saves a cursor with the checkpoint. */
+  setCursor(value: unknown): Promise<void>;
 }
 
 export interface Program<S extends Record<string, unknown>> {
@@ -127,6 +133,15 @@ export async function runProgram<S extends Record<string, unknown>>(
 
     result(id) {
       return checkpoint.done[id]?.output;
+    },
+
+    cursor<T>() {
+      return checkpoint.cursor as T | undefined;
+    },
+
+    async setCursor(value) {
+      checkpoint.cursor = structuredClone(value);
+      await persist();
     },
 
     async step(id, run) {
@@ -263,6 +278,12 @@ export interface Graph<S extends Record<string, unknown>> {
   maxVisits?: number;
 }
 
+interface GraphCursor {
+  node: string | null;
+  visits: number;
+  seen: Record<string, number>;
+}
+
 /** A declared graph compiled onto {@link defineProgram}. Conditional and back edges are edges. */
 export function defineGraph<S extends Record<string, unknown>>(graph: Graph<S>): Program<S> {
   if (!graph.nodes[graph.start]) throw new Error(`${graph.id}: no start node ${graph.start}`);
@@ -284,22 +305,30 @@ export function defineGraph<S extends Record<string, unknown>>(graph: Graph<S>):
     initial: graph.initial,
     fields: graph.fields,
     run: async (ctx) => {
-      const seen: Record<string, number> = {};
       const limit = graph.maxVisits ?? 100;
-      let node: string | null = graph.start;
-      let visits = 0;
+      // A saved cursor names the visit that was under way. It is counted already,
+      // so carry on at that visit; its finished steps and tasks are skipped by id.
+      const saved = ctx.cursor<GraphCursor>();
+      const seen: Record<string, number> = { ...saved?.seen };
+      let node: string | null = saved ? saved.node : graph.start;
+      let visits = saved?.visits ?? 0;
+      let resumed = saved !== undefined && saved.node !== null;
       while (node) {
-        visits += 1;
-        if (visits > limit) throw new Error(`${graph.id}: stopped after ${limit} visits`);
         const name: string = node;
         const current = graph.nodes[name];
         if (!current) throw new Error(`${graph.id}: no node ${name}`);
-        const n = (seen[name] ?? 0) + 1;
-        seen[name] = n;
-        const visitId = `${name}#${n}`;
-        await runNode(ctx, visitId, current);
+        if (!resumed) {
+          visits += 1;
+          if (visits > limit) throw new Error(`${graph.id}: stopped after ${limit} visits`);
+          seen[name] = (seen[name] ?? 0) + 1;
+        }
+        resumed = false;
+        // Before the node, so a crash inside it comes back to this same visit.
+        await ctx.setCursor({ node: name, visits, seen } satisfies GraphCursor);
+        await runNode(ctx, `${name}#${seen[name]}`, current);
         node = nextNode(graph, name, ctx.state);
       }
+      await ctx.setCursor({ node: null, visits, seen } satisfies GraphCursor);
     },
   });
 }

@@ -47,7 +47,9 @@ beforeAll(async () => {
 });
 
 /** The smallest useful agent: saves a note after approval and ends with its title. */
-const notes = (extra: { tools?: string[]; onDemandSkills?: string[] } = {}) =>
+const notes = (
+  extra: { tools?: string[]; onDemandSkills?: string[]; afterRun?: () => Promise<void> } = {},
+) =>
   defineAgent({
     spec: {
       id: "notes",
@@ -64,6 +66,7 @@ const notes = (extra: { tools?: string[]; onDemandSkills?: string[] } = {}) =>
     },
     input: z.object({ topic: z.string().min(1) }),
     output: z.object({ title: z.string() }),
+    ...(extra.afterRun ? { afterRun: extra.afterRun } : {}),
     dir,
     tools: (opts: { notesDir: string }) => [
       defineTool({
@@ -126,6 +129,38 @@ describe("defineAgent", () => {
     expect(sink.events.map((e) => e.type)).toContain("approval.granted");
     // the host's tracing sink sees the same run
     expect(traced.map((e) => e.seq)).toEqual(sink.events.map((e) => e.seq));
+  });
+
+  it("still writes the run's memory when the agent's own after-run hook fails", async () => {
+    const agent = notes({
+      afterRun: async () => {
+        throw new Error("disk full");
+      },
+    });
+    const own = `sdk-${randomUUID().slice(0, 6)}`;
+    const run = agent.create({
+      store,
+      client: script(),
+      models: scriptedModelConfig(),
+      runsDir: await mkdtemp(join(tmpdir(), "runs-")),
+      notesDir: await mkdtemp(join(tmpdir(), "notes-")),
+    });
+    const result = await run({
+      tenantId: own,
+      input: { topic: "the opener" },
+      approver: async () => ({ approved: true, by: "editor" }),
+      sinks: [],
+    });
+    // the failure is reported, not swallowed...
+    expect(result.afterRunError).toContain("disk full");
+    // ...and the approved note is remembered anyway
+    const examples = await store.recallEpisodes({
+      tenantId: own,
+      agentId: "notes",
+      query: "the opener",
+      episodeType: "example",
+    });
+    expect(examples).toHaveLength(1);
   });
 
   it("lists the skills there are to load, and the agent loads one when it needs it", async () => {

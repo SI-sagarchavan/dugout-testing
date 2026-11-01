@@ -323,6 +323,98 @@ describe("defineGraph", () => {
     expect(applied).toBe(1);
     expect(second.state.n).toBe(4);
   });
+
+  it("resumes a graph at the node it stopped on, not from start", async () => {
+    interface S extends Record<string, unknown> {
+      tree: string;
+      checkOk: boolean;
+      repairs: number;
+      changes: string;
+      passed: boolean;
+    }
+    const log: string[] = [];
+    let answers = ["make the title bigger"];
+    const graph = defineGraph<S>({
+      id: "resume-at-cursor",
+      initial: { tree: "v0", checkOk: false, repairs: 0, changes: "", passed: false },
+      fields: {
+        tree: { reduce: "replace" },
+        checkOk: { reduce: "replace" },
+        repairs: { reduce: "replace" },
+        changes: { reduce: "replace" },
+        passed: { reduce: "replace" },
+      },
+      start: "check",
+      nodes: {
+        check: { kind: "step", run: async (s) => ({ checkOk: s.tree !== "v0" }) },
+        repair: {
+          kind: "task",
+          agentId: "repair",
+          input: (s) => ({ tree: s.tree, changes: s.changes }),
+          apply: (output, s) => ({ tree: output as string, repairs: s.repairs + 1, changes: "" }),
+        },
+        save: {
+          kind: "step",
+          run: async (s) => {
+            const answer = answers.shift() ?? "approve";
+            log.push(`save#${s.tree}`);
+            return answer === "approve" ? { passed: true } : { changes: answer };
+          },
+        },
+      },
+      edges: [
+        { from: "check", to: "repair", when: (s) => !s.checkOk },
+        { from: "check", to: "save" },
+        { from: "repair", to: "check" },
+        { from: "save", to: END, when: (s) => s.passed },
+        { from: "save", to: "repair" },
+      ],
+    });
+    let n = 0;
+    let crashOn: string | undefined = "repair#2";
+    const tasks: TaskRunner = async (req) => {
+      log.push(`${req.id} ${JSON.stringify(req.input)}`);
+      if (req.id === crashOn) throw new Error("worker died");
+      n += 1;
+      return { status: "completed", output: `v${n}` };
+    };
+    let saved: ProgramCheckpoint<S> | undefined;
+    const save = (checkpoint: ProgramCheckpoint<S>) => {
+      saved = checkpoint;
+    };
+    await expect(runProgram(graph, { tasks, save })).rejects.toThrow("worker died");
+
+    crashOn = undefined;
+    answers = ["approve"];
+    if (!saved) throw new Error("no checkpoint was saved");
+    const { state } = await runProgram(graph, { tasks, save, resume: saved });
+    expect(log).toContain('repair#2 {"tree":"v1","changes":"make the title bigger"}');
+    expect(log.at(-1)).toBe("save#v2");
+    expect(state).toMatchObject({ tree: "v2", repairs: 2, changes: "", passed: true });
+    expect(saved?.cursor).toMatchObject({ node: null });
+  });
+
+  it("walks from start when the checkpoint has no cursor", async () => {
+    const graph = defineGraph({
+      id: "no-cursor",
+      initial: { n: 0 },
+      fields: { n: { reduce: "replace" } },
+      start: "a",
+      nodes: {
+        a: { kind: "step", run: async () => ({ n: 1 }) },
+        b: { kind: "step", run: async (s) => ({ n: s.n + 1 }) },
+      },
+      edges: [
+        { from: "a", to: "b" },
+        { from: "b", to: END },
+      ],
+    });
+    const tasks: TaskRunner = async () => ({ status: "completed", output: null });
+    const first = await runProgram(graph, { tasks });
+    const { cursor: _cursor, ...older } = first.checkpoint;
+    const second = await runProgram(graph, { tasks, resume: older });
+    expect(second.state.n).toBe(2);
+  });
 });
 
 async function waitFor(ready: () => boolean) {

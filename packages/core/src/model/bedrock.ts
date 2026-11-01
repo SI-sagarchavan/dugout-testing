@@ -1,6 +1,7 @@
 import {
   BedrockRuntimeClient,
   type ContentBlock,
+  ConverseCommand,
   ConverseStreamCommand,
   type ConverseStreamCommandInput,
   type ConverseStreamOutput,
@@ -28,6 +29,7 @@ import {
   modelEntry,
   modelFamily,
 } from "./config.ts";
+import { TransientModelError } from "./errors.ts";
 
 // Wire types come from the SDK and stay inside this file.
 type Document = NonNullable<ToolInputSchema.JsonMember["json"]>;
@@ -85,6 +87,51 @@ export function createBedrockClient(opts: BedrockClientOptions = {}): ModelClien
   };
 }
 
+const SEE_MAX_TOKENS = 4_000;
+
+/**
+ * One image, one reply. Claude only. The bytes stay in this call and never enter an agent transcript.
+ */
+export async function describeImage(opts: {
+  png: Buffer;
+  prompt: string;
+  model?: string;
+  models?: ModelConfig;
+  signal?: AbortSignal;
+  runtime?: BedrockRuntime;
+}): Promise<string> {
+  const models = opts.models ?? loadModelConfig();
+  const name = opts.model ?? "haiku";
+  const model = modelEntry(models, name);
+  if (modelFamily(model.id) !== "claude") {
+    throw new Error(`${name} does not take an image`);
+  }
+  const runtime = opts.runtime ?? new BedrockRuntimeClient({ region: await bedrockRegion() });
+  const output = (await runtime.send(
+    new ConverseCommand({
+      modelId: model.id,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { text: opts.prompt },
+            { image: { format: "png", source: { bytes: new Uint8Array(opts.png) } } },
+          ],
+        },
+      ],
+      inferenceConfig: { maxTokens: SEE_MAX_TOKENS },
+      ...(model.effort ? { outputConfig: { effort: model.effort } } : {}),
+    }),
+    opts.signal ? { abortSignal: opts.signal } : undefined,
+  )) as { output?: { message?: { content?: Array<{ text?: string }> } } };
+  const text = (output.output?.message?.content ?? [])
+    .map((block) => block.text ?? "")
+    .join("")
+    .trim();
+  if (!text) throw new Error("the vision model returned no description");
+  return text;
+}
+
 function toRequest(req: ModelRequest, model: ModelEntry): ConverseStreamCommandInput {
   // the model list only holds ids of a known family
   const family = modelFamily(model.id) as ModelFamily;
@@ -106,7 +153,15 @@ function toRequest(req: ModelRequest, model: ModelEntry): ConverseStreamCommandI
         add("user", [text(m.content)]);
         break;
       case "tool":
-        add("user", [{ toolResult: { toolUseId: m.toolCallId, content: [text(m.content)] } }]);
+        add("user", [
+          {
+            toolResult: {
+              toolUseId: m.toolCallId,
+              content: [text(m.content)],
+              ...(m.isError && model.toolErrorStatus ? { status: "error" as const } : {}),
+            },
+          },
+        ]);
         break;
       case "assistant": {
         // Claude's signed reasoning goes back first and unchanged, or the model loses it
@@ -132,7 +187,14 @@ function toRequest(req: ModelRequest, model: ModelEntry): ConverseStreamCommandI
     inferenceConfig: maxTokens,
     ...effort(family, model),
     ...(req.tools.length > 0
-      ? { toolConfig: { tools: req.tools.map((t) => toolSpec(t, model.strictTools)) } }
+      ? {
+          toolConfig: {
+            tools: req.tools.map((t) => toolSpec(t, model.strictTools)),
+            ...(req.toolChoice
+              ? { toolChoice: { tool: { name: encodeName(req.toolChoice.tool) } } }
+              : {}),
+          },
+        }
       : {}),
   };
 }
@@ -147,6 +209,9 @@ function effort(family: ModelFamily, model: ModelEntry): Partial<ConverseStreamC
         reasoningConfig: { type: "enabled", maxReasoningEffort: model.effort },
       },
     };
+  }
+  if (family === "openai") {
+    return { additionalModelRequestFields: { reasoning: { effort: model.effort } } };
   }
   return {};
 }
@@ -163,6 +228,8 @@ function addCachePoints(
   system: SystemContentBlock[],
   messages: WireMessage[],
 ) {
+  // no cache point is sent to a family not tried with one
+  if (family === "openai") return;
   if (system.length > 0) system.push(CACHE_POINT);
   const takes = (m: WireMessage) =>
     family === "claude" || (m.content ?? []).every((block) => "text" in block);
@@ -279,6 +346,14 @@ function parseInput(call: ToolCall): Document {
   }
 }
 
+const STREAM_FAILURES = [
+  ["internalServerException", "InternalServerException"],
+  ["modelStreamErrorException", "ModelStreamErrorException"],
+  ["validationException", "ValidationException"],
+  ["throttlingException", "ThrottlingException"],
+  ["serviceUnavailableException", "ServiceUnavailableException"],
+] as const;
+
 async function readStream(
   model: ModelEntry,
   stream: AsyncIterable<ConverseStreamOutput> | undefined,
@@ -297,13 +372,11 @@ async function readStream(
   const thoughts = new Map<number, { text: string; signature?: string; redacted?: Uint8Array }>();
 
   for await (const event of stream) {
-    const failure =
-      event.internalServerException ??
-      event.modelStreamErrorException ??
-      event.validationException ??
-      event.throttlingException ??
-      event.serviceUnavailableException;
-    if (failure) throw failure;
+    for (const [key, name] of STREAM_FAILURES) {
+      const failure = event[key];
+      // a failure in the stream may arrive without the name the SDK gives a thrown one
+      if (failure) throw Object.assign(new Error(failure.message), { name });
+    }
 
     const toolUse = event.contentBlockStart?.start?.toolUse;
     if (toolUse) {
@@ -378,9 +451,20 @@ async function readStream(
   };
 }
 
+/** Errors that may pass if the same request is sent again. */
+const TRANSIENT = new Set([
+  "ThrottlingException",
+  "ServiceUnavailableException",
+  "InternalServerException",
+  "ModelStreamErrorException",
+  "ModelTimeoutException",
+  "ModelNotReadyException",
+]);
+
 /** An SDK exception as a plain error, named for the service's error code. */
 function bedrockError(err: unknown): Error {
   const { name, message } =
     err && typeof err === "object" ? (err as { name?: string; message?: string }) : {};
-  return new Error(`Bedrock ${name ?? "error"}: ${message ?? String(err)}`, { cause: err });
+  const Kind = name && TRANSIENT.has(name) ? TransientModelError : Error;
+  return new Kind(`Bedrock ${name ?? "error"}: ${message ?? String(err)}`, { cause: err });
 }

@@ -3,8 +3,11 @@ import type { EmbeddingClient } from "./embeddings.ts";
 
 export type MemoryKind = "episodic" | "semantic";
 export type MemoryStatus = "proposed" | "active" | "retired";
-/** A record of one run, or a lesson from a reviewer's feedback. */
-export type EpisodeType = "run" | "lesson";
+/**
+ * A record of one run, a lesson from a reviewer's feedback, or an example: the input of a write
+ * call an editor approved in a completed run.
+ */
+export type EpisodeType = "run" | "lesson" | "example";
 
 export interface MemoryItem {
   id: string;
@@ -52,12 +55,16 @@ export interface SearchQuery {
  */
 export interface MemoryReader {
   activeFacts(tenantId: string, groups?: string[]): Promise<MemoryItem[]>;
-  /** Ranked by text and vector relevance alone. */
+  /**
+   * Ranked by text and vector relevance. An item is returned only if it matched the text or its
+   * cosine similarity is at least {@link MIN_EPISODE_SIMILARITY}. Examples are never returned.
+   */
   search(q: SearchQuery): Promise<Array<MemoryItem & { score: number }>>;
   /**
-   * Episodes of one type for the prompt, nearest by the cosine similarity of the stored embedding.
-   * `agentId` records who is reading; it does not change the order. Items below
-   * {@link MIN_EPISODE_SIMILARITY} are left out, and `limit` is only how many may fit.
+   * Episodes of one type for the prompt, nearest by the cosine similarity of the stored embedding;
+   * items below {@link MIN_EPISODE_SIMILARITY} are left out, and `limit` is only how many may fit.
+   * Lessons are reranked by {@link lessonScore}: strength, recency and the reading `agentId` count
+   * too, and a lesson seen {@link STRONG_LESSON} times is a candidate at any similarity.
    */
   recallEpisodes(
     q: Omit<SearchQuery, "kinds"> & { episodeType: EpisodeType; agentId: string },
@@ -142,6 +149,35 @@ export const toItem = (r: Row): MemoryItem => ({
  */
 export const MIN_EPISODE_SIMILARITY = 0.2;
 
+/** Lesson candidates taken by similarity before they are reranked. */
+export const LESSON_CANDIDATES = 20;
+/** A lesson seen this many times is a candidate however little it resembles the input. */
+export const STRONG_LESSON = 3;
+/** Weights of {@link lessonScore}, added to the cosine similarity. */
+export const STRENGTH_WEIGHT = 0.05;
+/** Repeats beyond the first that still count. */
+export const STRENGTH_CAP = 4;
+export const RECENCY_WEIGHT = 0.05;
+/** Days over which the recency bonus falls to 1/e. */
+export const RECENCY_DAYS = 60;
+export const SAME_AGENT_WEIGHT = 0.05;
+
+/** What ranks a lesson for a run: how alike it is, how often it came up, how fresh, whose it is. */
+export function lessonScore(
+  lesson: Pick<MemoryItem, "strength" | "lastSeenAt" | "agentId">,
+  similarity: number,
+  agentId: string,
+  now = Date.now(),
+): number {
+  const ageDays = Math.max(0, (now - Date.parse(lesson.lastSeenAt)) / 86_400_000);
+  return (
+    similarity +
+    STRENGTH_WEIGHT * Math.min(lesson.strength - 1, STRENGTH_CAP) +
+    RECENCY_WEIGHT * Math.exp(-ageDays / RECENCY_DAYS) +
+    (lesson.agentId === agentId ? SAME_AGENT_WEIGHT : 0)
+  );
+}
+
 /** Words OR-ed into a tsquery; anything that isn't a word is dropped, so input can't break it. */
 const orQuery = (text: string) =>
   [...new Set(text.toLowerCase().match(/[a-z0-9]{2,}/g) ?? [])].slice(0, 32).join(" | ");
@@ -175,6 +211,7 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
            select * from memory_items
            where (tenant_id = $1 or (tenant_id is null and shared_scope = any($7::text[])))
              and kind = any($2) and ($6::text is null or episode_type = $6) and ${LIVE}
+             and episode_type is distinct from 'example'
          ),
          text_rank as (
            select id, row_number() over (order by ts_rank_cd(tsv, q) desc) as r
@@ -190,9 +227,19 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
          from candidates c
          left join text_rank t using (id)
          left join vec_rank v using (id)
+         where t.r is not null or 1 - (c.embedding <=> $4::vector) >= $8
          order by score desc, created_at desc
          limit $5`,
-        [tenantId, kinds, orQuery(query), vector, limit, episodeType ?? null, groups],
+        [
+          tenantId,
+          kinds,
+          orQuery(query),
+          vector,
+          limit,
+          episodeType ?? null,
+          groups,
+          MIN_EPISODE_SIMILARITY,
+        ],
       );
       return rows.map((r) => ({ ...toItem(r), score: Number(r.score) }));
     });
@@ -216,17 +263,57 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
     recallEpisodes: async ({ limit = 5, ...q }) => {
       const vector = await embedOne(q.query);
       return tx(q.tenantId, async (db) => {
+        const live = `(tenant_id = $1 or (tenant_id is null and shared_scope = any($2::text[])))
+             and kind = 'episodic' and episode_type = $3 and ${LIVE}`;
+        const score = "1 - (embedding <=> $4::vector)";
+        if (q.episodeType !== "lesson") {
+          // an approved example shows one agent's output shape, so only that agent is shown it
+          const own = q.episodeType === "example" ? "and agent_id = $7" : "and $7::text is null";
+          const { rows } = await db.query(
+            `select ${COLUMNS}, ${score} as score from memory_items
+             where ${live} and ${score} >= $5 ${own}
+             order by embedding <=> $4::vector, created_at desc
+             limit $6`,
+            [
+              q.tenantId,
+              q.groups ?? [],
+              q.episodeType,
+              vector,
+              MIN_EPISODE_SIMILARITY,
+              limit,
+              q.episodeType === "example" ? q.agentId : null,
+            ],
+          );
+          return rows.map((r) => ({ ...toItem(r), score: Number(r.score) }));
+        }
+        // The nearest lessons, plus those seen often enough that the input needn't resemble them;
+        // both are reranked below. `union` drops a lesson found by both.
         const { rows } = await db.query(
-          `select ${COLUMNS}, 1 - (embedding <=> $4::vector) as score
-           from memory_items
-           where (tenant_id = $1 or (tenant_id is null and shared_scope = any($2::text[])))
-             and kind = 'episodic' and episode_type = $3 and ${LIVE}
-             and 1 - (embedding <=> $4::vector) >= $5
-           order by embedding <=> $4::vector, created_at desc
-           limit $6`,
-          [q.tenantId, q.groups ?? [], q.episodeType, vector, MIN_EPISODE_SIMILARITY, limit],
+          `(select ${COLUMNS}, ${score} as score from memory_items
+            where ${live} and ${score} >= $5
+            order by embedding <=> $4::vector, created_at desc limit $6)
+           union
+           (select ${COLUMNS}, ${score} as score from memory_items
+            where ${live} and strength >= $7
+            order by embedding <=> $4::vector, created_at desc limit $6)`,
+          [
+            q.tenantId,
+            q.groups ?? [],
+            q.episodeType,
+            vector,
+            MIN_EPISODE_SIMILARITY,
+            LESSON_CANDIDATES,
+            STRONG_LESSON,
+          ],
         );
-        return rows.map((r) => ({ ...toItem(r), score: Number(r.score) }));
+        const now = Date.now();
+        return rows
+          .map((r) => {
+            const item = toItem(r);
+            return { ...item, score: lessonScore(item, Number(r.score), q.agentId, now) };
+          })
+          .sort((x, y) => y.score - x.score || y.createdAt.localeCompare(x.createdAt))
+          .slice(0, limit);
       });
     },
 

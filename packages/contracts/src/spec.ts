@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { Message } from "./messages.ts";
+import type { RunContext } from "./runtime.ts";
 
 export const MemoryScope = z.enum(["episodic", "semantic", "procedural"]);
 export type MemoryScope = z.infer<typeof MemoryScope>;
@@ -30,4 +32,17 @@ export type AgentSpec = z.infer<typeof AgentSpec>;
 export interface AgentDefinition {
   spec: AgentSpec;
   output?: z.ZodType;
+  /**
+   * Sync check, no I/O (like `Tool.block`), after `output` passes and on the unwrapped value. A
+   * string refuses the `final` call and goes back to the model as the reason.
+   */
+  verifyFinal?: (
+    output: unknown,
+    run: { ctx: RunContext; messages: Message[] },
+  ) => string | undefined;
+  /**
+   * Sync, no I/O. Runs on the unwrapped `final` value before `verifyFinal`: the host overwrites
+   * what a tool already returned, so the model need not copy it exactly. Returns the value to use.
+   */
+  completeFinal?: (output: unknown, run: { ctx: RunContext; messages: Message[] }) => unknown;
 }

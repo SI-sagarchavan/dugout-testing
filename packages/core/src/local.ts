@@ -20,6 +20,7 @@ import type {
 import { createJsonlSink, createMemorySink, createRunLog, type RunLog } from "./events.ts";
 import { type RunResult, runAgent } from "./loop.ts";
 import { type ModelConfig, modelEntry } from "./model/config.ts";
+import { TransientModelError } from "./model/errors.ts";
 import { priceTokens } from "./model/pricing.ts";
 import { createFileOutputStore, type OutputStore } from "./output-store.ts";
 import {
@@ -46,6 +47,16 @@ export interface LocalStepsOptions {
   store?: RunStore;
   /** How often streamed fragments are sent; defaults to `FRAGMENT_MS`. */
   fragmentMs?: number;
+  /** Milliseconds to wait before retry `attempt` (1, 2, 3) of a transient model error; defaults to `retryDelay`. */
+  retryDelayMs?: (attempt: number) => number;
+}
+
+/** A transient model error is tried again this many times before it goes to the caller. */
+export const MODEL_RETRIES = 3;
+
+/** 1s, 2s, 4s, each ±25% so runs that were throttled together don't come back together. */
+export function retryDelay(attempt: number): number {
+  return 1_000 * 2 ** (attempt - 1) * (0.75 + Math.random() * 0.5);
 }
 
 /**
@@ -92,29 +103,48 @@ function batchFragments(log: RunLog, step: number, everyMs: number) {
   };
 }
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 /** `Steps` that call the model, tools and approver directly in this process. */
 export function createLocalSteps(opts: LocalStepsOptions): Steps {
   return {
-    async model({ step, model, messages, tools }) {
-      const { price } = modelEntry(opts.models, model);
-      const fragments = batchFragments(opts.log, step, opts.fragmentMs ?? FRAGMENT_MS);
-      let turn: ModelTurn;
-      try {
-        turn = await opts.client.complete(
-          // the run goes on for more turns, so its prompt goes in the cache
-          { model, messages, tools, cache: true },
-          fragments.token,
-          fragments.toolInput,
-        );
-      } finally {
-        // every fragment is out before the step completes, or the call fails
-        await fragments.flush();
+    async model({ step, model, messages, tools, toolChoice }) {
+      const { price, forcedTools } = modelEntry(opts.models, model);
+      const delay = opts.retryDelayMs ?? retryDelay;
+      for (let attempt = 0; ; attempt++) {
+        // new fragments per attempt: a failed call's half-sent batch is not carried over
+        const fragments = batchFragments(opts.log, step, opts.fragmentMs ?? FRAGMENT_MS);
+        let turn: ModelTurn;
+        try {
+          turn = await opts.client.complete(
+            // the run goes on for more turns, so its prompt goes in the cache
+            {
+              model,
+              messages,
+              tools,
+              cache: true,
+              ...(toolChoice && forcedTools ? { toolChoice } : {}),
+            },
+            fragments.token,
+            fragments.toolInput,
+          );
+        } catch (err) {
+          // a retry may repeat `token` events the log already has; that is acceptable
+          if (err instanceof TransientModelError && attempt < MODEL_RETRIES) {
+            await sleep(delay(attempt + 1));
+            continue;
+          }
+          throw err;
+        } finally {
+          // every fragment is out before the step completes, or the call fails
+          await fragments.flush();
+        }
+        const usage = {
+          ...turn.tokens,
+          ...priceTokens(price, turn.tokens),
+        };
+        return { ...turn, usage };
       }
-      const usage = {
-        ...turn.tokens,
-        ...priceTokens(price, turn.tokens),
-      };
-      return { ...turn, usage };
     },
     tool: (req) => opts.executor.execute(req, opts.ctx),
     async approval(req) {
@@ -158,6 +188,8 @@ export interface RunLocalOptions {
   afterRun?: (run: CompletedRun) => Promise<void>;
   /** Keeps the run's working memory; needed to wait for an approval or to resume. */
   store?: RunStore;
+  /** Waits before each retry of a transient model error; tests pass a short one. */
+  retryDelayMs?: (attempt: number) => number;
   /**
    * Carry on from the state `store` holds for `runId`. `decision` answers the approval the run
    * waits for. `startSeq` is the last `seq` the event log already has (defaults to the one saved
@@ -210,6 +242,7 @@ export async function runLocal(opts: RunLocalOptions) {
     approver: opts.approver,
     log,
     ...(opts.store ? { store: opts.store } : {}),
+    ...(opts.retryDelayMs ? { retryDelayMs: opts.retryDelayMs } : {}),
   });
   // a resumed run keeps the instructions and memory it started with
   const context = saved ? undefined : await opts.context?.(ctx, opts.input);

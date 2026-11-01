@@ -1,8 +1,15 @@
-import type { ModelClient, RunEvent } from "@dugout/contracts";
+import { createHash } from "node:crypto";
+import { AUTO_APPROVED, type ModelClient, type RunEvent } from "@dugout/contracts";
+import { createRedactor } from "@dugout/core";
 import type { MemoryItem, MemoryWriter } from "./store.ts";
 import { PROPOSE_TOOL } from "./tools.ts";
 
 export const EPISODE_TTL_DAYS = 180;
+
+/** An example longer than this isn't stored: it would crowd out the rest of the recalled memory. */
+export const MAX_EXAMPLE_CHARS = 4000;
+/** A lesson proposed as a fact is clipped to the length `memory.propose` allows. */
+const MAX_FACT_CHARS = 500;
 
 export interface Rejection {
   tool: string;
@@ -24,7 +31,9 @@ export interface ConsolidateOptions {
 
 /**
  * The only path from a run into long-term memory (ADR 0013):
- * - each rejection and change request becomes a lesson, or strengthens the same lesson;
+ * - each rejection and change request becomes a lesson, or strengthens the same lesson; a lesson
+ *   seen a third time is also proposed as a house fact, for a person to review;
+ * - a run that completed with an approved write leaves its last approved input as an example;
  * - a run that ended leaves one run record;
  * - `memory.propose` calls become proposed facts that wait for review.
  */
@@ -37,7 +46,11 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
   const episodes: MemoryItem[] = [];
   const proposals: MemoryItem[] = [];
 
+  // everything stored is redacted here, once, whatever the run saw
+  const redactor = createRedactor();
+  const redact = (text: string) => redactor.text(text);
   const requested = new Map<string, unknown>();
+  let approved: { tool: string; input: unknown } | undefined;
   const proposed = new Map<string, unknown>();
   const feedback: string[] = [];
   let input: unknown;
@@ -47,6 +60,15 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
     if (event.type === "run.completed") ending = event.data.status;
     if (event.type === "run.failed") ending = `failed (${event.data.reason})`;
     if (event.type === "approval.requested") requested.set(event.data.callId, event.data.input);
+    // A decision a host made without asking anyone is not an editor's approval, and the example
+    // it would leave is shown to later runs as "past work an editor approved".
+    if (
+      event.type === "approval.granted" &&
+      !event.data.by.endsWith(AUTO_APPROVED) &&
+      requested.has(event.data.callId)
+    ) {
+      approved = { tool: event.data.tool, input: requested.get(event.data.callId) };
+    }
     if (event.type === "tool.started" && event.data.tool === PROPOSE_TOOL) {
       proposed.set(event.data.callId, event.data.input);
     }
@@ -63,19 +85,22 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
         : rejected
           ? `A reviewer rejected a ${rejection.tool} draft: "${reason}"`
           : `A reviewer asked for a change to a ${rejection.tool} draft: "${reason}"`;
-      episodes.push(
-        await writer.addEpisode({
-          tenantId,
-          agentId,
-          episodeType: "lesson",
-          content,
-          // Same string a later run uses as its recall query, so this lesson can be found then.
-          situation: JSON.stringify(input ?? null),
-          confidence: lesson ? 0.9 : 0.7,
-          sourceRunId: runId,
-          ttlDays: EPISODE_TTL_DAYS,
-        }),
-      );
+      const stored = await writer.addEpisode({
+        tenantId,
+        agentId,
+        episodeType: "lesson",
+        content: redact(content),
+        // Same string a later run uses as its recall query, so this lesson can be found then.
+        situation: redact(JSON.stringify(input ?? null)),
+        confidence: lesson ? 0.9 : 0.7,
+        sourceRunId: runId,
+        ttlDays: EPISODE_TTL_DAYS,
+      });
+      episodes.push(stored);
+      if (stored.reinforced && stored.strength === 3) {
+        const proposal = await proposeLesson(writer, tenantId, agentId, runId, stored);
+        if (proposal) proposals.push(proposal);
+      }
     }
     if (event.type === "tool.completed" && event.data.ok && proposed.has(event.data.callId)) {
       const { key, content, confidence } = proposed.get(event.data.callId) as {
@@ -96,22 +121,66 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
     }
   }
 
+  // an editor approved this call and the run went on to complete: past work to imitate in style
+  if (ending === "completed" && approved) {
+    const content = redact(`${approved.tool}: ${JSON.stringify(approved.input ?? null)}`);
+    if (content.length <= MAX_EXAMPLE_CHARS) {
+      episodes.push(
+        await writer.addEpisode({
+          tenantId,
+          agentId,
+          episodeType: "example",
+          content,
+          situation: redact(JSON.stringify(input ?? null)),
+          confidence: 1,
+          sourceRunId: runId,
+          ttlDays: EPISODE_TTL_DAYS,
+        }),
+      );
+    }
+  }
+
   // what was asked and how it ended, in the reviewer's words; built from the events, no model call
   const run = ending
     ? await writer.addEpisode({
         tenantId,
         agentId,
         episodeType: "run",
-        content: [
-          `Input ${clip(JSON.stringify(input ?? null), 300)}: ${ending}.`,
-          ...feedback.map((f) => `Reviewer ${f}.`),
-        ].join(" "),
+        content: redact(
+          [
+            `Input ${clip(JSON.stringify(input ?? null), 300)}: ${ending}.`,
+            ...feedback.map((f) => `Reviewer ${f}.`),
+          ].join(" "),
+        ),
         confidence: 1,
         sourceRunId: runId,
         ttlDays: EPISODE_TTL_DAYS,
       })
     : undefined;
   return { episodes, proposals, run };
+}
+
+/**
+ * A lesson that keeps coming back belongs in the house facts. Proposes it once: the key comes from
+ * the lesson's text, so a rejected or already-proposed lesson isn't proposed again.
+ */
+async function proposeLesson(
+  writer: MemoryWriter,
+  tenantId: string,
+  agentId: string,
+  runId: string,
+  lesson: MemoryItem,
+): Promise<MemoryItem | undefined> {
+  const key = `lesson.${createHash("sha256").update(lesson.content).digest("hex").slice(0, 8)}`;
+  if ((await writer.history(tenantId, key)).length > 0) return undefined;
+  return writer.proposeFact({
+    tenantId,
+    agentId,
+    key,
+    content: clip(lesson.content, MAX_FACT_CHARS - 1), // clip adds an ellipsis
+    confidence: lesson.confidence,
+    sourceRunId: runId,
+  });
 }
 
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);

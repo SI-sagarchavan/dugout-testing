@@ -2,6 +2,12 @@ import { z } from "zod";
 import { AssistantMessage } from "./messages.ts";
 import { StepUsage, TokenUsage } from "./model.ts";
 
+/**
+ * What a host adds to the `by` of an approval it granted without asking anyone (`--yes`, a watcher
+ * publishing unattended). A decision nobody made must not be remembered as one an editor did.
+ */
+export const AUTO_APPROVED = " (auto)";
+
 export const RunUsage = TokenUsage.extend({
   costUsd: z.number(),
   budgetCostUsd: z.number(),
@@ -95,6 +101,8 @@ export const RunEvent = z.discriminatedUnion("type", [
     "tool.denied",
     z.object({ ...call, stage: z.enum(["registry", "spec", "policy"]), reason: z.string() }),
   ),
+  // The model's `final` was turned down and it goes on: the reason it was given, on the record.
+  event("final.refused", z.object({ step: z.number(), callId: z.string(), reason: z.string() })),
   event("approval.requested", z.object({ ...call, input: z.unknown() })),
   event("approval.granted", z.object({ ...call, by: z.string() })),
   event("approval.rejected", z.object({ ...call, by: z.string(), reason: z.string() })),
@@ -110,7 +118,7 @@ export const RunEvent = z.discriminatedUnion("type", [
   event(
     "run.failed",
     z.object({
-      reason: z.enum(["budget", "max_steps", "invalid_output", "error"]),
+      reason: z.enum(["budget", "max_steps", "invalid_output", "model_stop", "error"]),
       message: z.string(),
       usage: RunUsage,
     }),

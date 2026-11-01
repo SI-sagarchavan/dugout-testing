@@ -33,6 +33,8 @@ export const ToolMessage = z.object({
   role: z.literal("tool"),
   toolCallId: z.string(),
   content: z.string(),
+  /** The call failed, was refused or was not run; the provider is told, where it takes it. */
+  isError: z.boolean().optional(),
 });
 
 export const Message = z.discriminatedUnion("role", [

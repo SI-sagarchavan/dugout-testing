@@ -5,18 +5,21 @@
       "id": "apac.amazon.nova-micro-v1:0",
       "contextWindow": 128000,
       "maxOutputTokens": 10000,
+      "toolErrorStatus": true,
       "price": { "input": 0.041, "cacheRead": 0.01025, "output": 0.164 }
     },
     "nova-lite": {
       "id": "apac.amazon.nova-lite-v1:0",
       "contextWindow": 300000,
       "maxOutputTokens": 10000,
+      "toolErrorStatus": true,
       "price": { "input": 0.071, "cacheRead": 0.01775, "output": 0.284 }
     },
     "nova-pro": {
       "id": "apac.amazon.nova-pro-v1:0",
       "contextWindow": 300000,
       "maxOutputTokens": 10000,
+      "toolErrorStatus": true,
       "price": { "input": 0.94, "cacheRead": 0.235, "output": 3.76 }
     },
     "nova-2-lite": {
@@ -24,6 +27,7 @@
       "effort": "low",
       "contextWindow": 1000000,
       "maxOutputTokens": 65535,
+      "toolErrorStatus": true,
       "price": { "input": 0.35, "cacheRead": 0.0875, "cacheWrite": 0, "output": 2.95 }
     },
     "haiku": {
@@ -32,6 +36,8 @@
       "contextWindow": 1000000,
       "maxOutputTokens": 128000,
       "strictTools": true,
+      "forcedTools": true,
+      "toolErrorStatus": true,
       "price": { "input": 0.1, "cacheRead": 0.01, "cacheWrite": 0.125, "output": 0.5 }
     },
     "sonnet": {
@@ -40,6 +46,7 @@
       "contextWindow": 1000000,
       "maxOutputTokens": 128000,
       "strictTools": true,
+      "toolErrorStatus": true,
       "price": { "input": 2, "cacheRead": 0.1, "cacheWrite": 2.5, "output": 10 }
     },
     "sonnet-deep": {
@@ -48,6 +55,7 @@
       "contextWindow": 1000000,
       "maxOutputTokens": 128000,
       "strictTools": true,
+      "toolErrorStatus": true,
       "price": { "input": 2, "cacheRead": 0.1, "cacheWrite": 2.5, "output": 10 }
     },
     "opus": {
@@ -56,7 +64,15 @@
       "contextWindow": 1000000,
       "maxOutputTokens": 128000,
       "strictTools": true,
+      "toolErrorStatus": true,
       "price": { "input": 4, "cacheRead": 0.2, "cacheWrite": 5, "output": 20 }
+    },
+    "terra": {
+      "id": "global.openai.gpt-6.1-terra",
+      "effort": "medium",
+      "contextWindow": 400000,
+      "maxOutputTokens": 32000,
+      "price": { "input": 1.1, "cacheRead": 1.1, "output": 5.5 }
     },
     "sonnet-india": {
       "id": "in.anthropic.claude-sonnet-5",
@@ -64,6 +80,8 @@
       "contextWindow": 1000000,
       "maxOutputTokens": 128000,
       "strictTools": true,
+      "forcedTools": true,
+      "toolErrorStatus": true,
       "price": { "input": 2.2, "cacheRead": 0.22, "cacheWrite": 2.75, "output": 11 }
     },
     "opus-india": {
@@ -72,6 +90,7 @@
       "contextWindow": 1000000,
       "maxOutputTokens": 128000,
       "strictTools": true,
+      "toolErrorStatus": true,
       "price": { "input": 5.5, "cacheRead": 0.55, "cacheWrite": 6.875, "output": 27.5 }
     }
   }

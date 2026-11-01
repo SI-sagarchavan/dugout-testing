@@ -107,6 +107,9 @@ export function createTracingSink(tracer: Tracer, onRunEnd?: () => Promise<void>
           run.open.delete(`tool:${event.data.callId}`);
           break;
         }
+        case "final.refused":
+          run.root.addEvent("final.refused", { reason: event.data.reason }, at);
+          break;
         case "tool.denied":
           run.root.addEvent(
             "tool.denied",

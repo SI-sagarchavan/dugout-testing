@@ -6,6 +6,7 @@ import {
   type AgentSpec,
   type ApprovalRequest,
   defineTool,
+  type ModelClient,
   type RunEvent,
   type ToolContext,
 } from "@dugout/contracts";
@@ -16,10 +17,12 @@ import {
   createMemoryOutputStore,
   createMemorySink,
   createScriptedModel,
+  type ModelConfig,
   runLocal,
   type ScriptStep,
   SpecError,
   scriptedModelConfig,
+  TransientModelError,
 } from "../src/index.ts";
 
 const seen: ToolContext[] = [];
@@ -45,6 +48,30 @@ const draftSave = defineTool({
   timeoutMs: 1_000,
   async run(input) {
     saved.push(input);
+    return { saved: true };
+  },
+});
+
+const flakySave = defineTool({
+  name: "flaky.save",
+  description: "A write that fails",
+  input: z.object({ text: z.string() }),
+  effect: "write",
+  timeoutMs: 1_000,
+  async run() {
+    throw new Error("disk full");
+  },
+});
+
+/** Fails for text that starts with "bad", so a test can mix failures and successes. */
+const maybeSave = defineTool({
+  name: "maybe.save",
+  description: "A write that fails for some input",
+  input: z.object({ text: z.string() }),
+  effect: "write",
+  timeoutMs: 1_000,
+  async run({ text }) {
+    if (text.startsWith("bad")) throw new Error("rejected by the store");
     return { saved: true };
   },
 });
@@ -118,7 +145,12 @@ beforeEach(async () => {
 
 async function run(
   script: ScriptStep[],
-  opts: { agent?: AgentDefinition; approver?: Approver; input?: unknown } = {},
+  opts: {
+    agent?: AgentDefinition;
+    approver?: Approver;
+    input?: unknown;
+    models?: ModelConfig;
+  } = {},
 ) {
   const sink = createMemorySink();
   const model = createScriptedModel(script);
@@ -126,9 +158,9 @@ async function run(
     agent: opts.agent ?? { spec: spec(), output: Output },
     input: opts.input ?? "Write a preview",
     tenantId: "demo-cricket",
-    tools: [statsGet, draftSave, slowRead, bigRead, wholeRead],
+    tools: [statsGet, draftSave, slowRead, bigRead, wholeRead, flakySave, maybeSave],
     client: model,
-    models: scriptedModelConfig(),
+    models: opts.models ?? scriptedModelConfig(),
     approver: opts.approver ?? approveAll,
     runsDir,
     sinks: [sink],
@@ -524,6 +556,291 @@ describe("runAgent", () => {
     expect(result).toMatchObject({ status: "failed", reason: "invalid_output" });
   });
 
+  it("retries a reply cut off at max_tokens, then completes on the next good turn", async () => {
+    const { result, model } = await run(
+      [
+        { content: "The match begins at", finishReason: "max_tokens" },
+        { content: "A full preview.", finishReason: "end_turn" },
+      ],
+      { agent: { spec: spec() } },
+    );
+    expect(model.requests[1]?.messages.at(-1)).toMatchObject({
+      role: "user",
+      content: expect.stringMatching(/cut off/),
+    });
+    expect(result).toMatchObject({ status: "completed", output: "A full preview." });
+  });
+
+  it("fails with reason model_stop after three cut-off turns in a row", async () => {
+    const cut = { content: "The match", finishReason: "max_tokens" };
+    const { result, model } = await run([cut, cut, cut, final("never")]);
+    expect(model.requests).toHaveLength(3);
+    expect(result).toMatchObject({ status: "failed", reason: "model_stop" });
+    expect((result as { message: string }).message).toContain("max_tokens");
+  });
+
+  it("never runs a call from a cut-off turn, even a write that parses", async () => {
+    const { result, model, of } = await run(
+      [{ ...call("draft.save", { text: "hi" }), finishReason: "max_tokens" }, final("ok")],
+      { agent: { spec: spec({ approvals: ["effect:write"] }), output: Output } },
+    );
+    expect(approvals).toHaveLength(0);
+    expect(saved).toHaveLength(0);
+    expect(of("tool.denied")).toHaveLength(1);
+    expect(model.requests[1]?.messages.at(-1)).toMatchObject({
+      role: "tool",
+      content: "Not run: your reply was cut off (max_tokens). Send it again, shorter.",
+    });
+    expect(result.status).toBe("completed");
+  });
+
+  it("fails at once on content_filtered and runs none of its tool calls", async () => {
+    const { result, model } = await run([
+      { ...call("stats.get", { team: "x" }), finishReason: "content_filtered" },
+      final("ok"),
+    ]);
+    expect(model.requests).toHaveLength(1);
+    expect(result).toMatchObject({ status: "failed", reason: "model_stop" });
+    expect((result as { message: string }).message).toContain("content_filtered");
+    expect(seen).toHaveLength(0);
+  });
+
+  const withFlaky = {
+    agent: { spec: spec({ tools: ["stats.get", "flaky.save"] }), output: Output },
+  };
+
+  it("does not accept final in the turn of a failed call, and accepts it the next turn", async () => {
+    const { result, model } = await run(
+      [
+        {
+          toolCalls: [
+            { name: "flaky.save", arguments: { text: "a" } },
+            { name: "final", arguments: { summary: "saved" } },
+          ],
+        },
+        final("saved"),
+      ],
+      withFlaky,
+    );
+    expect(model.requests).toHaveLength(2);
+    const tools = model.requests[1]?.messages.filter((m) => m.role === "tool");
+    expect(tools?.at(-1)?.content).toBe(
+      "Not accepted: flaky.save failed in this turn. Deal with that before calling final.",
+    );
+    expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
+  });
+
+  it("counts final after a failed call against the invalid output limit", async () => {
+    const both = {
+      toolCalls: [
+        { name: "flaky.save", arguments: { text: "a" } },
+        { name: "final", arguments: { summary: "saved" } },
+      ],
+    };
+    const { result } = await run([both, both, both, final("x")], withFlaky);
+    expect(result).toMatchObject({ status: "failed", reason: "invalid_output" });
+  });
+
+  it("refuses a final that verifyFinal rejects, then accepts a corrected one", async () => {
+    const { result, model } = await run([final("draft"), final("approved")], {
+      agent: {
+        spec: spec(),
+        output: Output,
+        verifyFinal: (out) =>
+          (out as { summary: string }).summary === "draft" ? "still a draft" : undefined,
+      },
+    });
+    expect(model.requests[1]?.messages.at(-1)?.content).toBe("Not accepted: still a draft");
+    expect(result).toMatchObject({ status: "completed", output: { summary: "approved" } });
+  });
+
+  it("lets completeFinal rewrite the output before verifyFinal sees it", async () => {
+    const { result } = await run([final("draft")], {
+      agent: {
+        spec: spec(),
+        output: Output,
+        completeFinal: () => ({ summary: "approved" }),
+        verifyFinal: (out) =>
+          (out as { summary: string }).summary === "draft" ? "still a draft" : undefined,
+      },
+    });
+    expect(result).toMatchObject({ status: "completed", output: { summary: "approved" } });
+  });
+
+  it("hands verifyFinal the unwrapped output, the context and the transcript", async () => {
+    const calls: unknown[] = [];
+    const Union = z.union([z.object({ a: z.string() }), z.object({ b: z.string() })]);
+    await run([{ toolCalls: [{ name: "final", arguments: { result: { a: "x" } } }] }], {
+      agent: {
+        spec: spec(),
+        output: Union,
+        verifyFinal: (out, r) => {
+          calls.push(out, r.ctx.tenantId, r.messages.length);
+          return undefined;
+        },
+      },
+    });
+    expect(calls).toEqual([{ a: "x" }, "demo-cricket", 3]);
+  });
+
+  describe("tool results that are errors", () => {
+    const toolMessages = (
+      model: { requests: Array<{ messages: Array<{ role: string }> }> },
+      at: number,
+    ) =>
+      (model.requests[at]?.messages ?? []).filter((m) => m.role === "tool") as unknown as Array<{
+        content: string;
+        isError?: boolean;
+      }>;
+
+    it("marks a denial, a failed tool, an invalid final and a refused final", async () => {
+      const withFlaky = {
+        agent: { spec: spec({ tools: ["stats.get", "flaky.save"] }), output: Output },
+      };
+      const denied = await run([call("stats.get", { team: 3 }), final("ok")], withFlaky);
+      expect(toolMessages(denied.model, 1)[0]).toMatchObject({ isError: true });
+
+      const failed = await run([call("flaky.save", { text: "a" }), final("ok")], withFlaky);
+      expect(toolMessages(failed.model, 1)[0]).toMatchObject({
+        content: "Error: disk full",
+        isError: true,
+      });
+
+      const invalid = await run([final(42), final("ok")]);
+      expect(toolMessages(invalid.model, 1)[0]).toMatchObject({ isError: true });
+
+      const verified = await run([final("a"), final("b")], {
+        agent: {
+          spec: spec(),
+          output: Output,
+          verifyFinal: (o) => ((o as { summary: string }).summary === "a" ? "no" : undefined),
+        },
+      });
+      expect(toolMessages(verified.model, 1)[0]).toMatchObject({ isError: true });
+
+      const skipped = await run([
+        { ...call("stats.get", { team: "x" }), finishReason: "max_tokens" },
+        final("ok"),
+      ]);
+      expect(toolMessages(skipped.model, 1)[0]).toMatchObject({ isError: true });
+    });
+
+    it("leaves a successful result unmarked", async () => {
+      const { model } = await run([call("stats.get", { team: "x" }), final("ok")]);
+      expect(toolMessages(model, 1)[0]).not.toHaveProperty("isError");
+    });
+  });
+
+  describe("repeated failing calls", () => {
+    const agent = (maxSteps = 10) => ({
+      agent: {
+        spec: spec({ tools: ["maybe.save"], budget: { usdPerRun: 1, maxSteps, maxDepth: 0 } }),
+        output: Output,
+      },
+    });
+    const save = (text: string) => call("maybe.save", { text });
+
+    it("ends the run at the third identical failure, not at maxSteps", async () => {
+      const { result, model, of } = await run(
+        [save("bad"), save("bad"), save("bad"), save("bad"), final("x")],
+        agent(),
+      );
+      expect(model.requests).toHaveLength(3);
+      expect(of("tool.completed")).toHaveLength(3);
+      expect(result).toMatchObject({
+        status: "failed",
+        reason: "invalid_output",
+        message: "maybe.save failed 3 times with the same input",
+      });
+    });
+
+    it("counts the same input whatever the key order", async () => {
+      const { result } = await run(
+        [
+          call("maybe.save", { text: "bad", extra: 1 }),
+          call("maybe.save", { extra: 1, text: "bad" }),
+          call("maybe.save", { text: "bad", extra: 1 }),
+        ],
+        agent(),
+      );
+      expect(result).toMatchObject({ status: "failed" });
+    });
+
+    it("starts again from one on a different input or after a success", async () => {
+      const { result } = await run(
+        [
+          save("bad1"),
+          save("bad1"),
+          save("bad2"),
+          save("bad2"),
+          save("good"),
+          save("bad2"),
+          save("bad2"),
+          final("ok"),
+        ],
+        agent(),
+      );
+      expect(result.status).toBe("completed");
+    });
+  });
+
+  describe("finishing", () => {
+    const read = call("stats.get", { team: "x" });
+    const forced = () => {
+      const config = scriptedModelConfig();
+      const entry = config.models["nova-lite"] as ModelConfig["models"][string];
+      return {
+        models: { models: { ...config.models, "nova-lite": { ...entry, forcedTools: true } } },
+      };
+    };
+    const warning = (m: { role: string; content: string }) =>
+      m.content.startsWith("2 model turns left");
+
+    it("warns once, two turns before the step limit, and saves it in the transcript", async () => {
+      // maxSteps is 6: the warning goes in before turn 5
+      const { model } = await run([read, read, read, read, read, read]);
+      const warned = model.requests.map((r) => r.messages.filter(warning).length);
+      expect(warned).toEqual([0, 0, 0, 0, 1, 1]);
+      const text = model.requests[4]?.messages.find(warning)?.content;
+      expect(text).toBe("2 model turns left. Finish now.\nCall final with your result.");
+      // the later request holds the same message in the same place
+      expect(model.requests[5]?.messages.slice(0, model.requests[4]?.messages.length)).toEqual(
+        model.requests[4]?.messages,
+      );
+    });
+
+    it("leaves out the call-final line when the agent has no output schema", async () => {
+      const { model } = await run([read, read, read, read, read, read], {
+        agent: { spec: spec() },
+      });
+      expect(model.requests[4]?.messages.find(warning)?.content).toBe(
+        "2 model turns left. Finish now.",
+      );
+    });
+
+    it("forces final on the last step for a model with forcedTools, and not otherwise", async () => {
+      const script = [read, read, read, read, read, final("ok")];
+      const on = await run(script, forced());
+      expect(on.model.requests.map((r) => r.toolChoice)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { tool: "final" },
+      ]);
+      const off = await run(script);
+      expect(off.model.requests.some((r) => r.toolChoice)).toBe(false);
+    });
+
+    it("forces final on the turn after the call-final nudge", async () => {
+      const { model, result } = await run([{ content: "here you go" }, final("ok")], forced());
+      expect(model.requests[0]?.toolChoice).toBeUndefined();
+      expect(model.requests[1]?.toolChoice).toEqual({ tool: "final" });
+      expect(result.status).toBe("completed");
+    });
+  });
+
   it("reports a tool timeout as a failed call after its retries", async () => {
     const { of, result } = await run([call("slow.read"), final("ok")]);
     expect(slowAttempts).toBe(2);
@@ -620,6 +937,73 @@ describe("runAgent", () => {
   });
 });
 
+describe("model retries", () => {
+  /** Fails with `errors` first, one per call, then answers from the script. */
+  const flaky = (errors: Error[], script: ScriptStep[]): ModelClient & { calls: number } => {
+    const inner = createScriptedModel(script);
+    const client = {
+      calls: 0,
+      async complete(...args: Parameters<ModelClient["complete"]>) {
+        client.calls++;
+        const err = errors.shift();
+        if (err) throw err;
+        return inner.complete(...args);
+      },
+    };
+    return client;
+  };
+  const go = async (client: ModelClient) => {
+    const sink = createMemorySink();
+    const delays: number[] = [];
+    const result = await runLocal({
+      agent: { spec: spec({ tools: ["stats.get"] }), output: Output },
+      input: "Write a preview",
+      tenantId: "demo-cricket",
+      tools: [statsGet],
+      client,
+      models: scriptedModelConfig(),
+      approver: approveAll,
+      runsDir,
+      sinks: [sink],
+      outputs: createMemoryOutputStore(),
+      retryDelayMs: (attempt) => {
+        delays.push(attempt);
+        return 0;
+      },
+    });
+    return { result, delays, events: sink.events };
+  };
+
+  it("retries a transient error and completes with one step.completed", async () => {
+    const throttle = () => new TransientModelError("Bedrock ThrottlingException: slow down");
+    const client = flaky([throttle(), throttle()], [final("ok")]);
+    const { result, delays, events } = await go(client);
+    expect(result).toMatchObject({ status: "completed", output: { summary: "ok" } });
+    expect(client.calls).toBe(3);
+    expect(delays).toEqual([1, 2]);
+    expect(events.filter((e) => e.type === "step.completed")).toHaveLength(1);
+  });
+
+  it("gives up after three retries", async () => {
+    const throttle = () => new TransientModelError("Bedrock ThrottlingException: slow down");
+    const client = flaky(
+      [throttle(), throttle(), throttle(), throttle(), throttle()],
+      [final("ok")],
+    );
+    const { result, delays } = await go(client);
+    expect(client.calls).toBe(4);
+    expect(delays).toEqual([1, 2, 3]);
+    expect(result).toMatchObject({ status: "failed", reason: "error" });
+  });
+
+  it("does not retry other errors", async () => {
+    const client = flaky([new Error("Bedrock ValidationException: bad")], [final("ok")]);
+    const { result } = await go(client);
+    expect(client.calls).toBe(1);
+    expect(result).toMatchObject({ status: "failed", reason: "error" });
+  });
+});
+
 describe("runLocal hooks", () => {
   it("appends the memory context to the instructions and hands events to afterRun", async () => {
     const model = createScriptedModel([final("ok")]);
@@ -641,6 +1025,7 @@ describe("runLocal hooks", () => {
       outputs: createMemoryOutputStore(),
       context: async (ctx) => ({
         text: `## House facts\n- tenant ${ctx.tenantId}`,
+        recalled: "<recalled_memory>\nToday is 2026-11-01.\n</recalled_memory>",
         tokens: 8,
         sources: [{ id: "m1", kind: "semantic", tokens: 8 }],
       }),
@@ -652,6 +1037,10 @@ describe("runLocal hooks", () => {
     expect(result.status).toBe("completed");
     expect(model.requests[0]?.messages[0]?.content).toBe(
       "You are a test agent.\n\n## House facts\n- tenant demo-cricket",
+    );
+    // recalled memory leads the first user message, then a blank line and the input
+    expect(model.requests[0]?.messages[1]?.content).toBe(
+      "<recalled_memory>\nToday is 2026-11-01.\n</recalled_memory>\n\ngo",
     );
     expect(sink.events[1]).toMatchObject({
       type: "context.built",

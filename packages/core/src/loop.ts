@@ -15,11 +15,14 @@ import type {
 } from "@dugout/contracts";
 import { z } from "zod";
 import type { RunLog } from "./events.ts";
+import { TransientModelError } from "./model/errors.ts";
 import { BUILTIN_TOOLS, preflight, type ToolRegistry, toolDefinition } from "./tools.ts";
 
 export const FINAL_TOOL = "final";
 /** Invalid `final` calls (or turns that skip it) tolerated before the run fails. */
 const MAX_INVALID_OUTPUTS = 2;
+/** The same call failing this many times in a row ends the run. */
+const MAX_SAME_FAILURES = 3;
 
 export interface RunAgentOptions {
   agent: AgentDefinition;
@@ -37,7 +40,19 @@ export interface RunAgentOptions {
   resume?: { saved: SavedRun; reason: "approval" | "recovery"; decision?: ApprovalDecision };
 }
 
-export type FailureReason = "budget" | "max_steps" | "invalid_output" | "error";
+export type FailureReason = "budget" | "max_steps" | "invalid_output" | "model_stop" | "error";
+
+/** Stops where continuing is pointless: the provider ended the reply on purpose. */
+const TERMINAL_STOPS = new Set([
+  "guardrail_intervened",
+  "content_filtered",
+  "model_context_window_exceeded",
+  "refusal",
+]);
+/** Asks for the result; the turn after it must be `final`. */
+const FINAL_NUDGE = `Call the ${FINAL_TOOL} tool with your result.`;
+/** Stops where the reply is unusable but another try may work. */
+const CUT_OFF_STOPS = new Set(["max_tokens", "malformed_tool_use", "malformed_model_output"]);
 
 export type RunResult =
   | { status: "completed"; output: unknown; usage: RunUsage }
@@ -105,6 +120,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       ),
     );
   }
+  const inputText = typeof opts.input === "string" ? opts.input : JSON.stringify(opts.input);
   const messages: Message[] = saved
     ? [...saved.messages]
     : [
@@ -116,7 +132,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         },
         {
           role: "user",
-          content: typeof opts.input === "string" ? opts.input : JSON.stringify(opts.input),
+          // recalled memory goes here, not in the system prompt, so the prompt stays cacheable
+          content: opts.context?.recalled ? `${opts.context.recalled}\n\n${inputText}` : inputText,
         },
       ];
   const state: RunCheckpoint = saved
@@ -145,8 +162,6 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   const { usage } = state;
   let savedMessages = saved?.messages.length ?? 0;
   let decision = resume?.decision;
-  /** The last refused call. A second copy of it ends the run. */
-  let refused: { tool: string; args: string } | undefined;
   if (decision && !state.waiting) throw new Error("the run is not waiting for an approval");
 
   /** Saves the checkpoint and the messages added since the last save, as a new save point. */
@@ -235,11 +250,23 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         type: "tool.denied",
         data: { step, callId, tool, stage: "policy", reason },
       });
-      messages.push({ role: "tool", toolCallId: callId, content });
+      messages.push({ role: "tool", toolCallId: callId, content, isError: true });
     };
 
     for (const call of assistant.toolCalls ?? []) {
       if (answered.has(call.id)) continue;
+      if (turn.cutOff) {
+        // a call from a cut-off reply may be half written, even if its JSON parses
+        const why = turn.cutOffReason ?? "max_tokens";
+        await skip(
+          call.id,
+          call.name,
+          `skipped: the reply was cut off (${why})`,
+          `Not run: your reply was cut off (${why}). Send it again, shorter.`,
+        );
+        await save("tool");
+        continue;
+      }
       if (turn.changesRequested) {
         await skip(
           call.id,
@@ -263,15 +290,54 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           await save("tool");
           continue;
         }
+        // a write that failed in this turn may have left the work undone
+        if (turn.failed) {
+          if (++state.invalidOutputs > MAX_INVALID_OUTPUTS) {
+            return fail("invalid_output", `${FINAL_TOOL} sent after ${turn.failed} failed`);
+          }
+          await skip(
+            call.id,
+            call.name,
+            `${turn.failed} failed in this turn`,
+            `Not accepted: ${turn.failed} failed in this turn. Deal with that before calling ${FINAL_TOOL}.`,
+          );
+          await save("tool");
+          continue;
+        }
         const result = parseFinal(call, final.schema);
-        if (result.ok) return complete(final.unwrap(result.value));
+        if (result.ok) {
+          const unwrapped = final.unwrap(result.value);
+          const value = agent.completeFinal
+            ? agent.completeFinal(unwrapped, { ctx: opts.ctx, messages })
+            : unwrapped;
+          const refusal = agent.verifyFinal?.(value, { ctx: opts.ctx, messages });
+          if (refusal === undefined) return complete(value);
+          if (++state.invalidOutputs > MAX_INVALID_OUTPUTS) return fail("invalid_output", refusal);
+          await log.emit({
+            type: "final.refused",
+            data: { step, callId: call.id, reason: refusal },
+          });
+          messages.push({
+            role: "tool",
+            toolCallId: call.id,
+            content: `Not accepted: ${refusal}`,
+            isError: true,
+          });
+          await save("tool");
+          continue;
+        }
         if (++state.invalidOutputs > MAX_INVALID_OUTPUTS) {
           return fail("invalid_output", result.error);
         }
+        await log.emit({
+          type: "final.refused",
+          data: { step, callId: call.id, reason: result.error },
+        });
         messages.push({
           role: "tool",
           toolCallId: call.id,
           content: `Invalid result: ${result.error}`,
+          isError: true,
         });
         await save("tool");
         continue;
@@ -284,20 +350,21 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         ...(opts.ctx.input !== undefined ? { input: opts.ctx.input } : {}),
       });
       if (!checked.ok) {
+        turn.failed = call.name;
         const args = stableArgs(call.arguments);
         // One refusal is feedback. The same call again is the model stuck, so the run stops
         // instead of spending the rest of its steps on copies.
-        if (refused?.tool === call.name && refused.args === args) {
+        if (state.refused?.tool === call.name && state.refused.args === args) {
           const message = `${call.name} was refused, and the same call was sent again unchanged`;
           await log.emit({
             type: "tool.denied",
             data: { ...ids, stage: checked.stage, reason: message },
           });
-          messages.push({ role: "tool", toolCallId: call.id, content: message });
+          messages.push({ role: "tool", toolCallId: call.id, content: message, isError: true });
           await save("tool");
           return fail("invalid_output", message);
         }
-        refused = { tool: call.name, args };
+        state.refused = { tool: call.name, args };
         await log.emit({
           type: "tool.denied",
           data: { ...ids, stage: checked.stage, reason: checked.reason },
@@ -306,11 +373,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           role: "tool",
           toolCallId: call.id,
           content: `Denied (${checked.stage}): ${checked.reason}`,
+          isError: true,
         });
         await save("tool");
         continue;
       }
-      refused = undefined;
+      state.refused = undefined;
 
       // approved before a crash: the reviewer is not asked twice
       if (checked.needsApproval && !turn.approved.includes(call.id)) {
@@ -384,7 +452,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
             type: "tool.completed",
             data: { ...ids, ok: false, content: UNKNOWN_OUTCOME, durationMs: 0 },
           });
-          messages.push({ role: "tool", toolCallId: call.id, content: UNKNOWN_OUTCOME });
+          messages.push({
+            role: "tool",
+            toolCallId: call.id,
+            content: UNKNOWN_OUTCOME,
+            isError: true,
+          });
+          turn.failed = call.name;
           await save("tool");
           continue;
         }
@@ -397,12 +471,34 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       const started = Date.now();
       const outcome = await steps.tool({ step, call, input: checked.input });
       const content = outcome.ok ? outcome.content : `Error: ${outcome.error}`;
+      if (!outcome.ok) turn.failed = call.name;
+      // the same call failing again and again is the model stuck, like a refused copy of it
+      const args = stableArgs(call.arguments);
+      const repeated = state.failedCall;
+      state.failedCall = outcome.ok
+        ? undefined
+        : {
+            tool: call.name,
+            args,
+            count: repeated?.tool === call.name && repeated.args === args ? repeated.count + 1 : 1,
+          };
       await log.emit({
         type: "tool.completed",
         data: { ...ids, ok: outcome.ok, content, durationMs: Date.now() - started },
       });
-      messages.push({ role: "tool", toolCallId: call.id, content });
+      messages.push({
+        role: "tool",
+        toolCallId: call.id,
+        content,
+        ...(outcome.ok ? {} : { isError: true }),
+      });
       await save("tool");
+      if (state.failedCall && state.failedCall.count >= MAX_SAME_FAILURES) {
+        return fail(
+          "invalid_output",
+          `${call.name} failed ${MAX_SAME_FAILURES} times with the same input`,
+        );
+      }
     }
     return undefined;
   };
@@ -413,8 +509,28 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         if (state.step >= spec.budget.maxSteps) {
           return fail("max_steps", `no result after ${spec.budget.maxSteps} steps`);
         }
+        // two turns left: one to spare for a mistake, then the last
+        if (spec.budget.maxSteps - state.step === 2 && !state.stepsWarned) {
+          state.stepsWarned = true;
+          messages.push({
+            role: "user",
+            content: `2 model turns left. Finish now.${output ? `\nCall ${FINAL_TOOL} with your result.` : ""}`,
+          });
+          await save("model");
+        }
         const step = state.step + 1;
-        const turn = await steps.model({ step, model: spec.model, messages, tools });
+        // the last step, and the turn after a nudge, must end the run
+        const last = messages.at(-1);
+        const forceFinal =
+          output !== undefined &&
+          (step >= spec.budget.maxSteps || (last?.role === "user" && last.content === FINAL_NUDGE));
+        const turn = await steps.model({
+          step,
+          model: spec.model,
+          messages,
+          tools,
+          ...(forceFinal ? { toolChoice: { tool: FINAL_TOOL } } : {}),
+        });
         state.step = step;
         addUsage(usage, turn.usage);
         messages.push(turn.message);
@@ -435,8 +551,24 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           );
         }
 
+        if (TERMINAL_STOPS.has(turn.finishReason)) {
+          return fail("model_stop", `the model stopped the reply: ${turn.finishReason}`);
+        }
+        const cutOff = CUT_OFF_STOPS.has(turn.finishReason);
+        if (cutOff && ++state.invalidOutputs > MAX_INVALID_OUTPUTS) {
+          return fail(
+            "model_stop",
+            `the reply was cut off ${state.invalidOutputs} times (${turn.finishReason})`,
+          );
+        }
+
         if (!turn.message.toolCalls?.length) {
-          if (hasPendingChanges()) {
+          if (cutOff) {
+            messages.push({
+              role: "user",
+              content: `Your reply was cut off (${turn.finishReason}). Send it again, shorter.`,
+            });
+          } else if (hasPendingChanges()) {
             if (++state.blockedFinishes > MAX_INVALID_OUTPUTS)
               return fail("invalid_output", UNMADE);
             messages.push({ role: "user", content: pendingNote() });
@@ -446,15 +578,18 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
             if (++state.invalidOutputs > MAX_INVALID_OUTPUTS) {
               return fail("invalid_output", `ended without calling ${FINAL_TOOL}`);
             }
-            messages.push({
-              role: "user",
-              content: `Call the ${FINAL_TOOL} tool with your result.`,
-            });
+            messages.push({ role: "user", content: FINAL_NUDGE });
           }
           await save("model");
           continue;
         }
-        state.turn = { changesRequested: false, remind: false, approved: [], started: [] };
+        state.turn = {
+          changesRequested: false,
+          remind: false,
+          approved: [],
+          started: [],
+          ...(cutOff ? { cutOff: true, cutOffReason: turn.finishReason } : {}),
+        };
         await save("model");
       }
 
@@ -471,6 +606,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
     }
   } catch (err) {
     if (err instanceof RunInterrupted) throw err;
+    // With a save to resume from, a transient failure is left to the host: the worker records it,
+    // the lease runs out and the run is claimed again, up to its attempts.
+    if (err instanceof TransientModelError && steps.checkpoint) throw err;
     return fail("error", err instanceof Error ? err.message : String(err));
   }
 }

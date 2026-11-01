@@ -428,6 +428,81 @@ function crashingStore(crashWhen: (checkpoint: RunCheckpoint, appended: Message[
 describe("picking a run up after a crash", () => {
   const recover = (startSeq: number) => ({ reason: "recovery" as const, startSeq });
 
+  it("still stops on a refused call sent again after the crash", async () => {
+    const store = createMemoryRunStore();
+    const refusedCall = call("draft.save", { text: 3 });
+    await expect(
+      invoke({
+        runId: "c5",
+        store,
+        script: [
+          refusedCall,
+          () => {
+            throw new RunInterrupted("process died");
+          },
+        ],
+        approver: approve,
+      }),
+    ).rejects.toThrow(RunInterrupted);
+
+    const second = await invoke({
+      runId: "c5",
+      store,
+      script: [refusedCall],
+      approver: approve,
+      resume: recover(100),
+    });
+    expect(second.result).toMatchObject({
+      status: "failed",
+      reason: "invalid_output",
+      message: "draft.save was refused, and the same call was sent again unchanged",
+    });
+  });
+
+  it("keeps counting identical failures across the crash", async () => {
+    const store = createMemoryRunStore();
+    const failing = defineTool({
+      name: "draft.save",
+      description: "Save a draft",
+      input: z.object({ text: z.string() }),
+      effect: "write",
+      timeoutMs: 1_000,
+      async run() {
+        throw new Error("nope");
+      },
+    });
+    const go = (script: ScriptStep[], resume?: ReturnType<typeof recover>) =>
+      runLocal({
+        agent: { spec: spec({ tools: ["draft.save"] }), output: Output },
+        input: "Write and save a draft",
+        tenantId: "demo-cricket",
+        runId: "c6",
+        tools: [failing],
+        client: createScriptedModel(script),
+        models: scriptedModelConfig(),
+        approver: approve,
+        runsDir,
+        outputs: createMemoryOutputStore(),
+        store,
+        ...(resume ? { resume } : {}),
+      });
+    const save = call("draft.save", { text: "a" });
+    await expect(
+      go([
+        save,
+        save,
+        () => {
+          throw new RunInterrupted("process died");
+        },
+      ]),
+    ).rejects.toThrow(RunInterrupted);
+    const result = await go([save], recover(100));
+    expect(result).toMatchObject({
+      status: "failed",
+      message: "draft.save failed 3 times with the same input",
+    });
+  });
+
   it("does not ask the reviewer again for a call approved before the crash", async () => {
     const asked: ApprovalRequest[] = [];
     const approver: Approver = async (req) => {

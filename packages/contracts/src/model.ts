@@ -32,6 +32,8 @@ export interface ModelRequest {
   model: string;
   messages: Message[];
   tools: ToolDefinition[];
+  /** The model must call this tool, and no other. Sent only to a model whose entry has `forcedTools`. */
+  toolChoice?: { tool: string };
   /** Mark the prompt for the provider's cache, for a conversation that goes on for more turns. */
   cache?: boolean;
   signal?: AbortSignal;
