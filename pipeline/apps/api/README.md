@@ -184,7 +184,7 @@ artifact will fail identically on every attempt.
 ## Running it
 
 ```bash
-pnpm pipeline:infra:up         # from the dugout root: postgres + redis + electric
+pnpm infra:up && pnpm pipeline:infra:up   # from the dugout root: valkey (the queue), postgres, electric
 cp .env.example .env
 pnpm build
 pnpm db:migrate

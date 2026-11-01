@@ -38,14 +38,4 @@ New agents are written with `defineAgent` from `@dugout/sdk` (ADR 0007); `agents
 
 ## pipeline/
 
-The Figma plugin, compiler, DSL, renderer, control plane (:4100), Studio (:3000) and preview site (:3415) live in `pipeline/` (ADR 0020), so one checkout runs everything. It keeps its own `@fanos/*` toolchain; `pipeline/README.md` describes it. Its Postgres, Redis and Electric are separate from dugout's: `pnpm pipeline:infra:up`, then `cp pipeline/apps/api/.env.example pipeline/apps/api/.env`, `pnpm pipeline:db:migrate`, `pnpm pipeline:dev`.
-
-### All in Docker
-
-```sh
-pnpm stack:up        # builds dugout-stack once, then starts the pipeline and the agents' worker
-pnpm stack:watch     # optional: a Send from the Figma plugin starts a card-match run
-pnpm stack:down
-```
-
-Then Studio is http://localhost:3000 (the plugin's address), the preview site http://localhost:3415, and `pnpm agent ...` queues runs for the containerised worker. Move any host port with the variables listed in ADR 0021 (`PIPELINE_API_PORT`, ...). To bring your existing control-plane data across, see "The control-plane database moves with a dump" there.
+The Figma plugin, compiler, DSL, renderer, control plane (:4100), Studio (:3000) and preview site (:3415) live in `pipeline/` (ADR 0020), so one checkout runs everything. It keeps its own `@fanos/*` toolchain; `pipeline/README.md` describes it. Docker runs only the databases (ADR 0021): `pnpm infra:up && pnpm pipeline:infra:up`. Then `cp pipeline/apps/api/.env.example pipeline/apps/api/.env` (once), `pnpm pipeline:build`, `pnpm pipeline:db:migrate` (a no-op on the existing database) and `pnpm pipeline:dev`; `pnpm worker` and `pnpm card:watch` run the agents. The control plane's Postgres is the volume the old `trial` stack used, so its Sends and exports are all there: stop `api-postgres-1` and `api-electric-1` before starting it.
