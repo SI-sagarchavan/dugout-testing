@@ -48,6 +48,12 @@ An override may now create a surface under a name the compiler never used, which
 
 `pnpm card-match:vision` measures it: it breaks a first-passed frame in a known way (a picture taken out or shrunk, words changed, a text colour changed, a background removed), then asks whether the score noticed and whether a difference was reported at that place that the clean frame did not report there. It also looks at two identical pictures, to count what is invented. `CARD_MATCH_VISION=off pnpm eval card-match` runs the same cases with `frame.look` answering "not available", to compare the whole agent.
 
+## When looking fails
+
+`frame.publish` is held until `frame.look` has been called once, in every run, because a model that is only told to look does not (an A/B with it optional had 0 looks). A step the run cannot do must not be one it cannot finish without, so after two failures of `frame.look` itself (the vision model down, a lapsed credential, a render error) the hold lifts and the error tells the model to say so in `remaining`. A region outside the frame is the caller's mistake and does not count. A region is cut to the frame before anything is shown or placed, so a finding's `where` is the place it was seen. `frame.load` has ten minutes, not five: a big frame measures, fixes, checks each fix and measures again, and under three runs at once that passed five.
+
+Whether to look first or last was measured, 3 attempts per frame on 6 frames. Looking first gained +2.01 points over the code alone and passed 18 of 18; looking last +1.47 and 16 of 18; never looking +0.67 and 15 of 18. The one frame that carries the difference is match-centre.
+
 ## Limits
 
 - A crop is a stand-in: right pixels, but not an icon or data. Real art needs vectors from the export, or the design system's icon registry.

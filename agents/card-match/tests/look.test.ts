@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Bundle } from "../src/frame.ts";
 import { unpaintedLayers } from "../src/frame.ts";
-import { nodesAt, parseDifferences, scaleFor, tilesOf, toFrameBox } from "../src/look.ts";
+import {
+  clampRegion,
+  LookInputError,
+  nodesAt,
+  parseDifferences,
+  scaleFor,
+  tilesOf,
+  toFrameBox,
+} from "../src/look.ts";
 
 describe("parseDifferences", () => {
   const reply = (body: string) => `Here you go.\n${body}\nHope that helps.`;
@@ -65,6 +73,43 @@ describe("scaleFor", () => {
     expect(scaleFor({ w: 463 })).toBe(2);
     expect(scaleFor({ w: 683 })).toBe(1);
     expect(scaleFor({ w: 780 })).toBe(1);
+  });
+});
+
+describe("clampRegion", () => {
+  const frame = { w: 926, h: 469 };
+
+  it("leaves a region that is inside the frame", () => {
+    expect(clampRegion({ x: 10, y: 20, w: 300, h: 200 }, frame)).toEqual({
+      x: 10,
+      y: 20,
+      w: 300,
+      h: 200,
+    });
+  });
+
+  it("cuts a region that runs past the frame to the part that is in it", () => {
+    // findings are placed by the region, so it has to be the part that is actually shown
+    expect(clampRegion({ x: 900, y: 0, w: 400, h: 300 }, frame)).toEqual({
+      x: 900,
+      y: 0,
+      w: 26,
+      h: 300,
+    });
+    expect(clampRegion({ x: -50, y: -10, w: 100, h: 100 }, frame)).toEqual({
+      x: 0,
+      y: 0,
+      w: 50,
+      h: 90,
+    });
+  });
+
+  it("says so, as the caller's mistake, for a region with nothing of the frame in it", () => {
+    expect(() => clampRegion({ x: 0, y: 5000, w: 500, h: 500 }, frame)).toThrow(LookInputError);
+    expect(() => clampRegion({ x: 2000, y: 0, w: 100, h: 100 }, frame)).toThrow(
+      /Pass a region inside the frame/,
+    );
+    expect(() => clampRegion({ x: 10, y: 10, w: 2, h: 2 }, frame)).toThrow(LookInputError);
   });
 });
 

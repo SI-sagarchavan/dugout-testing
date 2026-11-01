@@ -35,6 +35,8 @@ const PANE_PX = 780;
 const TILE_HEIGHT = 700;
 const MAX_TILES = 12;
 const GAP = 8;
+/** Smaller than this and there is nothing for a vision model to read. */
+const MIN_REGION_PX = 8;
 
 export const Difference = z.object({
   kind: z.string().default("other"),
@@ -125,6 +127,23 @@ export function toFrameBox(box: readonly [number, number, number, number], regio
     w: Math.max(1, Math.round(Math.abs(x1 - x0) * region.w)),
     h: Math.max(1, Math.round(Math.abs(y1 - y0) * region.h)),
   };
+}
+
+/** The caller asked to look at a place there is nothing to look at. Not the vision call's fault. */
+export class LookInputError extends Error {}
+
+/** A region cut to the frame, so what is shown and where findings are placed are the same place. */
+export function clampRegion(region: Rect, frame: { w: number; h: number }): Rect {
+  const x0 = Math.max(0, Math.floor(region.x));
+  const y0 = Math.max(0, Math.floor(region.y));
+  const x1 = Math.min(frame.w, Math.ceil(region.x + region.w));
+  const y1 = Math.min(frame.h, Math.ceil(region.y + region.h));
+  if (x1 - x0 < MIN_REGION_PX || y1 - y0 < MIN_REGION_PX) {
+    throw new LookInputError(
+      `The region ${Math.round(region.w)}x${Math.round(region.h)} at ${Math.round(region.x)},${Math.round(region.y)} has less than ${MIN_REGION_PX}px of the ${frame.w}x${frame.h} frame in it. Pass a region inside the frame, or none to look at all of it.`,
+    );
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 export interface NodeAt {
@@ -366,7 +385,7 @@ export async function look(opts: {
   const { tools, bundle, built, see } = opts;
   const root = bundle.doc.root.geometry.bbox;
   const frame = { w: Math.round(root.w), h: Math.round(root.h) };
-  const tiles = opts.region ? [opts.region] : tilesOf(frame);
+  const tiles = opts.region ? [clampRegion(opts.region, frame)] : tilesOf(frame);
   const scale = scaleFor(tiles[0] ?? frame);
   const design = composeDesign(tools, bundle, scale);
   const rebuild = await renderRebuild(tools, bundle, built, scale);

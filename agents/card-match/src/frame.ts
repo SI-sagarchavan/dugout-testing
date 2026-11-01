@@ -1484,6 +1484,8 @@ export async function keepWhatHelps(
   start: Overrides,
   plain: number,
   score: (overrides: Overrides) => Promise<number>,
+  /** What `fixes` already scored, when the caller has it: one render fewer on a big frame. */
+  known?: number,
 ): Promise<{ overrides: Overrides; match: number; undone: string[] }> {
   const without: Record<string, (o: Overrides) => Overrides> = {
     "raw gradients": (o) => ({ ...o, gradients: start.gradients }),
@@ -1492,7 +1494,7 @@ export async function keepWhatHelps(
     // score says, and the others rarely interact with anything and cost a render each to test.
   };
   let kept = fixes;
-  let match = await score(kept);
+  let match = known ?? (await score(kept));
   const undone: string[] = [];
   const left = new Set(Object.keys(without));
   while (left.size > 0) {
@@ -1590,10 +1592,17 @@ export async function firstPass(
   let undone: string[] = [];
   // Crops are cut from screenshots, so a frame with none to compare against can't be checked
   if (measurement.comparedPixels > 0 && plainMeasured.comparedPixels > 0) {
-    const checked = await keepWhatHelps(kept, start, plainMeasured.match, async (o) => {
-      const tried = buildFrame(tools, bundle, o);
-      return tried.errors.length > 0 ? -1 : (await measureFrame(tools, bundle, tried)).match;
-    });
+    const checked = await keepWhatHelps(
+      kept,
+      start,
+      plainMeasured.match,
+      async (o) => {
+        const tried = buildFrame(tools, bundle, o);
+        return tried.errors.length > 0 ? -1 : (await measureFrame(tools, bundle, tried)).match;
+      },
+      // `measurement` is of exactly `kept`, measured a moment ago
+      measurement.match,
+    );
     undone = checked.undone;
     if (JSON.stringify(checked.overrides) !== JSON.stringify(kept)) {
       kept = checked.overrides;

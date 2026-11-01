@@ -440,6 +440,29 @@ describe("keepWhatHelps", () => {
     expect(got.undone.at(-1)).toContain("every fix");
   });
 
+  it("does not measure again what the caller has just measured", async () => {
+    const tried: number[] = [];
+    const got = await keepWhatHelps(
+      fixes,
+      start,
+      80,
+      async (o) => {
+        const worth =
+          80 +
+          2 *
+            (Number(o.gradients.length > 0) +
+              Number(o.crops.length > 0) +
+              Number(o.texts.length > 0));
+        tried.push(worth);
+        return worth;
+      },
+      86,
+    );
+    expect(got.overrides).toEqual(fixes);
+    // only the two fixes left out in turn: the whole was known
+    expect(tried).toHaveLength(2);
+  });
+
   it("keeps every fix when each one helps, having looked at each", async () => {
     const tried: number[] = [];
     const got = await keepWhatHelps(fixes, start, 80, async (o) => {

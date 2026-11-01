@@ -7,6 +7,7 @@ import { z } from "zod";
 import { completeFinal, verifyFinal } from "../src/agent.ts";
 import type { ControlPlane } from "../src/control-plane.ts";
 import type { Built, Bundle, Measurement, Overrides } from "../src/frame.ts";
+import { LookInputError } from "../src/look.ts";
 import { createMatchTools, type Engine } from "../src/tools.ts";
 
 const measured = (match: number, conformErrors = 0): Measurement => ({
@@ -304,6 +305,45 @@ describe("frame.look", () => {
       };
     await named("frame.load").run({}, ctx("v2"));
     await expect(named("frame.look").run({}, ctx("v2"))).rejects.toThrow(/no screenshot/i);
+  });
+});
+
+describe("a frame.look that fails", () => {
+  async function withFailingLook(error: Error) {
+    const { engine, plane } = setup(() => measured(90));
+    let calls = 0;
+    engine.look = async () => {
+      calls += 1;
+      throw error;
+    };
+    const dir = await mkdtemp(join(tmpdir(), "card-match-"));
+    const list = createMatchTools({ dir, engine, plane: () => plane });
+    const named = (name: string) =>
+      list.find((tool) => tool.name === name) as unknown as {
+        run(i: unknown, c: unknown): Promise<unknown>;
+        block(i: unknown, c: unknown): string | undefined;
+      };
+    return { named, calls: () => calls };
+  }
+
+  it("holds a publish for the first failure and lets it go after the second", async () => {
+    const { named } = await withFailingLook(new Error("vision model unreachable"));
+    await named("frame.load").run({}, ctx("f1"));
+    await expect(named("frame.look").run({}, ctx("f1"))).rejects.toThrow(/unreachable/);
+    expect(named("frame.publish").block({}, ctx("f1"))).toContain("frame.look");
+    await expect(named("frame.look").run({}, ctx("f1"))).rejects.toThrow(
+      /no longer held for it.*say in remaining/i,
+    );
+    expect(named("frame.publish").block({}, ctx("f1"))).toBeUndefined();
+  });
+
+  it("does not count a region outside the frame against the vision model", async () => {
+    const { named } = await withFailingLook(new LookInputError("region is outside the frame"));
+    await named("frame.load").run({}, ctx("f2"));
+    for (let i = 0; i < 4; i++) {
+      await expect(named("frame.look").run({}, ctx("f2"))).rejects.toThrow(/outside the frame/);
+    }
+    expect(named("frame.publish").block({}, ctx("f2"))).toContain("frame.look");
   });
 });
 

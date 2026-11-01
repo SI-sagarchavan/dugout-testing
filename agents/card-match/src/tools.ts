@@ -21,7 +21,7 @@ import {
   type Unpainted,
   unpaintedLayers,
 } from "./frame.ts";
-import { type Looked, look, type See } from "./look.ts";
+import { type Looked, LookInputError, look, type See } from "./look.ts";
 import { loadToolchain, type Toolchain } from "./toolchain.ts";
 
 export const MATCH_DIR = join(REPO_ROOT, ".runs", "card-match");
@@ -112,6 +112,8 @@ const State = z.object({
   unpainted: z.array(z.custom<Unpainted>()).default([]),
   /** How many times frame.look was called, so a run can be told apart by whether it looked. */
   looks: z.number().default(0),
+  /** Times the vision call or the render behind frame.look failed. */
+  lookFailures: z.number().default(0),
   examined: z.array(z.string()).default([]),
   examinedSurfaces: z.array(z.string()).default([]),
   published: Published.optional(),
@@ -235,6 +237,12 @@ function paintsUnpainted(state: { unpainted: Unpainted[] }, change: Overrides): 
 /** Worth a look: enough pixels, and not just glyph edges with the box in the right place. */
 /** Below this share of the frame, a match is over too little of it to be a result. */
 const MIN_COVERAGE = 25;
+/**
+ * After this many failures of frame.look itself, a publish is no longer held for it. A step the run
+ * cannot do must not be one it cannot finish without: a vision model that is down, a credential that
+ * has lapsed, or a render that fails would otherwise stop every run at the gate.
+ */
+const MAX_LOOK_FAILURES = 2;
 const ACTIONABLE_PIXELS = 100;
 const GLYPH_EDGE_OFF = 15;
 const MUST_EXAMINE = 5;
@@ -348,7 +356,9 @@ export function createMatchTools(
       "Load this run's Figma export, compile it, apply the fixes that need no judgement (tokenless gradients, placeholder icons cropped from the screenshot) and measure it against the screenshot. Takes no arguments. Returns the match, and the nodes that differ most. When no screenshot lines up with the frame it returns measured: false: publish it as it is.",
     input: noArgs,
     effect: "read",
-    timeoutMs: 300_000,
+    // A big frame measures, fixes, checks each fix and measures again; on a busy machine that
+    // was past five minutes, and the model's retry only waits for the first call to finish.
+    timeoutMs: 600_000,
     alwaysInline: true,
     run: (_input, ctx) =>
       inTurn(ctx.runId, async () => {
@@ -381,6 +391,7 @@ export function createMatchTools(
           undone: first.undone ?? [],
           unpainted: engine.unpainted?.(bundle, first.built) ?? [],
           looks: 0,
+          lookFailures: 0,
           examined: [],
           examinedSurfaces: [],
         };
@@ -544,7 +555,12 @@ export function createMatchTools(
       if (!state) return "Nothing is loaded. Call frame.load first.";
       // The score is blind to some of the worst defects, and a model that is only told to look
       // sometimes doesn't. A run made without eyes answers the call too, so the two read the same.
-      if (engine.look && !state.unmeasured && state.looks === 0) {
+      if (
+        engine.look &&
+        !state.unmeasured &&
+        state.looks === 0 &&
+        state.lookFailures < MAX_LOOK_FAILURES
+      ) {
         return "Not yet. Call frame.look once: it shows what the score cannot, such as text on the wrong edge or a background nothing compares.";
       }
       const waiting = unexamined(state);
@@ -648,7 +664,21 @@ export function createMatchTools(
         }
         const bundle = await bundleOf(ctx, state);
         const built = await engine.build(bundle, state.overrides);
-        const looked = await engine.look(bundle, built, input, see, ctx.signal);
+        let looked: Looked;
+        try {
+          looked = await engine.look(bundle, built, input, see, ctx.signal);
+        } catch (err) {
+          // a region outside the frame is the caller's mistake, not a vision model that is down
+          if (err instanceof LookInputError) throw err;
+          const failures = state.lookFailures + 1;
+          writeState(dir, ctx.runId, { ...state, lookFailures: failures });
+          const why = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            failures >= MAX_LOOK_FAILURES
+              ? `${why} frame.look has failed ${failures} times, so frame.publish is no longer held for it. Publish, and say in remaining that nothing looked at the frame.`
+              : why,
+          );
+        }
         writeState(dir, ctx.runId, { ...state, looks: state.looks + 1 });
         return {
           bands: looked.bands,
