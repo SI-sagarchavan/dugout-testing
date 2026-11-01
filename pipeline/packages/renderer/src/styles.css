@@ -1,0 +1,485 @@
+/**
+ * @fanos/renderer structural styles.
+ *
+ * Design values (colors, space, type, surfaces) come from @fanos/tokens emit.
+ * This sheet only encodes SDUI→DOM wiring that is not expressible as a token:
+ * Overlay layering, responsive custom-prop promotion, scrim pseudo, writing-mode.
+ */
+
+.fos-node {
+  box-sizing: border-box;
+}
+
+.fos-root {
+  position: relative;
+  box-sizing: border-box;
+}
+
+/* --- responsive property promotion ------------------------------------ */
+/* Breakpoint floors mirror @fanos/tokens DEFAULT_BREAKPOINTS (md:768, lg:1280). */
+
+/**
+ * Stop the promotion vars inheriting.
+ *
+ * The media blocks below apply `padding-*`, `gap`, `width` … to EVERY .fos-node
+ * from a custom property. Custom properties inherit, so without this reset a
+ * Stack with `space.pb` silently re-applies that same padding to every
+ * descendant node — a footer's 32px bottom padding lands on its name, its stat
+ * columns and every value inside them.
+ *
+ * Resetting to `initial` makes each var the guaranteed-invalid value, so the
+ * `var()` chain falls through to `revert-layer` for any node that did not set
+ * one itself. An element's own inline style still wins over this rule, so nodes
+ * that DO set a value are unaffected.
+ *
+ * Only bites at >=768px, which is why it stayed hidden while the harness pinned
+ * the viewport to the card width and never left the mobile branch.
+ */
+.fos-node {
+  --p-base: initial;   --p-md: initial;   --p-lg: initial;
+  --px-base: initial;  --px-md: initial;  --px-lg: initial;
+  --py-base: initial;  --py-md: initial;  --py-lg: initial;
+  --pt-base: initial;  --pt-md: initial;  --pt-lg: initial;
+  --pb-base: initial;  --pb-md: initial;  --pb-lg: initial;
+  --pl-base: initial;  --pl-md: initial;  --pl-lg: initial;
+  --pr-base: initial;  --pr-md: initial;  --pr-lg: initial;
+  --gap-base: initial; --gap-md: initial; --gap-lg: initial;
+  --w-base: initial;   --w-md: initial;   --w-lg: initial;
+  --h-base: initial;   --h-md: initial;   --h-lg: initial;
+  --flex-direction-base: initial;  --flex-direction-md: initial;  --flex-direction-lg: initial;
+  --align-items-base: initial;     --align-items-md: initial;     --align-items-lg: initial;
+  --justify-content-base: initial; --justify-content-md: initial; --justify-content-lg: initial;
+  /* What a responsive prop reads inline: its value at THIS breakpoint. Unset
+     below md, so the inline `var(--x-cur, var(--x-base))` falls to base. */
+  --p-cur: initial;
+  --px-cur: initial;
+  --py-cur: initial;
+  --pt-cur: initial;
+  --pb-cur: initial;
+  --pl-cur: initial;
+  --pr-cur: initial;
+  --gap-cur: initial;
+  --w-cur: initial;
+  --h-cur: initial;
+  --min-w-cur: initial;
+  --max-w-cur: initial;
+  --min-h-cur: initial;
+  --max-h-cur: initial;
+  --flex-direction-cur: initial;
+  --align-items-cur: initial;
+  --justify-content-cur: initial;
+  --text-align-cur: initial;
+}
+
+@media (min-width: 768px) {
+  .fos-node {
+    --p-cur: var(--p-md, var(--p-base));
+    --px-cur: var(--px-md, var(--px-base));
+    --py-cur: var(--py-md, var(--py-base));
+    --pt-cur: var(--pt-md, var(--pt-base));
+    --pb-cur: var(--pb-md, var(--pb-base));
+    --pl-cur: var(--pl-md, var(--pl-base));
+    --pr-cur: var(--pr-md, var(--pr-base));
+    --gap-cur: var(--gap-md, var(--gap-base));
+    --w-cur: var(--w-md, var(--w-base));
+    --h-cur: var(--h-md, var(--h-base));
+    --min-w-cur: var(--min-w-md, var(--min-w-base));
+    --max-w-cur: var(--max-w-md, var(--max-w-base));
+    --min-h-cur: var(--min-h-md, var(--min-h-base));
+    --max-h-cur: var(--max-h-md, var(--max-h-base));
+    --flex-direction-cur: var(--flex-direction-md, var(--flex-direction-base));
+    --align-items-cur: var(--align-items-md, var(--align-items-base));
+    --justify-content-cur: var(--justify-content-md, var(--justify-content-base));
+    --text-align-cur: var(--text-align-md, var(--text-align-base));
+    gap: var(--gap-md, var(--gap-base, revert-layer));
+    padding: var(--p-md, var(--p-base, revert-layer));
+    padding-inline: var(--px-md, var(--px-base, revert-layer));
+    padding-block: var(--py-md, var(--py-base, revert-layer));
+    padding-block-start: var(--pt-md, var(--pt-base, revert-layer));
+    padding-block-end: var(--pb-md, var(--pb-base, revert-layer));
+    padding-inline-start: var(--pl-md, var(--pl-base, revert-layer));
+    padding-inline-end: var(--pr-md, var(--pr-base, revert-layer));
+    width: var(--w-md, var(--w-base, revert-layer));
+    height: var(--h-md, var(--h-base, revert-layer));
+    flex-direction: var(--flex-direction-md, var(--flex-direction-base, revert-layer));
+    align-items: var(--align-items-md, var(--align-items-base, revert-layer));
+    justify-content: var(--justify-content-md, var(--justify-content-base, revert-layer));
+  }
+}
+
+@media (min-width: 1280px) {
+  .fos-node {
+    --p-cur: var(--p-lg, var(--p-md, var(--p-base)));
+    --px-cur: var(--px-lg, var(--px-md, var(--px-base)));
+    --py-cur: var(--py-lg, var(--py-md, var(--py-base)));
+    --pt-cur: var(--pt-lg, var(--pt-md, var(--pt-base)));
+    --pb-cur: var(--pb-lg, var(--pb-md, var(--pb-base)));
+    --pl-cur: var(--pl-lg, var(--pl-md, var(--pl-base)));
+    --pr-cur: var(--pr-lg, var(--pr-md, var(--pr-base)));
+    --gap-cur: var(--gap-lg, var(--gap-md, var(--gap-base)));
+    --w-cur: var(--w-lg, var(--w-md, var(--w-base)));
+    --h-cur: var(--h-lg, var(--h-md, var(--h-base)));
+    --min-w-cur: var(--min-w-lg, var(--min-w-md, var(--min-w-base)));
+    --max-w-cur: var(--max-w-lg, var(--max-w-md, var(--max-w-base)));
+    --min-h-cur: var(--min-h-lg, var(--min-h-md, var(--min-h-base)));
+    --max-h-cur: var(--max-h-lg, var(--max-h-md, var(--max-h-base)));
+    --flex-direction-cur: var(--flex-direction-lg, var(--flex-direction-md, var(--flex-direction-base)));
+    --align-items-cur: var(--align-items-lg, var(--align-items-md, var(--align-items-base)));
+    --justify-content-cur: var(--justify-content-lg, var(--justify-content-md, var(--justify-content-base)));
+    --text-align-cur: var(--text-align-lg, var(--text-align-md, var(--text-align-base)));
+    gap: var(--gap-lg, var(--gap-md, var(--gap-base, revert-layer)));
+    padding: var(--p-lg, var(--p-md, var(--p-base, revert-layer)));
+    padding-inline: var(--px-lg, var(--px-md, var(--px-base, revert-layer)));
+    padding-block: var(--py-lg, var(--py-md, var(--py-base, revert-layer)));
+    padding-block-start: var(--pt-lg, var(--pt-md, var(--pt-base, revert-layer)));
+    padding-block-end: var(--pb-lg, var(--pb-md, var(--pb-base, revert-layer)));
+    padding-inline-start: var(--pl-lg, var(--pl-md, var(--pl-base, revert-layer)));
+    padding-inline-end: var(--pr-lg, var(--pr-md, var(--pr-base, revert-layer)));
+    width: var(--w-lg, var(--w-md, var(--w-base, revert-layer)));
+    height: var(--h-lg, var(--h-md, var(--h-base, revert-layer)));
+    flex-direction: var(
+      --flex-direction-lg,
+      var(--flex-direction-md, var(--flex-direction-base, revert-layer))
+    );
+    align-items: var(
+      --align-items-lg,
+      var(--align-items-md, var(--align-items-base, revert-layer))
+    );
+    justify-content: var(
+      --justify-content-lg,
+      var(--justify-content-md, var(--justify-content-base, revert-layer))
+    );
+  }
+}
+
+/* --- Overlay / surface structure -------------------------------------- */
+
+.fos-overlay {
+  position: relative;
+  overflow: visible;
+}
+
+.fos-overlay.fos-overlay-clip {
+  overflow: hidden;
+}
+
+/**
+ * A Stack is a containing block too.
+ *
+ * `place` is not exclusive to Overlay children. Figma treats an absolutely
+ * positioned child as an exception INSIDE an auto-layout frame, not as an
+ * abandonment of it, so the compiler keeps such a frame a Stack and puts
+ * `place` on the one child Figma placed — see `classify` in @fanos/compile,
+ * which argues the case at length and measured what demoting the frame to an
+ * Overlay costs.
+ *
+ * That intent only survives if the Stack is positioned. Without this rule the
+ * placed child resolves its insets against the nearest positioned ANCESTOR,
+ * which for a row nested six frames deep is the page root: the fan-preferences
+ * player rows each hold an absolutely-placed plate and a remove button, and all
+ * eight of them flew out of their cards and stacked up against the right edge
+ * of the document.
+ *
+ * `relative` with no offsets moves nothing and paints nothing. It establishes a
+ * containing block, and a stacking context only for a box that sets `z-index`
+ * — which is what `place.z` means anyway.
+ */
+.fos-stack {
+  position: relative;
+}
+
+/**
+ * Absolute fill box. Token surface paint lives on the CHILD so tokens can keep
+ * `position: relative` for inset ::before borders without collapsing this box.
+ */
+.fos-surface-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.fos-surface-layer > [class*="fos-surface-"] {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* Anchored children above the surface; stacking is DOM order among peers. */
+.fos-overlay > .fos-node {
+  z-index: 1;
+}
+
+/* --- Image + scrim ---------------------------------------------------- */
+
+.fos-image {
+  display: block;
+}
+
+/* Only non-anchored images establish a containing block for the scrim. */
+.fos-image:not([data-fos-anchored]) {
+  position: relative;
+  overflow: hidden;
+}
+
+.fos-image[data-fos-anchored] {
+  /* position comes from place.anchor (absolute); allow cutout bleed */
+  overflow: visible;
+}
+
+.fos-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.fos-image[data-scrim]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: var(--fos-image-scrim);
+}
+
+/* Anchored images need a positioned wrapper for the scrim pseudo. */
+.fos-image[data-fos-anchored][data-scrim] {
+  /* create containing block without fighting absolute placement from place */
+}
+.fos-image[data-fos-anchored][data-scrim]::after {
+  /* still works: absolute positioned element is containing block for ::after */
+}
+
+/* --- Divider ---------------------------------------------------------- */
+
+.fos-divider-horizontal {
+  height: 1px;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.fos-divider-vertical {
+  width: 1px;
+  align-self: stretch;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+/* --- Text orientation -------------------------------------------------
+ * These sit on an INNER span, never on the anchored element: `inset-inline-*`
+ * resolves against an element's own writing mode, so putting `vertical-rl` on
+ * the positioned box swaps its axes and `mid-start` lands top-centre.
+ * `inline-block` is required for writing-mode and transform to take effect.
+ */
+
+.fos-text-vertical-up,
+.fos-text-vertical-down {
+  display: inline-block;
+  writing-mode: vertical-rl;
+}
+
+/* vertical-rl reads top-to-bottom; the half-turn makes it read bottom-to-top. */
+.fos-text-vertical-up {
+  transform: rotate(180deg);
+}
+
+/* --- Text truncation -------------------------------------------------
+ * Line clamp, not character truncation: the design clips by line box, and the
+ * line count is what the IR reports (`text.lines`).
+ */
+
+.fos-text-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* --- Button ------------------------------------------------------------
+ *
+ * One rule set for every variant. `Button.tsx` resolves which token family
+ * applies and hands the values down as custom properties, so adding a variant
+ * to the theme needs no CSS here.
+ *
+ * Every fallback is `transparent` or `inherit` rather than a colour, because a
+ * family legitimately omits parts: `link` has no surface, `filled` has no
+ * border. A missing var must disappear, not paint black.
+ */
+
+.fos-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--fos-space-1, 0.25rem);
+  /* A button is a control, not text: it never wraps mid-label by default. */
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  border: 0;
+  border-radius: var(--fos-radius-md, 0);
+  background: var(--fos-btn-surface, transparent);
+  color: var(--fos-btn-text, inherit);
+  /**
+   * No font declarations here, deliberately.
+   *
+   * `<button>` does come with a UA font that has to be overridden — but the
+   * `fos-type-*` class Button.tsx applies is what overrides it, and these rules
+   * are emitted AFTER the theme's type rules with the same specificity. A
+   * `font: inherit` reset here therefore wins the cascade and silently wipes
+   * the token: the news section's VIEW MORE label rendered in the UA serif with
+   * the type class present and losing.
+   */
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.fos-button-outline {
+  border: 1px solid var(--fos-btn-border, currentColor);
+}
+
+.fos-button-link,
+.fos-button-no-padding {
+  background: none;
+}
+
+.fos-button-link {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* `:hover` only where the pointer can actually hover, so a tap does not stick. */
+@media (hover: hover) {
+  .fos-button:hover:not(:disabled):not([aria-disabled="true"]) {
+    background: var(--fos-btn-surface-hover, var(--fos-btn-surface, transparent));
+    color: var(--fos-btn-text-hover, var(--fos-btn-text, inherit));
+    border-color: var(--fos-btn-border-hover, var(--fos-btn-border, currentColor));
+  }
+}
+
+/**
+ * Focus is not optional. A design that never drew a focus state still has to
+ * be keyboard-operable, so this is the SDK's floor rather than a token read.
+ */
+.fos-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.fos-button:disabled,
+.fos-button[aria-disabled="true"] {
+  background: var(--fos-btn-surface-disabled, var(--fos-btn-surface, transparent));
+  color: var(--fos-btn-text-disabled, var(--fos-btn-text, inherit));
+  border-color: var(--fos-btn-border-disabled, var(--fos-btn-border, currentColor));
+  cursor: not-allowed;
+}
+
+/* Mid-flight: the label stays put, so the control does not resize under a tap. */
+.fos-button[aria-busy="true"] {
+  cursor: progress;
+}
+
+/* --- Icon placeholder ------------------------------------------------- */
+
+.fos-icon-unknown {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+}
+
+/* Preserve newlines in names like SOPHIE\nMOLINEUX */
+.fos-text {
+  /* Authored newlines are meaningful — the design breaks "Ben / McKinney". */
+  white-space: pre-line;
+  /**
+   * `as: h1..h6` and `as: p` bring UA margins (36px for h3 in Chromium). On an
+   * absolutely-positioned Overlay child that silently shifts the node a whole
+   * line off its authored offset and pushes later lines under whatever sits
+   * below it. Semantics must not move pixels.
+   */
+  margin: 0;
+
+  /**
+   * Leading trim — the single biggest source of vertical drift between Figma
+   * and CSS, and the reason a `space.*` gap read straight out of the IR did not
+   * reproduce the design.
+   *
+   * Figma reports a TEXT node's height as roughly
+   *   (lines - 1) * lineHeight + capHeight
+   * — measured on 1:5095: 2 lines of dp_4 (32/34) is 53px, not the 68px CSS
+   * gives. CSS wraps every line in a full `line-height` box, so half the
+   * leading hangs above the first cap and below the last baseline. On a 2-line
+   * heading that is ~13px of phantom space, and it lands *between* the heading
+   * and whatever the design put a 16px gap in front of.
+   *
+   * `trim-both cap alphabetic` makes the box hug cap-height to baseline, which
+   * is exactly Figma's box. Inter-line spacing is untouched — only the outer
+   * edges are trimmed — so a gap token now means the same thing in both tools.
+   */
+  text-box: trim-both cap alphabetic;
+}
+
+/**
+ * …but never on clamped text.
+ *
+ * Line clamping implies `overflow: hidden`, so a cap-height top edge SHEARS
+ * every ascender and i-dot on the first line, and an alphabetic bottom edge
+ * shears the descenders on the last. Unclamped text overflows its box
+ * harmlessly; clamped text does not.
+ *
+ * Trim buys nothing here anyway: a truncating Figma node carries an explicit
+ * height (`I1:5131;10090:3705` is a fixed 43px), so the box comes from
+ * `size.h`, not from the leading.
+ *
+ * Must stay AFTER `.fos-text` — equal specificity, so source order decides.
+ */
+.fos-text-clamp,
+.fos-text-has-vertical,
+.fos-text-untrimmed {
+  text-box: normal;
+}
+
+/* Figma auto-width text: one line, spaces as authored. */
+.fos-text-nowrap {
+  white-space: pre;
+}
+
+/**
+ * …but a clamped node still has to OCCUPY the ink box.
+ *
+ * The exclusion above is right about shearing: clamping implies
+ * `overflow: hidden`, so a cap-height top edge cuts every ascender on the first
+ * line and an alphabetic bottom edge cuts the descenders on the last. Rendered
+ * with `text-box: trim-both` the news grid's summaries visibly lost the tops of
+ * their J, V and C and the tails of their g, p and y.
+ *
+ * What was wrong was the second half of the argument — that trim buys nothing
+ * here because a truncating Figma node carries an explicit height. That is true
+ * of `I1:5131;10090:3705` and false of this design: every clamped text on the
+ * news grid is `autoResize: HEIGHT`, so the DSL says `size.h: "auto"` and the
+ * box comes from the leading after all. Left untrimmed they stood 10px taller
+ * than Figma each, 20px per card, and the lead card's column clipped.
+ *
+ * So: keep the full line boxes — nothing is clipped, nothing is sheared — and
+ * pull the outer edges in with margin instead. The element still RENDERS at
+ * `lines × line-height`; it only OCCUPIES `(lines - 1) × line-height + cap`,
+ * which is Figma's box. `1cap` and `1lh` are the browser's own metrics for the
+ * element's actual font, so this needs no per-typeface table and stays correct
+ * when the type token changes.
+ *
+ * Half the leading per edge: `(1cap - 1lh) / 2` is negative whenever cap height
+ * is below the line height, which is every text style in the system.
+ */
+.fos-text-clamp {
+  margin-block: calc((1cap - 1lh) / 2);
+}
+
+/**
+ * Same pull on the top edge, so the ink still starts at the box's top; an equal
+ * and opposite push on the bottom, so the footprint stays the DECLARED height
+ * instead of losing the leading a second time. Occupied = h − half + half = h.
+ */
+.fos-text-clamp.fos-text-fixed-h {
+  margin-block: calc((1cap - 1lh) / 2) calc((1lh - 1cap) / 2);
+}

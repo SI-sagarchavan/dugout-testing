@@ -1,0 +1,889 @@
+/**
+ * IR -> DSL, deterministically.
+ *
+ * Same input, same output, every time. No model, no sampling, no ordering that
+ * depends on a hash map's iteration. That is the whole value proposition: the
+ * mechanical half of generation — coverage, geometry, tokens, sizing — is
+ * exactly where a language model kept failing, and it is exactly the half a
+ * compiler cannot get wrong.
+ *
+ * What it deliberately does NOT do:
+ *
+ *   - bindings. Every Text keeps its literal characters. Deciding that "19:30"
+ *     is `{match.time}` while "DAYS" stays a label needs world knowledge the IR
+ *     does not contain, and inventing a data model is API design.
+ *   - Repeaters. Recognising four cards as one template is a semantic call.
+ *   - icon names. The IR has no path data, so a glyph cannot be identified.
+ *   - naming new surfaces. Reported instead, with the exact spec required.
+ *
+ * Those are the LLM's job. Everything else is arithmetic, and it happens here.
+ */
+
+import type { FlatNode, FlatTree } from "@fanos/dsl";
+import { SCHEMA_VERSION } from "@fanos/dsl";
+import {
+  assetPlacement,
+  assetRef,
+  hasText,
+  type AssetBinding,
+  type AssetFit,
+  type FrameIRDocument,
+  type FrameIRNode,
+} from "@fanos/surface-canvas/ir";
+import type { NormalizedTheme, Surface, SurfaceSet } from "@fanos/tokens";
+import {
+  classify,
+  flowChildren,
+  iconNameSource,
+  isDecorativeVector,
+  isFillPlate,
+  isIconGroup,
+  paintsAsSurface,
+  type DslType,
+  type PrimitiveMap,
+} from "./classify.js";
+import { IdAllocator, isMeaningful, slug } from "./ids.js";
+import { canonicalRef } from "./refs.js";
+import { layoutBox, quarterTurnOf } from "./geometry.js";
+import {
+  button,
+  childrenFillRow,
+  iconRef,
+  inlineStretch,
+  isBand,
+  place,
+  raw,
+  size,
+  space,
+  stack,
+  text,
+  unhuggableAxes,
+  type Raw,
+  type SpaceProps,
+} from "./props.js";
+import { cleanup, type CleanupOptions } from "./cleanup.js";
+import { primitivesFromNames } from "./primitives.js";
+import { SurfaceResolver, specOf, type RequiredSurface } from "./surfaces.js";
+
+export interface CompileOptions {
+  theme: NormalizedTheme;
+  surfaces?: SurfaceSet;
+  /**
+   * Figma components declared to be DSL primitives, keyed by `componentKey`.
+   *
+   * Layered OVER what the document's own component names declare — see
+   * `primitivesFromNames`. The names are the designer's channel and cover the
+   * normal case without anything having to be wired or stored; this is for the
+   * two things a name cannot do: correct a component that is named wrongly, and
+   * declare one whose master nobody can rename.
+   *
+   * A component neither names nor maps compiles exactly as it did before — as
+   * the frames it is drawn from — and is reported once, so the gap is visible
+   * rather than silent.
+   */
+  primitives?: PrimitiveMap;
+  /**
+   * Figma layer-name slugs the tenant has declared to be a named glyph.
+   *
+   * `{ gender_dropdown: "chevron_right" }`. Same shape and same reason as
+   * `primitives`: the fact is a decision someone made in a design file, not
+   * something the IR records, so it is declared once and applied every run
+   * rather than inferred per node. Names not in the map pass through and are
+   * reported as `unknown-icon`, which is the queue this map gets filled from.
+   */
+  icons?: Readonly<Record<string, string>>;
+  /**
+   * Post-emission cleanup passes. All on by default; see `cleanup.ts`.
+   * Turning one off is for regenerating the tree that documents why it exists,
+   * not for production.
+   */
+  cleanup?: CleanupOptions;
+}
+
+export interface CompileNote {
+  /** Machine-readable reason, so callers can filter without parsing prose. */
+  kind:
+    | "unresolved-text-style"
+    | "unresolved-paint"
+    | "unknown-icon"
+    | "new-surface"
+    | "absorbed"
+    | "background-asset"
+    | "decorative-vector"
+    | "pinned-size"
+    | "fluid-band"
+    | "unmapped-component"
+    | "unsupported-type"
+    | "crop-dropped"
+    | "zero-props";
+  irId: string;
+  nodeId?: string;
+  message: string;
+}
+
+export interface RequiredAsset {
+  name: string;
+  ref: string;
+  role: "background";
+  sourceId: string;
+  targetId: string;
+}
+
+export interface CompileResult {
+  tree: FlatTree;
+  /** Surfaces the tree references that the theme does not define yet. */
+  requiredSurfaces: RequiredSurface[];
+  /** Background files the tree references. The agent registers them as asset.texture.* */
+  requiredAssets: RequiredAsset[];
+  notes: CompileNote[];
+  stats: {
+    irNodes: number;
+    emitted: number;
+    absorbed: number;
+    /** What the post-emission passes removed. See `cleanup.ts`. */
+    cleanup: { cropsDropped: number; rawsDropped: number; zeroProps: number };
+  };
+}
+
+interface Ctx {
+  readonly theme: NormalizedTheme;
+  readonly ids: IdAllocator;
+  readonly surfaces: SurfaceResolver;
+  readonly primitives: PrimitiveMap;
+  /** Layer-name slug -> registry glyph name. See the `Icon` case in `emit`. */
+  readonly icons: Readonly<Record<string, string>>;
+  /** Components seen that the primitive map does not name, for one note each. */
+  readonly unmapped: Map<string, { name: string; count: number }>;
+  readonly assetsByTarget: Map<string, AssetBinding[]>;
+  /**
+   * Every IR node by id.
+   *
+   * A binding's target need not be the source's parent — a designer can bind a
+   * plate to the section two levels up — so deciding whether it covers its
+   * target means reaching a node that is nowhere near the one being emitted.
+   */
+  readonly byId: Map<string, FrameIRNode>;
+  readonly usedAssets: Map<string, AssetBinding>;
+  readonly nodes: FlatNode[];
+  readonly notes: CompileNote[];
+  absorbed: number;
+  irNodes: number;
+}
+
+export function compile(doc: FrameIRDocument, options: CompileOptions): CompileResult {
+  const assetsByTarget = indexBindings(doc);
+  const byId = new Map<string, FrameIRNode>();
+  indexNodes(doc.root, byId);
+
+  const ctx: Ctx = {
+    theme: options.theme,
+    ids: new IdAllocator(),
+    surfaces: new SurfaceResolver(options.surfaces),
+    // The document's own names first, so the common case needs no configuration;
+    // an explicit entry wins, because it is the one someone typed on purpose.
+    primitives: { ...primitivesFromNames(doc), ...(options.primitives ?? {}) },
+    icons: options.icons ?? {},
+    unmapped: new Map(),
+    assetsByTarget,
+    byId,
+    usedAssets: new Map(),
+    nodes: [],
+    notes: [],
+    absorbed: 0,
+    irNodes: 0,
+  };
+
+  emit(ctx, doc.root, null, 0, true, undefined);
+
+  /**
+   * One note per unmapped component, not per instance.
+   *
+   * This is how the primitive map gets filled in: from what a real file
+   * actually uses, in usage order, rather than from someone enumerating a
+   * design system up front. A component nobody instantiates never needs an
+   * entry, and one used 40 times says so.
+   */
+  for (const [key, seen] of ctx.unmapped) {
+    ctx.notes.push({
+      kind: "unmapped-component",
+      irId: key,
+      message:
+        `"${seen.name}" is a Figma component used ${seen.count} time(s) with no primitive ` +
+        `declared — compiled as frames. Map componentKey ${key} to declare what it is.`,
+    });
+  }
+
+  /**
+   * The tree is complete; now take out what it says twice.
+   *
+   * After emission, not during: the rule is about a RELATIONSHIP — an image and
+   * the frame that clips it — and `emit` only ever holds one node at a time.
+   */
+  const cleaned = cleanup(ctx.nodes, options.cleanup);
+  for (const note of cleaned.notes) {
+    ctx.notes.push({ kind: note.kind, irId: nodeSrc(ctx.nodes, note.nodeId), nodeId: note.nodeId, message: note.message });
+  }
+
+  return {
+    tree: { schemaVersion: SCHEMA_VERSION, nodes: cleaned.nodes },
+    requiredSurfaces: ctx.surfaces.missing(),
+    requiredAssets: [...ctx.usedAssets.values()].map((b) => ({
+      name: b.name,
+      ref: assetRef(b.name),
+      role: "background",
+      sourceId: b.targetId,
+      targetId: b.targetId,
+    })),
+    notes: ctx.notes,
+    stats: {
+      irNodes: ctx.irNodes,
+      emitted: cleaned.nodes.length,
+      absorbed: ctx.absorbed,
+      cleanup: cleaned.stats,
+    },
+  };
+}
+
+/** The Figma id behind a DSL node, for a note that has only the node id. */
+function nodeSrc(nodes: FlatNode[], nodeId: string): string {
+  return nodes.find((n) => n.id === nodeId)?.src ?? nodeId;
+}
+
+function indexBindings(doc: FrameIRDocument): Map<string, AssetBinding[]> {
+  const byTarget = new Map<string, AssetBinding[]>();
+  for (const binding of doc.assets ?? []) {
+    const list = byTarget.get(binding.targetId) ?? [];
+    list.push(binding);
+    byTarget.set(binding.targetId, list);
+  }
+  return byTarget;
+}
+
+function indexNodes(n: FrameIRNode, into: Map<string, FrameIRNode>): void {
+  into.set(n.id, n);
+  for (const child of n.children ?? []) indexNodes(child, into);
+}
+
+function countIr(n: FrameIRNode): number {
+  return 1 + (n.children ?? []).reduce((a, c) => a + countIr(c), 0);
+}
+
+/** The DSL `fit` for a mark, from the designer's choice with a safe default. */
+function assetFitOf(binding: AssetBinding | undefined, node: FrameIRNode): AssetFit {
+  if (binding?.fit) return binding.fit;
+  // A 1.3.0 document carries no `fit`; the paint's own scaleMode is the next
+  // best source, and `FIT` is the only one CSS reproduces exactly.
+  return node.image?.fit === "FIT" ? "contain" : "cover";
+}
+
+/** `repeat` has no DSL Image equivalent — a tiled mark never reaches this path. */
+function imageFitOf(fit: AssetFit): "cover" | "contain" | "none" {
+  return fit === "contain" ? "contain" : fit === "none" ? "none" : "cover";
+}
+
+/**
+ * The surface-layer fit for a mark.
+ *
+ * `SurfaceLayer` speaks cover / contain / repeat / auto. A mark reaching this
+ * path either covers its target or is a tile, so `none` maps to `auto` — the
+ * bitmap's natural size, which is what "no scaling" means to CSS.
+ */
+function surfaceFitOf(binding: AssetBinding): "cover" | "contain" | "repeat" | "auto" {
+  switch (binding.fit) {
+    case "contain":
+      return "contain";
+    case "repeat":
+      return "repeat";
+    case "none":
+      return "auto";
+    default:
+      return "cover";
+  }
+}
+
+/** "40,120 in a 1170×400 target" — the note has to be checkable by eye. */
+function describePlacement(source: FrameIRNode, target: FrameIRNode): string {
+  const p = assetPlacement(source, target);
+  return (
+    `${Math.round(p.offset.x)},${Math.round(p.offset.y)} ` +
+    `in a ${Math.round(p.target.w)}×${Math.round(p.target.h)} "${target.name}"`
+  );
+}
+
+/**
+ * What a child needs to know about the node it is being emitted into.
+ *
+ * `fluid` is the piece that cannot be recovered later: whether the parent's
+ * width is a number or the page. A child of a fixed parent may safely keep the
+ * box the IR gave it; a child of a fluid one may not, or it tears away from the
+ * edge the design put it against.
+ */
+interface Parent {
+  node: FrameIRNode;
+  type: DslType;
+  fluid: boolean;
+}
+
+/**
+ * Emit one IR node and recurse.
+ *
+ * @param parentId  DSL parent id, or null for the root
+ * @param idx       sibling index among EMITTED siblings, which is not the same
+ *                  as the IR index once plates and icon paths are absorbed
+ */
+function emit(
+  ctx: Ctx,
+  node: FrameIRNode,
+  parentId: string | null,
+  idx: number,
+  isRoot: boolean,
+  parent?: Parent,
+): boolean {
+  const parentType = parent?.type;
+  ctx.irNodes += 1;
+
+  const iconGroup = !isRoot && isIconGroup(node);
+
+  const declared: DslType = iconGroup ? "Icon" : classify(node, ctx.primitives);
+
+  /**
+   * A declared primitive has to survive derivation, or it is not one.
+   *
+   * Decided BEFORE the type is fixed, because the fallback is a different node
+   * type with different children: a Button subsumes its subtree, and one that
+   * kept the type without the props would emit a labelless control with its own
+   * label nested inside it.
+   */
+  let type = declared;
+  const buttonProps = declared === "Button" ? button(ctx.theme, node) : undefined;
+  if (declared === "Button" && !buttonProps) {
+    type = classify(node);
+    ctx.notes.push({
+      kind: "unmapped-component",
+      irId: node.id,
+      message:
+        `"${node.name}" is declared a Button but has no text under it — compiled as ` +
+        `${type} instead. A button without a label is not a button.`,
+    });
+  }
+
+  const id = ctx.ids.take(node, type.toLowerCase());
+
+  const props: Record<string, unknown> = {};
+
+  /**
+   * A declared component the map does not name, counted for one note at the end.
+   *
+   * Counted on every instance rather than on the master, because the master may
+   * live on a page nobody exported — what matters is that this file uses it.
+   */
+  if (node.componentKey && !ctx.primitives[node.componentKey] && isMeaningful(node.name)) {
+    const seen = ctx.unmapped.get(node.componentKey);
+    if (seen) seen.count += 1;
+    else ctx.unmapped.set(node.componentKey, { name: node.name, count: 1 });
+  }
+
+  // --- paint -------------------------------------------------------------
+  /**
+   * A Button paints itself from its own token family — `button_<variant>_
+   * style_<n>_surface_*` — and it has three states where a surface has one. A
+   * folded surface here would win over the family and freeze the button in the
+   * colour it was drawn in, which is the whole bug the primitive exists to fix.
+   */
+  // Read before children so a fill plate can be folded in below.
+  // An Icon is painted by `tone`, never by a surface: its vector child looks
+  // like a fill plate (it covers the frame), and folding it painted the
+  // ticket glyph as a solid white square behind itself.
+  if (type !== "Button" && type !== "Icon") applyPaint(ctx, node, props, id);
+
+  // --- layout ------------------------------------------------------------
+  if (type === "Stack") Object.assign(props, stack(ctx.theme, node.layout, node));
+  if (type === "Overlay" && node.clipsContent) props.clip = true;
+  if (type === "Stack" && node.clipsContent) props.clip = true;
+  if (type === "Box" && node.clipsContent) props.clip = true;
+
+  // A rule has no interior, so padding on it is meaningless — and ruinous: the
+  // hairlines in the fixtures card declare 16px padding inside a 1px-tall box,
+  // which Figma cannot honour and which CSS turns into a 33px bar. The IR's own
+  // `bbox` says the node occupies 1px on screen; anything taller contradicts it.
+  // A Button's padding comes from the frame that actually carries its box,
+  // which is usually the master INSIDE the instance — see `button()`.
+  const sp =
+    type === "Divider" || type === "Button" ? undefined : space(ctx.theme, node.layout);
+  if (sp) props.space = sp;
+
+  const band = isRoot && isBand(node);
+  /**
+   * The same condition that decides `place` below, and it has to be: a node
+   * that is positioned rather than flowed cannot honour `fill`. See `size`.
+   */
+  const placed = !isRoot && (node.layout.positioning === "absolute" || parentType === "Overlay");
+  // `Button.size` is the sm/md/lg enum, which shadows the universal size object
+  // — the DSL gives a node's own field precedence, so a box here would be lost.
+  const sz = type === "Button" ? undefined : size(node, isRoot, band, placed);
+  if (sz && Object.keys(sz).length > 0) props.size = sz;
+
+  if (band) {
+    ctx.notes.push({
+      kind: "fluid-band",
+      irId: node.id,
+      nodeId: id,
+      message:
+        `the frame is ${Math.round(layoutBox(node).w)}px wide — a page-width band, not an ` +
+        `object — so it fills the viewport rather than being pinned to the artboard`,
+    });
+  }
+
+  // Pinning a raw px costs responsiveness, so it is never done quietly.
+  if (!isRoot) {
+    const pinned = unhuggableAxes(node);
+    const axes = [pinned.w ? "width" : null, pinned.h ? "height" : null].filter(Boolean);
+    if (axes.length > 0) {
+      ctx.notes.push({
+        kind: "pinned-size",
+        irId: node.id,
+        nodeId: id,
+        message:
+          `${axes.join(" and ")} pinned to the IR box — every child is absolutely ` +
+          `positioned, so there is nothing in flow for "hug" to size against`,
+      });
+    }
+  }
+
+  let stretched = false;
+  if (placed) {
+    // A GROUP has no auto-layout, so Figma reports its children as `auto`
+    // positioned even though nothing flows them — their box IS their position.
+    // S8 requires an anchor on every Overlay child, and it is right to.
+    //
+    // The IR parent is passed because a GROUP is not a coordinate space: see
+    // `place`, which subtracts the origin Figma has already folded into every
+    // one of a group's children. `parent.node` is always the IMMEDIATE IR
+    // parent — a child whose emit returns false takes its whole subtree with
+    // it, so nothing is ever re-parented past a level.
+    props.place = place(node, parent?.node);
+
+    /**
+     * A child that spans a fluid parent spans it at every width, not just the
+     * one it was drawn at. See `inlineStretch` — the offsets become padding and
+     * the box stretches, which is the same rectangle here and the right one
+     * everywhere else.
+     */
+    const stretch = parent?.fluid ? inlineStretch(ctx.theme, node, parent.node) : null;
+    if (stretch) {
+      stretched = true;
+      const { offset } = props.place as { offset?: { block?: Raw; inline?: Raw } };
+      props.place = {
+        anchor: "top-fill",
+        ...(offset?.block !== undefined ? { offset: { block: offset.block } } : {}),
+      };
+
+      // The design's side gaps, now inside the box. `inlineStretch` has already
+      // folded in whatever padding the node declared on that edge.
+      const padded = splitInline(props.space as SpaceProps | undefined);
+      if (stretch.pl !== undefined) padded.pl = stretch.pl;
+      if (stretch.pr !== undefined) padded.pr = stretch.pr;
+      if (Object.keys(padded).length > 0) props.space = padded;
+
+      // `width` alongside two insets over-constrains the box, and CSS resolves
+      // that by dropping the end inset — which is the pin all over again.
+      if (props.size) {
+        delete (props.size as { w?: unknown }).w;
+        if (Object.keys(props.size).length === 0) delete props.size;
+      }
+
+      /**
+       * The box really has moved, and C2 is right to notice.
+       *
+       * Its padding box now spans the parent where the IR says it started
+       * 41.7px in — while every descendant still lands exactly where Figma put
+       * it, because the offset became the padding. That is a deliberate
+       * departure with a reason, which is what `deviations` is for, and `max: 1`
+       * keeps any OTHER geometry problem on this node failing.
+       */
+      const box = layoutBox(node);
+      props._meta = {
+        ...((props._meta as Record<string, unknown> | undefined) ?? {}),
+        deviations: [
+          {
+            check: "C2",
+            reason:
+              `stretched to follow a fluid parent: the IR's ${Math.round(box.w)}px box at ` +
+              `x=${Math.round(box.x)} became the parent's full width with the side gaps as ` +
+              `padding, so the content sits where the IR puts it and the box does not`,
+            max: 1,
+          },
+        ],
+      };
+
+      ctx.notes.push({
+        kind: "fluid-band",
+        irId: node.id,
+        nodeId: id,
+        message:
+          `spans its fluid parent, so its ${Math.round(box.w)}px width became a ` +
+          `stretch with the side gaps as padding — it now follows the parent's width`,
+      });
+    }
+  }
+
+  /**
+   * A stretched row's children reached both edges at the design width, and
+   * `justify: start` only reproduces that while the row is exactly as wide as
+   * they are. See `childrenFillRow`.
+   */
+  if (stretched && type === "Stack" && props.direction === "row" && props.justify === "start") {
+    if (childrenFillRow(node)) {
+      props.justify = "between";
+      ctx.notes.push({
+        kind: "fluid-band",
+        irId: node.id,
+        nodeId: id,
+        message:
+          `children fill this row edge to edge, so the free space a wider viewport adds is ` +
+          `distributed between them rather than piling up after the last one`,
+      });
+    }
+  }
+
+  // --- leaves ------------------------------------------------------------
+  switch (type) {
+    case "Button":
+      Object.assign(props, buttonProps);
+      break;
+    case "Text": {
+      const t = text(ctx.theme, node);
+      if (!t) {
+        ctx.notes.push({
+          kind: "unresolved-text-style",
+          irId: node.id,
+          nodeId: id,
+          message:
+            `"${node.name}" has no resolvable text style` +
+            (node.text?.styleRef ? ` (Figma: ${node.text.styleRef})` : " (unbound in Figma)") +
+            ` — ${node.text?.fontSize ?? "?"}px/${node.text?.fontWeight ?? "?"} ` +
+            `lh ${node.text?.lineHeight ?? "?"}. Bind it in Figma or add the token.`,
+        });
+        return false;
+      }
+      Object.assign(props, t);
+      /**
+       * A quarter-turned layer reads along the vertical axis, and the DSL has a
+       * word for it. `rotation` is counter-clockwise as Figma reports it, so +90
+       * reads bottom-to-top. Without this a date strip's "21 JULY" laid out as a
+       * horizontal word inside a 30px column and was clipped to "JU".
+       *
+       * Only quarter turns: the DSL cannot say any other angle, and `size`
+       * already reads the transposed box through `layoutBox`.
+       */
+      const turn = quarterTurnOf(node.geometry.rotation);
+      if (turn) props.orientation = turn;
+      break;
+    }
+    case "Image": {
+      /**
+       * A content image. The IR has no CMS binding to offer, so the src is left
+       * for the agent to fill and the renderer draws its placeholder.
+       *
+       * Uploaded assets never reach here: they are not layers in the design,
+       * they are files bound to an element, and they paint that element's
+       * surface. See `applyPaint`.
+       */
+      props.src = "";
+      props.alt = node.name;
+      props.fit = node.image?.fit === "FIT" ? "contain" : "cover";
+      break;
+    }
+    case "Icon": {
+      // No path data in the IR, so the glyph cannot be identified. The layer
+      // name is the only hint, and the renderer draws a visible placeholder
+      // plus a warning for anything unregistered.
+      //
+      // The name comes from the most specific layer in the wrapper chain, not
+      // the outermost: every club crest on the fixtures page sits inside a
+      // component instance called "Teams", and naming them after that made
+      // sixteen different crests indistinguishable.
+      const named = iconNameSource(node);
+      /**
+       * `iconRef`, the same normaliser a Button's glyphs go through.
+       *
+       * These two paths used to disagree: a Button's `iconStart` came out as
+       * `chevron_left` and a bare Icon node from the identical layer came out
+       * as `atom_icon_chevron_left`, so half the design's glyphs missed the
+       * registry on a naming convention rather than on a missing drawing.
+       */
+      const derived = isMeaningful(named.name) ? iconRef(named.name) : "unknown";
+      /**
+       * The tenant's alias, when someone has declared one.
+       *
+       * A layer called `gender_dropdown` IS a right chevron, and no amount of
+       * reading the IR will establish that — the name is a product decision
+       * made in a design file, and the IR carries no path data to fall back on.
+       * So it is declared, exactly like `primitives`: proposed from the layer
+       * name, stored against it, and applied deterministically afterwards. The
+       * compiler never guesses; an undeclared name passes through unchanged and
+       * the note below is what asks for the decision.
+       */
+      props.name = ctx.icons[derived] ?? derived;
+      const { w, h } = layoutBox(node);
+      props.size = raw(Math.max(w, h));
+      const firstFill = (n: FrameIRNode): string | undefined =>
+        n.fill?.tokenRef ?? n.stroke?.tokenRef ?? (n.children ?? []).map(firstFill).find(Boolean);
+      const tone = canonicalRef(ctx.theme, firstFill(node), "color");
+      if (tone) props.tone = tone;
+      if (!ctx.icons[derived]) {
+        ctx.notes.push({
+          kind: "unknown-icon",
+          irId: node.id,
+          nodeId: id,
+          message:
+            `icon "${derived}" from layer name — the IR carries no path data, so verify the glyph. ` +
+            `Map it in the icon alias table if it is a glyph under another name.`,
+        });
+      }
+      break;
+    }
+    case "Divider": {
+      /**
+       * Orientation from `sizing` first, then the box.
+       *
+       * `sizing` leads because it is intent: a rule Figma stretches vertically
+       * is vertical whatever its box says. The box is the fallback for a rule
+       * that is fixed on both axes — and it is now the ROTATED box, so a
+       * quarter-turned line no longer reads as its own opposite. Before
+       * `geometry.rotation` existed this fallback saw the unrotated `w: 110,
+       * h: 0`, called a vertical rule horizontal, and at `width: 100%` crushed
+       * every sibling in the row.
+       */
+      const { w, h } = layoutBox(node);
+      props.orientation =
+        node.layout.sizing.h === "fill"
+          ? "vertical"
+          : node.layout.sizing.w === "fill"
+            ? "horizontal"
+            : w >= h
+              ? "horizontal"
+              : "vertical";
+      const tone = canonicalRef(ctx.theme, node.stroke?.tokenRef ?? node.fill?.tokenRef, "color");
+      if (tone) props.tone = tone;
+      if (node.opacity < 1) {
+        const pct = Math.round(node.opacity * 100);
+        const ref = canonicalRef(ctx.theme, String(pct), "opacity");
+        if (ref) props.opacity = ref;
+      }
+      // A rule's own box is its stroke, not a layout size.
+      delete props.size;
+      break;
+    }
+    case "Box": {
+      /**
+       * A vector too large to be a glyph. The Box keeps its box and its paint,
+       * which is the honest limit of what the IR knows — there is no path data,
+       * so a swoosh is emitted as the rectangle it occupies.
+       *
+       * Worth a note rather than silence, because it is fixable: marking the
+       * layer on the Assets tab ships the real artwork as a bitmap. Before the
+       * size guard existed these became Icons, and the renderer squared them —
+       * one 1368x116 shape painted a 1368x1368 block over the page.
+       */
+      if (isDecorativeVector(node)) {
+        const { w, h } = layoutBox(node);
+        ctx.notes.push({
+          kind: "decorative-vector",
+          irId: node.id,
+          nodeId: id,
+          message:
+            `"${node.name}" is ${Math.round(w)}×${Math.round(h)} of vector artwork — too large ` +
+            `to be an icon, and the IR carries no path data. Emitted as a plain box with its ` +
+            `paint. Mark it as a background asset in Surface Canvas to ship the real shape.`,
+        });
+      }
+      break;
+    }
+    default:
+      break;
+  }
+
+  ctx.nodes.push({ id, parent: parentId, idx, type, src: node.id, props } as FlatNode);
+
+  // --- children ----------------------------------------------------------
+  /**
+   * A Button subsumes what it is drawn from: the label, the glyphs and the
+   * wrapper frames are all `button()`'s inputs, and emitting them again would
+   * paint a second label inside the control.
+   */
+  const leaf =
+    type === "Text" ||
+    type === "Image" ||
+    type === "Icon" ||
+    type === "Divider" ||
+    type === "Button";
+  if (leaf) {
+    // Everything below a leaf is how Figma drew it, not separate content.
+    const below = countIr(node) - 1;
+    ctx.irNodes += below;
+    ctx.absorbed += below;
+    return true;
+  }
+
+  // Does a photo already cover this element? Decided once, not per child.
+  const painted = (ctx.assetsByTarget.get(node.id) ?? []).length > 0;
+
+  /**
+   * Is this node's own width the page's, rather than a number?
+   *
+   * True for a band, for anything Figma set to fill, and for a node that was
+   * just stretched to span a fluid parent — fluidity is inherited, so a row
+   * that follows the band must not hand its children a pinned box either.
+   */
+  const fluid = stretched || (props.size as { w?: unknown } | undefined)?.w === "full";
+
+  let out = 0;
+  for (const child of node.children ?? []) {
+    /**
+     * An element with a background photo has already had its decoration drawn.
+     *
+     * The designer exported that region from Figma, so the gradient plate, the
+     * texture, the facet and the cutout are all IN the image. Emitting them
+     * again paints them on top of the picture that already contains them —
+     * which is what produced a header of dashed placeholders over a photo.
+     *
+     * Text is never absorbed, at any depth. Baking a headline into a bitmap
+     * freezes copy the CMS is supposed to change, and no amount of visual
+     * fidelity is worth that.
+     */
+    const absorbedBackground = painted && !hasText(child);
+
+    if (isFillPlate(child, node) || absorbedBackground) {
+      ctx.irNodes += countIr(child);
+      ctx.absorbed += countIr(child);
+      ctx.notes.push({
+        kind: "absorbed",
+        irId: child.id,
+        nodeId: id,
+        message: absorbedBackground
+          ? `"${child.name}" is already in this element's background image — not emitted on top of it`
+          : `"${child.name}" is a fill plate at the parent's exact size — folded into its surface`,
+      });
+      continue;
+    }
+    // Only a child that actually produced a node consumes an index; S1 requires
+    // siblings to be contiguous from 0, and a skipped child would leave a hole.
+    if (emit(ctx, child, id, out, false, { node, type, fluid })) out += 1;
+  }
+  return true;
+}
+
+/**
+ * Padding shorthands expanded far enough that one inline edge can be rewritten.
+ *
+ * `p` and `px` say the same thing about both edges, and a stretch has a
+ * different number for each. The block axis is left in whatever form `space`
+ * chose, because nothing here touches it.
+ */
+function splitInline(sp: SpaceProps | undefined): SpaceProps {
+  const out: SpaceProps = { ...(sp ?? {}) };
+  if (out.p !== undefined) {
+    out.pt ??= out.p;
+    out.pb ??= out.p;
+    out.pl ??= out.p;
+    out.pr ??= out.p;
+    delete out.p;
+  }
+  if (out.px !== undefined) {
+    out.pl ??= out.px;
+    out.pr ??= out.px;
+    delete out.px;
+  }
+  return out;
+}
+
+/** Fill / stroke / radius / shadow -> a `surface` prop, plus notes. */
+function applyPaint(
+  ctx: Ctx,
+  node: FrameIRNode,
+  props: Record<string, unknown>,
+  id: string,
+): void {
+  // Text colour is `tone`, not a surface; Divider colour likewise.
+  if (node.text !== undefined) return;
+  // A childless image is a leaf — its file goes on `src`, not a surface.
+  if (node.image !== undefined && (node.children ?? []).length === 0) return;
+
+  // A frame whose fill lives on a child plate takes the plate's paint too.
+  const plate = (node.children ?? []).find((c) => isFillPlate(c, node));
+  const source = plate ?? node;
+  let spec: Surface | undefined = specOf(ctx.theme, source);
+
+  /**
+   * Only the marks that actually paint this element's surface become layers.
+   *
+   * The rest are positioned pictures and are emitted as nodes instead. Filtering
+   * with the SAME predicate the absorb decision uses is what keeps a mark from
+   * being counted twice — painted here and emitted there — which is how a plate
+   * ended up rendering both at its position and across the whole parent.
+   */
+  const backgrounds = ctx.assetsByTarget.get(node.id) ?? [];
+
+  if (backgrounds.length > 0) {
+    spec = {
+      ...(spec ?? {}),
+      layers: [
+        ...(spec?.layers ?? []),
+        ...backgrounds.map((background) => ({
+          type: "image" as const,
+          ref: assetRef(background.name),
+          // The designer's choice, not a constant. `cover` for everything is
+          // what rendered a repeating pattern as one stretched copy of itself.
+          fit: surfaceFitOf(background),
+        })),
+      ],
+    };
+    for (const background of backgrounds) {
+      ctx.usedAssets.set(background.name, background);
+      ctx.notes.push({
+        kind: "background-asset",
+        irId: node.id,
+        nodeId: id,
+        message:
+          `background "${background.name}" from "${background.fileName}" — ` +
+          `${assetRef(background.name)}, painted as ${surfaceFitOf(background)}`,
+      });
+    }
+  }
+  if (!spec) {
+    if (source.fill?.raw || source.stroke?.raw) {
+      ctx.notes.push({
+        kind: "unresolved-paint",
+        irId: node.id,
+        nodeId: id,
+        message: `paint ${source.fill?.raw ?? source.stroke?.raw} is not bound to any token in Figma`,
+      });
+    }
+    return;
+  }
+
+  /**
+   * A fill the theme could not name is a LOST paint even when the node still has
+   * a surface. A pill with a radius and a gradient style the theme spells
+   * differently resolves to `{ radius }` — a surface that exists, paints nothing,
+   * and raised no note, because the check above only fires when the whole spec
+   * is empty. The pills on the fixtures strip lost their fill exactly this way.
+   */
+  const lostFill = (source.fill?.tokenRef ?? source.fill?.styleRef) && !spec.layers && !backgrounds.length;
+  if (lostFill) {
+    ctx.notes.push({
+      kind: "unresolved-paint",
+      irId: node.id,
+      nodeId: id,
+      message:
+        `fill "${source.fill?.tokenRef}" matches no colour or gradient token in this theme — ` +
+        `the surface keeps its radius and border but paints no fill. Check the variable's name against the theme.`,
+    });
+  }
+  const suggested = isMeaningful(node.name) ? slug(node.name) : `surface_${slug(id)}`;
+  const ref = ctx.surfaces.resolve(spec, suggested, node.id);
+  props.surface = ref;
+}
+
+export type { Raw };

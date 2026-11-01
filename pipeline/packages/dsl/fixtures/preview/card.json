@@ -1,0 +1,1938 @@
+{
+  "schemaVersion": "1.0.0",
+  "nodes": [
+    {
+      "id": "root",
+      "parent": null,
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:1",
+      "props": {
+        "direction": "column",
+        "gap": "space.4",
+        "size": {
+          "w": "full"
+        }
+      }
+    },
+    {
+      "id": "header",
+      "parent": "root",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:2",
+      "props": {
+        "direction": "row",
+        "align": "center",
+        "justify": "between",
+        "surface": "surface.video_card",
+        "space": {
+          "p": "space.4"
+        }
+      }
+    },
+    {
+      "id": "header_title",
+      "parent": "header",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:3",
+      "props": {
+        "content": "{match.header_title}",
+        "style": "type.h1_bold",
+        "tone": "color.text_invert_high",
+        "textCase": "upper",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "header_button",
+      "parent": "header",
+      "idx": 1,
+      "type": "Button",
+      "src": "synthetic:new:4",
+      "props": {
+        "size": "md",
+        "label": "VIEW MORE",
+        "variant": "outline",
+        "styleN": 3,
+        "action": {
+          "kind": "none"
+        }
+      }
+    },
+    {
+      "id": "carousel",
+      "parent": "root",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:5",
+      "props": {
+        "direction": "column",
+        "gap": "space.3",
+        "align": "stretch",
+        "size": {
+          "w": "full"
+        }
+      }
+    },
+    {
+      "id": "cards_row",
+      "parent": "carousel",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:6",
+      "props": {
+        "direction": "row",
+        "gap": "space.3",
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "controls",
+      "parent": "carousel",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:7",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "center"
+      }
+    },
+    {
+      "id": "prev_button",
+      "parent": "controls",
+      "idx": 0,
+      "type": "Button",
+      "src": "synthetic:new:8",
+      "props": {
+        "size": "sm",
+        "label": "\u2190",
+        "variant": "outline",
+        "styleN": 3,
+        "action": {
+          "kind": "none"
+        }
+      }
+    },
+    {
+      "id": "next_button",
+      "parent": "controls",
+      "idx": 1,
+      "type": "Button",
+      "src": "synthetic:new:9",
+      "props": {
+        "size": "sm",
+        "label": "\u2192",
+        "variant": "outline",
+        "styleN": 3,
+        "action": {
+          "kind": "none"
+        }
+      }
+    },
+    {
+      "id": "c1",
+      "parent": "cards_row",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:10",
+      "props": {
+        "direction": "column",
+        "gap": "space.3",
+        "clip": true,
+        "surface": "surface.fixture_card",
+        "space": {
+          "p": "space.4"
+        },
+        "size": {
+          "w": {
+            "raw": 160,
+            "_unbound": true
+          }
+        }
+      }
+    },
+    {
+      "id": "c1_top",
+      "parent": "c1",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:11",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c1_pill",
+      "parent": "c1_top",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:12",
+      "props": {
+        "direction": "row",
+        "surface": "surface.tag_gender",
+        "space": {
+          "px": "space.2_5"
+        }
+      }
+    },
+    {
+      "id": "c1_pill_text",
+      "parent": "c1_pill",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:13",
+      "props": {
+        "content": "{match.c1_gender}",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_invert_high",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c1_time",
+      "parent": "c1_top",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:14",
+      "props": {
+        "content": "{match.c1_time}",
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c1_score1_row",
+      "parent": "c1",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:15",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c1_score1",
+      "parent": "c1_score1_row",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:16",
+      "props": {
+        "content": "{match.c1_score1}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_high",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c1_balls1",
+      "parent": "c1_score1_row",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:17",
+      "props": {
+        "content": "{match.c1_balls1}",
+        "style": "type.body_sm_regular",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c1_score2_row",
+      "parent": "c1",
+      "idx": 2,
+      "type": "Stack",
+      "src": "synthetic:new:18",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c1_score2",
+      "parent": "c1_score2_row",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:19",
+      "props": {
+        "content": "{match.c1_score2}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c1_balls2",
+      "parent": "c1_score2_row",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:20",
+      "props": {
+        "content": "{match.c1_balls2}",
+        "style": "type.body_sm_regular",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c1_div",
+      "parent": "c1",
+      "idx": 3,
+      "type": "Divider",
+      "src": "synthetic:new:21",
+      "props": {
+        "tone": "color.core_neu_400",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": "c1_result",
+      "parent": "c1",
+      "idx": 4,
+      "type": "Text",
+      "src": "synthetic:new:22",
+      "props": {
+        "content": "{match.c1_result}",
+        "style": "type.body_sm_regular",
+        "tone": "color.text_main_sec",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c2",
+      "parent": "cards_row",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:23",
+      "props": {
+        "direction": "column",
+        "gap": "space.3",
+        "surface": "surface.fixture_card",
+        "space": {
+          "p": "space.4"
+        },
+        "size": {
+          "w": {
+            "raw": 300,
+            "_unbound": true
+          }
+        }
+      }
+    },
+    {
+      "id": "c2_top",
+      "parent": "c2",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:24",
+      "props": {
+        "direction": "row",
+        "align": "center",
+        "justify": "between"
+      }
+    },
+    {
+      "id": "c2_kicker",
+      "parent": "c2_top",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:25",
+      "props": {
+        "content": "{match.c2_kicker}",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_prim",
+        "textCase": "upper",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c2_meta",
+      "parent": "c2_top",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:26",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c2_pill",
+      "parent": "c2_meta",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:27",
+      "props": {
+        "direction": "row",
+        "surface": "surface.tag_gender",
+        "space": {
+          "px": "space.2_5"
+        }
+      }
+    },
+    {
+      "id": "c2_pill_text",
+      "parent": "c2_pill",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:28",
+      "props": {
+        "content": "{match.c2_gender}",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_invert_high",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c2_time",
+      "parent": "c2_meta",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:29",
+      "props": {
+        "content": "{match.c2_time}",
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c2_div1",
+      "parent": "c2",
+      "idx": 1,
+      "type": "Divider",
+      "src": "synthetic:new:30",
+      "props": {
+        "tone": "color.core_neu_400",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": "c2_team1",
+      "parent": "c2",
+      "idx": 2,
+      "type": "Stack",
+      "src": "synthetic:new:31",
+      "props": {
+        "direction": "row",
+        "align": "center",
+        "justify": "between"
+      }
+    },
+    {
+      "id": "c2_team1_name",
+      "parent": "c2_team1",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:32",
+      "props": {
+        "content": "{match.c2_team1}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_main_high",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "c2_team1_col",
+      "parent": "c2_team1",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:33",
+      "props": {
+        "direction": "column",
+        "align": "end"
+      }
+    },
+    {
+      "id": "c2_team1_score",
+      "parent": "c2_team1_col",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:34",
+      "props": {
+        "align": "end",
+        "content": "{match.c2_score1}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_high",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c2_team1_balls",
+      "parent": "c2_team1_col",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:35",
+      "props": {
+        "align": "end",
+        "content": "{match.c2_balls1}",
+        "style": "type.body_sm_regular",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c2_team2",
+      "parent": "c2",
+      "idx": 3,
+      "type": "Stack",
+      "src": "synthetic:new:36",
+      "props": {
+        "direction": "row",
+        "align": "center",
+        "justify": "between"
+      }
+    },
+    {
+      "id": "c2_team2_name",
+      "parent": "c2_team2",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:37",
+      "props": {
+        "content": "{match.c2_team2}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_main_high",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "c2_team2_col",
+      "parent": "c2_team2",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:38",
+      "props": {
+        "direction": "column",
+        "align": "end"
+      }
+    },
+    {
+      "id": "c2_team2_score",
+      "parent": "c2_team2_col",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:39",
+      "props": {
+        "align": "end",
+        "content": "{match.c2_score2}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c2_team2_balls",
+      "parent": "c2_team2_col",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:40",
+      "props": {
+        "align": "end",
+        "content": "{match.c2_balls2}",
+        "style": "type.body_sm_regular",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c2_div2",
+      "parent": "c2",
+      "idx": 4,
+      "type": "Divider",
+      "src": "synthetic:new:41",
+      "props": {
+        "tone": "color.core_neu_400",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": "c2_result",
+      "parent": "c2",
+      "idx": 5,
+      "type": "Text",
+      "src": "synthetic:new:42",
+      "props": {
+        "wrap": true,
+        "content": "{match.c2_result}",
+        "style": "type.body_sm_regular",
+        "tone": "color.text_main_sec",
+        "as": "p"
+      }
+    },
+    {
+      "id": "ribbon1",
+      "parent": "cards_row",
+      "idx": 2,
+      "type": "Stack",
+      "src": "synthetic:new:43",
+      "props": {
+        "direction": "column",
+        "align": "center",
+        "justify": "center",
+        "surface": "surface.date_strip",
+        "size": {
+          "w": {
+            "raw": 40,
+            "_unbound": true
+          }
+        }
+      }
+    },
+    {
+      "id": "ribbon1_text",
+      "parent": "ribbon1",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:44",
+      "props": {
+        "content": "{match.ribbon1_date}",
+        "style": "type.body_sm_bold",
+        "tone": "color.text_invert_high",
+        "textCase": "upper",
+        "as": "p",
+        "orientation": "vertical-up"
+      }
+    },
+    {
+      "id": "c3",
+      "parent": "cards_row",
+      "idx": 3,
+      "type": "Stack",
+      "src": "synthetic:new:45",
+      "props": {
+        "direction": "column",
+        "gap": "space.3",
+        "surface": "surface.fixture_card",
+        "space": {
+          "p": "space.4"
+        },
+        "size": {
+          "w": {
+            "raw": 340,
+            "_unbound": true
+          }
+        }
+      }
+    },
+    {
+      "id": "c3_top",
+      "parent": "c3",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:46",
+      "props": {
+        "direction": "row",
+        "align": "center",
+        "justify": "between"
+      }
+    },
+    {
+      "id": "c3_kicker",
+      "parent": "c3_top",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:47",
+      "props": {
+        "content": "{match.c3_kicker}",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_high",
+        "textCase": "upper",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_meta",
+      "parent": "c3_top",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:48",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c3_pill",
+      "parent": "c3_meta",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:49",
+      "props": {
+        "direction": "row",
+        "surface": "surface.tag_gender",
+        "space": {
+          "px": "space.2_5"
+        }
+      }
+    },
+    {
+      "id": "c3_pill_text",
+      "parent": "c3_pill",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:50",
+      "props": {
+        "content": "{match.c3_gender}",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_invert_high",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_time",
+      "parent": "c3_meta",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:51",
+      "props": {
+        "content": "{match.c3_time}",
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_div1",
+      "parent": "c3",
+      "idx": 1,
+      "type": "Divider",
+      "src": "synthetic:new:52",
+      "props": {
+        "tone": "color.core_neu_400",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": "c3_body",
+      "parent": "c3",
+      "idx": 2,
+      "type": "Stack",
+      "src": "synthetic:new:53",
+      "props": {
+        "direction": "row",
+        "gap": "space.4",
+        "align": "center",
+        "justify": "between"
+      }
+    },
+    {
+      "id": "c3_teams",
+      "parent": "c3_body",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:54",
+      "props": {
+        "direction": "column",
+        "gap": "space.3"
+      }
+    },
+    {
+      "id": "c3_team1",
+      "parent": "c3_teams",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:55",
+      "props": {
+        "content": "{match.c3_team1}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_main_high",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "c3_team2",
+      "parent": "c3_teams",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:56",
+      "props": {
+        "content": "{match.c3_team2}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_main_high",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "c3_right",
+      "parent": "c3_body",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:57",
+      "props": {
+        "direction": "column",
+        "gap": "space.3",
+        "align": "end"
+      }
+    },
+    {
+      "id": "c3_countdown",
+      "parent": "c3_right",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:58",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "start"
+      }
+    },
+    {
+      "id": "c3_days",
+      "parent": "c3_countdown",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:59",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c3_days_num",
+      "parent": "c3_days",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:60",
+      "props": {
+        "content": "{match.cd_days}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_days_label",
+      "parent": "c3_days",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:61",
+      "props": {
+        "content": "DAYS",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_colon1",
+      "parent": "c3_countdown",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:62",
+      "props": {
+        "content": ":",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_hrs",
+      "parent": "c3_countdown",
+      "idx": 2,
+      "type": "Stack",
+      "src": "synthetic:new:63",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c3_hrs_num",
+      "parent": "c3_hrs",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:64",
+      "props": {
+        "content": "{match.cd_hrs}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_hrs_label",
+      "parent": "c3_hrs",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:65",
+      "props": {
+        "content": "HRS",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_colon2",
+      "parent": "c3_countdown",
+      "idx": 3,
+      "type": "Text",
+      "src": "synthetic:new:66",
+      "props": {
+        "content": ":",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_mins",
+      "parent": "c3_countdown",
+      "idx": 4,
+      "type": "Stack",
+      "src": "synthetic:new:67",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c3_mins_num",
+      "parent": "c3_mins",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:68",
+      "props": {
+        "content": "{match.cd_mins}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_mins_label",
+      "parent": "c3_mins",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:69",
+      "props": {
+        "content": "MINS",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_colon3",
+      "parent": "c3_countdown",
+      "idx": 5,
+      "type": "Text",
+      "src": "synthetic:new:70",
+      "props": {
+        "content": ":",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_secs",
+      "parent": "c3_countdown",
+      "idx": 6,
+      "type": "Stack",
+      "src": "synthetic:new:71",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c3_secs_num",
+      "parent": "c3_secs",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:72",
+      "props": {
+        "content": "{match.cd_secs}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_secs_label",
+      "parent": "c3_secs",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:73",
+      "props": {
+        "content": "SEC",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c3_tickets",
+      "parent": "c3_right",
+      "idx": 1,
+      "type": "Button",
+      "src": "synthetic:new:74",
+      "props": {
+        "size": "sm",
+        "label": "GET TICKETS",
+        "variant": "filled",
+        "styleN": 2,
+        "action": {
+          "kind": "none"
+        }
+      }
+    },
+    {
+      "id": "c3_div2",
+      "parent": "c3",
+      "idx": 3,
+      "type": "Divider",
+      "src": "synthetic:new:75",
+      "props": {
+        "tone": "color.core_neu_400",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": "c3_venue",
+      "parent": "c3",
+      "idx": 4,
+      "type": "Text",
+      "src": "synthetic:new:76",
+      "props": {
+        "content": "{match.c3_venue}",
+        "style": "type.body_sm_regular",
+        "tone": "color.text_main_sec",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4",
+      "parent": "cards_row",
+      "idx": 4,
+      "type": "Stack",
+      "src": "synthetic:new:77",
+      "props": {
+        "direction": "column",
+        "gap": "space.3",
+        "surface": "surface.fixture_card",
+        "space": {
+          "p": "space.4"
+        },
+        "size": {
+          "w": {
+            "raw": 340,
+            "_unbound": true
+          }
+        }
+      }
+    },
+    {
+      "id": "c4_top",
+      "parent": "c4",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:78",
+      "props": {
+        "direction": "row",
+        "align": "center",
+        "justify": "between"
+      }
+    },
+    {
+      "id": "c4_kicker",
+      "parent": "c4_top",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:79",
+      "props": {
+        "content": "{match.c4_kicker}",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_high",
+        "textCase": "upper",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_meta",
+      "parent": "c4_top",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:80",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c4_pill",
+      "parent": "c4_meta",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:81",
+      "props": {
+        "direction": "row",
+        "surface": "surface.tag_gender",
+        "space": {
+          "px": "space.2_5"
+        }
+      }
+    },
+    {
+      "id": "c4_pill_text",
+      "parent": "c4_pill",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:82",
+      "props": {
+        "content": "{match.c4_gender}",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_invert_high",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_time",
+      "parent": "c4_meta",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:83",
+      "props": {
+        "content": "{match.c4_time}",
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_div1",
+      "parent": "c4",
+      "idx": 1,
+      "type": "Divider",
+      "src": "synthetic:new:84",
+      "props": {
+        "tone": "color.core_neu_400",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": "c4_body",
+      "parent": "c4",
+      "idx": 2,
+      "type": "Stack",
+      "src": "synthetic:new:85",
+      "props": {
+        "direction": "row",
+        "gap": "space.4",
+        "align": "center",
+        "justify": "between"
+      }
+    },
+    {
+      "id": "c4_teams",
+      "parent": "c4_body",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:86",
+      "props": {
+        "direction": "column",
+        "gap": "space.3"
+      }
+    },
+    {
+      "id": "c4_team1",
+      "parent": "c4_teams",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:87",
+      "props": {
+        "content": "{match.c4_team1}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_main_high",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "c4_team2",
+      "parent": "c4_teams",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:88",
+      "props": {
+        "content": "{match.c4_team2}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_main_high",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "c4_right",
+      "parent": "c4_body",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:89",
+      "props": {
+        "direction": "column",
+        "gap": "space.3",
+        "align": "end"
+      }
+    },
+    {
+      "id": "c4_countdown",
+      "parent": "c4_right",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:90",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "start"
+      }
+    },
+    {
+      "id": "c4_days",
+      "parent": "c4_countdown",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:91",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c4_days_num",
+      "parent": "c4_days",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:92",
+      "props": {
+        "content": "{match.cd_days}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_days_label",
+      "parent": "c4_days",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:93",
+      "props": {
+        "content": "DAYS",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_colon1",
+      "parent": "c4_countdown",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:94",
+      "props": {
+        "content": ":",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_hrs",
+      "parent": "c4_countdown",
+      "idx": 2,
+      "type": "Stack",
+      "src": "synthetic:new:95",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c4_hrs_num",
+      "parent": "c4_hrs",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:96",
+      "props": {
+        "content": "{match.cd_hrs}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_hrs_label",
+      "parent": "c4_hrs",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:97",
+      "props": {
+        "content": "HRS",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_colon2",
+      "parent": "c4_countdown",
+      "idx": 3,
+      "type": "Text",
+      "src": "synthetic:new:98",
+      "props": {
+        "content": ":",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_mins",
+      "parent": "c4_countdown",
+      "idx": 4,
+      "type": "Stack",
+      "src": "synthetic:new:99",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c4_mins_num",
+      "parent": "c4_mins",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:100",
+      "props": {
+        "content": "{match.cd_mins}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_mins_label",
+      "parent": "c4_mins",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:101",
+      "props": {
+        "content": "MINS",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_colon3",
+      "parent": "c4_countdown",
+      "idx": 5,
+      "type": "Text",
+      "src": "synthetic:new:102",
+      "props": {
+        "content": ":",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_secs",
+      "parent": "c4_countdown",
+      "idx": 6,
+      "type": "Stack",
+      "src": "synthetic:new:103",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c4_secs_num",
+      "parent": "c4_secs",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:104",
+      "props": {
+        "content": "{match.cd_secs}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_secs_label",
+      "parent": "c4_secs",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:105",
+      "props": {
+        "content": "SEC",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c4_tickets",
+      "parent": "c4_right",
+      "idx": 1,
+      "type": "Button",
+      "src": "synthetic:new:106",
+      "props": {
+        "size": "sm",
+        "label": "GET TICKETS",
+        "variant": "filled",
+        "styleN": 2,
+        "action": {
+          "kind": "none"
+        }
+      }
+    },
+    {
+      "id": "c4_div2",
+      "parent": "c4",
+      "idx": 3,
+      "type": "Divider",
+      "src": "synthetic:new:107",
+      "props": {
+        "tone": "color.core_neu_400",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": "c4_venue",
+      "parent": "c4",
+      "idx": 4,
+      "type": "Text",
+      "src": "synthetic:new:108",
+      "props": {
+        "content": "{match.c4_venue}",
+        "style": "type.body_sm_regular",
+        "tone": "color.text_main_sec",
+        "as": "p"
+      }
+    },
+    {
+      "id": "ribbon2",
+      "parent": "cards_row",
+      "idx": 5,
+      "type": "Stack",
+      "src": "synthetic:new:109",
+      "props": {
+        "direction": "column",
+        "align": "center",
+        "justify": "center",
+        "surface": "surface.date_strip",
+        "size": {
+          "w": {
+            "raw": 40,
+            "_unbound": true
+          }
+        }
+      }
+    },
+    {
+      "id": "ribbon2_text",
+      "parent": "ribbon2",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:110",
+      "props": {
+        "content": "{match.ribbon2_date}",
+        "style": "type.body_sm_bold",
+        "tone": "color.text_invert_high",
+        "textCase": "upper",
+        "as": "p",
+        "orientation": "vertical-up"
+      }
+    },
+    {
+      "id": "c5",
+      "parent": "cards_row",
+      "idx": 6,
+      "type": "Stack",
+      "src": "synthetic:new:111",
+      "props": {
+        "direction": "column",
+        "gap": "space.3",
+        "surface": "surface.fixture_card",
+        "space": {
+          "p": "space.4"
+        },
+        "size": {
+          "w": {
+            "raw": 340,
+            "_unbound": true
+          }
+        }
+      }
+    },
+    {
+      "id": "c5_top",
+      "parent": "c5",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:112",
+      "props": {
+        "direction": "row",
+        "align": "center",
+        "justify": "between"
+      }
+    },
+    {
+      "id": "c5_kicker",
+      "parent": "c5_top",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:113",
+      "props": {
+        "content": "{match.c5_kicker}",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_high",
+        "textCase": "upper",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_meta",
+      "parent": "c5_top",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:114",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c5_pill",
+      "parent": "c5_meta",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:115",
+      "props": {
+        "direction": "row",
+        "surface": "surface.tag_gender",
+        "space": {
+          "px": "space.2_5"
+        }
+      }
+    },
+    {
+      "id": "c5_pill_text",
+      "parent": "c5_pill",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:116",
+      "props": {
+        "content": "{match.c5_gender}",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_invert_high",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_time",
+      "parent": "c5_meta",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:117",
+      "props": {
+        "content": "{match.c5_time}",
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_div1",
+      "parent": "c5",
+      "idx": 1,
+      "type": "Divider",
+      "src": "synthetic:new:118",
+      "props": {
+        "tone": "color.core_neu_400",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": "c5_body",
+      "parent": "c5",
+      "idx": 2,
+      "type": "Stack",
+      "src": "synthetic:new:119",
+      "props": {
+        "direction": "row",
+        "gap": "space.4",
+        "align": "center",
+        "justify": "between"
+      }
+    },
+    {
+      "id": "c5_teams",
+      "parent": "c5_body",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:120",
+      "props": {
+        "direction": "column",
+        "gap": "space.3"
+      }
+    },
+    {
+      "id": "c5_team1",
+      "parent": "c5_teams",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:121",
+      "props": {
+        "content": "{match.c5_team1}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_main_high",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "c5_team2",
+      "parent": "c5_teams",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:122",
+      "props": {
+        "content": "{match.c5_team2}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_main_high",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "c5_right",
+      "parent": "c5_body",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:new:123",
+      "props": {
+        "direction": "column",
+        "gap": "space.3",
+        "align": "end"
+      }
+    },
+    {
+      "id": "c5_countdown",
+      "parent": "c5_right",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:124",
+      "props": {
+        "direction": "row",
+        "gap": "space.2_5",
+        "align": "start"
+      }
+    },
+    {
+      "id": "c5_days",
+      "parent": "c5_countdown",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:125",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c5_days_num",
+      "parent": "c5_days",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:126",
+      "props": {
+        "content": "{match.cd_days}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_days_label",
+      "parent": "c5_days",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:127",
+      "props": {
+        "content": "DAYS",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_colon1",
+      "parent": "c5_countdown",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:128",
+      "props": {
+        "content": ":",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_hrs",
+      "parent": "c5_countdown",
+      "idx": 2,
+      "type": "Stack",
+      "src": "synthetic:new:129",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c5_hrs_num",
+      "parent": "c5_hrs",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:130",
+      "props": {
+        "content": "{match.cd_hrs}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_hrs_label",
+      "parent": "c5_hrs",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:131",
+      "props": {
+        "content": "HRS",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_colon2",
+      "parent": "c5_countdown",
+      "idx": 3,
+      "type": "Text",
+      "src": "synthetic:new:132",
+      "props": {
+        "content": ":",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_mins",
+      "parent": "c5_countdown",
+      "idx": 4,
+      "type": "Stack",
+      "src": "synthetic:new:133",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c5_mins_num",
+      "parent": "c5_mins",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:134",
+      "props": {
+        "content": "{match.cd_mins}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_mins_label",
+      "parent": "c5_mins",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:135",
+      "props": {
+        "content": "MINS",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_colon3",
+      "parent": "c5_countdown",
+      "idx": 5,
+      "type": "Text",
+      "src": "synthetic:new:136",
+      "props": {
+        "content": ":",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_secs",
+      "parent": "c5_countdown",
+      "idx": 6,
+      "type": "Stack",
+      "src": "synthetic:new:137",
+      "props": {
+        "direction": "column",
+        "align": "center"
+      }
+    },
+    {
+      "id": "c5_secs_num",
+      "parent": "c5_secs",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:138",
+      "props": {
+        "content": "{match.cd_secs}",
+        "style": "type.h3_bold",
+        "tone": "color.text_main_prim",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_secs_label",
+      "parent": "c5_secs",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:139",
+      "props": {
+        "content": "SEC",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c5_tickets",
+      "parent": "c5_right",
+      "idx": 1,
+      "type": "Button",
+      "src": "synthetic:new:140",
+      "props": {
+        "size": "sm",
+        "label": "GET TICKETS",
+        "variant": "filled",
+        "styleN": 2,
+        "action": {
+          "kind": "none"
+        }
+      }
+    },
+    {
+      "id": "c5_div2",
+      "parent": "c5",
+      "idx": 3,
+      "type": "Divider",
+      "src": "synthetic:new:141",
+      "props": {
+        "tone": "color.core_neu_400",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": "c5_venue",
+      "parent": "c5",
+      "idx": 4,
+      "type": "Text",
+      "src": "synthetic:new:142",
+      "props": {
+        "content": "{match.c5_venue}",
+        "style": "type.body_sm_regular",
+        "tone": "color.text_main_sec",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c6",
+      "parent": "cards_row",
+      "idx": 7,
+      "type": "Stack",
+      "src": "synthetic:new:143",
+      "props": {
+        "direction": "column",
+        "gap": "space.3",
+        "justify": "between",
+        "clip": true,
+        "surface": "surface.fixture_card",
+        "space": {
+          "p": "space.4"
+        },
+        "size": {
+          "w": {
+            "raw": 80,
+            "_unbound": true
+          }
+        }
+      }
+    },
+    {
+      "id": "c6_pill",
+      "parent": "c6",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:new:144",
+      "props": {
+        "direction": "row",
+        "surface": "surface.tag_gender",
+        "space": {
+          "px": "space.2_5"
+        }
+      }
+    },
+    {
+      "id": "c6_pill_text",
+      "parent": "c6_pill",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:new:145",
+      "props": {
+        "content": "{match.c6_gender}",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_invert_high",
+        "as": "p"
+      }
+    },
+    {
+      "id": "c6_venue",
+      "parent": "c6",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:new:146",
+      "props": {
+        "content": "{match.c6_venue}",
+        "style": "type.body_sm_regular",
+        "tone": "color.text_main_sec",
+        "as": "p",
+        "truncate": 1
+      }
+    }
+  ]
+}

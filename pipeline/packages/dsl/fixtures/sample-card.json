@@ -1,0 +1,224 @@
+{
+  "schemaVersion": "1.0.0",
+  "nodes": [
+    {
+      "id": "card",
+      "parent": null,
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:sample-card:0",
+      "props": {
+        "direction": "column",
+        "align": "stretch",
+        "gap": "space.4",
+        "surface": "surface.fixture_shell",
+        "space": { "p": "space.5" },
+        "size": {
+          "w": { "raw": 360, "_unbound": true }
+        }
+      }
+    },
+    {
+      "id": "competition",
+      "parent": "card",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:sample-card:1",
+      "props": {
+        "content": "{match.competition}",
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "textCase": "upper",
+        "as": "p"
+      }
+    },
+    {
+      "id": "home",
+      "parent": "card",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:sample-card:2",
+      "props": {
+        "content": "{match.home}",
+        "style": "type.h1_bold",
+        "tone": "color.text_main_high",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "versus",
+      "parent": "card",
+      "idx": 2,
+      "type": "Text",
+      "src": "synthetic:sample-card:3",
+      "props": {
+        "content": "vs",
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_low",
+        "as": "p"
+      }
+    },
+    {
+      "id": "away",
+      "parent": "card",
+      "idx": 3,
+      "type": "Text",
+      "src": "synthetic:sample-card:4",
+      "props": {
+        "content": "{match.away}",
+        "style": "type.h1_bold",
+        "tone": "color.text_main_high",
+        "as": "h2"
+      }
+    },
+    {
+      "id": "rule",
+      "parent": "card",
+      "idx": 4,
+      "type": "Divider",
+      "src": "synthetic:sample-card:5",
+      "props": {
+        "orientation": "horizontal",
+        "tone": "color.core_neu_400"
+      }
+    },
+    {
+      "id": "strip",
+      "parent": "card",
+      "idx": 5,
+      "type": "Stack",
+      "src": "synthetic:sample-card:6",
+      "props": {
+        "direction": "row",
+        "justify": "between",
+        "align": "center",
+        "gap": "space.3",
+        "surface": "surface.stat_strip",
+        "space": { "px": "space.4", "py": "space.2_5" }
+      }
+    },
+    {
+      "id": "format_col",
+      "parent": "strip",
+      "idx": 0,
+      "type": "Stack",
+      "src": "synthetic:sample-card:7",
+      "props": {
+        "direction": "column",
+        "align": "center",
+        "gap": "space.2_5"
+      }
+    },
+    {
+      "id": "format_label",
+      "parent": "format_col",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:sample-card:8",
+      "props": {
+        "content": "Format",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_sec_high",
+        "textCase": "upper",
+        "align": "center",
+        "as": "p"
+      }
+    },
+    {
+      "id": "format_value",
+      "parent": "format_col",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:sample-card:9",
+      "props": {
+        "content": "{match.format}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_prim_high",
+        "align": "center",
+        "as": "p"
+      }
+    },
+    {
+      "id": "when_col",
+      "parent": "strip",
+      "idx": 1,
+      "type": "Stack",
+      "src": "synthetic:sample-card:10",
+      "props": {
+        "direction": "column",
+        "align": "center",
+        "gap": "space.2_5"
+      }
+    },
+    {
+      "id": "when_label",
+      "parent": "when_col",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:sample-card:11",
+      "props": {
+        "content": "Kickoff",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_sec_high",
+        "textCase": "upper",
+        "align": "center",
+        "as": "p"
+      }
+    },
+    {
+      "id": "when_value",
+      "parent": "when_col",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:sample-card:12",
+      "props": {
+        "content": "{match.date} · {match.kickoff}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_prim_high",
+        "align": "center",
+        "as": "p"
+      }
+    },
+    {
+      "id": "venue_col",
+      "parent": "strip",
+      "idx": 2,
+      "type": "Stack",
+      "src": "synthetic:sample-card:13",
+      "props": {
+        "direction": "column",
+        "align": "center",
+        "gap": "space.2_5"
+      }
+    },
+    {
+      "id": "venue_label",
+      "parent": "venue_col",
+      "idx": 0,
+      "type": "Text",
+      "src": "synthetic:sample-card:14",
+      "props": {
+        "content": "Venue",
+        "style": "type.body_xs_bold",
+        "tone": "color.text_sec_high",
+        "textCase": "upper",
+        "align": "center",
+        "as": "p"
+      }
+    },
+    {
+      "id": "venue_value",
+      "parent": "venue_col",
+      "idx": 1,
+      "type": "Text",
+      "src": "synthetic:sample-card:15",
+      "props": {
+        "content": "{match.venue}",
+        "style": "type.body_md_bold",
+        "tone": "color.text_prim_high",
+        "align": "center",
+        "as": "p"
+      }
+    }
+  ]
+}

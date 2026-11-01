@@ -2,3 +2,24 @@ packages:
   - "packages/*"
   - "agents/*"
   - "apps/*"
+  - "pipeline/packages/*"
+  - "pipeline/apps/*"
+
+onlyBuiltDependencies:
+  - esbuild
+
+# The pipeline's rendering and build stack, pinned to what the `trial` lockfile resolved when it
+# moved here (ADR 0020). playwright picks the Chromium that renders every pixel the agents
+# measure against, so a drift here moves the numbers.
+overrides:
+  playwright: 1.62.1
+  playwright-core: 1.62.1
+  react: 19.2.8
+  react-dom: 19.2.8
+  "@types/react": 19.2.18
+  "@types/react-dom": 19.2.4
+  next: 15.5.23
+  bullmq: 5.81.3
+  fastify: 5.12.0
+  "@electric-sql/react": 1.0.55
+  "@figma/plugin-typings": 1.132.0

@@ -2,7 +2,7 @@
   "name": "dugout",
   "version": "0.0.0",
   "private": true,
-  "description": "Dugout \u2014 FanOS agent harness, agents and evals",
+  "description": "Dugout — FanOS agent harness, agents and evals",
   "type": "module",
   "packageManager": "pnpm@10.7.1",
   "engines": {
@@ -33,7 +33,12 @@
     "infra:up": "docker compose up -d --wait",
     "infra:down": "docker compose down",
     "infra:reset": "docker compose down -v",
-    "card-match:vision": "tsx agents/card-match/scripts/vision-bench.ts"
+    "card-match:vision": "tsx agents/card-match/scripts/vision-bench.ts",
+    "pipeline:build": "pnpm --filter \"./pipeline/**\" -r build",
+    "pipeline:infra:up": "docker compose -f pipeline/apps/api/docker-compose.yml up -d --wait",
+    "pipeline:infra:down": "docker compose -f pipeline/apps/api/docker-compose.yml down",
+    "pipeline:db:migrate": "pnpm --filter @fanos/api db:migrate",
+    "pipeline:dev": "pnpm --parallel --filter @fanos/surface-studio --filter @fanos/web --filter @fanos/api run \"/^dev(:worker)?$/\""
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.3",

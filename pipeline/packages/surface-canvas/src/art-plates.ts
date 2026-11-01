@@ -1,0 +1,111 @@
+/**
+ * Which layers get a screenshot of their own.
+ *
+ * The export used to screenshot only the root's direct children: the sections.
+ * Everything below that was inside someone else's picture, so a masked photo, a
+ * crest and an icon were only ever seen baked into a whole section, with the
+ * text above them and the cards beside them in the same pixels. Nothing
+ * downstream could cut one out cleanly, and the picture it did cut carried
+ * whatever else was there.
+ *
+ * This picks the layers that are ART: the ones nothing downstream can build from
+ * the IR, because the IR has no path data and no bitmap bytes. A layer of its
+ * own is exactly that layer, nothing else in it.
+ *
+ *   root    the whole frame, with its own fill, which no section picture holds
+ *   mask    a layer that CONTAINS a mask. Its export is the masked result, which
+ *           is the only place the mask's effect can be seen (IR 1.9.0 `isMask`)
+ *   image   a layer painted with a bitmap and holding no text
+ *   vector  the largest subtree made only of paths: a crest, an icon, a swoosh
+ *
+ * Whatever sits inside a picked mask layer is not picked on its own: the mask's
+ * picture already has it, in the shape the design shows.
+ *
+ * PURE. No Figma.
+ */
+import { countPaths, hasText, isVectorOnly } from "./ir/artwork.js";
+import type { FrameIRNode } from "./ir/schema.js";
+
+export type ArtKind = "root" | "mask" | "image" | "vector";
+
+export interface ArtPick {
+  id: string;
+  name: string;
+  kind: ArtKind;
+  /** Layout box, px. */
+  w: number;
+  h: number;
+}
+
+/** The most art screenshots one export carries, root and masks first. */
+export const MAX_ART_PLATES = 120;
+
+/** A side shorter than this is a rule or a dot, which compiles as a Divider. */
+const MIN_THICK_PX = 3;
+/** And one smaller than this on both sides is too small to be worth a picture. */
+const MIN_ART_PX = 8;
+
+const PRIORITY: Record<ArtKind, number> = { root: 0, mask: 1, image: 2, vector: 3 };
+
+export interface ArtSelection {
+  picks: ArtPick[];
+  /** How many layers qualified, before the cap. */
+  candidates: number;
+}
+
+export function selectArtPlates(
+  root: FrameIRNode,
+  opts: { max?: number; skip?: ReadonlySet<string> } = {},
+): ArtSelection {
+  const max = opts.max ?? MAX_ART_PLATES;
+  const skip = opts.skip ?? new Set<string>();
+  const found: ArtPick[] = [];
+
+  const pick = (n: FrameIRNode, kind: ArtKind) =>
+    found.push({
+      id: n.id,
+      name: n.name,
+      kind,
+      w: n.geometry.bbox.w,
+      h: n.geometry.bbox.h,
+    });
+
+  const big = (n: FrameIRNode) => {
+    const { w, h } = n.geometry.bbox;
+    return Math.max(w, h) >= MIN_ART_PX && Math.min(w, h) >= MIN_THICK_PX;
+  };
+
+  const visit = (n: FrameIRNode, isRoot: boolean) => {
+    if (n.opacity === 0 || n.extractionError) return;
+    if (isRoot) {
+      pick(n, "root");
+    } else if ((n.children ?? []).some((c) => c.isMask === true) && big(n)) {
+      // everything inside is in this layer's picture, in the shape the design shows
+      if (!skip.has(n.id)) pick(n, "mask");
+      return;
+    } else if (n.image?.hasImageFill && !hasText(n) && big(n)) {
+      if (!skip.has(n.id)) pick(n, "image");
+      return;
+    } else if (isVectorOnly(n) && countPaths(n) >= 1 && big(n)) {
+      if (!skip.has(n.id)) pick(n, "vector");
+      return;
+    }
+    for (const child of n.children ?? []) visit(child, false);
+  };
+  visit(root, true);
+
+  // the root is always first; after it, what the design does with the most room and the most
+  // risk of being baked into something else
+  found.sort(
+    (a, b) => PRIORITY[a.kind] - PRIORITY[b.kind] || b.w * b.h - a.w * a.h,
+  );
+  return { picks: found.slice(0, max), candidates: found.length };
+}
+
+/** The file name a plate is stored under: kind first, so a listing groups. */
+export function artPlateName(pick: ArtPick, sanitized: string): string {
+  return `art-${pick.kind}-${sanitized}-${pick.id.replace(/:/g, "-")}.png`;
+}
+
+/** Plate names that are art pictures, which a consumer cuts from and does not measure. */
+export const ART_PLATE_PREFIX = "art-";
