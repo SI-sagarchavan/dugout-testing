@@ -142,6 +142,7 @@ const VALUE_FLAGS = new Set([
   "--fork",
   "--from",
   "--model",
+  "--effort",
   "--reject",
   "--changes",
 ]);

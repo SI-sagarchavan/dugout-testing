@@ -9,6 +9,7 @@ import {
   createScriptedModel,
   RunInterrupted,
   scriptedModelConfig,
+  TransientModelError,
 } from "@dugout/core";
 import { createPool, withTenant } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
@@ -54,6 +55,8 @@ const entry = (client: () => ModelClient): AgentEntry => ({
       runsDir,
       draftsDir: join(runsDir, "drafts"),
       consolidate: false,
+      // a transient model error is retried at once, so the tests don't wait
+      retryDelayMs: () => 0,
     })(opts),
 });
 /** One worker process. Two of them with the same database are a restart, or a second worker. */
@@ -97,7 +100,7 @@ const lastType = (type: RunEvent["type"]) => (es: RunEvent[]) => es.at(-1)?.type
 const runRow = (runId: string) =>
   withTenant(pool, TENANT, async (db) => {
     const { rows } = await db.query(
-      "select status, lease_owner, lease_until, attempts, decision from runs where id = $1",
+      "select status, lease_owner, lease_until, attempts, decision, model from runs where id = $1",
       [runId],
     );
     return rows[0] as {
@@ -106,6 +109,7 @@ const runRow = (runId: string) =>
       lease_until: Date | null;
       attempts: number;
       decision: unknown;
+      model: string | null;
     };
   });
 const insertRun = (runId: string, leaseOwner: string) =>
@@ -128,6 +132,16 @@ const waitingCall = (es: RunEvent[]) =>
 const approve = { approved: true as const, by: "editor" };
 
 describe("workers", () => {
+  it("queue a run on the model, at the effort, it was asked to use", async () => {
+    const runId = await queue.start(TENANT, "match-preview", INPUT, { model: "haiku@low" });
+    expect(await runRow(runId)).toMatchObject({ status: "queued", model: "haiku@low" });
+    // no worker is meant to run it
+    await withTenant(pool, TENANT, (db) => db.query("delete from runs where id = $1", [runId]));
+    await expect(
+      queue.start(TENANT, "match-preview", INPUT, { model: "nova-micro@high" }),
+    ).rejects.toThrow("takes no effort");
+  });
+
   it("start a queued run, and another worker finishes it once its approval is decided", async () => {
     const first = workerWith(writerModel);
     const runId = await queue.start(TENANT, "match-preview", INPUT);
@@ -207,6 +221,43 @@ describe("workers", () => {
     expect(
       all.filter((e) => e.type === "tool.started" && e.data.tool === "fixtures.get"),
     ).toHaveLength(1);
+  });
+
+  it("pick up a run whose model keeps throwing transient errors, and finish it once the model recovers", async () => {
+    let recovered = false;
+    const inner = writerModel();
+    const throttled = (): ModelClient => ({
+      async complete(req, onToken, onToolInput) {
+        // the first turn is answered; the second is throttled until the model "recovers"
+        if (!recovered && req.messages.filter((m) => m.role === "assistant").length === 1) {
+          throw new TransientModelError("Bedrock ThrottlingException: slow down");
+        }
+        return inner.complete(req, onToken, onToolInput);
+      },
+    });
+    const leaseMs = 600;
+    const first = workerWith(throttled, { leaseMs });
+    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    await first.poll();
+    await first.idle();
+    // not failed: the error went to the worker, and the saved run waits for another try
+    expect(await runRow(runId)).toMatchObject({ status: "running" });
+    expect((await events.read(runId, 0)).some((e) => e.type === "run.failed")).toBe(false);
+    expect(errors.at(-1)).toBeInstanceOf(TransientModelError);
+
+    recovered = true;
+    await sleep(leaseMs + 100);
+    expect(await first.poll()).toContain(runId);
+    const resumed = await eventsUntil(runId, lastType("approval.requested"));
+    expect(resumed.find((e) => e.type === "run.resumed")).toMatchObject({
+      data: { reason: "recovery" },
+    });
+    expect(await queue.decide(TENANT, runId, waitingCall(resumed), approve)).toBeDefined();
+    await first.poll();
+    await first.idle();
+    const all = await events.read(runId, 0);
+    contiguous(all);
+    expect(all.at(-1)).toMatchObject({ type: "run.completed", data: { status: "completed" } });
   });
 
   it("hand their runs to another worker when they stop", async () => {
@@ -323,7 +374,7 @@ describe("workers", () => {
       seq: 1,
       at: new Date().toISOString(),
       type: "run.started",
-      data: { agentId: "match-preview", agentVersion: 1, tenantId: TENANT, input: INPUT },
+      data: { agentId: "match-preview", agentVersion: 2, tenantId: TENANT, input: INPUT },
     });
 
     const sweeper = workerWith(writerModel);
@@ -352,7 +403,7 @@ describe("workers", () => {
     const checkpoint: RunCheckpoint = {
       version: 1,
       agentId: "match-preview",
-      agentVersion: 1,
+      agentVersion: 2,
       step: 0,
       usage: {
         inputTokens: 0,

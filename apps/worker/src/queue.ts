@@ -53,14 +53,24 @@ export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
         return rows;
       }),
 
-    /** Queues a run; a worker starts it. The input must already be checked against the agent's schema. */
-    async start(tenantId: string, agentId: string, input: unknown) {
+    /**
+     * Queues a run; a worker starts it. The input must already be checked against the agent's
+     * schema. `model` is a name in the model list, with an effort as `name@effort`, run in place of
+     * the spec's.
+     */
+    async start(
+      tenantId: string,
+      agentId: string,
+      input: unknown,
+      options: { model?: string } = {},
+    ) {
+      if (options.model) modelEntry(loadModelConfig(), options.model);
       const runId = randomUUID();
       await withTenant(opts.pool, tenantId, (db) =>
         db.query(
-          `insert into runs (id, tenant_id, agent_id, status, input)
-           values ($1, $2, $3, 'queued', $4)`,
-          [runId, tenantId, agentId, input],
+          `insert into runs (id, tenant_id, agent_id, status, input, model)
+           values ($1, $2, $3, 'queued', $4, $5)`,
+          [runId, tenantId, agentId, input, options.model ?? null],
         ),
       );
       return runId;

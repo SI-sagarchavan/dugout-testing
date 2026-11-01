@@ -1,4 +1,9 @@
-import type { ApprovalDecision, ApprovalRequest, RunEvent } from "@dugout/contracts";
+import {
+  type ApprovalDecision,
+  type ApprovalRequest,
+  AUTO_APPROVED,
+  type RunEvent,
+} from "@dugout/contracts";
 import type { AnyAgent } from "@dugout/sdk";
 import { endsInvocation, type RunQueue } from "@dugout/worker";
 import pc from "picocolors";
@@ -33,6 +38,11 @@ export interface SessionOptions {
   terminal: Terminal;
   /** Who decides the approvals. */
   by: string;
+  /**
+   * Approves each approval request itself, without asking. The request stays in the run's events
+   * and the decision is recorded as made by `by` (auto), so a run can be traced to who chose this.
+   */
+  autoApprove?: boolean;
   signal: AbortSignal;
   /** How long to wait for a worker before saying none has picked the run up. */
   hintMs?: number;
@@ -80,6 +90,14 @@ export async function followRun(opts: SessionOptions): Promise<Ending | undefine
     // an approval replayed from earlier in the run was decided already: carry on past it
     if ((await queue.waitingFor(tenantId, runId)) !== last.data.callId) continue;
     const shown = present(last.data);
+    if (opts.autoApprove) {
+      terminal.line(dim(`· approved without asking: ${last.data.tool}`));
+      const auto = { approved: true as const, by: `${opts.by}${AUTO_APPROVED}` };
+      if ((await queue.decide(tenantId, runId, last.data.callId, auto)) === undefined) {
+        terminal.line(dim("· this approval was already decided elsewhere"));
+      }
+      continue;
+    }
     if (terminal.panel) terminal.panel(shown);
     else terminal.line(`\n\n${shown}`);
     const decision = await askDecision(terminal, opts.by);
@@ -133,18 +151,21 @@ async function askChoice(terminal: Terminal, by: string): Promise<ApprovalDecisi
 const LIVE_TAIL = 64;
 
 /** Shows a run's events; streamed text as it comes, the rest as dim notes on lines of their own. */
-function shower(terminal: Terminal) {
+export function shower(terminal: Terminal) {
   let midLine = false;
   // The model writes a tool call for a long time before tool.started. That call's text stays on
   // one line and the tail moves, instead of the terminal sitting still until the call is done.
   let liveTool = "";
-  let liveStep = 0;
+  let liveCall = "";
   let liveText = "";
+  // Calls already on a line of their own, which tool.started doesn't print again.
+  const streamed = new Set<string>();
   let liveDrawn = false;
   const finishLive = () => {
     if (!liveDrawn) return;
     terminal.write("\n");
     liveTool = "";
+    liveCall = "";
     liveText = "";
     liveDrawn = false;
     midLine = false;
@@ -170,16 +191,19 @@ function shower(terminal: Terminal) {
       terminal.write(e.data.text);
       midLine = !e.data.text.endsWith("\n");
     } else if (e.type === "tool.input.delta") {
-      if (liveTool && (liveTool !== e.data.tool || liveStep !== e.data.step)) finishLive();
+      // A turn can make several calls, and each gets its own line.
+      if (liveCall && liveCall !== e.data.callId) finishLive();
       liveTool = e.data.tool;
-      liveStep = e.data.step;
+      liveCall = e.data.callId;
       liveText += e.data.text;
       // `{}` is card.figma and the other calls with no arguments. Leave those to tool.started.
       if (liveText === "{}") {
         liveTool = "";
+        liveCall = "";
         liveText = "";
         return;
       }
+      streamed.add(e.data.callId);
       drawLive(liveTool, liveText, liveDrawn);
     } else if (e.type === "context.built") {
       const count = e.data.sources.length;
@@ -192,13 +216,14 @@ function shower(terminal: Terminal) {
     } else if (e.type === "run.resumed") note(`· resumed by a worker (${e.data.reason})`);
     else if (e.type === "tool.started") {
       // The call already streamed onto its line. Don't print the same JSON again, clipped.
-      if (liveDrawn && liveTool === e.data.tool && liveStep === e.data.step) {
+      if (streamed.delete(e.data.callId)) {
         finishLive();
       } else {
         const input = JSON.stringify(e.data.input);
         note(`· ${e.data.tool}${input && input !== "{}" ? ` ${clip(input)}` : ""}`);
       }
     } else if (e.type === "tool.denied") note(`· denied ${e.data.tool}: ${e.data.reason}`, "warn");
+    else if (e.type === "final.refused") note(`· final refused: ${e.data.reason}`, "warn");
     else if (e.type === "tool.completed" && !e.data.ok)
       note(`· ${e.data.tool} failed: ${e.data.content}`, "bad");
     else if (e.type === "approval.changes_requested")

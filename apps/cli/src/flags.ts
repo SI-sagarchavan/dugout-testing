@@ -111,6 +111,9 @@ export function parseCliArgs(agent: Pick<AnyAgent, "input" | "cli">, argv: strin
   const options: NonNullable<ParseArgsConfig["options"]> = {
     tenant: { type: "string" },
     input: { type: "string" },
+    model: { type: "string" },
+    effort: { type: "string" },
+    yes: { type: "boolean" },
   };
   for (const [name, flag] of flags) {
     options[name] =
@@ -126,7 +129,14 @@ export function parseCliArgs(agent: Pick<AnyAgent, "input" | "cli">, argv: strin
     if (value === undefined) continue;
     input[flag.field] = flag.kind === "number" ? Number(value) : value;
   }
-  return { tenant: typeof values.tenant === "string" ? values.tenant : undefined, input };
+  const text = (value: unknown) => (typeof value === "string" && value ? value : undefined);
+  return {
+    tenant: text(values.tenant),
+    input,
+    model: text(values.model),
+    effort: text(values.effort),
+    yes: values.yes === true,
+  };
 }
 
 /** One usage line, naming each field by its alias when it has one. */
@@ -144,5 +154,11 @@ export function usage(
     const repeat = flag.kind === "strings" ? "..." : "";
     return flag.required ? `${text}${repeat}` : `[${text}]${repeat}`;
   });
-  return [command, "--tenant <id>", ...parts, "[--input <json>]"].join(" ");
+  return [
+    command,
+    "--tenant <id>",
+    ...parts,
+    "[--input <json>]",
+    "[--model <name>] [--effort <level>] [--yes]",
+  ].join(" ");
 }

@@ -20,6 +20,8 @@
     "sitemap": "tsx apps/cli/scripts/agent.ts sitemap",
     "matchday": "tsx apps/cli/scripts/agent.ts matchday",
     "card": "tsx agents/card/scripts/card.ts",
+    "card-match:measure": "tsx agents/card-match/scripts/measure.ts",
+    "card:watch": "tsx apps/cli/scripts/figma-watch.ts",
     "round": "tsx agents/round/scripts/round.ts",
     "memory:review": "tsx packages/memory/scripts/review.ts",
     "memory:promote": "tsx packages/memory/scripts/promote.ts",
@@ -30,7 +32,8 @@
     "smoke": "tsx packages/core/scripts/smoke.ts",
     "infra:up": "docker compose up -d --wait",
     "infra:down": "docker compose down",
-    "infra:reset": "docker compose down -v"
+    "infra:reset": "docker compose down -v",
+    "card-match:vision": "tsx agents/card-match/scripts/vision-bench.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.3",

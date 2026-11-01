@@ -48,6 +48,27 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
+  agents/card-match:
+    dependencies:
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@dugout/evals':
+        specifier: workspace:^
+        version: link:../../packages/evals
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../../packages/memory
+      '@dugout/sdk':
+        specifier: workspace:^
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
   agents/match-preview:
     dependencies:
       '@dugout/contracts':
@@ -149,6 +170,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.8.1
         version: 1.8.1
+      '@dugout/agent-card-match':
+        specifier: workspace:^
+        version: link:../../agents/card-match
       '@dugout/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -189,6 +213,9 @@ importers:
       '@dugout/agent-card':
         specifier: workspace:^
         version: link:../../agents/card
+      '@dugout/agent-card-match':
+        specifier: workspace:^
+        version: link:../../agents/card-match
       '@dugout/agent-match-preview':
         specifier: workspace:^
         version: link:../../agents/match-preview

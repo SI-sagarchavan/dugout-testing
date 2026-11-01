@@ -89,7 +89,7 @@ const follow = (
   agent: AnyAgent,
   runId: string,
   terminal: Terminal,
-  opts: { afterSeq?: number; signal?: AbortSignal; hintMs?: number } = {},
+  opts: { afterSeq?: number; signal?: AbortSignal; hintMs?: number; autoApprove?: boolean } = {},
 ) =>
   followRun({
     queue,
@@ -101,6 +101,7 @@ const follow = (
     signal: opts.signal ?? new AbortController().signal,
     ...(opts.afterSeq !== undefined ? { afterSeq: opts.afterSeq } : {}),
     ...(opts.hintMs !== undefined ? { hintMs: opts.hintMs } : {}),
+    ...(opts.autoApprove ? { autoApprove: true } : {}),
   });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -135,6 +136,18 @@ describe("the CLI", () => {
     expect(text()).toContain("── Draft for c-101");
     expect(text()).toContain("· resumed by a worker (approval)");
     contiguous(await events.read(runId, 0));
+  });
+
+  it("approves without asking when told to, and records that it did", async () => {
+    const runId = await queue.start(TENANT, "match-preview", { fixtureId: "c-101" });
+    const { terminal, asked, text } = scripted([]);
+    const ending = await follow(matchPreview, runId, terminal, { autoApprove: true });
+
+    expect(ending).toMatchObject({ type: "run.completed", data: { status: "completed" } });
+    expect(asked).toHaveLength(0);
+    expect(text()).toContain("approved without asking");
+    const decided = (await events.read(runId, 0)).find((e) => e.type === "approval.granted");
+    expect(decided).toMatchObject({ data: { by: "editor (auto)" } });
   });
 
   it("sends a change back into the same run, and approves what comes back", async () => {

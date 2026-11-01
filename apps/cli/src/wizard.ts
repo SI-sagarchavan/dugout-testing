@@ -1,7 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Tenant } from "@dugout/core";
-import { loadTenants, TENANTS_DIR } from "@dugout/core";
+import {
+  EFFORT_MARK,
+  FAMILIES,
+  loadModelConfig,
+  loadTenants,
+  modelEntry,
+  modelFamily,
+  runModel,
+  TENANTS_DIR,
+} from "@dugout/core";
 import { agentIds, loadAgent } from "@dugout/sdk";
 import { summaryOf } from "./commands.ts";
 import type { InputField } from "./flags.ts";
@@ -232,4 +241,33 @@ function teamNames(dir: string): Map<string, string> {
   } catch {
     return new Map();
   }
+}
+
+/**
+ * Which model, and how hard it thinks, when the terminal is asking. The first answer to each keeps
+ * what the agent's spec says. Returns the name a run takes, or undefined for no change.
+ */
+export async function askModel(prompter: Prompter, specModel: string): Promise<string | undefined> {
+  const config = loadModelConfig();
+  const picked = await prompter.select("Model", [
+    { value: "", label: `The agent's own (${specModel})` },
+    ...Object.entries(config.models)
+      .filter(([name]) => !name.includes(EFFORT_MARK))
+      .map(([name, entry]) => ({
+        value: name,
+        label: name,
+        hint: entry.effort ? `${entry.effort} effort` : "no effort setting",
+      })),
+  ]);
+  const base = picked || specModel;
+  const family = modelFamily(modelEntry(config, base).id);
+  const efforts = family ? FAMILIES[family].efforts : [];
+  const effort =
+    efforts.length > 0
+      ? await prompter.select("Effort", [
+          { value: "", label: `${base}'s own (${config.models[base]?.effort ?? "none"})` },
+          ...efforts.map((level) => ({ value: level, label: level })),
+        ])
+      : "";
+  return runModel(config, specModel, { model: picked, effort });
 }

@@ -1,7 +1,7 @@
 import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import type { ApprovalDecision, SavePoint } from "@dugout/contracts";
-import { type ForkChange, loadEnv, loadModelConfig, loadTenants } from "@dugout/core";
+import { type ForkChange, loadEnv, loadModelConfig, loadTenants, runModel } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import { type AnyAgent, agentIds, loadAgent } from "@dugout/sdk";
 import {
@@ -42,6 +42,7 @@ import {
   say,
 } from "./ui.ts";
 import {
+  askModel,
   chooseRun,
   completeInput,
   fieldSuggestions,
@@ -248,9 +249,21 @@ async function startRun(
     console.error(`usage: ${usage(agent, host.command)}`);
     return 2;
   }
-  const runId = await host.queue.start(tenant.id, agent.spec.id, parsed.data);
-  host.terminal.line(dim(`· run ${runId} queued`));
-  return followAndReport(host, agent, tenant.id, runId, 0);
+  let model = undefined as string | undefined;
+  try {
+    model = runModel(loadModelConfig(), agent.spec.model, args);
+    if (!model && host.prompter && !explicitInput(argv)) {
+      model = await askModel(host.prompter, agent.spec.model);
+    }
+  } catch (err) {
+    console.error(`${(err as Error).message}\nusage: ${usage(agent, host.command)}`);
+    return 2;
+  }
+  const runId = await host.queue.start(tenant.id, agent.spec.id, parsed.data, {
+    ...(model ? { model } : {}),
+  });
+  host.terminal.line(dim(`· run ${runId} queued${model ? ` on ${model}` : ""}`));
+  return followAndReport(host, agent, tenant.id, runId, 0, args.yes);
 }
 
 /** A flag other than `--tenant` means the command already said what the run is. */
@@ -605,6 +618,7 @@ async function followAndReport(
   tenantId: string,
   runId: string,
   afterSeq: number,
+  autoApprove = false,
 ): Promise<number> {
   host.cancelMessage.current = [
     "Cancelled. The run keeps going. Attach again with:",
@@ -630,6 +644,7 @@ async function followAndReport(
       terminal: host.terminal,
       by: userInfo().username,
       signal: stop.signal,
+      ...(autoApprove ? { autoApprove } : {}),
     });
     return ending ? report(ending, agent, tenantId, host.interactive) : 1;
   } finally {

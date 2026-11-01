@@ -46,6 +46,9 @@ describe("command line", () => {
     ]);
     expect(args).toEqual({
       tenant: "demo-cricket",
+      model: undefined,
+      effort: undefined,
+      yes: false,
       input: {
         brief: "A T20 club",
         sports: ["cricket", "kabaddi"],
@@ -53,6 +56,25 @@ describe("command line", () => {
         layout: { columns: 3 },
       },
     });
+  });
+
+  it("reads the model and effort a run asks for", () => {
+    const args = parseCliArgs(brief as never, [
+      "--tenant",
+      "demo-cricket",
+      "--brief",
+      "A T20 club",
+      "--model",
+      "haiku",
+      "--effort",
+      "high",
+    ]);
+    expect(args).toMatchObject({ model: "haiku", effort: "high" });
+    expect(args.input).toEqual({ brief: "A T20 club" });
+  });
+
+  it("shows them in the usage line", () => {
+    expect(usage(brief as never)).toContain("[--model <name>] [--effort <level>] [--yes]");
   });
 
   it("refuses a flag the agent doesn't take", () => {
@@ -91,7 +113,7 @@ describe("command line", () => {
 
   it("writes a usage line from the input", () => {
     expect(usage(brief as never, "pnpm brief")).toBe(
-      "pnpm brief --tenant <id> --brief <brief> [--sport <sports>]... [--pages <pages>] [--draft] [--input <json>]",
+      "pnpm brief --tenant <id> --brief <brief> [--sport <sports>]... [--pages <pages>] [--draft] [--input <json>] [--model <name>] [--effort <level>] [--yes]",
     );
   });
 
@@ -100,10 +122,10 @@ describe("command line", () => {
     const sitemap = await loadAgent("sitemap");
     expect(sitemap.spec.id).toBe("sitemap");
     expect(usage(sitemap)).toBe(
-      "pnpm agent sitemap --tenant <id> --brief <brief> [--sport <sports>]... [--input <json>]",
+      "pnpm agent sitemap --tenant <id> --brief <brief> [--sport <sports>]... [--input <json>] [--model <name>] [--effort <level>] [--yes]",
     );
     expect(usage(await loadAgent("match-preview"), "pnpm preview")).toBe(
-      "pnpm preview --tenant <id> --fixture <fixtureId> [--brief <brief>] [--input <json>]",
+      "pnpm preview --tenant <id> --fixture <fixtureId> [--brief <brief>] [--input <json>] [--model <name>] [--effort <level>] [--yes]",
     );
     await expect(loadAgent("nope")).rejects.toThrow('no agent "nope"');
   });
