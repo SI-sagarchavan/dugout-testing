@@ -41,13 +41,21 @@ case "${1:-ensure}" in
       echo "fanos already holds $held exports; importing replaces them. Pass --force to do it." >&2
       exit 1
     fi
+    # Check the source and take the whole dump before anything is dropped: an unreachable source
+    # must leave the target as it is.
+    if [ "$(docker inspect -f '{{.State.Running}}' "$src" 2>/dev/null)" != true ]; then
+      echo "$src is not running, so there is nothing to import. Start it (docker start $src) and retry." >&2
+      exit 1
+    fi
+    dump="$(mktemp)"; trap 'rm -f "$dump"' EXIT
+    docker exec "$src" pg_dump -U fanos -Fc fanos > "$dump"
+    if [ ! -s "$dump" ]; then echo "the dump from $src is empty; nothing was changed." >&2; exit 1; fi
     if ! admin -c "DROP DATABASE fanos WITH (FORCE)" >/dev/null 2>&1; then
-      echo "could not replace fanos: Electric holds a replication slot on it. Stop it first (pnpm pipeline:infra:down)." >&2
+      echo "could not replace fanos: Electric holds a replication slot on it. Stop it first (pnpm infra down)." >&2
       exit 1
     fi
     admin -c "CREATE DATABASE fanos OWNER fanos" >/dev/null
-    docker exec "$src" pg_dump -U fanos -Fc fanos \
-      | docker exec -i "$DST" pg_restore -U fanos -d fanos --no-owner --exit-on-error
+    docker exec -i "$DST" pg_restore -U fanos -d fanos --no-owner --exit-on-error < "$dump"
     echo "imported from $src:"
     docker exec -i "$DST" psql -U fanos -d fanos -At -c \
       "SELECT 'exports ' || count(*) FROM figma_exports UNION ALL SELECT 'artifacts ' || count(*) FROM artifacts"
