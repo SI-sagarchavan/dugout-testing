@@ -1,13 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { PIPELINE_ROOT } from "@dugout/core";
+import { REPO_ROOT } from "@dugout/core";
 
-/** `pipeline/` in this repo: the DSL vocabulary and the renderer. Build it with `pnpm pipeline:build`. */
-export function pipelineRoot(): string {
-  return PIPELINE_ROOT;
-}
-
+// The DSL vocabulary and the renderer are the built @fanos packages: `pnpm build`.
 interface DslIssue {
   code: string;
   severity: string;
@@ -25,7 +21,7 @@ interface Checker {
 let checker: Checker | undefined;
 
 async function loadChecker(): Promise<void> {
-  const root = pipelineRoot();
+  const root = REPO_ROOT;
   const dsl = (await import(pathToFileURL(join(root, "packages/dsl/dist/index.js")).href)) as {
     flatTreeSchema: { parse(tree: unknown): unknown };
     validate(
@@ -81,7 +77,7 @@ function formatIssue(issue: DslIssue): string {
 
 /** The hand-authored sample, used by the scripted tests as a known-good tree. */
 export function sampleCard(): { tree: unknown; data: unknown } {
-  const root = pipelineRoot();
+  const root = REPO_ROOT;
   return {
     tree: JSON.parse(readFileSync(join(root, "packages/dsl/fixtures/sample-card.json"), "utf8")),
     data: JSON.parse(

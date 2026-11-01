@@ -2,7 +2,8 @@ import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ToolContext } from "@dugout/contracts";
-import { checkCard, pipelineRoot } from "./dsl.ts";
+import { REPO_ROOT } from "@dugout/core";
+import { checkCard } from "./dsl.ts";
 import type { CardDraft } from "./schema.ts";
 
 /** A mismatch passes when its thinner side is at most this many pixels. */
@@ -486,7 +487,7 @@ async function loadHarness(): Promise<Harness> {
 }
 
 async function loadHarnessOnce(): Promise<Harness> {
-  const root = pipelineRoot();
+  const root = REPO_ROOT;
   const renderer = (await import(
     pathToFileURL(join(root, "packages/renderer/dist/harness.js")).href
   )) as Omit<Harness, "themeCss" | "fontCss" | "publicDir">;

@@ -9,7 +9,7 @@ The design decisions below are already made. Implement them as written. If one t
 ## Working rules
 
 - Do the tasks in order, and tick each box when its tests pass.
-- Run `pnpm infra:up` first, because tests need Postgres and Valkey. Run `pnpm check` after every task. A task is not done while it fails.
+- Run `pnpm infra up` first, because tests need Postgres and Valkey. Run `pnpm check` after every task. A task is not done while it fails.
 - Write the listed failing test first, then the fix.
 - Commit or push only when the user asks. On `main`, branch first.
 - **The working tree has unfinished card work that is not yours:** `agents/card/*`, `packages/core/src/model/bedrock.ts`, its test, `packages/sdk/src/agent.ts`, `schemas/card.input.json` and `CLAUDE.md`. Don't revert it, and ask the user how to handle it before the first commit.
@@ -201,7 +201,7 @@ Today this fails: `repair#2` never reruns, the tree stays `v1`, and `changes` st
   ```
 
   where `ageDays` uses `lastSeenAt`. Return the top `limit`. Export the weights as named constants, and fix the doc comment at `store.ts:58`.
-- In `consolidateRun`: when `addEpisode` returns `reinforced: true` and `strength === 3`, call `proposeFact` with key `lesson.<first 8 hex of sha256(content)>` and the lesson as its content, unless that key already exists (check with `history`). Content over 500 characters is clipped. A person still approves it through `pnpm memory:review`.
+- In `consolidateRun`: when `addEpisode` returns `reinforced: true` and `strength === 3`, call `proposeFact` with key `lesson.<first 8 hex of sha256(content)>` and the lesson as its content, unless that key already exists (check with `history`). Content over 500 characters is clipped. A person still approves it through `pnpm agent memory review`.
 
 **Tests:**
 

@@ -5,8 +5,8 @@ FanOS agent harness, agents and evals. See `CLAUDE.md` for layout/commands and `
 ```sh
 nvm use && pnpm install
 cp .env.example .env          # set AWS_PROFILE and AWS_REGION for Bedrock
-pnpm infra:up && pnpm db:migrate && pnpm seed
-pnpm pipeline:build           # the Figma-to-SDUI pipeline in pipeline/; the card agents load its dist
+pnpm infra up && pnpm db migrate && pnpm db seed
+pnpm build           # the @fanos packages and apps; the card agents load their dist
 pnpm check
 
 pnpm worker                   # terminal 1: runs the agents, as the ECS service does in production
@@ -16,9 +16,9 @@ pnpm agent                          # menu: run, attach, cancel, list, history, 
 pnpm agent --help
 pnpm agent history <runId> --tenant <tenant>
 pnpm agent fork <runId> --from <version> --tenant <tenant>
-pnpm preview --tenant demo-cricket --fixture c-101
-pnpm sitemap --tenant demo-cricket --sport cricket --brief "T20 club: news, fixtures, squad, standings"
-pnpm matchday --tenant demo-cricket --fixture c-101 --channel social --brief "Season opener"
+pnpm agent match-preview --tenant demo-cricket --fixture c-101
+pnpm agent sitemap --tenant demo-cricket --sport cricket --brief "T20 club: news, fixtures, squad, standings"
+pnpm agent matchday --tenant demo-cricket --fixture c-101 --channel social --brief "Season opener"
 pnpm agent <id> --tenant <tenant> --<input field> <value>   # any agent in agents/
 # at an approval: Approve, Reject, or Request a change
 # a pipe answers y, n, or the change ("change the Fan Zone path to /fanzone")
@@ -36,6 +36,6 @@ A worker that gets SIGTERM hands its runs to another worker, which resumes them 
 
 New agents are written with `defineAgent` from `@dugout/sdk` (ADR 0007); `agents/sitemap` is a compact example. Add one to the list in `apps/worker/scripts/work.ts` for the worker to run it.
 
-## pipeline/
+## The Figma-to-SDUI pipeline
 
-The Figma plugin, compiler, DSL, renderer, control plane (:4100), Studio (:3000) and preview site (:3415) live in `pipeline/` (ADR 0020), so one checkout runs everything. It keeps its own `@fanos/*` toolchain; `pipeline/README.md` describes it. Docker runs only the databases (ADR 0021): one Postgres with a `harness` database for dugout and a `fanos` one for the pipeline, and one Valkey. `pnpm infra:up && pnpm pipeline:infra:up`. Then `cp pipeline/apps/api/.env.example pipeline/apps/api/.env` (once), `pnpm pipeline:build`, `pnpm pipeline:db:migrate` and `pnpm pipeline:dev`; `pnpm worker` and `pnpm card:watch` run the agents. To bring across the old `trial` stack's data: `pnpm pipeline:db:import`.
+The Figma plugin, compiler, DSL, renderer, control plane (:4100), Studio (:3000) and preview site (:3415) are the `@fanos/*` packages and apps, in `packages/` and `apps/` beside dugout's (ADR 0020), so one checkout runs everything. It keeps its own `@fanos/*` toolchain; `docs/pipeline.md` describes it. Docker runs only the databases (ADR 0021): one Postgres with a `harness` database for dugout and a `fanos` one for the pipeline, and one Valkey. `pnpm infra up pipeline`. Then `cp apps/api/.env.example apps/api/.env` (once), `pnpm build`, `pnpm db migrate fanos` and `pnpm dev`; `pnpm worker` and `pnpm agent watch` run the agents. To bring across the old `trial` stack's data: `pnpm db import`.

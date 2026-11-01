@@ -1,4 +1,4 @@
-// pnpm card-match:measure [--write [--all]] — the code-only result for each eval frame, no model.
+// pnpm eval measure [--write [--all]] — the code-only result for each eval frame, no model.
 // Without --write it prints a table next to the recorded baseline (evals/baseline.json). With it,
 // frames not recorded yet are added, so a later run shows what changed; --all re-records them all.
 import { readFileSync, writeFileSync } from "node:fs";

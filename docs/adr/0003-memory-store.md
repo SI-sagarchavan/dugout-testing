@@ -5,7 +5,7 @@ Date: 2026-10-29 · Status: accepted; tenant overrides of skills are gone, and w
 ## Decision
 
 - **One table, `memory_items`**, for semantic and episodic memory, with row-level security on `tenant_id`. The app connects as `dugout_app`, which is neither a superuser nor the table owner, so the policy always applies. `withTenant` sets `app.tenant_id` per transaction, and queries also filter on `tenant_id` explicitly as a second check.
-- **Semantic facts are versioned rows.** A fact has a `key`. A change is a new `proposed` row, and activating it retires the previous active row, so older versions stay queryable. A partial unique index allows only one active row per key. Only the review command (`pnpm memory:review`) or the seed script activates facts.
+- **Semantic facts are versioned rows.** A fact has a `key`. A change is a new `proposed` row, and activating it retires the previous active row, so older versions stay queryable. A partial unique index allows only one active row per key. Only the review command (`pnpm agent memory review`) or the seed script activates facts.
 - **Episodes** come only from consolidation. Each one carries its source run id, a confidence score and an expiry date (180 days).
 - **Hybrid search** combines full-text rank and pgvector cosine rank with reciprocal rank fusion. It searches only active, unexpired rows.
 - **Embeddings**: an `EmbeddingClient` for any OpenAI-compatible `/embeddings` endpoint, fixed at 1024 dimensions by the column. With no endpoint configured, a word-hashing embedder is used, so similarity is lexical until a real model is chosen. Changing the model means re-embedding.

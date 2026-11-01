@@ -40,7 +40,7 @@ With the backend serving requests, the HTTP API in this repo would only have bee
 
 What wnm-fanxp-backend does against the same database and Valkey (`apps/worker/src/queue.ts` is the reference):
 
-- **Start a run.** Insert into `runs` with status `queued`, the tenant, the agent id and the input, already checked against the agent's input schema. Each agent's input and output are JSON Schema files in `schemas/` (`<agent>.input.json`, `<agent>.output.json`), which `pnpm schemas` writes and a test keeps current.
+- **Start a run.** Insert into `runs` with status `queued`, the tenant, the agent id and the input, already checked against the agent's input schema. Each agent's input and output are JSON Schema files in `schemas/` (`<agent>.input.json`, `<agent>.output.json`), which `pnpm agent schemas` writes and a test keeps current.
 - **Decide an approval.** When the run is `waiting` and its checkpoint waits for that call, set it back to `queued` with the decision in `runs.decision` and `attempts` reset to 0. Check both in one statement, so two decisions can't both win.
 - **Follow a run.** Read the Valkey stream `run:<id>:events`, whose entry ids are `0-<seq>`; resume after a known `seq` with an exclusive range. An invocation ends at `approval.requested`, `run.completed`, `run.failed` or `run.cancelled`. `run_events` in Postgres has every event except the streamed fragments (`token`, `tool.input.delta`).
 - **Cancel a run.** Set it to `cancelled`, with `cancelled_by` and `cancel_reason`, when it is `queued`, `running` or `waiting` (`queue.cancel` in `apps/worker/src/queue.ts` is the reference). For a queued or waiting run, or a running one whose lease has run out, the host appends `run.cancelled` itself. A running run stops at its worker's next save, and the worker appends it; if that worker dies first, the next worker claims the run only to append it. `run.cancelled` ends the stream like `run.completed` and `run.failed`.
@@ -49,7 +49,7 @@ What wnm-fanxp-backend does against the same database and Valkey (`apps/worker/s
 
 ## Consequences
 
-- Local work needs `pnpm worker` next to `pnpm agent`. Evals and `pnpm smoke` still run the agent in their own process.
+- Local work needs `pnpm worker` next to `pnpm agent`. Evals and `pnpm eval smoke` still run the agent in their own process.
 - The per-request response modes of ADR 0008 (`stream`, wait, `background`) left with the API, along with the per-agent default and the JWT dev tokens. How the backend answers its own clients is the backend's choice.
 - A worker deploy hands its runs to the other workers, and anyone following a run doesn't see it: the events come from Valkey and go on without a gap. Checked live: a worker stopped mid-run with a 500 ms grace, and a second one resumed at the same step without repeating finished tool calls.
 - A run waits up to a second to be claimed after it is queued or decided. A Postgres `NOTIFY` can remove that if it matters.

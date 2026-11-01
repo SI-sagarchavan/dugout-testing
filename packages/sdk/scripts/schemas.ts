@@ -1,4 +1,4 @@
-// pnpm schemas — writes each agent's input and output JSON Schema to schemas/, for hosts to check
+// pnpm agent schemas — writes each agent's input and output JSON Schema to schemas/, for hosts to check
 // requests against before queueing a run (ADR 0009). An SDK test fails when they are out of date.
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";

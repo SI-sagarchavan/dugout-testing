@@ -43,7 +43,7 @@ const cases = FRAMES.map((frame) => ({
   exportId: frame.exportId,
 }));
 
-/** What the code alone reached before the accuracy fixes, from `pnpm card-match:measure --write`. */
+/** What the code alone reached before the accuracy fixes, from `pnpm eval measure --write`. */
 const baseline = JSON.parse(readFileSync(join(import.meta.dirname, "baseline.json"), "utf8")) as {
   recordedAt: string;
   frames: Record<string, { firstPass: { match: number; coverage: number } }>;

@@ -53,7 +53,7 @@ import {
 
 /**
  * The terminal host for the workers (ADR 0009). With no arguments in a terminal it opens a menu.
- * `pnpm agent <id>`, `pnpm agent run <id>`, `pnpm preview`, `pnpm sitemap` and `pnpm matchday` queue a run and
+ * `pnpm agent <id>` and `pnpm agent run <id>` queue a run and
  * follow it. `attach` and `--run` follow one already queued. `cancel` and `--cancel` stop one.
  * `history` and `--history` list a run's save points. `fork` and `--fork` start a new run from one.
  * A pipe keeps the old answers: `y`, `n`, or the text of a change.

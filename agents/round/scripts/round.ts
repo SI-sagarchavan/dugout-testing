@@ -1,4 +1,4 @@
-// pnpm round --tenant demo-cricket [--fixture c-101 ...] [--channel social] [--brief "..."] [--yes] [--resume]
+// pnpm agent program round --tenant demo-cricket [--fixture c-101 ...] [--channel social] [--brief "..."] [--yes] [--resume]
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { join } from "node:path";
@@ -16,7 +16,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.tenant) {
     console.error(
-      "Usage: pnpm round --tenant <id> [--fixture <id> ...] [--channel social|push|headline] [--brief <text>] [--yes] [--resume]",
+      "Usage: pnpm agent program round --tenant <id> [--fixture <id> ...] [--channel social|push|headline] [--brief <text>] [--yes] [--resume]",
     );
     process.exit(2);
   }

@@ -138,7 +138,7 @@ describe("commands", () => {
     ]) {
       expect(help).toContain(name);
     }
-    expect(help).toContain("pnpm preview");
+    expect(help).toContain("memory <review|promote>");
     expect(help).toContain("y, n, or the change");
   });
 
@@ -149,9 +149,9 @@ describe("commands", () => {
   });
 
   it("shows an agent's flags", () => {
-    const help = plain(renderAgentHelp(matchPreview, "pnpm preview"));
+    const help = plain(renderAgentHelp(matchPreview));
     expect(help).toContain("match-preview");
-    expect(help).toContain("pnpm preview --tenant <id> --fixture <fixtureId>");
+    expect(help).toContain("pnpm agent match-preview --tenant <id> --fixture <fixtureId>");
     expect(help).toContain("--fixture <fixtureId>");
     expect(help).toContain("Required");
     expect(help).toContain("--input <json>");

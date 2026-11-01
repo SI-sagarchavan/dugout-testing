@@ -15,7 +15,7 @@ An agent is the same for every tenant. The run's tenant decides what memory puts
 ## Decision
 
 - **Skills are per agent only.** `loadSkill(dir, name)` takes no tenant and there are no overrides. The tenant notes became house facts (`audience`, `style.opening`, `site.fan-zone` and others).
-- **House facts are only memory.** The demo tenants' starting facts are in `config/tenants/<tenant>/facts.json`, keyed by agent id. `seedHouseFacts(store, tenantIds, agentIds)` in `@dugout/sdk` loads them, and `pnpm seed`, the eval suites and tests call it. `defineAgent` no longer has `dataDir` or `seed`.
+- **House facts are only memory.** The demo tenants' starting facts are in `config/tenants/<tenant>/facts.json`, keyed by agent id. `seedHouseFacts(store, tenantIds, agentIds)` in `@dugout/sdk` loads them, and `pnpm db seed`, the eval suites and tests call it. `defineAgent` no longer has `dataDir` or `seed`.
 - **A tenant's sample sports data** is in `config/tenants/<tenant>/` too. It isn't memory: the tools read it live with the verified tenant id, as they will read the real feed.
 - Facts are still scoped to a tenant and an agent. The store is unchanged.
 
@@ -25,4 +25,4 @@ An agent is the same for every tenant. The run's tenant decides what memory puts
 - A tenant's instructions change through memory review, not a pull request to the agent.
 - Skills are never dropped from the prompt, but facts are dropped whole when the memory budget runs out, so a former tenant note can now be dropped. With 5 to 7 facts per tenant and agent, that doesn't happen.
 - Facts true of the whole tenant (spelling, audience) are stored once per agent: demo-cricket's audience fact is in both agents' facts. A tenant-wide scope is a store change, left for the memory work.
-- A dev database seeded before this gets the former tenant notes as facts on the next `pnpm seed`.
+- A dev database seeded before this gets the former tenant notes as facts on the next `pnpm db seed`.

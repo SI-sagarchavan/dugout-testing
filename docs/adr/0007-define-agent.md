@@ -32,8 +32,8 @@ The common shape: what an agent _is_ (instructions, tools, output schema) is dec
 - **One terminal runner:** `pnpm agent <id> --tenant <tenant> --<field> <value>`.
   - The flags come from the input schema's top-level fields (strings, enums, numbers, booleans, lists of strings). `--input '<json>'` covers anything else. `cli.flags` adds aliases such as `--fixture`.
   - `cli.present` shows an approval request to a reviewer. Every agent gets the same prompt: `y`, `n`, or type a change.
-  - `pnpm preview` and `pnpm sitemap` are this runner with the agent filled in.
-  - `pnpm seed` seeds every agent.
+  - `pnpm agent match-preview` and `pnpm agent sitemap` are this runner with the agent filled in.
+  - `pnpm db seed` seeds every agent.
 - **Finding agents.** Dev tools find agents by folder, the way `pnpm eval <id>` already did: the folder name is the id, and `src/index.ts` exports `agent`. The API lists the agents it serves explicitly, `hostAgents(deps, matchPreview, sitemap)` in `apps/api/scripts/serve.ts`, so a deploy never serves a half-built folder.
 - **Evals share one model judge:** `createModelJudge(client, model, rubric)`. The sports-copy judge and the sitemap's brief-fit judge are each a rubric on top of it.
 

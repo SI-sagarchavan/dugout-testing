@@ -2,7 +2,7 @@
 
 The `card` agent reads a DSL file and a screenshot, and most of what decides fidelity never reaches it: the IR, the surfaces, the export's theme. `card-match` starts from what the plugin's Send already stored, by export id.
 
-- **Trigger.** `pnpm card:watch` is a host (ADR 0009) that looks at the control plane for new exports and queues a run per frame, so the plugin and the pipeline do not change. The plugin can't show the run's link, because the control plane doesn't know about it. A Send made while the watcher is down still runs when it next starts, once the tenant has a prior `card-match` run.
+- **Trigger.** `pnpm agent watch` is a host (ADR 0009) that looks at the control plane for new exports and queues a run per frame, so the plugin and the pipeline do not change. The plugin can't show the run's link, because the control plane doesn't know about it. A Send made while the watcher is down still runs when it next starts, once the tenant has a prior `card-match` run.
 - **The compiler stays the source.** The model never writes a tree. It adds overrides keyed by Figma id, and each is an input to a recompile, so they survive one.
 - **Code does what needs no judgement.** Tokenless gradients come from the IR's matrix. Placeholder icons are cropped from the screenshot, with any gradient above them taken back out of the pixels. Only then does the model look.
 - **Measured, not claimed.** Each override is rendered and compared. It is undone if the pixel match drops, conform errors rise, or nothing improves. The approval and `final` carry code's numbers, and `final` is refused if they differ. Publishing is refused until the worst findings have been examined, because models stop early when the first number looks high.
@@ -30,7 +30,7 @@ A match is over the screenshots that could be placed, which can be a sliver of t
 
 ## Evals
 
-`pnpm card-match:measure` runs the code alone on the three eval frames and prints them next to `evals/baseline.json`, recorded before these changes. `pnpm eval card-match` runs the agent on the same frames and grades it against that baseline: it must cover at least as much, and match at least as well. `pnpm card-match:measure --write` records a new baseline.
+`pnpm eval measure` runs the code alone on the three eval frames and prints them next to `evals/baseline.json`, recorded before these changes. `pnpm eval card-match` runs the agent on the same frames and grades it against that baseline: it must cover at least as much, and match at least as well. `pnpm eval measure --write` records a new baseline.
 
 ## What the export now says (IR 1.9.0)
 
@@ -38,7 +38,15 @@ The plugin used to screenshot only the root's direct children, and the IR said n
 
 The plugin also exports a picture of each layer that is art (`src/art-plates.ts`): the frame itself, a layer that contains a mask (its export is the masked result), an image with no text, and the largest subtree of nothing but paths. Plate names that start with `art-` are what crops are cut from; they are not measured. When the export holds the frame's own picture, that is the one the match is measured against, so the root's fill is compared for the first time. The control plane takes up to 200 pictures, and the plugin stops at an 18 MB budget.
 
-Nothing here has been run against a Figma export yet. It is tested against the selection on real IRs and against stubbed Figma nodes. The first Send from a rebuilt plugin is the real test, and `pnpm card-match:measure` against it is how to read it.
+**What the 18 MB is spent on.** The first real export (`D_Photos_Listing`, 51 candidate pictures) used all of it on 19: one 2,732×4,976 section picture was 9.7 MB, and each card photo 1.4–1.7 MB, so the root and about half the photos were dropped and those cards rendered blank (`artPlatesTruncated: true`). Now:
+- **Photos are 1×.** In the product they come from the API, so a photo's picture is a stand-in to cut from and measure against, and 1× is the size the page renders at. Platform art (vectors, masks, the frame) stays 2×.
+- **A page-tall layer is 1×** (over 8 M pixels at 2×), sections included.
+- **1× before dropping.** A picture that does not fit at its scale is tried at 1×, and dropped only if that does not fit either.
+- **Marked backgrounds are not plates.** They stay on the platform and travel as the designer's own bytes, so their layers are skipped when pictures are chosen. Exporting a lower-quality copy would only spend the budget.
+
+The consumers already read each picture's scale from its size against the layer's box (`fitOf`), so mixed 1× and 2× pictures need nothing from them. Measured on that export's real pictures, the seven largest go from 17.6 MB to 5.5 MB. Whether the whole export now fits is for the next Send to say: `artPlatesTruncated` in its summary.
+
+Nothing here has been run against a Figma export yet. It is tested against the selection on real IRs and against stubbed Figma nodes. The first Send from a rebuilt plugin is the real test, and `pnpm eval measure` against it is how to read it.
 
 ## Looking
 
@@ -46,7 +54,7 @@ The score counts pixels, and some defects barely move it: text on the wrong edge
 
 An override may now create a surface under a name the compiler never used, which is how a dropped background gets painted. `frame.load` lists layers whose IR has a fill and whose compiled node paints none, as `unpainted`, with the theme token the style's name points at.
 
-`pnpm card-match:vision` measures it: it breaks a first-passed frame in a known way (a picture taken out or shrunk, words changed, a text colour changed, a background removed), then asks whether the score noticed and whether a difference was reported at that place that the clean frame did not report there. It also looks at two identical pictures, to count what is invented. `CARD_MATCH_VISION=off pnpm eval card-match` runs the same cases with `frame.look` answering "not available", to compare the whole agent.
+`pnpm eval vision` measures it: it breaks a first-passed frame in a known way (a picture taken out or shrunk, words changed, a text colour changed, a background removed), then asks whether the score noticed and whether a difference was reported at that place that the clean frame did not report there. It also looks at two identical pictures, to count what is invented. `CARD_MATCH_VISION=off pnpm eval card-match` runs the same cases with `frame.look` answering "not available", to compare the whole agent.
 
 ## When looking fails
 

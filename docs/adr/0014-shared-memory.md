@@ -17,14 +17,14 @@ After ADR 0013, memory belonged to tenants and the only knowledge every tenant s
 - **What is shared.** Facts and lessons. Run records always stay with their tenant.
 - **Where it is stored.** Shared items are `memory_items` rows with no tenant and a `shared_scope` of `global` or `sport:<sport>`. `sources` lists the tenant items each was promoted from.
 - **Row-level security, one policy per command.** A run reads its tenant's rows and approved shared rows, and writes only its tenant's rows. Only the admin role writes shared rows, and a proposal is invisible to every run.
-- **Promotion** (`pnpm memory:promote`, admin role):
+- **Promotion** (`pnpm agent memory promote`, admin role):
   1. It finds pairs of similar items held by different tenants (cosine similarity 0.85 or more; lessons only within one agent) and groups them.
   2. It considers only groups that two or more tenants hold. The scope is the sport the tenants have in common. When they have several in common, the model names the one the point is about; with none in common, or "any", it is global.
   3. A model rewrites the group as one sentence naming no tenant. It replies NONE when the items describe each client, only share a topic, or set different values for the same thing.
   4. Code rejects any rewrite that names a tenant.
   5. Items already promoted are never proposed again.
 - **The promotion model.** It is `sonnet-india` (`in.anthropic.claude-sonnet-5`) by default (`MEMORY_PROMOTE_MODEL`, a name in the model list of ADR 0015), which keeps tenant data in India. In tests on 2026-10-30, Nova Lite confused a club's own facts with shared rules; Sonnet 5 got every case right in 12 runs.
-- **A person approves every shared item** with `pnpm memory:review --shared`, which shows the tenant items it came from.
+- **A person approves every shared item** with `pnpm agent memory review --shared`, which shows the tenant items it came from.
 
 ## Consequences
 

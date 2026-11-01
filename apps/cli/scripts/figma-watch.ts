@@ -1,4 +1,4 @@
-// pnpm card:watch --tenant demo-cricket [--project default] [--latest] [--model sonnet] [--effort high] [--ask]
+// pnpm agent watch --tenant demo-cricket [--project default] [--latest] [--model sonnet] [--effort high] [--ask]
 //
 // Press Send in the Figma plugin and a card-match run starts. It publishes without asking; --ask
 // brings the approval prompt back. This host looks at the control plane
@@ -34,7 +34,7 @@ const { values } = parseArgs({
 });
 if (!values.tenant) {
   console.error(
-    "usage: pnpm card:watch --tenant <tenant> [--project <id>] [--latest] [--model <name>] [--effort <level>] [--ask]",
+    "usage: pnpm agent watch --tenant <tenant> [--project <id>] [--latest] [--model <name>] [--effort <level>] [--ask]",
   );
   process.exit(1);
 }

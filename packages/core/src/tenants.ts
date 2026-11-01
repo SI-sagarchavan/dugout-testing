@@ -11,11 +11,9 @@ const Tenant = z.object({
 export type Tenant = z.infer<typeof Tenant>;
 
 export const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
-/** The Figma-to-SDUI pipeline in this repo: compiler, DSL, renderer, plugin, control plane, Studio. */
-export const PIPELINE_ROOT = join(REPO_ROOT, "pipeline");
 const DEFAULT_FILE = join(REPO_ROOT, "config", "tenants.json");
 /**
- * Each demo tenant's own data, in `<tenant>/`: `facts.json`, the house facts `pnpm seed` starts
+ * Each demo tenant's own data, in `<tenant>/`: `facts.json`, the house facts `pnpm db seed` starts
  * memory from, and the sample sports data that stands in for its feed.
  */
 export const TENANTS_DIR = join(REPO_ROOT, "config", "tenants");

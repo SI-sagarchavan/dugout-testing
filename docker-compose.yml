@@ -1,4 +1,4 @@
-# The databases, in Docker. The apps run on the host with pnpm (`pnpm worker`, `pnpm pipeline:dev`).
+# The databases, in Docker. The apps run on the host with pnpm (`pnpm worker`, `pnpm dev`).
 #
 # One Postgres+pgvector server holds both databases: `harness` (dugout's memory and runs) and `fanos`
 # (the pipeline's control plane, with its own role). One Valkey (no-eviction, like prod streams)
@@ -7,7 +7,7 @@
 # with DUGOUT_PG_PORT and DUGOUT_VALKEY_PORT.
 #
 # Profiles:
-#   pipeline  Electric, the control plane's live sync (`pnpm pipeline:infra:up`)
+#   pipeline  Electric, the control plane's live sync (`pnpm infra up pipeline`)
 #   temporal  parked: `docker compose --profile temporal up -d`.
 name: dugout
 services:

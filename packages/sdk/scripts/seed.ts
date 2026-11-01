@@ -1,4 +1,4 @@
-// pnpm seed — loads each tenant's house facts (`config/tenants/<tenant>/facts.json`) as its active
+// pnpm db seed — loads each tenant's house facts (`config/tenants/<tenant>/facts.json`) as its active
 // semantic memory. Every agent of the tenant reads them. Safe to re-run.
 import { loadEnv, loadTenants } from "@dugout/core";
 import { createPool } from "@dugout/db";

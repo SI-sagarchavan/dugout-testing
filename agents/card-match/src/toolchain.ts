@@ -1,12 +1,7 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { PIPELINE_ROOT } from "@dugout/core";
-
-/** `pipeline/` in this repo. The same compiler and renderer a pipeline run uses. */
-export function pipelineRoot(): string {
-  return PIPELINE_ROOT;
-}
+import { REPO_ROOT } from "@dugout/core";
 
 export interface Box {
   id: string;
@@ -124,7 +119,7 @@ export interface Toolchain {
 
 let loading: Promise<Toolchain> | undefined;
 
-/** The pipeline's built packages. Build them with `pnpm pipeline:build`. */
+/** The built @fanos packages, the same compiler and renderer a pipeline run uses. `pnpm build`. */
 export function loadToolchain(): Promise<Toolchain> {
   loading ??= load().catch((err: unknown) => {
     loading = undefined;
@@ -134,7 +129,7 @@ export function loadToolchain(): Promise<Toolchain> {
 }
 
 async function load(): Promise<Toolchain> {
-  const root = pipelineRoot();
+  const root = REPO_ROOT;
   const from = async <T>(path: string) =>
     (await import(pathToFileURL(join(root, "packages", path)).href)) as T;
   const compiler = await from<{ compile: Toolchain["compile"] }>("compile/dist/index.js");

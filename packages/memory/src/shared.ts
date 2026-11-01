@@ -191,7 +191,7 @@ export interface PromoteOptions {
  * Finds the same fact, or the same lesson of one agent, in several tenants and proposes it as
  * shared memory: for the sport it is about when the tenants have sports in common (when several,
  * the generalizer names the one), and for every tenant when they have none in common. A
- * person approves each proposal (`pnpm memory:review --shared`) before any run reads it. Items
+ * person approves each proposal (`pnpm agent memory review --shared`) before any run reads it. Items
  * already promoted are skipped, so running it again proposes only what is new.
  */
 export async function promoteSharedMemory(opts: PromoteOptions) {

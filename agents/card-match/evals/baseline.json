@@ -653,7 +653,7 @@
   },
   "visionBenchmark": {
     "file": ".evals/vision-2026-11-01T09-55-48-243Z.json",
-    "note": "pnpm card-match:vision, 22 seeded defects on 5 frames. Score noticed 50%. Vision detected 45% counting only differences the clean frame did not already report at that place (a floor: half the defects sat where the clean frame already had a difference), and 10 of 11 where the clean frame had nothing there. On 10 identical pairs it invented 10 differences, 3 of them medium or high."
+    "note": "pnpm eval vision, 22 seeded defects on 5 frames. Score noticed 50%. Vision detected 45% counting only differences the clean frame did not already report at that place (a floor: half the defects sat where the clean frame already had a difference), and 10 of 11 where the clean frame had nothing there. On 10 identical pairs it invented 10 differences, 3 of them medium or high."
   },
   "lookOrderExperiment": {
     "note": "6 frames x 3 attempts per arm, same code and neutral shared instructions. first: frame.look any time, required before publish. last: refused until the worst findings are examined. off: frame.look answers \"not available\" (still required to be called once).",

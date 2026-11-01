@@ -1,4 +1,4 @@
-// pnpm card-match:vision [--frames a,b] — does frame.look find what is wrong, and does the score?
+// pnpm eval vision [--frames a,b] — does frame.look find what is wrong, and does the score?
 //
 // Takes a frame the agent has already improved, breaks it in a known way in a known place, and asks
 // two things of the broken frame: did the pixel match drop by enough to notice, and did the vision

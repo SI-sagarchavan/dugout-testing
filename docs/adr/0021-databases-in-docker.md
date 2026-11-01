@@ -12,14 +12,18 @@ Docker runs the databases only. The apps run on the host with the usual commands
 
 | service                                | profile    | what                                                                                                                                                                        |
 | -------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `postgres` (:55432), `valkey` (:56379) | default    | `pnpm infra:up`                                                                                                                                                             |
-| `pipeline-electric` (:3010)            | `pipeline` | the control plane's live sync, from `fanos`. `pnpm pipeline:infra:up` (it also creates the `fanos` role and databases on an existing server, with `scripts/pipeline-db.sh`) |
+| `postgres` (:55432), `valkey` (:56379) | default    | `pnpm infra up`                                                                                                                                                             |
+| `pipeline-electric` (:3010)            | `pipeline` | the control plane's live sync, from `fanos`. `pnpm infra up pipeline` (it also creates the `fanos` role and databases on an existing server, with `scripts/pipeline-db.sh`) |
 
 A fresh server creates the role and databases itself, from `docker/postgres-init/`. On a server that already exists, `scripts/pipeline-db.sh` does the same, and the `wal_level` setting takes effect when the Postgres container is next recreated.
 
-**Moving the old data.** The `trial` stack kept its database in a Postgres 16 container (`api-postgres-1`, volume `api_fanos-pg`). `pnpm pipeline:db:import` copies it into `fanos` (a dump of the source, which is only read, restored into the new database); 50 exports, 296 artifacts and every other table matched row for row. It refuses to replace a `fanos` that already holds exports unless `--force` is given, and cannot replace one Electric is attached to. The old volume is not touched: keep it for a while as a backup, then remove it with `docker volume rm api_fanos-pg` once the shared server has served you for a few days.
+**Moving the old data.** The `trial` stack kept its database in a Postgres 16 container (`api-postgres-1`, volume `api_fanos-pg`). `pnpm db import` copies it into `fanos` (a dump of the source, which is only read, restored into the new database); 50 exports, 296 artifacts and every other table matched row for row. It refuses to replace a `fanos` that already holds exports unless `--force` is given, and cannot replace one Electric is attached to. The old volume is not touched: keep it for a while as a backup, then remove it with `docker volume rm api_fanos-pg` once the shared server has served you for a few days.
 
-**Running it:** `pnpm infra:up && pnpm pipeline:infra:up`, `pnpm pipeline:build` once and after pipeline changes, then `pnpm pipeline:dev` (API :4100 and its worker, Studio :3000, web :3415), `pnpm worker` for the agents and `pnpm card:watch` for the Figma watcher.
+**Running it:** `pnpm infra up pipeline`, `pnpm build` once and after pipeline changes, then `pnpm dev` (API :4100 and its worker, Studio :3000, web :3415), `pnpm worker` for the agents and `pnpm agent watch` for the Figma watcher.
+
+**Agents and pipeline keep separate databases**, in every environment: they have different owners and lifetimes, and share no transactions or joins (agents reach the control plane through its HTTP API). A single database with two schemas was tried and dropped: it would have needed `runs` and `run_steps` kept apart anyway, and removes nothing but a connection string. Local shares a server to save a container. In dev and prod the control plane should have its own instance, because `wal_level=logical` is server-wide and a stopped Electric makes its replication slot retain WAL until the disk fills.
+
+**The final DSL belongs to FanXP.** The published tree is stored in the existing FanXP surface database (dev and prod), through the FanXP backend's API, by a write-effect tool behind approval. `harness` and `fanos` keep a reference to it, not a second copy. This part is intended and not yet built.
 
 ## Tried and not adopted: the apps in containers
 

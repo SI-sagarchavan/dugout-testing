@@ -1,7 +1,7 @@
-// pnpm memory:promote [--min-tenants 2] — finds the same fact, or the same lesson of one agent, in
+// pnpm agent memory promote [--min-tenants 2] — finds the same fact, or the same lesson of one agent, in
 // several tenants and proposes it as shared memory: for their sport, or for every tenant when they
 // span sports (ADR 0014). The smart model rewrites each without naming any tenant; a person approves
-// each with `pnpm memory:review --shared`. Runs as the admin role, since it reads across tenants.
+// each with `pnpm agent memory review --shared`. Runs as the admin role, since it reads across tenants.
 import { parseArgs } from "node:util";
 import { createBedrockClient, loadEnv, loadTenants } from "@dugout/core";
 import { adminDatabaseUrl, createPool } from "@dugout/db";
@@ -30,7 +30,7 @@ try {
     console.log(`proposed [${p.sharedScope}] ${what}: ${p.content} (from ${p.strength} tenants)`);
   }
   console.log(
-    `${proposed.length} proposed, ${skipped} kept as tenant-specific. Review with: pnpm memory:review --shared`,
+    `${proposed.length} proposed, ${skipped} kept as tenant-specific. Review with: pnpm agent memory review --shared`,
   );
 } finally {
   await pool.end();

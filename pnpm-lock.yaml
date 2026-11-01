@@ -178,206 +178,7 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
-  apps/cli:
-    dependencies:
-      '@clack/prompts':
-        specifier: ^1.8.1
-        version: 1.8.1
-      '@dugout/agent-card-match':
-        specifier: workspace:^
-        version: link:../../agents/card-match
-      '@dugout/contracts':
-        specifier: workspace:^
-        version: link:../../packages/contracts
-      '@dugout/core':
-        specifier: workspace:^
-        version: link:../../packages/core
-      '@dugout/db':
-        specifier: workspace:^
-        version: link:../../packages/db
-      '@dugout/sdk':
-        specifier: workspace:^
-        version: link:../../packages/sdk
-      '@dugout/worker':
-        specifier: workspace:^
-        version: link:../worker
-      iovalkey:
-        specifier: ^0.4.0
-        version: 0.4.0
-      picocolors:
-        specifier: ^1.1.1
-        version: 1.1.1
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@dugout/agent-match-preview':
-        specifier: workspace:^
-        version: link:../../agents/match-preview
-      '@dugout/agent-sitemap':
-        specifier: workspace:^
-        version: link:../../agents/sitemap
-      '@dugout/memory':
-        specifier: workspace:^
-        version: link:../../packages/memory
-
-  apps/worker:
-    dependencies:
-      '@dugout/agent-card':
-        specifier: workspace:^
-        version: link:../../agents/card
-      '@dugout/agent-card-match':
-        specifier: workspace:^
-        version: link:../../agents/card-match
-      '@dugout/agent-match-preview':
-        specifier: workspace:^
-        version: link:../../agents/match-preview
-      '@dugout/agent-matchday':
-        specifier: workspace:^
-        version: link:../../agents/matchday
-      '@dugout/agent-sitemap':
-        specifier: workspace:^
-        version: link:../../agents/sitemap
-      '@dugout/contracts':
-        specifier: workspace:^
-        version: link:../../packages/contracts
-      '@dugout/core':
-        specifier: workspace:^
-        version: link:../../packages/core
-      '@dugout/db':
-        specifier: workspace:^
-        version: link:../../packages/db
-      '@dugout/sdk':
-        specifier: workspace:^
-        version: link:../../packages/sdk
-      iovalkey:
-        specifier: ^0.4.0
-        version: 0.4.0
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@dugout/memory':
-        specifier: workspace:^
-        version: link:../../packages/memory
-
-  packages/contracts:
-    dependencies:
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-
-  packages/core:
-    dependencies:
-      '@aws-sdk/client-bedrock-runtime':
-        specifier: ^3.1160.0
-        version: 3.1160.0
-      '@dugout/contracts':
-        specifier: workspace:^
-        version: link:../contracts
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-
-  packages/db:
-    dependencies:
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
-    devDependencies:
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
-
-  packages/evals:
-    dependencies:
-      '@dugout/contracts':
-        specifier: workspace:^
-        version: link:../contracts
-      '@dugout/core':
-        specifier: workspace:^
-        version: link:../core
-      '@dugout/db':
-        specifier: workspace:^
-        version: link:../db
-      '@dugout/memory':
-        specifier: workspace:^
-        version: link:../memory
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-
-  packages/memory:
-    dependencies:
-      '@aws-sdk/client-bedrock-runtime':
-        specifier: ^3.1160.0
-        version: 3.1160.0
-      '@dugout/contracts':
-        specifier: workspace:^
-        version: link:../contracts
-      '@dugout/core':
-        specifier: workspace:^
-        version: link:../core
-      '@dugout/db':
-        specifier: workspace:^
-        version: link:../db
-      openai:
-        specifier: ^7.45.1
-        version: 7.45.1(@aws-sdk/credential-provider-node@3.972.91)(@smithy/signature-v4@5.7.5)(zod@4.6.7)
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-
-  packages/sdk:
-    dependencies:
-      '@dugout/contracts':
-        specifier: workspace:^
-        version: link:../contracts
-      '@dugout/core':
-        specifier: workspace:^
-        version: link:../core
-      '@dugout/db':
-        specifier: workspace:^
-        version: link:../db
-      '@dugout/memory':
-        specifier: workspace:^
-        version: link:../memory
-      '@dugout/tracing':
-        specifier: workspace:^
-        version: link:../tracing
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-
-  packages/tracing:
-    dependencies:
-      '@dugout/contracts':
-        specifier: workspace:^
-        version: link:../contracts
-      '@opentelemetry/api':
-        specifier: ^1.10.0
-        version: 1.10.0
-      '@opentelemetry/exporter-trace-otlp-http':
-        specifier: ^0.300.0
-        version: 0.300.0(@opentelemetry/api@1.10.0)
-      '@opentelemetry/resources':
-        specifier: ^3.0.0
-        version: 3.0.0(@opentelemetry/api@1.10.0)
-      '@opentelemetry/sdk-trace':
-        specifier: ^3.0.0
-        version: 3.0.0(@opentelemetry/api@1.10.0)
-    devDependencies:
-      '@dugout/core':
-        specifier: workspace:^
-        version: link:../core
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-
-  pipeline/apps/api:
+  apps/api:
     dependencies:
       '@fanos/compile':
         specifier: workspace:*
@@ -432,7 +233,50 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
-  pipeline/apps/surface-studio:
+  apps/cli:
+    dependencies:
+      '@clack/prompts':
+        specifier: ^1.8.1
+        version: 1.8.1
+      '@dugout/agent-card-match':
+        specifier: workspace:^
+        version: link:../../agents/card-match
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../../packages/db
+      '@dugout/sdk':
+        specifier: workspace:^
+        version: link:../../packages/sdk
+      '@dugout/worker':
+        specifier: workspace:^
+        version: link:../worker
+      iovalkey:
+        specifier: ^0.4.0
+        version: 0.4.0
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@dugout/agent-match-preview':
+        specifier: workspace:^
+        version: link:../../agents/match-preview
+      '@dugout/agent-sitemap':
+        specifier: workspace:^
+        version: link:../../agents/sitemap
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../../packages/memory
+
+  apps/surface-studio:
     dependencies:
       '@electric-sql/react':
         specifier: 1.0.55
@@ -487,7 +331,7 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
-  pipeline/apps/web:
+  apps/web:
     dependencies:
       '@electric-sql/react':
         specifier: 1.0.55
@@ -524,7 +368,47 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  pipeline/packages/compile:
+  apps/worker:
+    dependencies:
+      '@dugout/agent-card':
+        specifier: workspace:^
+        version: link:../../agents/card
+      '@dugout/agent-card-match':
+        specifier: workspace:^
+        version: link:../../agents/card-match
+      '@dugout/agent-match-preview':
+        specifier: workspace:^
+        version: link:../../agents/match-preview
+      '@dugout/agent-matchday':
+        specifier: workspace:^
+        version: link:../../agents/matchday
+      '@dugout/agent-sitemap':
+        specifier: workspace:^
+        version: link:../../agents/sitemap
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../../packages/db
+      '@dugout/sdk':
+        specifier: workspace:^
+        version: link:../../packages/sdk
+      iovalkey:
+        specifier: ^0.4.0
+        version: 0.4.0
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../../packages/memory
+
+  packages/compile:
     dependencies:
       '@fanos/conform':
         specifier: workspace:*
@@ -555,7 +439,7 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
-  pipeline/packages/conform:
+  packages/conform:
     dependencies:
       '@fanos/dsl':
         specifier: workspace:*
@@ -583,7 +467,35 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
-  pipeline/packages/dsl:
+  packages/contracts:
+    dependencies:
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/core:
+    dependencies:
+      '@aws-sdk/client-bedrock-runtime':
+        specifier: ^3.1160.0
+        version: 3.1160.0
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/db:
+    dependencies:
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+
+  packages/dsl:
     dependencies:
       '@fanos/tokens':
         specifier: workspace:*
@@ -611,7 +523,49 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
-  pipeline/packages/renderer:
+  packages/evals:
+    dependencies:
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../core
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../db
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../memory
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/memory:
+    dependencies:
+      '@aws-sdk/client-bedrock-runtime':
+        specifier: ^3.1160.0
+        version: 3.1160.0
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../core
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../db
+      openai:
+        specifier: ^7.45.1
+        version: 7.45.1(@aws-sdk/credential-provider-node@3.972.91)(@smithy/signature-v4@5.7.5)(zod@4.6.7)
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/renderer:
     dependencies:
       '@fanos/dsl':
         specifier: workspace:*
@@ -660,7 +614,28 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
-  pipeline/packages/surface-canvas:
+  packages/sdk:
+    dependencies:
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../core
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../db
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../memory
+      '@dugout/tracing':
+        specifier: workspace:^
+        version: link:../tracing
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/surface-canvas:
     dependencies:
       '@fanos/tokens':
         specifier: workspace:*
@@ -700,7 +675,7 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
-  pipeline/packages/tokens:
+  packages/tokens:
     dependencies:
       zod:
         specifier: ^3.25.76
@@ -718,6 +693,31 @@ importers:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
+
+  packages/tracing:
+    dependencies:
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+      '@opentelemetry/api':
+        specifier: ^1.10.0
+        version: 1.10.0
+      '@opentelemetry/exporter-trace-otlp-http':
+        specifier: ^0.300.0
+        version: 0.300.0(@opentelemetry/api@1.10.0)
+      '@opentelemetry/resources':
+        specifier: ^3.0.0
+        version: 3.0.0(@opentelemetry/api@1.10.0)
+      '@opentelemetry/sdk-trace':
+        specifier: ^3.0.0
+        version: 3.0.0(@opentelemetry/api@1.10.0)
+    devDependencies:
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../core
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
 packages:
 
@@ -5394,7 +5394,7 @@ snapshots:
 
   '@types/pngjs@6.0.5':
     dependencies:
-      '@types/node': 22.20.5
+      '@types/node': 26.6.6
 
   '@types/react-dom@19.2.4(@types/react@19.2.18)':
     dependencies:

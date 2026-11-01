@@ -1,4 +1,4 @@
-// pnpm card --tenant demo-cricket --card fixture-rail --brief "..." [--figma <dsl.json> --screenshot <card.png>] [--attempts 3] [--yes] [--resume]
+// pnpm agent program card --tenant demo-cricket --card fixture-rail --brief "..." [--figma <dsl.json> --screenshot <card.png>] [--attempts 3] [--yes] [--resume]
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stdin, stdout } from "node:process";
@@ -7,7 +7,7 @@ import type { EventSink, RunEvent } from "@dugout/contracts";
 import { type ProgramCheckpoint, REPO_ROOT, runProgram } from "@dugout/core";
 import { liveDeps } from "@dugout/sdk";
 import { outline } from "../src/agent.ts";
-import { checkCard, pipelineRoot } from "../src/dsl.ts";
+import { checkCard } from "../src/dsl.ts";
 import { EditBatchSchema } from "../src/edits.ts";
 import { closeRenderBrowser, diffCard, loadFigma, unpaintedTypes } from "../src/pixels.ts";
 import { type CardProgramState, DEFAULT_ATTEMPTS, defineCardProgram } from "../src/program.ts";
@@ -20,7 +20,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.tenant || !args.cardId || !args.brief) {
     console.error(
-      "Usage: pnpm card --tenant <id> --card <id> --brief <text> [--figma <dsl.json> --screenshot <card.png>] [--attempts 3] [--yes] [--resume]",
+      "Usage: pnpm agent program card --tenant <id> --card <id> --brief <text> [--figma <dsl.json> --screenshot <card.png>] [--attempts 3] [--yes] [--resume]",
     );
     process.exit(2);
   }
@@ -38,7 +38,7 @@ async function main() {
   const draft = draftAgent.create(made);
   const ask = approver(args.yes);
   const runId = `card-program-${args.cardId}`;
-  const renderRoot = pipelineRoot();
+  const renderRoot = REPO_ROOT;
   const input = {
     cardId: args.cardId,
     ...(args.figma ? { figma: args.figma } : {}),

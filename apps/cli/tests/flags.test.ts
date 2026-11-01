@@ -124,8 +124,8 @@ describe("command line", () => {
     expect(usage(sitemap)).toBe(
       "pnpm agent sitemap --tenant <id> --brief <brief> [--sport <sports>]... [--input <json>] [--model <name>] [--effort <level>] [--yes]",
     );
-    expect(usage(await loadAgent("match-preview"), "pnpm preview")).toBe(
-      "pnpm preview --tenant <id> --fixture <fixtureId> [--brief <brief>] [--input <json>] [--model <name>] [--effort <level>] [--yes]",
+    expect(usage(await loadAgent("match-preview"))).toBe(
+      "pnpm agent match-preview --tenant <id> --fixture <fixtureId> [--brief <brief>] [--input <json>] [--model <name>] [--effort <level>] [--yes]",
     );
     await expect(loadAgent("nope")).rejects.toThrow('no agent "nope"');
   });

@@ -1,5 +1,5 @@
 // Live smoke run against Bedrock: one read tool, then `final`. Exercises streaming, tool calls and
-// usage. Run with `pnpm smoke [--model <name>]` (reads .env if present, for AWS_PROFILE and
+// usage. Run with `pnpm eval smoke [--model <name>]` (reads .env if present, for AWS_PROFILE and
 // AWS_REGION); the model is a name in config/models.json and defaults to nova-lite.
 import { existsSync } from "node:fs";
 import { defineTool } from "@dugout/contracts";

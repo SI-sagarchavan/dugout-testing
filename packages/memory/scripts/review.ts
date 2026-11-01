@@ -1,6 +1,6 @@
-// pnpm memory:review --tenant demo-cricket — approve or reject the tenant's proposed facts. Every
+// pnpm agent memory review --tenant demo-cricket — approve or reject the tenant's proposed facts. Every
 // agent of the tenant reads an approved fact.
-// pnpm memory:review --shared — approve or reject proposed shared memory (ADR 0014), shown beside
+// pnpm agent memory review --shared — approve or reject proposed shared memory (ADR 0014), shown beside
 // the tenant items it was promoted from. Check it names no tenant before approving: every tenant
 // of its scope will read it. Runs as the admin role, the only one that writes shared memory.
 import { userInfo } from "node:os";
@@ -15,7 +15,7 @@ const { values } = parseArgs({
   options: { tenant: { type: "string" }, shared: { type: "boolean" } },
 });
 if (!values.tenant && !values.shared) {
-  console.error("usage: pnpm memory:review --tenant <id> | --shared");
+  console.error("usage: pnpm agent memory review --tenant <id> | --shared");
   process.exit(2);
 }
 const reviewer = userInfo().username;

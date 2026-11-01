@@ -33,7 +33,7 @@ export const COMMANDS = [
     ],
     examples: [
       "pnpm agent run match-preview --tenant demo-cricket --fixture c-101",
-      "pnpm preview --tenant demo-cricket --fixture c-101",
+      "pnpm agent match-preview --tenant demo-cricket --fixture c-101",
     ],
   },
   {
@@ -407,6 +407,14 @@ export function renderHelp(topic?: CommandName): string {
   return renderRoot();
 }
 
+const TOOLS: Array<[string, string]> = [
+  ["watch", "A Send from the Figma plugin starts a card-match run"],
+  ["program <card|round>", "Run a card or a round as a program, in this process"],
+  ["memory <review|promote>", "Approve proposed facts, or propose shared memory"],
+  ["schemas", "Write each agent's input and output JSON Schema to schemas/"],
+];
+const toolWidth = Math.max(...TOOLS.map(([name]) => name.length));
+
 function renderRoot(): string {
   const width = Math.max(...COMMANDS.map((command) => command.syntax.length));
   const lines = [
@@ -429,10 +437,8 @@ function renderRoot(): string {
     `  ${paint.name("--help".padEnd(12))}  Show this help`,
     `  ${paint.name("--version".padEnd(12))}  Show the version`,
     "",
-    paint.heading("Shortcuts"),
-    `  ${paint.name("pnpm preview".padEnd(16))}  match-preview`,
-    `  ${paint.name("pnpm sitemap".padEnd(16))}  sitemap`,
-    `  ${paint.name("pnpm matchday".padEnd(16))}  matchday`,
+    paint.heading("Tools (same entry point)"),
+    ...TOOLS.map(([name, summary]) => `  ${paint.name(name.padEnd(toolWidth))}  ${summary}`),
     "",
     "At an approval, a terminal asks you to approve, reject, or request a change.",
     "A pipe answers y, n, or the change itself. Ctrl-C leaves the run going.",

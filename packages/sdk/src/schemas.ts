@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { AnyAgent } from "./agent.ts";
 import { agentIds, loadAgent } from "./registry.ts";
 
-/** Where `pnpm schemas` writes them; hosts copy them from here. */
+/** Where `pnpm agent schemas` writes them; hosts copy them from here. */
 export const SCHEMAS_DIR = join(REPO_ROOT, "schemas");
 
 /**

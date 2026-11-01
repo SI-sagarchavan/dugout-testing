@@ -5,7 +5,7 @@ const TEST_DB = "harness_test";
 
 /**
  * Creates and migrates a database next to the main one (default `harness_test`) and returns its
- * app-role and admin URLs. Needs `pnpm infra:up` locally; CI provides a service.
+ * app-role and admin URLs. Needs `pnpm infra up` locally; CI provides a service.
  */
 export async function prepareDatabase(
   name = TEST_DB,
@@ -17,7 +17,7 @@ export async function prepareDatabase(
     await client.connect();
   } catch (err) {
     throw new Error(
-      `cannot reach Postgres at ${admin.host} (${(err as Error).message}); run \`pnpm infra:up\``,
+      `cannot reach Postgres at ${admin.host} (${(err as Error).message}); run \`pnpm infra up\``,
     );
   }
   try {

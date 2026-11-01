@@ -2,13 +2,11 @@ packages:
   - "packages/*"
   - "agents/*"
   - "apps/*"
-  - "pipeline/packages/*"
-  - "pipeline/apps/*"
 
 onlyBuiltDependencies:
   - esbuild
 
-# The pipeline's rendering and build stack, pinned to what the `trial` lockfile resolved when it
+# The @fanos apps' and packages' rendering and build stack, pinned to what the `trial` lockfile resolved when it
 # moved here (ADR 0020). playwright picks the Chromium that renders every pixel the agents
 # measure against, so a drift here moves the numbers.
 overrides:

@@ -6,7 +6,7 @@
  * Designs the agent was NOT tuned on. Nothing in the code was changed because of how one of them
  * looked, so a number here says whether a fix helps a design nobody has examined. They are not in
  * the live eval, because some score badly for reasons no fix has addressed yet, and they would hold
- * the gate shut. `pnpm card-match:measure` prints them next to the tuned frames.
+ * the gate shut. `pnpm eval measure` prints them next to the tuned frames.
  */
 export const HOLDOUT = [
   { id: "ho-header", exportId: "e02bac4a-8d12-47d0-86c8-859294648575", kind: "a site header" },

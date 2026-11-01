@@ -4,13 +4,13 @@ The `card` and `card-match` agents ran the pipeline's compiler, DSL validator an
 
 ## Decision
 
-The pipeline is `pipeline/` in this repo: the `@fanos/*` packages (`tokens`, `dsl`, `conform`, `compile`, `renderer`, `surface-canvas`) and apps (`api`, `surface-studio`, `web`), as they were in `trial`. They join the pnpm workspace as `pipeline/packages/*` and `pipeline/apps/*`.
+The pipeline's packages and apps sit in `packages/` and `apps/` beside dugout's, as in any other part of this monorepo: `@fanos/{tokens,dsl,conform,compile,renderer,surface-canvas}` and `@fanos/{api,surface-studio,web}`. The npm scope says which family a folder belongs to. (They first landed in a `pipeline/` folder; that hid them from the repo's layout for no gain.)
 
-- **One path.** `PIPELINE_ROOT` in `@dugout/core` replaces `trialRoot()` and `FANOS_TRIAL_ROOT`. The agents still import the built `dist` of the pipeline packages, so `pnpm pipeline:build` runs after install and after a change there.
-- **Own toolchain, not ours.** `pipeline/` keeps its tsup, vitest 2 and TypeScript 5 (each package pins its own), and `pnpm check` lints it with neither Biome nor dugout's TypeScript settings. Reformatting it was no part of the move.
-- **Nothing renamed.** The `@fanos/*` names do not clash with `@dugout/*`. The relative layout inside `pipeline/` is the one the apps already assume (the web app reads fixtures from `../../..`), so the card agent still writes its preview to `pipeline/packages/{dsl,renderer}/fixtures/preview/`.
+- **One path.** The agents find the built packages from `REPO_ROOT`; `trialRoot()` and `FANOS_TRIAL_ROOT` are gone. They still import `dist`, so `pnpm build` runs after install and after a change there.
+- **Own toolchain, for now.** The `@fanos/*` code keeps its tsup, vitest 2 and TypeScript 5 (each package pins its own) and its compiler options (`tsconfig.fanos.json`, less strict than `tsconfig.base.json`), and `biome.json` excludes it. Reformatting and stricter types were no part of the move, and can be done package by package.
+- **Nothing renamed.** The `@fanos/*` names do not clash with `@dugout/*`, and the relative layout between an app and a package is the one the apps assume (the web app reads fixtures from `../..`).
 - **Shared infra.** The control plane's database is `fanos` in dugout's Postgres server, its job queue is dugout's Valkey, and Electric is a service of the root `docker-compose.yml` (ADR 0021).
 
 ## Not moved
 
-Git history (it stays in the `trial` remote), `native-preview/` (an Expo experiment that nothing imports), `skills-lock.json`, and the `.github` workflow, which does nothing in a subfolder.
+Git history (it stays in the `trial` remote), `native-preview/` (an Expo experiment that nothing imports), `skills-lock.json`, and the `.github` workflow.
