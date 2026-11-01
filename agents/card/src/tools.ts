@@ -87,6 +87,8 @@ export async function publishPromptCard(
     draft,
     run.ctx.tenantId,
     run.ctx.runId,
+    // generated from a brief, nobody approved a save: the preview only
+    { record: false },
   );
 }
 
@@ -262,16 +264,22 @@ export async function writeCard(
   draft: CardDraft,
   tenantId: string,
   runId: string,
+  /**
+   * `false` writes the preview only. The record is the last card an editor APPROVED to be saved:
+   * a run that generated one from a brief was never asked, so it must not replace it.
+   */
+  opts: { record?: boolean } = {},
 ) {
   const preview = previewPaths(renderRoot);
-  const record = join(cardsDir, tenantId, `${draft.cardId}.json`);
   await mkdir(join(preview.tree, ".."), { recursive: true });
   await mkdir(join(preview.data, ".."), { recursive: true });
-  await mkdir(join(record, ".."), { recursive: true });
   const tree = `${JSON.stringify(draft.tree, null, 2)}\n`;
   const data = `${JSON.stringify(draft.data, null, 2)}\n`;
   await writeFile(preview.tree, tree);
   await writeFile(preview.data, data);
+  if (opts.record === false) return { preview, record: undefined };
+  const record = join(cardsDir, tenantId, `${draft.cardId}.json`);
+  await mkdir(join(record, ".."), { recursive: true });
   await writeFile(
     record,
     `${JSON.stringify({ cardId: draft.cardId, runId, tree: draft.tree, data: draft.data }, null, 2)}\n`,

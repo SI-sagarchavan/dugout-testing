@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemorySink, createScriptedModel, scriptedModelConfig } from "@dugout/core";
@@ -129,6 +129,10 @@ describe("card agent", () => {
   it("drafts from the brief and does not save", async () => {
     const draft = sample();
     const cardsDir = await mkdtemp(join(tmpdir(), "cards-"));
+    // a card an editor approved earlier, for the same id: a run nobody approved must leave it alone
+    const approved = join(cardsDir, "demo-cricket", "trial-card.json");
+    await mkdir(join(cardsDir, "demo-cricket"), { recursive: true });
+    await writeFile(approved, '{"approved":"by an editor"}');
     const renderRoot = await mkdtemp(join(tmpdir(), "render-"));
     const client = createScriptedModel([
       () => ({ toolCalls: [{ name: "card.draft", arguments: draft }] }),
@@ -157,6 +161,7 @@ describe("card agent", () => {
       await readFile(join(renderRoot, "packages/dsl/fixtures/preview/card.json"), "utf8"),
     ) as { nodes: unknown[] };
     expect(preview.nodes).toHaveLength(draft.tree.nodes.length);
+    expect(await readFile(approved, "utf8")).toBe('{"approved":"by an editor"}');
     const system = client.requests[0]?.messages[0]?.content ?? "";
     expect(system).toContain("## Skill: card");
     expect(system).toContain("surface.fixture_shell");
