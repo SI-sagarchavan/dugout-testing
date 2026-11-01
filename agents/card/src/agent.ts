@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { AgentSpec } from "@dugout/contracts";
 import { defineAgent } from "@dugout/sdk";
 import { z } from "zod";
+import { referenceOf } from "./pixels.ts";
 import { CARD_ID, type CardDraft, CardShape, Output, summarize } from "./schema.ts";
 import { CARDS_DIR, createCardTools, publishPromptCard } from "./tools.ts";
 
@@ -92,6 +93,8 @@ export const agent = defineAgent({
       ...(opts.see ? { see: opts.see } : {}),
     }),
   afterRun: (run, deps) => publishPromptCard(run, deps),
+  // a card made from a brief never calls card.save: only a Figma run is expected to write
+  writeExpected: (input) => referenceOf(input).mode === "on",
   cli: {
     flags: { card: "cardId" },
     present: (req) => outline(req.input),

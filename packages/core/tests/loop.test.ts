@@ -818,9 +818,15 @@ describe("runAgent", () => {
       );
     });
 
+    // an agent that never writes, so there is nothing a forced answer could skip
+    const readOnly = () => ({
+      spec: spec({ tools: ["stats.get", "slow.read", "big.read"] }),
+      output: Output,
+    });
+
     it("forces final on the last step for a model with forcedTools, and not otherwise", async () => {
       const script = [read, read, read, read, read, final("ok")];
-      const on = await run(script, forced());
+      const on = await run(script, { ...forced(), agent: readOnly() });
       expect(on.model.requests.map((r) => r.toolChoice)).toEqual([
         undefined,
         undefined,
@@ -829,15 +835,52 @@ describe("runAgent", () => {
         undefined,
         { tool: "final" },
       ]);
-      const off = await run(script);
+      const off = await run(script, { agent: readOnly() });
       expect(off.model.requests.some((r) => r.toolChoice)).toBe(false);
     });
 
     it("forces final on the turn after the call-final nudge", async () => {
-      const { model, result } = await run([{ content: "here you go" }, final("ok")], forced());
+      const { model, result } = await run([{ content: "here you go" }, final("ok")], {
+        ...forced(),
+        agent: readOnly(),
+      });
       expect(model.requests[0]?.toolChoice).toBeUndefined();
       expect(model.requests[1]?.toolChoice).toEqual({ tool: "final" });
       expect(result.status).toBe("completed");
+    });
+
+    describe("an agent that is expected to write", () => {
+      const save = call("draft.save", { text: "a" });
+
+      it("leaves the choice open after the nudge until something has been saved", async () => {
+        // the model says what it will do, instead of doing it: forcing `final` here would end the
+        // run completed with nothing saved and no approval ever asked for
+        const { model, result } = await run(
+          [{ content: "Now I'll save it." }, save, final("ok")],
+          forced(),
+        );
+        expect(model.requests[1]?.toolChoice).toBeUndefined();
+        expect(result.status).toBe("completed");
+      });
+
+      it("forces final on the nudge once the write has happened", async () => {
+        const { model } = await run([save, { content: "all done" }, final("ok")], forced());
+        expect(model.requests[2]?.toolChoice).toEqual({ tool: "final" });
+      });
+
+      it("does not force the last step before a write, so the run fails instead of faking one", async () => {
+        const { model, result } = await run([read, read, read, read, read, read], forced());
+        expect(model.requests.some((r) => r.toolChoice)).toBe(false);
+        expect(result.status).toBe("failed");
+      });
+
+      it("forces final when the agent says this run is not expected to write", async () => {
+        const { model } = await run([{ content: "here you go" }, final("ok")], {
+          ...forced(),
+          agent: { spec: spec(), output: Output, writeExpected: () => false },
+        });
+        expect(model.requests[1]?.toolChoice).toEqual({ tool: "final" });
+      });
     });
   });
 

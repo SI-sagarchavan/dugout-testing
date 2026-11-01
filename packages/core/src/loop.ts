@@ -109,6 +109,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   }
 
   const tools = registry.definitions([...spec.tools, ...BUILTIN_TOOLS]);
+  // an agent that lists a tool that writes is expected to use it, unless it says this run won't
+  const writeExpected =
+    agent.writeExpected?.(opts.ctx.input) ??
+    spec.tools.some((name) => registry.get(name)?.effect === "write");
   if (final) {
     tools.push(
       toolDefinition(
@@ -157,6 +161,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         lastSeq: 0,
         invalidOutputs: 0,
         blockedFinishes: 0,
+        wrote: false,
         pendingChanges: {},
       };
   const { usage } = state;
@@ -492,6 +497,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         content,
         ...(outcome.ok ? {} : { isError: true }),
       });
+      if (outcome.ok && registry.get(call.name)?.effect === "write") state.wrote = true;
       await save("tool");
       if (state.failedCall && state.failedCall.count >= MAX_SAME_FAILURES) {
         return fail(
@@ -523,6 +529,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         const last = messages.at(-1);
         const forceFinal =
           output !== undefined &&
+          // A model forced to answer before it saved ends "completed" with nothing saved.
+          (state.wrote || !writeExpected) &&
           (step >= spec.budget.maxSteps || (last?.role === "user" && last.content === FINAL_NUDGE));
         const turn = await steps.model({
           step,

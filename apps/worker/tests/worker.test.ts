@@ -419,6 +419,7 @@ describe("workers", () => {
       lastSeq: 0,
       invalidOutputs: 0,
       blockedFinishes: 0,
+      wrote: false,
       pendingChanges: {},
     };
     await expect(

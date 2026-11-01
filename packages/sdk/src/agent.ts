@@ -95,6 +95,8 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
   ) => string | undefined;
   /** Sync, no I/O: fills `final` fields a tool already returned, before `verifyFinal` runs. */
   completeFinal?: (output: unknown, run: { ctx: RunContext; messages: Message[] }) => unknown;
+  /** Whether a run of this input is expected to write; see `AgentDefinition.writeExpected`. */
+  writeExpected?: (input: unknown) => boolean;
   /** The agent's folder: skills are read from `skills/`. Nothing in it is per tenant. */
   dir: string;
   /**
@@ -154,6 +156,7 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
     ...(config.output ? { output: config.output } : {}),
     ...(config.verifyFinal ? { verifyFinal: config.verifyFinal } : {}),
     ...(config.completeFinal ? { completeFinal: config.completeFinal } : {}),
+    ...(config.writeExpected ? { writeExpected: config.writeExpected } : {}),
   };
   const skillsDir = join(config.dir, "skills");
 

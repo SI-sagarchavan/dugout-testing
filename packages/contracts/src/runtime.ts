@@ -94,6 +94,8 @@ export const RunCheckpoint = z.object({
   lastSeq: z.number().int().nonnegative(),
   invalidOutputs: z.number().int().nonnegative(),
   blockedFinishes: z.number().int().nonnegative(),
+  /** A tool that writes has completed in this run. Absent on a run saved before this existed. */
+  wrote: z.boolean().default(false),
   /** The last call that was refused before it ran, so a resumed run still stops on a copy of it. */
   refused: z.object({ tool: z.string(), args: z.string() }).optional(),
   /** The last call whose tool failed, and how many times in a row with this same input. */

@@ -45,4 +45,12 @@ export interface AgentDefinition {
    * what a tool already returned, so the model need not copy it exactly. Returns the value to use.
    */
   completeFinal?: (output: unknown, run: { ctx: RunContext; messages: Message[] }) => unknown;
+  /**
+   * Whether this run is expected to write something. `final` is only FORCED (a forced tool choice,
+   * on the last step or after the nudge) once a write has happened when one is expected, because a
+   * model forced to answer before it saved ends `completed` with nothing saved and no approval ever
+   * asked for. Default: expected when the spec lists a tool that writes. An agent that can write but
+   * does not on some runs (a card made from a brief) says so here.
+   */
+  writeExpected?: (input: unknown) => boolean;
 }
