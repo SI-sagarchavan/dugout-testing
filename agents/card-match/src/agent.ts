@@ -30,14 +30,14 @@ export const spec: AgentSpec = {
     "frame.override",
     "frame.look",
     "frame.publish",
-    "memory.search",
-    "memory.propose",
   ],
   skills: ["card-match"],
   onDemandSkills: [],
   model: "sonnet",
-  // Not episodic: last run's numbers are about another frame, and this frame's are all in frame.load.
-  memory: { read: ["procedural", "semantic"], write: ["episodic", "semantic"] },
+  // The skill only. House facts are about copy (previews, spelling, site menus), and last run's
+  // numbers are about another frame: this frame's are all in frame.load. So nothing is read, and
+  // nothing is written that no run would read.
+  memory: { read: ["procedural"], write: [] },
   budget: { usdPerRun: 1, maxSteps: 30, maxDepth: 0 },
   approvals: ["effect:write"],
 };
