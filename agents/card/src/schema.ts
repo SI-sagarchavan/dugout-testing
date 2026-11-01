@@ -161,7 +161,7 @@ export const CardObject = z
   })
   .strict();
 
-/** The editor is asked only after the trial validator accepts the tree. */
+/** The editor is asked only after the pipeline validator accepts the tree. */
 export const SaveSchema = CardShape.superRefine((draft, ctx) => {
   const check = checkCard(draft.tree, draft.data);
   if (!check.ok) ctx.addIssue({ code: "custom", message: check.issues.join("\n") });

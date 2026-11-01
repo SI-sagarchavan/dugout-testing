@@ -2,7 +2,7 @@
 
 The `card` agent reads a DSL file and a screenshot, and most of what decides fidelity never reaches it: the IR, the surfaces, the export's theme. `card-match` starts from what the plugin's Send already stored, by export id.
 
-- **Trigger.** `pnpm card:watch` is a host (ADR 0009) that looks at the control plane for new exports and queues a run per frame, so the plugin and the trial repo do not change. The plugin can't show the run's link, because the control plane doesn't know about it. A Send made while the watcher is down still runs when it next starts, once the tenant has a prior `card-match` run.
+- **Trigger.** `pnpm card:watch` is a host (ADR 0009) that looks at the control plane for new exports and queues a run per frame, so the plugin and the pipeline do not change. The plugin can't show the run's link, because the control plane doesn't know about it. A Send made while the watcher is down still runs when it next starts, once the tenant has a prior `card-match` run.
 - **The compiler stays the source.** The model never writes a tree. It adds overrides keyed by Figma id, and each is an input to a recompile, so they survive one.
 - **Code does what needs no judgement.** Tokenless gradients come from the IR's matrix. Placeholder icons are cropped from the screenshot, with any gradient above them taken back out of the pixels. Only then does the model look.
 - **Measured, not claimed.** Each override is rendered and compared. It is undone if the pixel match drops, conform errors rise, or nothing improves. The approval and `final` carry code's numbers, and `final` is refused if they differ. Publishing is refused until the worst findings have been examined, because models stop early when the first number looks high.
@@ -61,5 +61,5 @@ Whether to look first or last was measured, 3 attempts per frame on 6 frames. Lo
 - The screenshot's page colour is unknown, so the render is on mid grey, and a screenshot is laid over the render rather than over a colour.
 - The agent's stored themes are the newest `token_set`, and Studio's preview falls back to the newest one. They are the project's theme plus a frame's raw paints. The agent itself skips them when it picks a theme.
 - Overrides live in `.runs/card-match/<runId>.json`, on the worker's disk. A run resumed on another machine would have to start over: to move before production (H7).
-- Compiler bugs found here are reported in `compilerFindings`, not fixed: the agent doesn't edit the trial repo.
+- Compiler bugs found here are reported in `compilerFindings`, not fixed: the agent doesn't edit the pipeline.
 - A vision model invents differences. On identical pictures it reported about one per tile, one in three of them medium or high. Treat `frame.look` as a list of leads to read with `frame.node`, never as a verdict. Content on a tile boundary is seen in halves.

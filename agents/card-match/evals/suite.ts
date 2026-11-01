@@ -34,7 +34,7 @@ export interface SuiteOptions {
   runsDir: string;
 }
 
-// The live cases read stored Sends from the local control plane, so they need the trial stack up.
+// The live cases read stored Sends from the local control plane, so they need the pipeline stack up.
 // Scripted mode runs the same cases against fixed numbers, to check the plumbing alone.
 const cases = FRAMES.map((frame) => ({
   id: frame.id,
@@ -190,7 +190,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<(typeof
 
 const PREVIEW = "http://localhost:3000/v1/preview/dsl_tree-id?theme=t&surfaces=surface_set-id";
 
-/** The tools' plumbing without a trial checkout: fixed numbers, nothing to find. */
+/** The tools' plumbing without a built pipeline: fixed numbers, nothing to find. */
 function fakeEngine(match: number): Engine {
   const measured: Measurement = {
     match,

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { defineTool, type ToolContext } from "@dugout/contracts";
 import { type CompletedRun, describeImage, REPO_ROOT } from "@dugout/core";
 import { z } from "zod";
-import { checkCard, trialRoot } from "./dsl.ts";
+import { checkCard, pipelineRoot } from "./dsl.ts";
 import { applyEdits, EditBatchSchema } from "./edits.ts";
 import { diffCard, loadFigma, passBlock, referenceOf } from "./pixels.ts";
 import { flattenOnPage } from "./png.ts";
@@ -82,7 +82,7 @@ export async function publishPromptCard(
   const draft = heldDraft(run.ctx.runId);
   if (!draft || !checkCard(draft.tree, draft.data).ok) return;
   await writeCard(
-    opts.renderRoot ?? trialRoot(),
+    opts.renderRoot ?? pipelineRoot(),
     opts.cardsDir ?? CARDS_DIR,
     draft,
     run.ctx.tenantId,
@@ -106,7 +106,7 @@ export function createCardTools(
   opts: { cardsDir?: string; renderRoot?: string; see?: SeeImage } = {},
 ) {
   const cardsDir = opts.cardsDir ?? CARDS_DIR;
-  const renderRoot = opts.renderRoot ?? trialRoot();
+  const renderRoot = opts.renderRoot ?? pipelineRoot();
   const see = opts.see ?? defaultSee;
 
   const cardFigma = defineTool({

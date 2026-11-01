@@ -132,7 +132,7 @@ export const Overrides = z
     gradients: z.array(z.string()).default([]),
     /** Replace a surface the compiler named, e.g. to bind the token the design really uses. */
     surfaces: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
-    /** Props on the node a Figma id compiled to. The trial validator checks every token. */
+    /** Props on the node a Figma id compiled to. The pipeline validator checks every token. */
     props: z
       .array(z.object({ src: z.string(), props: z.record(z.string(), z.unknown()) }))
       .default([]),
@@ -664,7 +664,7 @@ export function unpaintedLayers(bundle: Bundle, tree: Tree, themeRaw: unknown): 
     .map(({ area: _area, ...rest }) => rest);
 }
 
-/** The same compile a pipeline run does, with this frame's overrides, then the trial validator. */
+/** The same compile a pipeline run does, with this frame's overrides, then the pipeline validator. */
 export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Overrides): Built {
   const gradients = new Map<string, RawGradient>();
   const missing: string[] = [];

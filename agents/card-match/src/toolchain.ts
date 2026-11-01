@@ -1,11 +1,11 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { REPO_ROOT } from "@dugout/core";
+import { PIPELINE_ROOT } from "@dugout/core";
 
-/** Sibling checkout of the FanOS trial repo. The same compiler and renderer a pipeline run uses. */
-export function trialRoot(): string {
-  return process.env.FANOS_TRIAL_ROOT ?? join(REPO_ROOT, "..", "trial");
+/** `pipeline/` in this repo. The same compiler and renderer a pipeline run uses. */
+export function pipelineRoot(): string {
+  return PIPELINE_ROOT;
 }
 
 export interface Box {
@@ -124,7 +124,7 @@ export interface Toolchain {
 
 let loading: Promise<Toolchain> | undefined;
 
-/** The trial repo's built packages. Build them there with `pnpm -r build`. */
+/** The pipeline's built packages. Build them with `pnpm pipeline:build`. */
 export function loadToolchain(): Promise<Toolchain> {
   loading ??= load().catch((err: unknown) => {
     loading = undefined;
@@ -134,7 +134,7 @@ export function loadToolchain(): Promise<Toolchain> {
 }
 
 async function load(): Promise<Toolchain> {
-  const root = trialRoot();
+  const root = pipelineRoot();
   const from = async <T>(path: string) =>
     (await import(pathToFileURL(join(root, "packages", path)).href)) as T;
   const compiler = await from<{ compile: Toolchain["compile"] }>("compile/dist/index.js");

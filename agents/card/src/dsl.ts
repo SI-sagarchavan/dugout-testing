@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { REPO_ROOT } from "@dugout/core";
+import { PIPELINE_ROOT } from "@dugout/core";
 
-/** Sibling checkout of the FanOS trial repo: the DSL vocabulary and the renderer. */
-export function trialRoot(): string {
-  return process.env.FANOS_TRIAL_ROOT ?? join(REPO_ROOT, "..", "trial");
+/** `pipeline/` in this repo: the DSL vocabulary and the renderer. Build it with `pnpm pipeline:build`. */
+export function pipelineRoot(): string {
+  return PIPELINE_ROOT;
 }
 
 interface DslIssue {
@@ -25,7 +25,7 @@ interface Checker {
 let checker: Checker | undefined;
 
 async function loadChecker(): Promise<void> {
-  const root = trialRoot();
+  const root = pipelineRoot();
   const dsl = (await import(pathToFileURL(join(root, "packages/dsl/dist/index.js")).href)) as {
     flatTreeSchema: { parse(tree: unknown): unknown };
     validate(
@@ -52,7 +52,7 @@ async function loadChecker(): Promise<void> {
   };
 }
 
-// Importers wait until the trial validator is ready.
+// Importers wait until the pipeline validator is ready.
 await loadChecker();
 
 export interface CardCheck {
@@ -60,7 +60,7 @@ export interface CardCheck {
   issues: string[];
 }
 
-/** Zero errors and zero warnings. A warning would fail the trial fixture suite. */
+/** Zero errors and zero warnings. A warning would fail the pipeline fixture suite. */
 export function checkCard(tree: unknown, data: unknown): CardCheck {
   if (!checker) return { ok: false, issues: ["the DSL checker is not loaded"] };
   try {
@@ -81,7 +81,7 @@ function formatIssue(issue: DslIssue): string {
 
 /** The hand-authored sample, used by the scripted tests as a known-good tree. */
 export function sampleCard(): { tree: unknown; data: unknown } {
-  const root = trialRoot();
+  const root = pipelineRoot();
   return {
     tree: JSON.parse(readFileSync(join(root, "packages/dsl/fixtures/sample-card.json"), "utf8")),
     data: JSON.parse(

@@ -26,7 +26,7 @@ import { loadToolchain, type Toolchain } from "./toolchain.ts";
 
 export const MATCH_DIR = join(REPO_ROOT, ".runs", "card-match");
 
-/** The compile, render and compare steps, so a test can run the tools without a trial checkout. */
+/** The compile, render and compare steps, so a test can run the tools without a built pipeline. */
 export interface Engine {
   bundle(plane: ControlPlane, exportId: string, themeArtifactId?: string): Promise<Bundle>;
   build(bundle: Bundle, overrides: Overrides): Promise<Built>;
@@ -50,7 +50,7 @@ export interface Engine {
   unpainted?(bundle: Bundle, built: Built): Unpainted[];
 }
 
-export function trialEngine(tools?: Toolchain): Engine {
+export function pipelineEngine(tools?: Toolchain): Engine {
   const load = async () => tools ?? (await loadToolchain());
   return {
     bundle: async (plane, exportId, theme) => loadBundle(await load(), plane, exportId, theme),
@@ -299,7 +299,7 @@ export function createMatchTools(
   } = {},
 ) {
   const dir = opts.dir ?? MATCH_DIR;
-  const engine = opts.engine ?? trialEngine();
+  const engine = opts.engine ?? pipelineEngine();
   const planeOf = opts.plane ?? ((project: string) => createControlPlane(project));
   const bundles = new Map<string, Promise<Bundle>>();
   const turns = new Map<string, Promise<unknown>>();

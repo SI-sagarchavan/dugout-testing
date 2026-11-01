@@ -3,7 +3,7 @@
 // Press Send in the Figma plugin and a card-match run starts. It publishes without asking; --ask
 // brings the approval prompt back. This host looks at the control plane
 // for new exports, queues a run for each, follows it here and asks at its approval. The plugin and
-// the trial repo are unchanged. Needs `pnpm worker`. --latest also runs on the newest export sent
+// the pipeline are unchanged. Needs `pnpm worker`. --latest also runs on the newest export sent
 // before now. Ctrl-C stops watching; a run in progress goes on in its worker.
 
 import { userInfo } from "node:os";

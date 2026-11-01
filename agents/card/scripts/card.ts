@@ -7,7 +7,7 @@ import type { EventSink, RunEvent } from "@dugout/contracts";
 import { type ProgramCheckpoint, REPO_ROOT, runProgram } from "@dugout/core";
 import { liveDeps } from "@dugout/sdk";
 import { outline } from "../src/agent.ts";
-import { checkCard, trialRoot } from "../src/dsl.ts";
+import { checkCard, pipelineRoot } from "../src/dsl.ts";
 import { EditBatchSchema } from "../src/edits.ts";
 import { closeRenderBrowser, diffCard, loadFigma, unpaintedTypes } from "../src/pixels.ts";
 import { type CardProgramState, DEFAULT_ATTEMPTS, defineCardProgram } from "../src/program.ts";
@@ -38,7 +38,7 @@ async function main() {
   const draft = draftAgent.create(made);
   const ask = approver(args.yes);
   const runId = `card-program-${args.cardId}`;
-  const renderRoot = trialRoot();
+  const renderRoot = pipelineRoot();
   const input = {
     cardId: args.cardId,
     ...(args.figma ? { figma: args.figma } : {}),

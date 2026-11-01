@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ToolContext } from "@dugout/contracts";
-import { checkCard, trialRoot } from "./dsl.ts";
+import { checkCard, pipelineRoot } from "./dsl.ts";
 import type { CardDraft } from "./schema.ts";
 
 /** A mismatch passes when its thinner side is at most this many pixels. */
@@ -380,7 +380,7 @@ function splitFigma(raw: unknown): Split | { error: string } {
   return { error: `expected schemaVersion and nodes, or tree and data. Keys: ${keys}` };
 }
 
-/** Node types the trial renderer does not paint. Button and Icon are painted. */
+/** Node types the pipeline renderer does not paint. Button and Icon are painted. */
 export function unpaintedTypes(tree: unknown): string[] {
   const nodes = nodesOf(tree);
   if (!nodes) return [];
@@ -486,7 +486,7 @@ async function loadHarness(): Promise<Harness> {
 }
 
 async function loadHarnessOnce(): Promise<Harness> {
-  const root = trialRoot();
+  const root = pipelineRoot();
   const renderer = (await import(
     pathToFileURL(join(root, "packages/renderer/dist/harness.js")).href
   )) as Omit<Harness, "themeCss" | "fontCss" | "publicDir">;
@@ -501,7 +501,7 @@ async function loadHarnessOnce(): Promise<Harness> {
     emitCss(theme: unknown, options: { surfaces: unknown; assets: unknown }): { css: string };
     LOCAL_ASSET_CONTEXT: unknown;
   };
-  if (!fonts.FONT_FACE_CSS) throw new Error("the trial renderer did not export FONT_FACE_CSS");
+  if (!fonts.FONT_FACE_CSS) throw new Error("the pipeline renderer did not export FONT_FACE_CSS");
   const theme = tokens.loadTheme(join(root, "packages/tokens/fixtures/southern-brave.json"));
   const surfaces = tokens.loadSurfaces(join(root, "packages/tokens/surfaces/southern-brave.json"));
   const { css } = tokens.emitCss(theme, { surfaces, assets: tokens.LOCAL_ASSET_CONTEXT });

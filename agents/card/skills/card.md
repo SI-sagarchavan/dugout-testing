@@ -1,4 +1,4 @@
-A card is one flat SDUI tree plus a data object. The trial renderer draws it. The checker is the trial validator, so a tree it rejects is not finished.
+A card is one flat SDUI tree plus a data object. The pipeline renderer draws it. The checker is the pipeline validator, so a tree it rejects is not finished.
 
 ## Wire format
 

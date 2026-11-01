@@ -30,7 +30,7 @@ export interface FindingSource {
 
 /**
  * Files what a run says the compiler should have done. A gap already on file gets one more line
- * under `## Comments` instead of a second ticket. Nothing here edits the trial repo (ADR 0019).
+ * under `## Comments` instead of a second ticket. Nothing here edits the pipeline (ADR 0019).
  */
 export function recordCompilerFindings(
   repoRoot: string,
@@ -68,7 +68,7 @@ export function recordCompilerFindings(
         "Status: needs-triage",
         `Key: ${key}`,
         "",
-        "Reported by the card-match agent: what the compiler should have done. Fix it in the trial repo.",
+        "Reported by the card-match agent: what the compiler should have done. Fix it in the pipeline.",
         "",
         "## Comments",
         "",
