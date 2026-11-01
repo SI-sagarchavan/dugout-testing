@@ -15,6 +15,7 @@ import {
   checkCard,
   closeRenderBrowser,
   compareCard,
+  heldDraft,
   pngSize,
   referenceOf,
   renderCardPng,
@@ -23,6 +24,7 @@ import {
   unpaintedTypes,
   withinEight,
 } from "../src/index.ts";
+import { flattenOnPage, pngFromRgba, rgbaOf } from "../src/png.ts";
 
 const pool = createPool(inject("databaseUrl"));
 afterAll(async () => {
@@ -52,6 +54,14 @@ const broken = (): CardDraft => {
 };
 
 describe("pixel gate", () => {
+  it("fills a transparent screenshot with the near-black page", () => {
+    const png = pngFromRgba(2, 1, Uint8Array.of(0, 0, 0, 0, 255, 0, 0, 255));
+    const flat = rgbaOf(flattenOnPage(png));
+    expect([...(flat?.rgba ?? [])]).toEqual([10, 10, 10, 255, 255, 0, 0, 255]);
+    const opaque = pngFromRgba(1, 1, Uint8Array.of(1, 2, 3, 255));
+    expect(flattenOnPage(opaque).equals(opaque)).toBe(true);
+  });
+
   it("treats a band up to 8 pixels thick as close enough", () => {
     expect(pngSize(TINY_PNG)).toEqual({ width: 1, height: 1 });
     expect(withinEight({ w: 360, h: 8 })).toBe(true);
@@ -59,6 +69,7 @@ describe("pixel gate", () => {
     expect(withinEight({ w: 9, h: 9 })).toBe(false);
     expect(referenceOf(undefined)).toEqual({ mode: "off" });
     expect(referenceOf({ figma: "/tmp/tree.json" }).mode).toBe("invalid");
+    expect(referenceOf({ screenshot: "/tmp/missing.png" }).mode).toBe("invalid");
     expect(referenceOf({ figma: "tree.json", screenshot: "shot.png" }).mode).toBe("invalid");
   });
 
@@ -73,6 +84,8 @@ describe("pixel gate", () => {
     if (ref.mode !== "on") return;
     expect(ref.figmaPath).toBe(figma);
     expect(ref.screenshotPath).toBe(screenshot);
+    const prompt = referenceOf({ cardId: "trial-card", screenshot });
+    expect(prompt.mode).toBe("prompt");
   });
 
   it("names node types the renderer does not paint", () => {
@@ -113,14 +126,13 @@ describe("DSL checker", () => {
 });
 
 describe("card agent", () => {
-  it("loads the DSL skill, checks, then saves after approval", async () => {
+  it("drafts from the brief and does not save", async () => {
     const draft = sample();
     const cardsDir = await mkdtemp(join(tmpdir(), "cards-"));
     const renderRoot = await mkdtemp(join(tmpdir(), "render-"));
     const client = createScriptedModel([
       () => ({ toolCalls: [{ name: "card.draft", arguments: draft }] }),
       () => ({ toolCalls: [{ name: "card.check", arguments: {} }] }),
-      () => ({ toolCalls: [{ name: "card.save", arguments: {} }] }),
       () => ({ toolCalls: [{ name: "final", arguments: summarize(draft) }] }),
     ]);
     const run = agent.create({
@@ -140,18 +152,17 @@ describe("card agent", () => {
     expect(result.status).toBe("completed");
     if (result.status !== "completed") return;
     expect(result.output).toEqual(summarize(draft));
-    const saved = JSON.parse(
-      await readFile(join(cardsDir, "demo-cricket", "trial-card.json"), "utf8"),
-    );
-    expect(saved.tree.nodes.length).toBe(draft.tree.nodes.length);
+    expect(heldDraft(result.runId)?.tree.nodes).toHaveLength(draft.tree.nodes.length);
     const preview = JSON.parse(
       await readFile(join(renderRoot, "packages/dsl/fixtures/preview/card.json"), "utf8"),
-    );
-    expect(preview.schemaVersion).toBe("1.0.0");
+    ) as { nodes: unknown[] };
+    expect(preview.nodes).toHaveLength(draft.tree.nodes.length);
     const system = client.requests[0]?.messages[0]?.content ?? "";
     expect(system).toContain("## Skill: card");
     expect(system).toContain("surface.fixture_shell");
     expect(system).toContain("8 pixels thick");
+    expect(system).toContain("Do not call card.save");
+    expect(system).not.toContain("synthetic:agent-card");
   });
 
   it("denies a save before approval when the screenshot has not been matched", async () => {
@@ -198,7 +209,7 @@ describe("card agent", () => {
     ).rejects.toThrow();
   });
 
-  it("denies a bad tree before asking for approval, then accepts the fix", async () => {
+  it("checks a bad tree, then accepts the fix, and refuses save", async () => {
     const bad = broken();
     const good = sample();
     const cardsDir = await mkdtemp(join(tmpdir(), "cards-"));
@@ -208,8 +219,9 @@ describe("card agent", () => {
       store,
       client: createScriptedModel([
         () => ({ toolCalls: [{ name: "card.draft", arguments: bad }] }),
-        () => ({ toolCalls: [{ name: "card.save", arguments: {} }] }),
+        () => ({ toolCalls: [{ name: "card.check", arguments: {} }] }),
         () => ({ toolCalls: [{ name: "card.draft", arguments: good }] }),
+        () => ({ toolCalls: [{ name: "card.check", arguments: {} }] }),
         () => ({ toolCalls: [{ name: "card.save", arguments: {} }] }),
         () => ({ toolCalls: [{ name: "final", arguments: summarize(good) }] }),
       ]),
@@ -230,10 +242,16 @@ describe("card agent", () => {
       sinks: [sink],
     });
     expect(result.status).toBe("completed");
-    expect(asked).toBe(1);
+    expect(asked).toBe(0);
+    const checks = sink.events.filter(
+      (event) => event.type === "tool.completed" && event.data.tool === "card.check",
+    );
+    expect(
+      checks.map((event) => (event.type === "tool.completed" ? event.data.content : "")),
+    ).toEqual([expect.stringContaining("type.not_a_token"), expect.stringContaining('"ok":true')]);
     const denied = sink.events.filter((event) => event.type === "tool.denied");
-    expect(denied.map((event) => (event.type === "tool.denied" ? event.data.tool : ""))).toEqual([
-      "card.save",
+    expect(denied.map((event) => (event.type === "tool.denied" ? event.data.reason : ""))).toEqual([
+      expect.stringContaining("Do not call card.save"),
     ]);
   });
 
@@ -338,7 +356,6 @@ describe("card agent", () => {
           ],
         }),
         () => ({ toolCalls: [{ name: "card.check", arguments: {} }] }),
-        () => ({ toolCalls: [{ name: "card.save", arguments: {} }] }),
         () => ({ toolCalls: [{ name: "final", arguments: summarize(draft) }] }),
       ]),
       models: scriptedModelConfig(),
@@ -364,11 +381,49 @@ describe("card agent", () => {
     expect(
       failed.map((event) => (event.type === "tool.completed" ? event.data.content : "")),
     ).toEqual([expect.stringContaining("no node missing")]);
-    const saved = JSON.parse(
-      await readFile(join(cardsDir, "demo-cricket", "trial-card.json"), "utf8"),
-    ) as { tree: { nodes: Array<{ id: string; props: { content?: string } }> } };
-    expect(saved.tree.nodes).toHaveLength(draft.tree.nodes.length);
-    expect(saved.tree.nodes.find((node) => node.id === "home")?.props.content).toBe("Edited");
+    const saved = heldDraft(result.runId);
+    expect(saved?.tree.nodes).toHaveLength(draft.tree.nodes.length);
+    const home = saved?.tree.nodes.find((node) => node.id === "home");
+    expect(home?.props.content).toBe("Edited");
+  });
+
+  it("reads a screenshot with the vision model and does not save", async () => {
+    const draft = sample();
+    const dir = await mkdtemp(join(tmpdir(), "card-see-"));
+    const screenshot = join(dir, "shot.png");
+    await writeFile(screenshot, TINY_PNG);
+    const renderRoot = await mkdtemp(join(tmpdir(), "render-"));
+    const seen: Buffer[] = [];
+    const run = agent.create({
+      store,
+      client: createScriptedModel([
+        () => ({ toolCalls: [{ name: "card.see", arguments: {} }] }),
+        () => ({ toolCalls: [{ name: "card.draft", arguments: draft }] }),
+        () => ({ toolCalls: [{ name: "card.check", arguments: {} }] }),
+        () => ({ toolCalls: [{ name: "final", arguments: summarize(draft) }] }),
+      ]),
+      models: scriptedModelConfig(),
+      cardsDir: await mkdtemp(join(tmpdir(), "cards-")),
+      renderRoot,
+      see: async (png) => {
+        seen.push(png);
+        return "A white strip. The words are THE ROAD AHEAD.";
+      },
+      runsDir: await mkdtemp(join(tmpdir(), "runs-")),
+      consolidate: false,
+    });
+    const result = await run({
+      tenantId: "demo-cricket",
+      input: { cardId: "trial-card", brief: "A fixtures strip", screenshot },
+      approver: async () => ({ approved: true, by: "editor" }),
+    });
+    expect(result.status).toBe("completed");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.equals(flattenOnPage(TINY_PNG))).toBe(true);
+    const preview = JSON.parse(
+      await readFile(join(renderRoot, "packages/dsl/fixtures/preview/card.json"), "utf8"),
+    ) as { nodes: unknown[] };
+    expect(preview.nodes).toHaveLength(draft.tree.nodes.length);
   });
 });
 

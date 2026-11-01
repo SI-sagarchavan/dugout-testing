@@ -215,7 +215,8 @@ async function readCheckpoint(
   if (!raw) return undefined;
   const parsed = JSON.parse(raw) as ProgramCheckpoint<CardProgramState>;
   if (typeof parsed.state?.repairs !== "number") return undefined;
-  return parsed;
+  // saved before repair kept its attempts: an append field must start as a list
+  return { ...parsed, state: { ...parsed.state, attempts: parsed.state.attempts ?? [] } };
 }
 
 function parseArgs(argv: string[]) {

@@ -297,6 +297,119 @@ describe("card program", () => {
     expect(state.repairs).toBe(1);
   });
 
+  it("tells the next repair why its last edits were not applied", async () => {
+    let checks = 0;
+    const { deps } = harness({
+      check: async () => {
+        checks += 1;
+        return checks < 3 ? { ok: false, issues: [`issue ${checks}`] } : { ok: true, issues: [] };
+      },
+    });
+    const inputs: Array<{ lastError: string; attempts: Array<Record<string, unknown>> }> = [];
+    const tasks: TaskRunner = async (req) => {
+      inputs.push(req.input as (typeof inputs)[number]);
+      return inputs.length === 1
+        ? saved({ edits: [{ id: "missing_node", props: { padding: 4, color: "x" } }] })
+        : edited();
+    };
+    const { state } = await runProgram(defineCardProgram(noScreenshot(request), deps), { tasks });
+    expect(inputs[0]?.lastError).toBe("");
+    expect(inputs[0]?.attempts).toEqual([]);
+    expect(inputs[1]?.lastError).toContain("missing_node");
+    expect(inputs[1]?.attempts).toEqual([
+      {
+        repair: 1,
+        stage: "check",
+        report: "issue 1",
+        edits: "missing_node: props padding, color",
+        result: "no node missing_node",
+      },
+    ]);
+    expect(state.attempts).toHaveLength(2);
+    expect(state.attempts[1]?.result).toBe("applied");
+    expect(state.passed).toBe(true);
+  });
+
+  it("clips a long error before it goes back to the repair agent, which takes 500 characters", async () => {
+    let checks = 0;
+    const { deps } = harness({
+      check: async () => {
+        checks += 1;
+        return checks < 3 ? { ok: false, issues: [`issue ${checks}`] } : { ok: true, issues: [] };
+      },
+    });
+    const inputs: Array<{ lastError: string }> = [];
+    const tasks: TaskRunner = async (req) => {
+      inputs.push(req.input as (typeof inputs)[number]);
+      // many ids that are not in the tree: "no node a, b, c, ..." runs far past 500 characters
+      return inputs.length === 1
+        ? saved({
+            edits: Array.from({ length: 30 }, (_, i) => ({
+              id: `a_node_that_is_not_in_the_tree_${i}`,
+              props: { padding: 4 },
+            })),
+          })
+        : edited();
+    };
+    await runProgram(defineCardProgram(noScreenshot(request), deps), { tasks });
+    expect(inputs[1]?.lastError.length).toBeGreaterThan(400);
+    expect(inputs[1]?.lastError.length).toBeLessThanOrEqual(500);
+  });
+
+  it("does not call it no progress when a repair changed the report only past its clipped start", async () => {
+    // a long report whose first 300 characters never change while repairs fix the later issues
+    let checks = 0;
+    const { deps } = harness({
+      check: async () => {
+        checks += 1;
+        return { ok: false, issues: [`${"x".repeat(320)} then ${checks}`] };
+      },
+    });
+    const tasks: TaskRunner = async () => edited();
+    const { state } = await runProgram(
+      defineCardProgram({ ...noScreenshot(request), maxAttempts: 4 }, deps),
+      { tasks },
+    );
+    expect(state.error).not.toBe("repair is not changing the result");
+    expect(state.repairs).toBe(4);
+  });
+
+  it("stops when repairs leave the report unchanged, before the attempts run out", async () => {
+    const { calls, deps } = harness({
+      check: async () => {
+        calls.push("check");
+        return { ok: false, issues: ["still broken"] };
+      },
+    });
+    const tasks: TaskRunner = async () => edited();
+    const { state } = await runProgram(
+      defineCardProgram({ ...noScreenshot(request), maxAttempts: 5 }, deps),
+      { tasks },
+    );
+    expect(state.repairs).toBe(2);
+    expect(state.halt).toBe(true);
+    expect(state.error).toBe("repair is not changing the result");
+    expect(state.passed).toBe(false);
+    expect(calls).not.toContain("save");
+  });
+
+  it("stops on an unchanged diff report too", async () => {
+    const stuck: CardDiff = {
+      ok: false,
+      message: "the render is 400×300 and the screenshot is 400×280",
+      size: { render: { width: 400, height: 300 }, screenshot: { width: 400, height: 280 } },
+      regions: [],
+    };
+    const { deps } = harness({ diff: async () => stuck });
+    const tasks: TaskRunner = async () => edited();
+    const { state } = await runProgram(defineCardProgram({ ...request, maxAttempts: 5 }, deps), {
+      tasks,
+    });
+    expect(state.repairs).toBe(2);
+    expect(state.halt).toBe(true);
+    expect(state.error).toBe("repair is not changing the result");
+  });
+
   it("keeps the loaded tree when repair sends a whole tree", async () => {
     const { deps } = harness({
       check: async () => ({ ok: false, issues: ["surface"] }),

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelClient } from "@dugout/contracts";
@@ -17,8 +17,8 @@ import { seedHouseFacts } from "@dugout/sdk";
 import {
   agent,
   type CardDraft,
+  CardShape,
   checkCard,
-  previewPaths,
   sampleCard,
   spec,
   summarize,
@@ -80,15 +80,31 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<(typeof
         sinks: [sink],
       });
       const events = sink.events;
-      const grades = [endedGracefully(events), writesGated(events, ["card.save"])];
+      const grades = [
+        endedGracefully(events),
+        writesGated(events, ["card.save"]),
+        {
+          grader: "no-save",
+          pass: !events.some(
+            (event) => event.type === "tool.started" && event.data.tool === "card.save",
+          ),
+          detail: "prompt generation does not save",
+        },
+      ];
       if (result.status === "completed") {
-        const preview = previewPaths(renderRoot);
-        const tree = JSON.parse(await readFile(preview.tree, "utf8"));
-        const data = JSON.parse(await readFile(preview.data, "utf8"));
+        const started = events.find(
+          (event) => event.type === "tool.started" && event.data.tool === "card.draft",
+        );
+        const drafted = CardShape.safeParse(
+          started?.type === "tool.started" ? started.data.input : undefined,
+        );
         const output = result.output as { cardId?: string };
         grades.push({
           grader: "card-valid",
-          pass: checkCard(tree, data).ok && output.cardId === c.cardId,
+          pass:
+            drafted.success &&
+            checkCard(drafted.data.tree, drafted.data.data).ok &&
+            output.cardId === c.cardId,
           detail: output.cardId ?? "no card",
         });
       }
@@ -112,7 +128,6 @@ function scriptedWriter(draft: CardDraft): ModelClient {
   return createScriptedModel([
     { toolCalls: [{ name: "card.draft", arguments: draft }] },
     { toolCalls: [{ name: "card.check", arguments: {} }] },
-    { toolCalls: [{ name: "card.save", arguments: {} }] },
     { toolCalls: [{ name: "final", arguments: summarize(draft) }] },
   ]);
 }

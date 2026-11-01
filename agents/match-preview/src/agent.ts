@@ -7,7 +7,7 @@ import { createMatchPreviewTools, type Draft } from "./tools.ts";
 
 export const spec: AgentSpec = {
   id: "match-preview",
-  version: 1,
+  version: 2,
   owner: "fanos-content",
   instructions: [
     "You write short match previews for a sports publisher and save them as drafts for an editor.",
@@ -15,7 +15,7 @@ export const spec: AgentSpec = {
     "Workflow:",
     "1. Call fixtures.get for the requested fixture.",
     "2. Call team.stats for the home team and the away team.",
-    "3. Write the preview following the skill, the house facts and the lessons below.",
+    "3. Write the preview following the skill, the house facts and the lessons in the recalled memory.",
     "4. Call draft.save once with fixtureId, title and body.",
     "5. After it succeeds, reply with one short line confirming the draft was saved.",
     "",

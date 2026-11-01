@@ -29,8 +29,14 @@ interface LoadedFixture {
   awayTeam: { name: string };
 }
 
+// the run input follows the recalled memory in the first user message
 const inputOf = (req: ModelRequest) =>
-  JSON.parse(req.messages.find((message) => message.role === "user")?.content ?? "{}") as {
+  JSON.parse(
+    (req.messages.find((message) => message.role === "user")?.content ?? "{}").replace(
+      /^<recalled_memory>[\s\S]*<\/recalled_memory>\n\n/,
+      "",
+    ),
+  ) as {
     fixtureId: string;
     channels?: Channel[];
   };
@@ -261,9 +267,11 @@ describe("matchday agent", () => {
         approver: approve,
         sinks: [sink],
       });
-      const system = client.requests[0]?.messages[0]?.content ?? "";
-      expect(system).toContain(betting);
-      expect(system).not.toContain("static pages");
+      // lessons are recalled memory: in the first user message, not the system prompt
+      expect(client.requests[0]?.messages[0]?.content).not.toContain(betting);
+      const recalled = client.requests[0]?.messages[1]?.content ?? "";
+      expect(recalled).toContain(betting);
+      expect(recalled).not.toContain("static pages");
       const built = sink.events.find((event) => event.type === "context.built");
       const episodic =
         built?.type === "context.built"

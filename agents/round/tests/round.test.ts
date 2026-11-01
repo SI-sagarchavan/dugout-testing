@@ -145,8 +145,12 @@ function writerScript() {
         {
           name: "fixtures.get",
           arguments: {
+            // the input follows any recalled memory in the first user message
             fixtureId: JSON.parse(
-              req.messages.find((message) => message.role === "user")?.content ?? "{}",
+              (req.messages.find((message) => message.role === "user")?.content ?? "{}").replace(
+                /^<recalled_memory>[\s\S]*<\/recalled_memory>\n\n/,
+                "",
+              ),
             ).fixtureId,
           },
         },

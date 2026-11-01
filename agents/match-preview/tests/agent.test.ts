@@ -164,6 +164,26 @@ describe("match-preview", () => {
     }
   });
 
+  it("sends one system prompt for a tenant whatever the input, and the input after the recalled memory", async () => {
+    const requests = [];
+    for (const fixtureId of ["c-101", "c-102"]) {
+      const { run, client } = preview(writerScript(fixtureId));
+      await run({
+        tenantId: "demo-cricket",
+        input: { fixtureId },
+        approver: async () => ({ approved: true, by: "x" }),
+      });
+      requests.push(client.requests[0]);
+    }
+    // recalled memory depends on the input, so it can't be in the cached prefix
+    expect(requests[0]?.messages[0]).toEqual(requests[1]?.messages[0]);
+    for (const [i, fixtureId] of ["c-101", "c-102"].entries()) {
+      const first = requests[i]?.messages[1]?.content ?? "";
+      expect(first).toMatch(/^<recalled_memory>\nToday is \d{4}-\d{2}-\d{2}\./);
+      expect(first.endsWith(`</recalled_memory>\n\n{"fixtureId":"${fixtureId}"}`)).toBe(true);
+    }
+  });
+
   it("remembers a rejection as a lesson in that tenant's next run only", async () => {
     const tenantId = "demo-cricket";
     const reason = `Don't call the match a clash ${tenantSuffix}`;
@@ -185,9 +205,11 @@ describe("match-preview", () => {
       input: { fixtureId: "c-103" },
       approver: async () => ({ approved: true, by: "x" }),
     });
-    expect(second.client.requests[0]?.messages[0]?.content).toContain(
-      `Never call a match a clash ${tenantSuffix}.`,
-    );
+    // a lesson is recalled memory: in the first user message with the input, never in the system prompt
+    const lesson = `Never call a match a clash ${tenantSuffix}.`;
+    expect(second.client.requests[0]?.messages[0]?.content).not.toContain(lesson);
+    expect(second.client.requests[0]?.messages[1]?.content).toContain(lesson);
+    expect(second.client.requests[0]?.messages[1]?.content).toContain('{"fixtureId":"c-103"}');
 
     const other = preview(writerScript("f-203"));
     await other.run({
@@ -196,6 +218,7 @@ describe("match-preview", () => {
       approver: async () => ({ approved: true, by: "x" }),
     });
     expect(other.client.requests[0]?.messages[0]?.content).not.toContain(tenantSuffix);
+    expect(other.client.requests[0]?.messages[1]?.content).not.toContain(tenantSuffix);
 
     await store.deleteBySourceRun(tenantId, rejected.runId);
   });

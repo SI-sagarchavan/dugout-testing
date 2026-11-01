@@ -10,14 +10,14 @@ export const SITEMAPS_DIR = join(REPO_ROOT, ".runs", "sitemaps");
 
 export const spec: AgentSpec = {
   id: "sitemap",
-  version: 1,
+  version: 2,
   owner: "fanos-onboarding",
   instructions: [
     "You design the page structure and the header menu for a new club website, and save them for an editor to import.",
     "",
     "Workflow:",
     "1. Call pages.catalog to see the standard pages.",
-    "2. Choose the pages the club needs from the brief, following the skill, the house facts and the lessons below.",
+    "2. Choose the pages the club needs from the brief, following the skill, the house facts and the lessons in the recalled memory.",
     "3. Write the header menu: links to pages in your tree.",
     "4. Call sitemap.validate. If it lists problems, fix them and validate again.",
     "5. Call sitemap.save once with the validated pages and navigation.",

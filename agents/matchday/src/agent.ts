@@ -10,7 +10,7 @@ export const PACKS_DIR = join(REPO_ROOT, ".runs", "packs");
 
 export const spec: AgentSpec = {
   id: "matchday",
-  version: 1,
+  version: 2,
   owner: "fanos-content",
   instructions: [
     "You write a matchday pack for one fixture and save it for an editor. The pack is a short preview, plus a social post, a push notification or a headline only when the input lists that channel.",
@@ -19,7 +19,7 @@ export const spec: AgentSpec = {
     "1. Call fixtures.get for the requested fixture.",
     "2. Call team.stats for the home team and the away team.",
     "3. For each channel in the input, call skill.load with that channel's name before you write it. Skip this step when the input has no channels.",
-    "4. Write the pack following the skill, the house facts and the lessons below.",
+    "4. Write the pack following the skill, the house facts and the lessons in the recalled memory.",
     "5. Call pack.save once. Always include social, push and headline: the text for a requested channel, and null for the others.",
     "6. After it succeeds, call final with the same pack.",
     "",

@@ -1,12 +1,35 @@
+import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { defineTool, type ToolContext } from "@dugout/contracts";
-import { REPO_ROOT } from "@dugout/core";
+import { type CompletedRun, describeImage, REPO_ROOT } from "@dugout/core";
 import { z } from "zod";
 import { checkCard, trialRoot } from "./dsl.ts";
 import { applyEdits, EditBatchSchema } from "./edits.ts";
 import { diffCard, loadFigma, passBlock, referenceOf } from "./pixels.ts";
+import { flattenOnPage } from "./png.ts";
 import { type CardDraft, CardShape, summarize } from "./schema.ts";
+
+const SEE_PROMPT = [
+  "Describe this screenshot so someone can rebuild the same layout.",
+  "Start with the frame: the colour behind the whole strip, then the header if there is one. Say what sits on the left of the header and what sits on the right, and the colour of that text.",
+  "Then walk left to right. Give each card, date ribbon, and cut-off edge its own paragraph. Do not merge two cards into one.",
+  "Quote every visible word. Say whether that text is red, navy, white, or grey, and whether a circular team badge is on that row.",
+  "Say when a control is a button. Count the cards, including ones cut off at the edge.",
+  "The page behind the card is near-black. A pale word on that page is not sitting on white.",
+  "Cover every card from the left edge to the right edge. Do not stop in the middle of a card.",
+  "Close with one line: Cards: <count>. Buttons: <the button labels you actually saw, quoted>.",
+  "Do not write JSON. Do not write a component tree. Do not invent text that is not visible.",
+].join(" ");
+
+/** Vision read of a PNG. Tests pass their own. The default calls Claude and keeps the bytes out of the transcript. */
+export type SeeImage = (png: Buffer, signal: AbortSignal) => Promise<string>;
+
+const VISION_BYTES = 5_000_000;
+
+async function defaultSee(png: Buffer, signal: AbortSignal): Promise<string> {
+  return describeImage({ png, prompt: SEE_PROMPT, model: "sonnet", signal });
+}
 
 export const CARDS_DIR = join(REPO_ROOT, ".runs", "cards");
 
@@ -40,15 +63,49 @@ function requireDraft(ctx: Pick<ToolContext, "runId">): CardDraft {
   return held.draft;
 }
 
+/** The card this run is holding. Tests read it when prompt generation does not save. */
+export function heldDraft(runId: string): CardDraft | undefined {
+  return drafts.get(runId)?.draft;
+}
+
+/**
+ * A finished prompt run has no card.save. The host still writes the checked tree so the preview
+ * page shows it. A Figma run stays behind the save approval.
+ */
+export async function publishPromptCard(
+  run: CompletedRun,
+  opts: { cardsDir?: string; renderRoot?: string } = {},
+): Promise<void> {
+  if (run.result.status !== "completed") return;
+  const ref = referenceOf(run.ctx.input);
+  if (ref.mode !== "off" && ref.mode !== "prompt") return;
+  const draft = heldDraft(run.ctx.runId);
+  if (!draft || !checkCard(draft.tree, draft.data).ok) return;
+  await writeCard(
+    opts.renderRoot ?? trialRoot(),
+    opts.cardsDir ?? CARDS_DIR,
+    draft,
+    run.ctx.tenantId,
+    run.ctx.runId,
+  );
+}
+
 function gate(draft: CardDraft, ctx: Pick<ToolContext, "runId" | "input">): string | undefined {
+  const ref = referenceOf(ctx.input);
+  if (ref.mode === "off" || ref.mode === "prompt") {
+    return "This run generates the card from the brief. Do not call card.save. Call final with cardId, nodeCount and rootType.";
+  }
   const check = checkCard(draft.tree, draft.data);
   if (!check.ok) return check.issues.join("\n");
   return passBlock(draft, ctx);
 }
 
-export function createCardTools(opts: { cardsDir?: string; renderRoot?: string } = {}) {
+export function createCardTools(
+  opts: { cardsDir?: string; renderRoot?: string; see?: SeeImage } = {},
+) {
   const cardsDir = opts.cardsDir ?? CARDS_DIR;
   const renderRoot = opts.renderRoot ?? trialRoot();
+  const see = opts.see ?? defaultSee;
 
   const cardFigma = defineTool({
     name: "card.figma",
@@ -72,6 +129,30 @@ export function createCardTools(opts: { cardsDir?: string; renderRoot?: string }
         ...loaded,
         note: "Stored. Call card.check with {}. Change a node with card.edit. Do not send this tree back.",
       };
+    },
+  });
+
+  const cardSee = defineTool({
+    name: "card.see",
+    description:
+      "Read this run's reference screenshot with a vision model. Takes no arguments. Use the description for the layout and quote the words it reports. Do not call this when the run has a Figma file.",
+    input: noArgs,
+    effect: "read",
+    timeoutMs: 60_000,
+    async run(_input, ctx) {
+      const ref = referenceOf(ctx.input);
+      if (ref.mode === "on") {
+        throw new Error(
+          "This run has a Figma file. Call card.figma. card.diff compares the screenshot.",
+        );
+      }
+      if (ref.mode !== "prompt") throw new Error("This run has no screenshot.");
+      if (ref.size > VISION_BYTES) {
+        throw new Error("the screenshot is over 5MB. The vision model cannot take it.");
+      }
+      const png = flattenOnPage(readFileSync(ref.screenshotPath));
+      const description = await see(png, ctx.signal);
+      return { description };
     },
   });
 
@@ -150,7 +231,7 @@ export function createCardTools(opts: { cardsDir?: string; renderRoot?: string }
   const cardSave = defineTool({
     name: "card.save",
     description:
-      "Save the loaded card. Takes no arguments. The tree must be one card.check accepted. When this run has a reference screenshot, it must be the tree card.diff just accepted, within 8 pixels. An editor approves the save. Returns cardId, nodeCount and rootType; pass that object to final. Do not send the tree.",
+      "Save the loaded card. Only for a run that has a Figma file. Takes no arguments. The tree must be one card.check accepted, and card.diff must have accepted this screenshot. An editor approves the save. Returns cardId, nodeCount and rootType. A prompt run must not call this.",
     input: noArgs,
     effect: "write",
     timeoutMs: 10_000,
@@ -164,7 +245,7 @@ export function createCardTools(opts: { cardsDir?: string; renderRoot?: string }
     },
   });
 
-  return [cardFigma, cardDraft, cardEdit, cardCheck, cardDiff, cardSave];
+  return [cardFigma, cardSee, cardDraft, cardEdit, cardCheck, cardDiff, cardSave];
 }
 
 /** The preview page reads these two files on each request. */

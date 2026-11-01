@@ -55,6 +55,13 @@ export type Reference =
   | { mode: "off" }
   | { mode: "invalid"; reason: string }
   | {
+      mode: "prompt";
+      cardId: string;
+      screenshotPath: string;
+      mtimeMs: number;
+      size: number;
+    }
+  | {
       mode: "on";
       cardId: string;
       figmaPath: string;
@@ -67,12 +74,21 @@ export type Reference =
 export function referenceOf(input: unknown): Reference {
   const fields = fieldsOf(input);
   if (!fields.figma && !fields.screenshot) return { mode: "off" };
-  if (!fields.figma || !fields.screenshot) {
+  if (!fields.cardId) return { mode: "invalid", reason: "the run has no cardId" };
+  if (fields.figma && !fields.screenshot) {
     return { mode: "invalid", reason: "figma and screenshot are set together" };
   }
-  if (!fields.cardId) return { mode: "invalid", reason: "the run has no cardId" };
-  const shot = resolveFile("screenshot", fields.screenshot, 8_000_000);
+  const shot = resolveFile("screenshot", fields.screenshot ?? "", 8_000_000);
   if ("error" in shot) return { mode: "invalid", reason: shot.error };
+  if (!fields.figma) {
+    return {
+      mode: "prompt",
+      cardId: fields.cardId,
+      screenshotPath: shot.path,
+      mtimeMs: shot.mtimeMs,
+      size: shot.size,
+    };
+  }
   const figma = resolveFile("figma", fields.figma, 1_000_000);
   if ("error" in figma) return { mode: "invalid", reason: figma.error };
   return {
@@ -91,7 +107,7 @@ export function passBlock(
   ctx: Pick<ToolContext, "runId" | "input">,
 ): string | undefined {
   const ref = referenceOf(ctx.input);
-  if (ref.mode === "off") return undefined;
+  if (ref.mode === "off" || ref.mode === "prompt") return undefined;
   if (ref.mode === "invalid") return ref.reason;
   if (draft.cardId !== ref.cardId) return `cardId must be ${ref.cardId}`;
   const pass = passes.get(ctx.runId);
@@ -118,7 +134,9 @@ export function loadFigma(input: unknown): {
   unsupported?: string[];
 } {
   const ref = referenceOf(input);
-  if (ref.mode === "off") return { ok: false, issues: ["this run has no Figma DSL"] };
+  if (ref.mode === "off" || ref.mode === "prompt") {
+    return { ok: false, issues: ["this run has no Figma DSL"] };
+  }
   if (ref.mode === "invalid") return { ok: false, issues: [ref.reason] };
   let raw: unknown;
   try {
@@ -157,6 +175,9 @@ export async function diffCard(
       size: { render: null, screenshot: null },
       regions: [],
     };
+  }
+  if (ref.mode === "prompt") {
+    return fail("This run generates from the brief. The screenshot is read by card.see.");
   }
   if (ref.mode === "invalid") return fail(ref.reason);
   if (draft.cardId !== ref.cardId) return fail(`cardId must be ${ref.cardId}`);

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { defineGraph, END, type GraphEdge } from "@dugout/core";
 import { applyEdits, type EditBatch, EditBatchSchema } from "./edits.ts";
 
@@ -6,6 +7,31 @@ export const DEFAULT_ATTEMPTS = 3;
 
 const MAX_BRIEF = 2_000;
 const MAX_REPORT = 8_000;
+const MAX_ATTEMPT_TEXT = 300;
+/** The most `lastError` the repair agent's input takes (`RepairInput` in repair.ts). */
+const MAX_LAST_ERROR = 500;
+const clipError = (error: string) => error.slice(0, MAX_LAST_ERROR);
+const fingerprint = (text: string) => createHash("sha1").update(text).digest("hex").slice(0, 16);
+/** Past attempts a repair sees. Older ones add tokens and no new information. */
+const SHOWN_ATTEMPTS = 5;
+/** Identical reports in a row, after which another repair is not worth a model call. */
+const STALLED_AFTER = 2;
+
+/** One repair that ran: what it was answering, what it sent, and what became of it. */
+export interface CardAttempt {
+  repair: number;
+  stage: string;
+  /** What the repair answered, clipped. Not what is compared: see `key`. */
+  report: string;
+  edits: string;
+  result: string;
+  /**
+   * A fingerprint of the WHOLE report. `report` is clipped for the model, and a report of several
+   * issues differs from the last one only past the clip when a repair fixes the later ones, which
+   * is progress. Absent on a checkpoint from before this existed.
+   */
+  key?: string;
+}
 
 export interface CardProgramState extends Record<string, unknown> {
   cardId: string;
@@ -26,6 +52,8 @@ export interface CardProgramState extends Record<string, unknown> {
   error: string;
   /** An editor's change request. Empty unless save was sent back. */
   changes: string;
+  /** Every repair so far, so the next one does not send an edit that already failed. */
+  attempts: CardAttempt[];
 }
 
 export interface CardProgramRequest {
@@ -91,6 +119,10 @@ export interface RepairInput {
   report: string;
   tree: unknown;
   data: unknown;
+  /** Why the last edits were not applied. Empty when they were. */
+  lastError: string;
+  /** The latest few repairs, oldest first. */
+  attempts: CardAttempt[];
 }
 
 /**
@@ -133,6 +165,7 @@ export function initialCardState(request: CardProgramRequest): CardProgramState 
     passed: false,
     error: "",
     changes: "",
+    attempts: [],
   };
 }
 
@@ -161,6 +194,10 @@ export function defineCardProgram(request: CardProgramRequest, deps: CardProgram
     report: state.report,
     tree: state.tree,
     data: state.data,
+    lastError: clipError(state.error),
+    // A checkpoint from before attempts existed has none.
+    // the fingerprint is for the program, not the model
+    attempts: (state.attempts ?? []).slice(-SHOWN_ATTEMPTS).map(({ key: _key, ...shown }) => shown),
   });
 
   const editsOf = (output: unknown, cardId: string): EditBatch | undefined => {
@@ -176,16 +213,31 @@ export function defineCardProgram(request: CardProgramRequest, deps: CardProgram
   const applyRepair = (output: unknown, state: CardProgramState) => {
     const bumped = state.repairs + 1;
     const batch = editsOf(output, state.cardId);
+    const attempt = (edits: string, result: string): CardAttempt => ({
+      repair: bumped,
+      stage: state.stage,
+      report: state.report.slice(0, MAX_ATTEMPT_TEXT),
+      edits: edits.slice(0, MAX_ATTEMPT_TEXT),
+      result: result.slice(0, MAX_ATTEMPT_TEXT),
+      key: fingerprint(state.report),
+    });
     if (!batch) {
+      const error = messageOf(output, "repair did not return edits");
       return {
         repairs: bumped,
         changes: "",
-        error: messageOf(output, "repair did not return edits"),
+        error,
+        attempts: [attempt("none", error)],
       };
     }
     const applied = applyEdits(state.tree, state.data, batch);
     if (!applied.ok) {
-      return { repairs: bumped, changes: "", error: applied.error };
+      return {
+        repairs: bumped,
+        changes: "",
+        error: applied.error,
+        attempts: [attempt(summarize(batch), applied.error)],
+      };
     }
     return {
       tree: applied.tree,
@@ -193,7 +245,20 @@ export function defineCardProgram(request: CardProgramRequest, deps: CardProgram
       repairs: bumped,
       changes: "",
       error: "",
+      attempts: [attempt(summarize(batch), "applied")],
     };
+  };
+
+  /** True when the last repairs were each answering this same report. */
+  const stalled = (state: CardProgramState, report: string): boolean => {
+    const last = (state.attempts ?? []).slice(-STALLED_AFTER);
+    const key = fingerprint(report);
+    const head = report.slice(0, MAX_ATTEMPT_TEXT);
+    return (
+      last.length === STALLED_AFTER &&
+      // a checkpoint from before the fingerprint falls back to the clipped text
+      last.every((item) => (item.key !== undefined ? item.key === key : item.report === head))
+    );
   };
 
   const nodes = {
@@ -228,6 +293,8 @@ export function defineCardProgram(request: CardProgramRequest, deps: CardProgram
               report: "There is no Figma tree. Write the card the brief describes.",
               tree: null,
               data: null,
+              lastError: clipError(state.error),
+              attempts: [],
             }),
             until: (output: unknown) => deps.take(output, state0.cardId)?.tree !== undefined,
             maxAttempts: 1,
@@ -244,12 +311,15 @@ export function defineCardProgram(request: CardProgramRequest, deps: CardProgram
       kind: "step" as const,
       run: async (state: CardProgramState) => {
         const check = await deps.check(state.tree, state.data);
+        const report = clip(check.issues.join("\n"));
+        const stuck = !check.ok && stalled(state, report);
         return {
           checkOk: check.ok,
           stage: "check" as const,
-          report: clip(check.issues.join("\n")),
-          halt: false,
+          report,
+          halt: stuck,
           diffOk: false,
+          ...(stuck ? { error: NO_PROGRESS } : {}),
         };
       },
     },
@@ -290,12 +360,14 @@ export function defineCardProgram(request: CardProgramRequest, deps: CardProgram
                 lines.push(`region ${region.x},${region.y} ${region.w}×${region.h}: ${ids}`);
               }
               if (report.issues?.length) lines.push(...report.issues);
+              const text = clip(lines.join("\n"));
+              const stuck = !report.ok && stalled(state, text);
               return {
                 diffOk: report.ok,
-                halt: false,
+                halt: stuck,
                 stage: "diff" as const,
-                report: clip(lines.join("\n")),
-                error: "",
+                report: text,
+                error: stuck ? NO_PROGRESS : "",
               };
             },
           },
@@ -341,6 +413,8 @@ export function defineCardProgram(request: CardProgramRequest, deps: CardProgram
     );
   }
   edges.push(
+    // First match wins, so a stalled repair ends the graph before it can edge back.
+    { from: "check", to: END, when: (state) => state.halt },
     {
       from: "check",
       to: "repair",
@@ -389,12 +463,28 @@ export function defineCardProgram(request: CardProgramRequest, deps: CardProgram
       passed: { reduce: "replace" },
       error: { reduce: "replace" },
       changes: { reduce: "replace" },
+      attempts: { reduce: "append" },
     },
     start: figma ? "load" : "draft",
     maxVisits: 4 + maxAttempts * 4,
     nodes,
     edges,
   });
+}
+
+const NO_PROGRESS = "repair is not changing the result";
+
+/** `node_1: props padding, color` for each node an edit batch touches. */
+function summarize(batch: EditBatch): string {
+  const parts = batch.edits.map((edit) => {
+    const what = [
+      ...(edit.type ? [`type ${edit.type}`] : []),
+      ...(edit.props ? [`props ${Object.keys(edit.props).join(", ")}`] : []),
+    ];
+    return `${edit.id}: ${what.join(", ") || "no change"}`;
+  });
+  if (batch.data) parts.push(`data ${Object.keys(batch.data.match).join(", ")}`);
+  return parts.join("; ");
 }
 
 function clip(text: string): string {
