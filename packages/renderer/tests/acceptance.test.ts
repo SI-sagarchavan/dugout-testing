@@ -1,3 +1,5 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { renderIcon } from "../src/components/icons.js";
 /**
  * Acceptance criteria for the player-card fixture.
  *
@@ -122,6 +124,37 @@ describe("generated from the Figma IR", () => {
 describe("structural acceptance (pure)", () => {
   it("reifies the card tree", () => {
     expect(() => reify(card())).not.toThrow();
+  });
+
+  it("mixes a node with what is under it only when it says to", () => {
+    const blended = resolveNode({ blend: "luminosity" });
+    expect(blended.style.mixBlendMode).toBe("luminosity");
+    expect(blended.className).toContain("fos-blend");
+    expect(resolveNode({}).style.mixBlendMode).toBeUndefined();
+  });
+
+  it("draws a button's glyph from a picture when it is given one", () => {
+    const html = renderToStaticMarkup(renderIcon("data:image/png;base64,AAAA", { size: 18 }));
+    expect(html).toContain('src="data:image/png;base64,AAAA"');
+    expect(html).toContain('width="18"');
+    expect(html).toContain('data-fos-icon="picture"');
+  });
+
+  it("keeps a full-width node's content in a centred column", () => {
+    const gutter = "max(0px, (100% - 1366px) / 2)";
+    const bar = resolveNode({ column: 1366, space: { pl: { raw: 220, _unbound: true } } }).style;
+    expect(bar.paddingInlineStart).toBe(`calc(${gutter} + var(--pl-base, 0px))`);
+    expect(bar.paddingInlineEnd).toBe(`calc(${gutter} + var(--pr-base, 0px))`);
+    const even = resolveNode({ column: 1366, space: { px: { raw: 97, _unbound: true } } }).style;
+    expect(even.paddingInline).toBeUndefined();
+    expect(even.paddingInlineStart).toBe(`calc(${gutter} + var(--px-base))`);
+    const placed = resolveNode({
+      column: 1366,
+      place: { anchor: "top-start", offset: { inline: { raw: 98, _unbound: true } } },
+    }).style;
+    expect(placed.insetInlineStart).toBe(`calc(${gutter} + 98px)`);
+    expect(placed.paddingInlineStart).toBeUndefined();
+    expect(resolveNode({}).style.insetInlineStart).toBeUndefined();
   });
 
   it("Overlay clip:false keeps overflow visible; clip:true hides", () => {

@@ -15,6 +15,7 @@ import {
   type Built,
   type Bundle,
   flattenOn,
+  frameBox,
   isolate,
   measuredPlates,
   PAGE,
@@ -215,7 +216,7 @@ function resample(tools: Toolchain, image: PngImage, factor: 0.5 | 1 | 2): PngIm
 
 /** The design as one picture of the whole frame: its pictures laid on grey, in order. */
 export function composeDesign(tools: Toolchain, bundle: Bundle, scale: 1 | 2): PngImage {
-  const root = bundle.doc.root.geometry.bbox;
+  const root = frameBox(bundle);
   const canvas = tools.png.create(Math.round(root.w * scale), Math.round(root.h * scale));
   for (let i = 0; i < canvas.data.length; i += 4) {
     canvas.data[i] = canvas.data[i + 1] = canvas.data[i + 2] = PAGE_RGB;
@@ -258,7 +259,7 @@ export async function renderRebuild(
   built: Built,
   scale: 1 | 2,
 ): Promise<PngImage> {
-  const root = bundle.doc.root.geometry.bbox;
+  const root = frameBox(bundle);
   const width = Math.round(root.w);
   const wholeFrame = bundle.plates.some((p) => p.nodeId === bundle.doc.rootNodeId);
   // Without a picture of the frame itself, the root's own fill is in no design picture: leave it
@@ -279,6 +280,7 @@ export async function renderRebuild(
     width,
     viewport: Math.max(width, viewportOf(bundle)),
     height: Math.round(root.h),
+    pageHeight: Math.round(root.h),
     background: PAGE,
     deviceScaleFactor: scale,
   });
@@ -383,7 +385,7 @@ export async function look(opts: {
   signal?: AbortSignal;
 }): Promise<Looked> {
   const { tools, bundle, built, see } = opts;
-  const root = bundle.doc.root.geometry.bbox;
+  const root = frameBox(bundle);
   const frame = { w: Math.round(root.w), h: Math.round(root.h) };
   const tiles = opts.region ? [clampRegion(opts.region, frame)] : tilesOf(frame);
   const scale = scaleFor(tiles[0] ?? frame);

@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-11-01T03:35:30.065Z",
+  "recordedAt": "2026-11-02T06:49:34.920Z",
   "note": "re-recorded before the next fixes",
   "frames": {
     "fixtures-strip": {
@@ -15,39 +15,42 @@
         "coverage": 100,
         "conformErrors": 23,
         "placeholderIcons": 0,
-        "standIns": 15
+        "standIns": 15,
+        "withoutCrops": 95.39
       }
     },
     "video-card": {
       "compiled": {
-        "match": 23.09,
+        "match": 23.01,
         "coverage": 100,
         "conformErrors": 5,
         "placeholderIcons": 1,
         "standIns": 0
       },
       "firstPass": {
-        "match": 99.71,
+        "match": 99.59,
         "coverage": 100,
         "conformErrors": 5,
         "placeholderIcons": 0,
-        "standIns": 2
+        "standIns": 2,
+        "withoutCrops": 23.01
       }
     },
     "news-later": {
       "compiled": {
-        "match": 90.97,
+        "match": 91.69,
         "coverage": 43.02,
         "conformErrors": 1,
         "placeholderIcons": 1,
         "standIns": 0
       },
       "firstPass": {
-        "match": 91.23,
+        "match": 91.95,
         "coverage": 43.02,
         "conformErrors": 1,
         "placeholderIcons": 0,
-        "standIns": 1
+        "standIns": 1,
+        "withoutCrops": 91.69
       }
     },
     "fixtures-inner": {
@@ -63,7 +66,8 @@
         "coverage": 84.76,
         "conformErrors": 23,
         "placeholderIcons": 0,
-        "standIns": 15
+        "standIns": 15,
+        "withoutCrops": 94.59
       }
     },
     "player-card": {
@@ -79,39 +83,42 @@
         "coverage": 100,
         "conformErrors": 11,
         "placeholderIcons": 0,
-        "standIns": 3
+        "standIns": 3,
+        "withoutCrops": 55.29
       }
     },
     "player-strip": {
       "compiled": {
-        "match": 28.91,
+        "match": 28.89,
         "coverage": 95.9,
         "conformErrors": 67,
         "placeholderIcons": 2,
         "standIns": 0
       },
       "firstPass": {
-        "match": 67.27,
+        "match": 98.77,
         "coverage": 95.9,
-        "conformErrors": 61,
+        "conformErrors": 52,
         "placeholderIcons": 0,
-        "standIns": 10
+        "standIns": 7,
+        "withoutCrops": 29.11
       }
     },
     "latest-news": {
       "compiled": {
-        "match": 61.16,
+        "match": 62.01,
         "coverage": 70.85,
         "conformErrors": 4,
         "placeholderIcons": 0,
         "standIns": 0
       },
       "firstPass": {
-        "match": 71.68,
+        "match": 95.2,
         "coverage": 70.85,
         "conformErrors": 10,
         "placeholderIcons": 0,
-        "standIns": 6
+        "standIns": 6,
+        "withoutCrops": 62.01
       }
     },
     "hospitality": {
@@ -123,28 +130,29 @@
         "standIns": 0
       },
       "firstPass": {
-        "match": 87.96,
+        "match": 87.92,
         "coverage": 97.85,
         "conformErrors": 333,
         "placeholderIcons": 0,
-        "standIns": 43
+        "standIns": 43,
+        "withoutCrops": 74.32
       }
     },
     "team-page": {
-      "note": "recorded from the live run 1b370bfc (frame.load: match 76.02, before 82.5) and an ablation on the code before the gradient fixes, not from a fresh measure",
       "compiled": {
         "match": 82.5,
         "coverage": 100,
         "conformErrors": 97,
-        "placeholderIcons": 0,
+        "placeholderIcons": 19,
         "standIns": 0
       },
       "firstPass": {
-        "match": 76.02,
+        "match": 96.82,
         "coverage": 100,
         "conformErrors": 87,
         "placeholderIcons": 0,
-        "standIns": 30
+        "standIns": 30,
+        "withoutCrops": 82.53
       }
     },
     "match-centre": {
@@ -160,24 +168,25 @@
         "coverage": 100,
         "conformErrors": 51,
         "placeholderIcons": 0,
-        "standIns": 11
+        "standIns": 11,
+        "withoutCrops": 40.09
       }
     },
     "ho-header": {
       "compiled": {
-        "match": 88.12,
-        "coverage": 100,
-        "conformErrors": 24,
+        "match": 88.16,
+        "coverage": 75.4,
+        "conformErrors": 16,
         "placeholderIcons": 10,
         "standIns": 0
       },
       "firstPass": {
-        "match": 94.92,
-        "coverage": 100,
-        "conformErrors": 21,
+        "match": 96.34,
+        "coverage": 75.4,
+        "conformErrors": 12,
         "placeholderIcons": 0,
         "standIns": 10,
-        "withoutCrops": 88.12
+        "withoutCrops": 88.19
       }
     },
     "ho-frame-101626": {
@@ -189,12 +198,12 @@
         "standIns": 0
       },
       "firstPass": {
-        "match": 92.47,
+        "match": 92.44,
         "coverage": 100,
         "conformErrors": 145,
         "placeholderIcons": 0,
         "standIns": 57,
-        "withoutCrops": 91.27
+        "withoutCrops": 91.28
       }
     },
     "ho-standings": {
@@ -216,19 +225,19 @@
     },
     "ho-frame-1984079082": {
       "compiled": {
-        "match": 33.73,
+        "match": 33.81,
         "coverage": 74.33,
         "conformErrors": 2,
         "placeholderIcons": 5,
         "standIns": 0
       },
       "firstPass": {
-        "match": 90.44,
+        "match": 90.53,
         "coverage": 74.33,
         "conformErrors": 2,
         "placeholderIcons": 0,
         "standIns": 10,
-        "withoutCrops": 33.73
+        "withoutCrops": 33.81
       }
     },
     "ho-merchandise": {
@@ -240,7 +249,7 @@
         "standIns": 0
       },
       "firstPass": {
-        "match": 92.93,
+        "match": 99.06,
         "coverage": 99.38,
         "conformErrors": 5,
         "placeholderIcons": 0,
@@ -257,7 +266,7 @@
         "standIns": 0
       },
       "firstPass": {
-        "match": 97.88,
+        "match": 97.81,
         "coverage": 100,
         "conformErrors": 2,
         "placeholderIcons": 0,
@@ -267,36 +276,36 @@
     },
     "ho-spider": {
       "compiled": {
-        "match": 51.77,
+        "match": 76.48,
         "coverage": 100,
-        "conformErrors": 342,
-        "placeholderIcons": 13,
+        "conformErrors": 334,
+        "placeholderIcons": 70,
         "standIns": 0
       },
       "firstPass": {
-        "match": 91.09,
+        "match": 91.17,
         "coverage": 100,
-        "conformErrors": 348,
+        "conformErrors": 396,
         "placeholderIcons": 0,
-        "standIns": 21,
-        "withoutCrops": 51.75
+        "standIns": 78,
+        "withoutCrops": 76.48
       }
     },
     "ho-live": {
       "compiled": {
-        "match": 76.67,
+        "match": 76.69,
         "coverage": 74.15,
         "conformErrors": 43,
         "placeholderIcons": 5,
         "standIns": 0
       },
       "firstPass": {
-        "match": 79.18,
+        "match": 79.21,
         "coverage": 74.15,
         "conformErrors": 48,
         "placeholderIcons": 0,
         "standIns": 5,
-        "withoutCrops": 76.91
+        "withoutCrops": 76.93
       }
     }
   },
@@ -325,8 +334,8 @@
         "failed": ["covers-at-least-baseline", "match-not-below-baseline", "reports-coverage"],
         "detail": {
           "reports-coverage": "the result has no coverage, so a match over a sliver looks like a match",
-          "covers-at-least-baseline": "coverage 100% \u2192 none% (baseline 2026-11-01)",
-          "match-not-below-baseline": "match 97.75% \u2192 97.75%"
+          "covers-at-least-baseline": "coverage 100% → none% (baseline 2026-11-01)",
+          "match-not-below-baseline": "match 97.75% → 97.75%"
         }
       },
       "video-card": {
@@ -336,8 +345,8 @@
         "failed": ["covers-at-least-baseline", "match-not-below-baseline", "reports-coverage"],
         "detail": {
           "reports-coverage": "the result has no coverage, so a match over a sliver looks like a match",
-          "covers-at-least-baseline": "coverage 4.31% \u2192 none% (baseline 2026-11-01)",
-          "match-not-below-baseline": "match 45.69% \u2192 45.69%"
+          "covers-at-least-baseline": "coverage 4.31% → none% (baseline 2026-11-01)",
+          "match-not-below-baseline": "match 45.69% → 45.69%"
         }
       },
       "news-later": {
@@ -347,8 +356,8 @@
         "failed": ["reports-coverage"],
         "detail": {
           "reports-coverage": "the result has no coverage, so a match over a sliver looks like a match",
-          "covers-at-least-baseline": "coverage 0% \u2192 none% (baseline 2026-11-01)",
-          "match-not-below-baseline": "match 0% \u2192 unmeasured"
+          "covers-at-least-baseline": "coverage 0% → none% (baseline 2026-11-01)",
+          "match-not-below-baseline": "match 0% → unmeasured"
         }
       }
     }
@@ -377,8 +386,8 @@
         "costUsd": 0.2494,
         "detail": {
           "reports-coverage": "coverage 100%",
-          "covers-at-least-baseline": "coverage 100% \u2192 100% (baseline 2026-11-01)",
-          "match-not-below-baseline": "match 97.75% \u2192 98.02%"
+          "covers-at-least-baseline": "coverage 100% → 100% (baseline 2026-11-01)",
+          "match-not-below-baseline": "match 97.75% → 98.02%"
         }
       },
       "video-card": {
@@ -387,8 +396,8 @@
         "costUsd": 0.1567,
         "detail": {
           "reports-coverage": "coverage 100%",
-          "covers-at-least-baseline": "coverage 4.31% \u2192 100% (baseline 2026-11-01)",
-          "match-not-below-baseline": "match 45.69% \u2192 95.73%"
+          "covers-at-least-baseline": "coverage 4.31% → 100% (baseline 2026-11-01)",
+          "match-not-below-baseline": "match 45.69% → 95.73%"
         }
       },
       "news-later": {
@@ -397,8 +406,8 @@
         "costUsd": 0.1556,
         "detail": {
           "reports-coverage": "coverage 43.02%",
-          "covers-at-least-baseline": "coverage 0% \u2192 43.02% (baseline 2026-11-01)",
-          "match-not-below-baseline": "match 0% \u2192 95.19%"
+          "covers-at-least-baseline": "coverage 0% → 43.02% (baseline 2026-11-01)",
+          "match-not-below-baseline": "match 0% → 95.19%"
         }
       }
     }
@@ -486,6 +495,309 @@
             "conformErrors": 11,
             "placeholderIcons": 0,
             "standIns": 2
+          }
+        }
+      }
+    },
+    {
+      "recordedAt": "2026-11-01T03:35:30.065Z",
+      "note": "re-recorded before the next fixes",
+      "frames": {
+        "fixtures-strip": {
+          "compiled": {
+            "match": 81.83,
+            "coverage": 100,
+            "conformErrors": 26,
+            "placeholderIcons": 15,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 97.75,
+            "coverage": 100,
+            "conformErrors": 23,
+            "placeholderIcons": 0,
+            "standIns": 15
+          }
+        },
+        "video-card": {
+          "compiled": {
+            "match": 23.09,
+            "coverage": 100,
+            "conformErrors": 5,
+            "placeholderIcons": 1,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 99.71,
+            "coverage": 100,
+            "conformErrors": 5,
+            "placeholderIcons": 0,
+            "standIns": 2
+          }
+        },
+        "news-later": {
+          "compiled": {
+            "match": 90.97,
+            "coverage": 43.02,
+            "conformErrors": 1,
+            "placeholderIcons": 1,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 91.23,
+            "coverage": 43.02,
+            "conformErrors": 1,
+            "placeholderIcons": 0,
+            "standIns": 1
+          }
+        },
+        "fixtures-inner": {
+          "compiled": {
+            "match": 78.6,
+            "coverage": 84.76,
+            "conformErrors": 26,
+            "placeholderIcons": 15,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 97.38,
+            "coverage": 84.76,
+            "conformErrors": 23,
+            "placeholderIcons": 0,
+            "standIns": 15
+          }
+        },
+        "player-card": {
+          "compiled": {
+            "match": 55.29,
+            "coverage": 100,
+            "conformErrors": 14,
+            "placeholderIcons": 0,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 99.75,
+            "coverage": 100,
+            "conformErrors": 11,
+            "placeholderIcons": 0,
+            "standIns": 3
+          }
+        },
+        "player-strip": {
+          "compiled": {
+            "match": 28.91,
+            "coverage": 95.9,
+            "conformErrors": 67,
+            "placeholderIcons": 2,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 67.27,
+            "coverage": 95.9,
+            "conformErrors": 61,
+            "placeholderIcons": 0,
+            "standIns": 10
+          }
+        },
+        "latest-news": {
+          "compiled": {
+            "match": 61.16,
+            "coverage": 70.85,
+            "conformErrors": 4,
+            "placeholderIcons": 0,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 71.68,
+            "coverage": 70.85,
+            "conformErrors": 10,
+            "placeholderIcons": 0,
+            "standIns": 6
+          }
+        },
+        "hospitality": {
+          "compiled": {
+            "match": 74.3,
+            "coverage": 97.85,
+            "conformErrors": 315,
+            "placeholderIcons": 26,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 87.96,
+            "coverage": 97.85,
+            "conformErrors": 333,
+            "placeholderIcons": 0,
+            "standIns": 43
+          }
+        },
+        "team-page": {
+          "note": "recorded from the live run 1b370bfc (frame.load: match 76.02, before 82.5) and an ablation on the code before the gradient fixes, not from a fresh measure",
+          "compiled": {
+            "match": 82.5,
+            "coverage": 100,
+            "conformErrors": 97,
+            "placeholderIcons": 0,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 76.02,
+            "coverage": 100,
+            "conformErrors": 87,
+            "placeholderIcons": 0,
+            "standIns": 30
+          }
+        },
+        "match-centre": {
+          "compiled": {
+            "match": 39.5,
+            "coverage": 100,
+            "conformErrors": 48,
+            "placeholderIcons": 3,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 88.54,
+            "coverage": 100,
+            "conformErrors": 51,
+            "placeholderIcons": 0,
+            "standIns": 11
+          }
+        },
+        "ho-header": {
+          "compiled": {
+            "match": 88.12,
+            "coverage": 100,
+            "conformErrors": 24,
+            "placeholderIcons": 10,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 94.92,
+            "coverage": 100,
+            "conformErrors": 21,
+            "placeholderIcons": 0,
+            "standIns": 10,
+            "withoutCrops": 88.12
+          }
+        },
+        "ho-frame-101626": {
+          "compiled": {
+            "match": 91.27,
+            "coverage": 100,
+            "conformErrors": 90,
+            "placeholderIcons": 57,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 92.47,
+            "coverage": 100,
+            "conformErrors": 145,
+            "placeholderIcons": 0,
+            "standIns": 57,
+            "withoutCrops": 91.27
+          }
+        },
+        "ho-standings": {
+          "compiled": {
+            "match": 17.1,
+            "coverage": 100,
+            "conformErrors": 20,
+            "placeholderIcons": 3,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 19.49,
+            "coverage": 100,
+            "conformErrors": 7,
+            "placeholderIcons": 0,
+            "standIns": 6,
+            "withoutCrops": 16.98
+          }
+        },
+        "ho-frame-1984079082": {
+          "compiled": {
+            "match": 33.73,
+            "coverage": 74.33,
+            "conformErrors": 2,
+            "placeholderIcons": 5,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 90.44,
+            "coverage": 74.33,
+            "conformErrors": 2,
+            "placeholderIcons": 0,
+            "standIns": 10,
+            "withoutCrops": 33.73
+          }
+        },
+        "ho-merchandise": {
+          "compiled": {
+            "match": 69.94,
+            "coverage": 99.38,
+            "conformErrors": 5,
+            "placeholderIcons": 0,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 92.93,
+            "coverage": 99.38,
+            "conformErrors": 5,
+            "placeholderIcons": 0,
+            "standIns": 3,
+            "withoutCrops": 69.94
+          }
+        },
+        "ho-tickets": {
+          "compiled": {
+            "match": 18.64,
+            "coverage": 100,
+            "conformErrors": 2,
+            "placeholderIcons": 13,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 97.88,
+            "coverage": 100,
+            "conformErrors": 2,
+            "placeholderIcons": 0,
+            "standIns": 16,
+            "withoutCrops": 18.64
+          }
+        },
+        "ho-spider": {
+          "compiled": {
+            "match": 51.77,
+            "coverage": 100,
+            "conformErrors": 342,
+            "placeholderIcons": 13,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 91.09,
+            "coverage": 100,
+            "conformErrors": 348,
+            "placeholderIcons": 0,
+            "standIns": 21,
+            "withoutCrops": 51.75
+          }
+        },
+        "ho-live": {
+          "compiled": {
+            "match": 76.67,
+            "coverage": 74.15,
+            "conformErrors": 43,
+            "placeholderIcons": 5,
+            "standIns": 0
+          },
+          "firstPass": {
+            "match": 79.18,
+            "coverage": 74.15,
+            "conformErrors": 48,
+            "placeholderIcons": 0,
+            "standIns": 5,
+            "withoutCrops": 76.91
           }
         }
       }

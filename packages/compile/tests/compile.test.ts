@@ -17,7 +17,7 @@ import { parseFrameIRDocument, type FrameIRDocument } from "@fanos/surface-canva
 import { compile } from "../src/compile.js";
 import { isMeaningful, slug } from "../src/ids.js";
 import { canonicalRef, paintRef } from "../src/refs.js";
-import { snapSpace, unhuggableAxes } from "../src/props.js";
+import { drawnText, fittedLayout, snapSpace, unhuggableAxes } from "../src/props.js";
 import { declaredType, primitivesFromNames } from "../src/primitives.js";
 
 const irDir = new URL("../../conform/fixtures/ir/", import.meta.url).pathname;
@@ -1947,5 +1947,112 @@ describe("a fill that matches no token", () => {
     const result = compile(doc, { theme, surfaces });
     const note = result.notes.find((x) => x.kind === "unresolved-paint" && x.irId === node!.id);
     expect(note?.message).toContain("prim/horiz_nonexistent_9/0");
+  });
+});
+
+describe("blend modes", () => {
+  const withBlend = (blendMode: string) => {
+    const doc = structuredClone(ir("fixture-card"));
+    const leaf = (n: FrameIRDocument["root"]): FrameIRDocument["root"] =>
+      n.children.length > 0 ? leaf(n.children[0]!) : n;
+    const target = leaf(doc.root);
+    (target as { blendMode?: string }).blendMode = blendMode;
+    return { doc, target };
+  };
+  const nodeOf = (doc: FrameIRDocument, id: string) =>
+    compile(doc, { theme }).tree.nodes.find((n) => n.src === id);
+  const notes = (doc: FrameIRDocument) => compile(doc, { theme }).notes;
+
+  it("carries a layer's blend into the tree, in CSS's spelling", () => {
+    const { doc, target } = withBlend("LUMINOSITY");
+    expect(nodeOf(doc, target.id)?.props.blend).toBe("luminosity");
+    const hard = withBlend("HARD_LIGHT");
+    expect(nodeOf(hard.doc, hard.target.id)?.props.blend).toBe("hard-light");
+  });
+
+  it("reports a blend a browser has no form for, rather than a near miss", () => {
+    const { doc, target } = withBlend("LINEAR_BURN");
+    expect(nodeOf(doc, target.id)?.props.blend).toBeUndefined();
+    expect(notes(doc).some((n) => n.kind === "unsupported-blend" && n.irId === target.id)).toBe(true);
+  });
+});
+
+describe("page-width layouts", () => {
+  const page = () => compile(ir("photos-page"), { theme }).tree.nodes;
+
+  it("gives a bar that spans a fluid parent the window, and its content the design's column", () => {
+    const bars = page().filter((n) => n.props.column !== undefined && !n.props.place);
+    expect(bars.length).toBeGreaterThan(0);
+    for (const bar of bars) {
+      expect((bar.props.size as { w?: unknown }).w).toBe("full");
+      expect(typeof bar.props.column).toBe("number");
+    }
+  });
+
+  it("is still deterministic and legal", () => {
+    expect(JSON.stringify(page())).toBe(JSON.stringify(page()));
+  });
+});
+
+describe("what Figma draws and CSS would not", () => {
+  const layer = (over: Record<string, unknown>, h: number, kids: unknown[] = []) => {
+    const base = ir("fixture-card").root;
+    return {
+      ...base,
+      geometry: {
+        ...base.geometry,
+        bbox: { x: 0, y: 0, w: 100, h },
+        relBbox: { x: 0, y: 0, w: 100, h },
+        rotation: 0,
+      },
+      children: kids,
+      ...over,
+    } as unknown as FrameIRDocument["root"];
+  };
+  const pad = (value: number) => ({ value, unbound: true });
+  const row = (top: number, h: number, kid: FrameIRDocument["root"], align = "CENTER") =>
+    layer(
+      {
+        layout: {
+          ...ir("fixture-card").root.layout,
+          mode: "horizontal",
+          align,
+          padding: { top: pad(top), bottom: pad(top), left: pad(15), right: pad(15) },
+        },
+      },
+      h,
+      [kid],
+    );
+  const label = (h: number, lineHeight?: number) =>
+    layer({ text: { characters: "x", lineHeight }, layout: ir("fixture-card").root.layout }, h);
+
+  it("gives a fixed box the padding it has room for, measured by the line", () => {
+    const fitted = fittedLayout(row(25, 32, label(8, 18)));
+    expect(fitted.padding.top.value).toBe(7);
+    expect(fitted.padding.bottom.value).toBe(7);
+    expect(fitted.padding.left.value).toBe(15);
+  });
+
+  it("leaves padding that fits, and a box whose text is only tighter than its line", () => {
+    const fits = row(4, 16, label(8, 18));
+    expect(fittedLayout(fits)).toBe(fits.layout);
+  });
+
+  it("leaves content that isn't centred, whose place depends on the padding", () => {
+    const top = row(25, 32, label(8, 18), "MIN");
+    expect(fittedLayout(top)).toBe(top.layout);
+  });
+
+  it("draws a carriage return as Figma does", () => {
+    const text = (lines: number) =>
+      layer({ text: { characters: "a\r  b", lines } }, 10) as FrameIRDocument["root"];
+    expect(drawnText(text(1))).toBe("a  b");
+    expect(drawnText(text(2))).toBe("a\n  b");
+  });
+
+  it("takes a gradient style over the variable beside it", () => {
+    expect(paintRef(theme, "sec/vert_3/0", "gradient/sec/horiz_1")?.ref).toBe(
+      "gradient.sec_horiz_1",
+    );
   });
 });

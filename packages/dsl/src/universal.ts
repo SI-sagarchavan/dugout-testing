@@ -106,12 +106,38 @@ export const metaFields: Fields = {
 
 export const REVEALS = ["none", "fade", "fade-up", "scale"] as const;
 export const PLATFORMS = ["web", "native"] as const;
+export const BLENDS = [
+  "multiply",
+  "screen",
+  "overlay",
+  "darken",
+  "lighten",
+  "color-dodge",
+  "color-burn",
+  "hard-light",
+  "soft-light",
+  "difference",
+  "exclusion",
+  "hue",
+  "saturation",
+  "color",
+  "luminosity",
+  "plus-lighter",
+] as const;
 
 export const universalFields: Fields = {
   surface: opt(f.token("surface"), { resp: true }),
   space: opt(f.obj(spaceFields)),
   size: opt(f.obj(sizeFields)),
   place: opt(f.obj(placeFields)),
+  /** How the node mixes with what is under it. Default: it paints over it. */
+  blend: opt(f.enum(...BLENDS)),
+  /**
+   * The design width, on a node that keeps its content in a centred column of it
+   * while its own box may be wider: a full-width bar, or something placed in one.
+   * Exactly at that width it changes nothing.
+   */
+  column: opt(f.num()),
   reveal: opt(f.enum(...REVEALS)),
   /** Duration token (or Raw ms). Never a space token — see T5. */
   revealDelay: opt(f.val("duration"), { resp: true }),

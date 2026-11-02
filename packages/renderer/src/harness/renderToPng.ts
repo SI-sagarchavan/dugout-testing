@@ -24,6 +24,13 @@ export interface RenderToPngOptions {
   width: number;
   height?: number;
   /**
+   * Capture this much of the page from the root's top-left corner when it is taller than the root
+   * element. The root of a frame that does not clip its content is only the first screen of the
+   * page, and an element screenshot stops at the element: the rest of the page, painted below it,
+   * is lost. Unset, the screenshot is the root element, as before.
+   */
+  pageHeight?: number;
+  /**
    * Page viewport width, which is what the emitted CSS media queries key off.
    *
    * Separate from `width` on purpose: a 534px card sitting on a 1440px desktop
@@ -104,6 +111,16 @@ export async function renderToPng(
     deviceScaleFactor,
     async (page) => {
       const root = page.locator("[data-fos-root]");
+      const box = options.pageHeight ? await root.boundingBox() : null;
+      if (options.pageHeight && box && box.height < options.pageHeight - 0.5) {
+        const buf = await page.screenshot({
+          type: "png",
+          omitBackground: false,
+          fullPage: true,
+          clip: { x: box.x, y: box.y, width: box.width, height: options.pageHeight },
+        });
+        return Buffer.from(buf);
+      }
       const buf = await root.screenshot({ type: "png", omitBackground: false });
       return Buffer.from(buf);
     },

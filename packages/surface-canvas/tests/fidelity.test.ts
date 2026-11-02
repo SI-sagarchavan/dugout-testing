@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { imageDetailOf, maskOf, renderBoxOf, textAlignOf } from "../src/fidelity";
+import { blendOf, imageDetailOf, maskOf, renderBoxOf, textAlignOf } from "../src/fidelity";
 import { IR_VERSIONS, parseFrameIRDocument, safeParseFrameIRDocument } from "../src/ir/index";
 import { document, looseText, node, resetIds } from "./health-fixtures";
 
@@ -127,5 +127,32 @@ describe("IR 1.9.0", () => {
     const doc = JSON.parse(JSON.stringify(document(node({ id: "1:1" }))));
     doc.root.image = { fit: "CROP", hasImageFill: true, transform: [[1, 0]] };
     expect(safeParseFrameIRDocument(doc).success).toBe(false);
+  });
+});
+
+describe("IR 1.10.0", () => {
+  it("records a layer's own blend, and nothing for one that mixes with nothing", () => {
+    expect(blendOf({ blendMode: "LUMINOSITY" })).toBe("LUMINOSITY");
+    expect(blendOf({ blendMode: "PASS_THROUGH" })).toBeUndefined();
+    expect(blendOf({ blendMode: "NORMAL" })).toBeUndefined();
+    expect(blendOf({})).toBeUndefined();
+  });
+
+  it("falls back to the paint of a layer with one visible paint", () => {
+    const paint = (blendMode: string, visible = true) => ({ blendMode, visible });
+    expect(blendOf({ blendMode: "PASS_THROUGH", fills: [paint("OVERLAY")] })).toBe("OVERLAY");
+    expect(blendOf({ fills: [paint("MULTIPLY", false), paint("OVERLAY")] })).toBe("OVERLAY");
+    expect(blendOf({ fills: [paint("OVERLAY"), paint("NORMAL")] })).toBeUndefined();
+    expect(blendOf({ fills: "mixed" })).toBeUndefined();
+    expect(blendOf({ blendMode: "SCREEN", fills: [paint("OVERLAY")] })).toBe("SCREEN");
+  });
+
+  it("is a known version, and the field survives a parse", () => {
+    resetIds();
+    const root = node({ id: "1:1" });
+    root.blendMode = "LUMINOSITY";
+    expect(IR_VERSIONS).toContain("1.10.0");
+    const parsed = parseFrameIRDocument(JSON.parse(JSON.stringify(document(root))));
+    expect(parsed.root.blendMode).toBe("LUMINOSITY");
   });
 });

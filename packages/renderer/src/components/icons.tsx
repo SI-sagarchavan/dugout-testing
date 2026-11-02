@@ -281,6 +281,14 @@ export function renderIcon(
   name: string,
   opts: { size: number; color?: string; className?: string; style?: CSSProperties },
 ): ReactElement {
+  // A glyph the registry doesn't have, as the design draws it.
+  if (name.startsWith("data:")) {
+    return (
+      <span className={opts.className} style={opts.style} data-fos-icon="picture">
+        <img src={name} width={opts.size} alt="" style={{ display: "block", height: "auto" }} />
+      </span>
+    );
+  }
   const Glyph = ICON_REGISTRY[name];
   if (!Glyph) {
     console.warn(`[fos-render] unknown icon name "${name}" — rendering placeholder`);

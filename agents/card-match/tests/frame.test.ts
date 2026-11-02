@@ -3,8 +3,13 @@ import {
   alignmentInBox,
   alignmentOf,
   type Bundle,
+  backdropBand,
+  buttonGlyphs,
   clipOf,
+  colorToken,
+  cropPlace,
   fitOf,
+  frameBox,
   gradientOf,
   gridNudge,
   isArtPlate,
@@ -120,6 +125,72 @@ describe("visibleBox", () => {
     bundle.byId.set("gone", node("gone", 0, 0, 10, 10));
     bundle.parents.set("gone", "card");
     expect(visibleBox(bundle, "gone")).toBeUndefined();
+  });
+});
+
+describe("frameBox", () => {
+  const node = (id: string, x: number, y: number, w: number, h: number, clipsContent = false) => ({
+    id,
+    name: id,
+    type: "FRAME",
+    geometry: { bbox: { x, y, w, h } },
+    clipsContent,
+  });
+  /** A tree of [node, parent] pairs, the first being the root. */
+  const page = (...rows: Array<[ReturnType<typeof node>, string | null]>) =>
+    ({
+      doc: { root: rows[0]?.[0] },
+      byId: new Map(rows.map(([n]) => [n.id, n])),
+      parents: new Map(rows.map(([n, parent]) => [n.id, parent])),
+    }) as unknown as Bundle;
+
+  it("is the root when the root clips: it is the page", () => {
+    const root = node("root", 100, 50, 1366, 768, true);
+    const tall = node("tall", 100, 50, 1366, 2488);
+    expect(frameBox(page([root, null], [tall, "root"]))).toEqual({
+      x: 100,
+      y: 50,
+      w: 1366,
+      h: 768,
+    });
+  });
+
+  it("runs down to what a root that does not clip holds: a 768px frame with a 2488px page", () => {
+    const root = node("root", 100, 50, 1366, 768);
+    const container = node("container", 100, 50, 1366, 2488, true);
+    expect(frameBox(page([root, null], [container, "root"]))).toEqual({
+      x: 100,
+      y: 50,
+      w: 1366,
+      h: 2488,
+    });
+  });
+
+  it("counts only what shows: a layer a clipping parent cuts off does not stretch the page", () => {
+    const root = node("root", 0, 0, 1000, 500);
+    const strip = node("strip", 0, 0, 1000, 800, true);
+    const photo = node("photo", 0, 700, 1000, 5000);
+    expect(frameBox(page([root, null], [strip, "root"], [photo, "strip"])).h).toBe(800);
+  });
+
+  it("keeps the root's width: a layer running off the side is cut there, not a reason to widen", () => {
+    const root = node("root", 0, 0, 1000, 500);
+    const wide = node("wide", -200, 0, 2000, 900);
+    expect(frameBox(page([root, null], [wide, "root"]))).toEqual({ x: 0, y: 0, w: 1000, h: 900 });
+  });
+
+  it("stops at a height a browser can screenshot", () => {
+    const root = node("root", 0, 0, 1000, 500);
+    const ruler = node("ruler", 0, 0, 1000, 90_000);
+    expect(frameBox(page([root, null], [ruler, "root"])).h).toBe(16_000);
+  });
+
+  it("puts the photos under the first screen on the page, which they were not", () => {
+    const root = node("root", 0, 0, 1366, 768);
+    const container = node("container", 0, 0, 1366, 2488, true);
+    const photo = node("photo", 0, 1900, 400, 300);
+    const bundle = page([root, null], [container, "root"], [photo, "container"]);
+    expect(visibleBox(bundle, "photo")).toEqual({ x: 0, y: 1900, w: 400, h: 300 });
   });
 });
 
@@ -580,5 +651,134 @@ describe("tokensOf", () => {
       "color.plain",
       "color.far",
     ]);
+  });
+});
+
+describe("cropPlace", () => {
+  const box = (x: number, y: number, w: number, h: number) => ({ x, y, w, h });
+  const layer = (bbox: ReturnType<typeof box>, rotation: number) =>
+    ({ geometry: { bbox, rotation } }) as unknown as Parameters<typeof cropPlace>[1];
+  const byId = new Map([
+    ["parent", layer(box(100, 76, 1366, 418), 0)],
+  ]) as unknown as Bundle["byId"];
+  const place = {
+    anchor: "top-start",
+    z: 2,
+    offset: { block: { raw: -280, _unbound: true }, inline: { raw: 199, _unbound: true } },
+  };
+
+  it("puts a turned layer's picture where its bounding box is, relative to the parent", () => {
+    expect(cropPlace({ byId }, layer(box(63, -283, 1068, 1172), 34.81), place, "parent")).toEqual({
+      anchor: "top-start",
+      z: 2,
+      offset: { block: { raw: -359, _unbound: true }, inline: { raw: -37, _unbound: true } },
+    });
+  });
+
+  it("leaves everything else where the compiler put it", () => {
+    const flat = layer(box(63, -283, 10, 10), 0);
+    const turned = layer(box(63, -283, 10, 10), 45);
+    expect(cropPlace({ byId }, flat, place, "parent")).toBe(place);
+    expect(cropPlace({ byId }, turned, place, undefined)).toBe(place);
+    const fill = { anchor: "fill" };
+    expect(cropPlace({ byId }, turned, fill, "parent")).toBe(fill);
+    expect(cropPlace({ byId }, turned, undefined, "parent")).toBeUndefined();
+  });
+});
+
+describe("backdropBand", () => {
+  const layer = (id: string, x: number, w: number, children: unknown[] = [], type = "VECTOR") => ({
+    id,
+    type,
+    geometry: { bbox: { x, y: 0, w, h: 100 } },
+    children,
+  });
+  const bundleOf = (root: ReturnType<typeof layer>) => {
+    const byId = new Map<string, unknown>();
+    const walk = (n: ReturnType<typeof layer>) => {
+      byId.set(n.id, n);
+      (n.children as ReturnType<typeof layer>[]).forEach(walk);
+    };
+    walk(root);
+    return { byId } as unknown as Parameters<typeof backdropBand>[0];
+  };
+  const tree = (...rows: Array<[string, string | null, string?]>) =>
+    rows.map(([id, parent, anchor]) => ({
+      id,
+      parent,
+      src: id,
+      idx: 0,
+      type: "Image",
+      props: anchor ? { place: { anchor } } : {},
+    })) as unknown as Parameters<typeof backdropBand>[1];
+
+  it("takes a wide picture in a band of only art, past any wrapper", () => {
+    const wrap = layer("wrap", 0, 1500, [layer("art", 0, 683)], "GROUP");
+    const nodes = tree(["band", null, "top-fill"], ["wrap", "band", "top-start"], ["art", "wrap"]);
+    const found = backdropBand(bundleOf(layer("band", 0, 1366, [wrap])), nodes, nodes[2]);
+    expect(found?.id).toBe("band");
+  });
+
+  it("leaves a picture narrow against the band where it is", () => {
+    const nodes = tree(["band", null, "top-fill"], ["logo", "band", "top-start"]);
+    const root = layer("band", 0, 1366, [layer("logo", 98, 84)]);
+    expect(backdropBand(bundleOf(root), nodes, nodes[1])).toBeUndefined();
+  });
+
+  it("leaves a band with words in it alone", () => {
+    const nodes = tree(["band", null, "top-fill"], ["art", "band", "top-start"]);
+    const root = layer("band", 0, 1366, [layer("art", 0, 1366), layer("t", 0, 10, [], "TEXT")]);
+    expect(backdropBand(bundleOf(root), nodes, nodes[1])).toBeUndefined();
+  });
+
+  it("needs a band at all", () => {
+    const nodes = tree(["card", null, "top-start"], ["art", "card", "top-start"]);
+    const root = layer("card", 0, 300, [layer("art", 0, 300)]);
+    expect(backdropBand(bundleOf(root), nodes, nodes[1])).toBeUndefined();
+  });
+});
+
+describe("colorToken", () => {
+  const body = { color: { light: { core_neu_50: "#fafafa", text_main: "#111111" } } };
+
+  it("finds a paint variable under the name the theme has it by", () => {
+    expect(colorToken(body, "color/neu/50")).toBe("color.core_neu_50");
+    expect(colorToken(body, "text/main")).toBe("color.text_main");
+  });
+
+  it("gives no colour for a name it doesn't have, which the validator would refuse", () => {
+    expect(colorToken(body, "color/neu/900")).toBeUndefined();
+    expect(colorToken(body, undefined)).toBeUndefined();
+  });
+});
+
+describe("buttonGlyphs", () => {
+  const button = (props: Record<string, unknown>) =>
+    [{ id: "b", parent: null, idx: 0, type: "Button", src: "btn", props }] as unknown as Parameters<
+      typeof buttonGlyphs
+    >[2];
+  const bundle = {
+    doc: { rootNodeId: "root" },
+    byId: new Map([
+      ["btn", { id: "btn", children: [{ id: "glyph", children: [] }] }],
+      ["glyph", { id: "glyph", children: [], geometry: { bbox: { w: 17.6 } } }],
+    ]),
+    plates: [{ nodeId: "glyph", name: "art-vector-glyph", png: Buffer.from("x") }],
+  } as unknown as Bundle;
+
+  it("draws a glyph the icon set lacks from the button's own picture", () => {
+    const nodes = button({ iconStart: "handbag" });
+    buttonGlyphs({ iconNames: [] }, bundle, nodes);
+    expect(nodes[0]?.props.iconSize).toBe(18);
+    expect(nodes[0]?.props.iconStart).toBe(
+      `data:image/png;base64,${Buffer.from("x").toString("base64")}`,
+    );
+  });
+
+  it("leaves a glyph the icon set has, which can still take the button's colour", () => {
+    const nodes = button({ iconStart: "ticket" });
+    buttonGlyphs({ iconNames: ["ticket"] }, bundle, nodes);
+    expect(nodes[0]?.props.iconStart).toBe("ticket");
+    expect(nodes[0]?.props.iconSize).toBeUndefined();
   });
 });

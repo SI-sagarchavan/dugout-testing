@@ -165,8 +165,44 @@ const overlap = (a: Rect, b: Rect): Rect | undefined => {
   return w > 0 && h > 0 ? { x, y, w, h } : undefined;
 };
 
+/** The most of a page that is measured: a screenshot of it at 2x has to fit a browser's limits. */
+const MAX_PAGE_HEIGHT = 16_000;
+const pages = new WeakMap<object, Rect>();
+
 /**
- * Where a layer shows on the page: its box cut by the frame and by every ancestor that clips. Figma
+ * The page the design is. A root that clips its content is the page. One that does not (a 768px
+ * frame that holds a 2,488px page) is only the first screen of it, and everything under that is on
+ * show in a preview all the same: so the page is the root's box, taller by whatever its layers
+ * draw below it. Sideways the root stays the page, since a layer running off its side is cut
+ * there.
+ *
+ * Before this, every score, crop and check was cut to the root's own box, so the lower part of such
+ * a page was never compared and its photos were never placed.
+ */
+export function frameBox(bundle: Pick<Bundle, "doc" | "byId" | "parents">): Rect {
+  const cached = pages.get(bundle.doc);
+  if (cached) return cached;
+  const root = bundle.doc.root.geometry.bbox;
+  let bottom = root.y + root.h;
+  if (!bundle.doc.root.clipsContent) {
+    // the root's columns at any height (finite, because -Infinity + Infinity is NaN)
+    const columns = { x: root.x, y: -1e9, w: root.w, h: 2e9 };
+    for (const [id, node] of bundle.byId) {
+      let box: Rect | undefined = overlap(node.geometry.bbox, columns);
+      for (let up = bundle.parents.get(id); up && box; up = bundle.parents.get(up)) {
+        const ancestor = bundle.byId.get(up);
+        if (ancestor?.clipsContent) box = overlap(box, ancestor.geometry.bbox);
+      }
+      if (box) bottom = Math.max(bottom, box.y + box.h);
+    }
+  }
+  const page = { x: root.x, y: root.y, w: root.w, h: Math.min(bottom - root.y, MAX_PAGE_HEIGHT) };
+  pages.set(bundle.doc, page);
+  return page;
+}
+
+/**
+ * Where a layer shows on the page: its box cut by the page and by every ancestor that clips. Figma
  * exports a layer as it shows, so a photo wider than its card comes out as the card's size.
  */
 export function visibleBox(bundle: Bundle, id: string): Rect | undefined {
@@ -177,7 +213,7 @@ export function visibleBox(bundle: Bundle, id: string): Rect | undefined {
     const ancestor = bundle.byId.get(up);
     if (ancestor?.clipsContent) box = overlap(box, ancestor.geometry.bbox);
   }
-  return box && overlap(box, bundle.doc.root.geometry.bbox);
+  return box && overlap(box, frameBox(bundle));
 }
 
 interface ShadowEffect {
@@ -450,6 +486,9 @@ function plateFor(tools: Toolchain, bundle: Bundle, node: IrNode) {
   if (!want) return undefined;
   let best: { plate: Bundle["plates"][number]; vis: Rect; scale: number; rank: number } | undefined;
   for (const plate of bundle.plates) {
+    // A picture of a single layer holds that layer alone. Over another layer's box it has none of
+    // what is really there: a breadcrumb's chevron came out as a square of the banner's texture.
+    if (isArtPlate(bundle, plate) && !subtreeOf(bundle, plate.nodeId).has(node.id)) continue;
     const place = placeOf(bundle, plate.nodeId, plateImage(tools, plate.png));
     const vis = place?.box;
     const fit = place?.fit;
@@ -686,6 +725,7 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
   const addedTexts: Built["addedTexts"] = [];
   const nodesOf = (src: string) => nodes.filter((node) => node.src === src);
 
+  buttonGlyphs(tools, bundle, nodes);
   for (const src of overrides.gradients) {
     const name = gradientName(src);
     if (!gradients.has(name)) continue;
@@ -705,8 +745,10 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
     // The compiler draws a clipped picture as the window it fills: the IR box is the whole bitmap,
     // positioned so its window shows the right part. The crop is the window, whatever the box is.
     const parent = bundle.parents.get(src);
-    const window =
-      parent && found.some((node) => (node.props.place as { anchor?: string })?.anchor === "fill")
+    const band = backdropBand(bundle, nodes, found[0]);
+    const window = band
+      ? visibleBox(bundle, band.src)
+      : parent && found.some((node) => (node.props.place as { anchor?: string })?.anchor === "fill")
         ? visibleBox(bundle, parent)
         : undefined;
     const crop = ir && cropFromPlates(tools, bundle, ir, overrides.gradients, window);
@@ -719,8 +761,19 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
     for (const node of found) {
       nodes = deleteDescendants(nodes, node.id);
       node.type = "Image";
+      const parentSrc = nodes.find((other) => other.id === node.parent)?.src;
+      const place = band
+        ? { anchor: "fill" }
+        : window
+          ? node.props.place
+          : cropPlace(bundle, ir, node.props.place, parentSrc);
+      if (band) fillUpTo(nodes, node, band);
       node.props = {
-        ...(node.props.place ? { place: node.props.place } : {}),
+        ...(place ? { place } : {}),
+        ...(node.props.column && !band ? { column: node.props.column } : {}),
+        // the layer's picture is the layer alone: how it mixes with the rest is still to do
+        ...(node.props.blend ? { blend: node.props.blend } : {}),
+        ...(band ? { _meta: FOLLOWS_BAND } : {}),
         src: crop,
         alt: ir.name,
         fit: "fill",
@@ -780,10 +833,125 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
   };
 }
 
+/**
+ * A button's icon isn't a node, so nothing can crop it. One the icon set doesn't have would be a
+ * placeholder, while the export holds a picture of exactly that glyph, inside the button's layer.
+ */
+export function buttonGlyphs(
+  tools: Pick<Toolchain, "iconNames">,
+  bundle: Bundle,
+  nodes: TreeNode[],
+) {
+  for (const node of nodes) {
+    if (node.type !== "Button") continue;
+    const inside = subtreeOf(bundle, node.src);
+    const pictures = bundle.plates.filter(
+      (plate) => isArtPlate(bundle, plate) && inside.has(plate.nodeId),
+    );
+    const start = pictures[0];
+    const end = pictures[pictures.length - 1];
+    const glyph = (key: "iconStart" | "iconEnd", plate: typeof start) => {
+      const name = node.props[key];
+      if (typeof name !== "string" || !plate || tools.iconNames.includes(name)) return;
+      node.props[key] = `data:image/png;base64,${plate.png.toString("base64")}`;
+      // the picture is this size in the design, whatever size this button's own glyphs are
+      const width = bundle.byId.get(plate.nodeId)?.geometry?.bbox.w;
+      if (width) node.props.iconSize = Math.round(width);
+    };
+    glyph("iconStart", start);
+    glyph("iconEnd", end);
+  }
+}
+
+/** Of a page-width band this much across, a picture is its backdrop and not something on it. */
+const MIN_BACKDROP_SHARE = 0.4;
+
+/**
+ * The band a picture is the backdrop of, if it is one. A band that spans the window and holds only
+ * art (a banner: photos, a wedge, a curve) has nothing in it to keep in the column, and its art has
+ * to follow the band or a wider window shows the art's edge. A picture much narrower than the band,
+ * such as a logo in a row of them, sits on the band and keeps its size.
+ */
+export function backdropBand(
+  bundle: Bundle,
+  nodes: TreeNode[],
+  node: TreeNode | undefined,
+): TreeNode | undefined {
+  let at = nodes.find((other) => other.id === node?.parent);
+  while (at && (at.props.place as { anchor?: string } | undefined)?.anchor !== "top-fill") {
+    at = nodes.find((other) => other.id === at?.parent);
+  }
+  const box = node && bundle.byId.get(node.src)?.geometry.bbox;
+  const outer = at && bundle.byId.get(at.src)?.geometry.bbox;
+  if (!at || !box || !outer) return undefined;
+  const across = Math.min(box.x + box.w, outer.x + outer.w) - Math.max(box.x, outer.x);
+  if (across < outer.w * MIN_BACKDROP_SHARE) return undefined;
+  const hasText = [...subtreeOf(bundle, at.src)].some((id) => bundle.byId.get(id)?.type === "TEXT");
+  return hasText ? undefined : at;
+}
+
+/** A backdrop inside wrappers fills them, so each wrapper up to its band has to fill as well. */
+function fillUpTo(nodes: TreeNode[], node: TreeNode, band: TreeNode) {
+  let at = nodes.find((other) => other.id === node.parent);
+  while (at && at.id !== band.id) {
+    const { size: _size, column: _column, ...rest } = at.props;
+    at.props = { ...rest, place: { anchor: "fill" }, _meta: FOLLOWS_BAND };
+    at = nodes.find((other) => other.id === at?.parent);
+  }
+}
+
+/** The box really has moved to the band's, and the geometry gate is right to notice. */
+const FOLLOWS_BAND = {
+  deviations: [
+    {
+      check: "C2",
+      reason:
+        "a backdrop follows its band: the layer's own box became the band's, and its pixels stay where the IR puts them at the design width",
+    },
+  ],
+};
+
+/**
+ * Where a crop of a turned layer goes. The compiler places such a layer by its unturned box, for a
+ * turn that a picture doesn't need: its pixels are already turned, and fill the layer's bounding
+ * box. Keeping that place with this size put a banner's wedge 236px from where it belongs.
+ */
+export function cropPlace(
+  bundle: Pick<Bundle, "byId">,
+  ir: IrNode,
+  place: unknown,
+  parentSrc: string | undefined,
+): unknown {
+  const parent = parentSrc ? bundle.byId.get(parentSrc)?.geometry.bbox : undefined;
+  const at = place as { anchor?: string } | undefined;
+  if (!parent || !ir.geometry.rotation || at?.anchor !== "top-start") return place;
+  const box = ir.geometry.bbox;
+  return {
+    ...at,
+    offset: {
+      block: { raw: box.y - parent.y, _unbound: true },
+      inline: { raw: box.x - parent.x, _unbound: true },
+    },
+  };
+}
+
 interface RawType {
   size: number;
   weight: number;
   line_height: number;
+}
+
+/**
+ * A paint variable's name as the theme has it. `color/neu/50` is `core_neu_50` there. A name it
+ * doesn't have is no colour, not an error: one bad name was failing the validator, and that lost
+ * every text put back on the page.
+ */
+export function colorToken(body: RawTokens | undefined, ref: string | undefined) {
+  if (!ref) return undefined;
+  const flat = ref.replace(/\//g, "_");
+  const names = [flat, flat.replace(/^color_/, ""), flat.replace(/^color_/, "core_")];
+  const found = names.find((name) => body?.color?.light?.[name] !== undefined);
+  return found ? `color.${found}` : undefined;
 }
 
 /**
@@ -827,8 +995,7 @@ function addText(
     if (!best || cost < best.cost) best = { name, cost, exact };
   }
   if (!best) return undefined;
-  const ref = (ir.fill as { tokenRef?: string } | null | undefined)?.tokenRef;
-  const tone = ref ? `color.${ref.replace(/\//g, "_")}` : undefined;
+  const tone = colorToken(body, (ir.fill as { tokenRef?: string } | null | undefined)?.tokenRef);
   const sizing = (ir.layout as { sizing?: { w?: string; h?: string } } | undefined)?.sizing ?? {};
   const box = ir.geometry.bbox;
   const axis = (mode: string | undefined, raw: number) =>
@@ -1035,7 +1202,7 @@ export async function measureFrame(
   bundle: Bundle,
   built: Built,
 ): Promise<Measurement> {
-  const root = bundle.doc.root.geometry.bbox;
+  const root = frameBox(bundle);
   const width = Math.round(root.w);
   const height = Math.round(root.h);
   const options = (deviceScaleFactor: number) => ({
@@ -1045,6 +1212,9 @@ export async function measureFrame(
     width,
     viewport: Math.max(width, viewportOf(bundle)),
     height,
+    // the page, not just the root element: under a root that does not clip, the rest is painted
+    // below it
+    pageHeight: height,
     background: PAGE,
     deviceScaleFactor,
   });

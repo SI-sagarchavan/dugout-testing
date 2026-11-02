@@ -167,7 +167,7 @@ export function Button({ node, ctx }: { node: Node; ctx: NodeRenderContext }) {
     resolved.className,
   ].join(" ");
 
-  const iconPx = ICON_PX[size]!;
+  const iconPx = typeof props.iconSize === "number" ? props.iconSize : ICON_PX[size]!;
   const iconStart = typeof props.iconStart === "string" ? props.iconStart : undefined;
   const iconEnd = typeof props.iconEnd === "string" ? props.iconEnd : undefined;
   const inner = (

@@ -26,7 +26,7 @@ import {
   type TokenValue,
 } from "./ir/schema";
 import { annotateTree } from "./ir/signature";
-import { imageDetailOf, maskOf, renderBoxOf, textAlignOf } from "./fidelity";
+import { blendOf, imageDetailOf, maskOf, renderBoxOf, textAlignOf } from "./fidelity";
 
 const YIELD_EVERY = 500;
 
@@ -233,6 +233,9 @@ async function normalize(
     ir.isMask = true;
     if (mask.maskType) ir.maskType = mask.maskType;
   }
+
+  const blendMode = blendOf(node as { blendMode?: unknown; fills?: unknown });
+  if (blendMode) ir.blendMode = blendMode;
 
   return ir;
 }

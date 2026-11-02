@@ -333,6 +333,17 @@ function emitSurface(
     lines.push("", `${selector}::before {`, ...beforeBody.map((l) => INDENT + l), "}");
   }
 
+  // An Overlay paints its surface on an inner layer and clips on its own box, so a picture in a
+  // rounded, clipped card ran past the corners its own surface had rounded.
+  if (surface.radius) {
+    lines.push(
+      "",
+      `.fos-overlay-clip:has(> .fos-surface-layer > ${selector}) {`,
+      `${INDENT}border-radius: ${cssVar(surface.radius)};`,
+      "}",
+    );
+  }
+
   return lines;
 }
 

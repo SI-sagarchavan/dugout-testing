@@ -108,8 +108,13 @@ import { z } from "zod";
  *   bitmap shows, which is the half a cover-fit crop turns on.
  *
  * Absent on 1.1.0–1.8.0 documents, which still parse and mean what they did.
+ *
+ * 1.10.0 — adds `blendMode`: how a layer mixes with what is under it. A layer's
+ * picture is taken on its own, so it never shows this. Navy at 60% over red is
+ * purple when normal and dark red when luminosity, and a banner drew purple
+ * until the IR said which. Absent on a normal layer, and on older documents.
  */
-export const IR_VERSION = "1.9.0" as const;
+export const IR_VERSION = "1.10.0" as const;
 export const IR_VERSIONS = [
   "1.1.0",
   "1.2.0",
@@ -120,6 +125,7 @@ export const IR_VERSIONS = [
   "1.7.0",
   "1.8.0",
   "1.9.0",
+  "1.10.0",
 ] as const;
 
 /**
@@ -482,6 +488,28 @@ export const imageSchema = z.object({
 });
 export type ImageInfo = z.infer<typeof imageSchema>;
 
+/** Figma's blend modes, without the two that mean nothing is mixed. */
+export const blendModeSchema = z.enum([
+  "DARKEN",
+  "MULTIPLY",
+  "LINEAR_BURN",
+  "COLOR_BURN",
+  "LIGHTEN",
+  "SCREEN",
+  "LINEAR_DODGE",
+  "COLOR_DODGE",
+  "OVERLAY",
+  "SOFT_LIGHT",
+  "HARD_LIGHT",
+  "DIFFERENCE",
+  "EXCLUSION",
+  "HUE",
+  "SATURATION",
+  "COLOR",
+  "LUMINOSITY",
+]);
+export type BlendMode = z.infer<typeof blendModeSchema>;
+
 /** Figma's `maskType`. `ALPHA` clips by the mask's opacity, `VECTOR` by its outline. */
 export const maskTypeSchema = z.enum(["ALPHA", "VECTOR", "LUMINANCE"]);
 export type MaskType = z.infer<typeof maskTypeSchema>;
@@ -512,6 +540,8 @@ export interface FrameIRNode {
   isMask?: boolean;
   /** Figma's `maskType`, recorded only on a mask (1.9.0+). */
   maskType?: MaskType;
+  /** How the layer mixes with what is under it (1.10.0+). Absent when it doesn't. */
+  blendMode?: BlendMode;
 
   text?: TextInfo;
   image?: ImageInfo;
@@ -564,6 +594,7 @@ export const frameIRNodeSchema: z.ZodType<FrameIRNode, z.ZodTypeDef, unknown> = 
     clipsContent: z.boolean(),
     isMask: z.boolean().optional(),
     maskType: maskTypeSchema.optional(),
+    blendMode: blendModeSchema.optional(),
 
     text: textSchema.optional(),
     image: imageSchema.optional(),

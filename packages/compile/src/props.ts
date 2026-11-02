@@ -88,6 +88,50 @@ export interface SpaceProps {
  * noise, and `p` / `px` / `py` are the vocabulary designers actually use — so
  * collapse when the values are identical, and only then.
  */
+/**
+ * The padding that fits. Figma keeps a fixed box and lets centred content sit in it whatever the
+ * padding says: a 32px button can declare 25px above and below. CSS grows the box to hold it
+ * instead, so what the box leaves is what the padding is. Only a real overflow counts, by the
+ * layers' own boxes: a text box is tighter than its line, and that alone is no overflow. What is
+ * left is measured by the line, since that is what CSS will lay out.
+ */
+export function fittedLayout(n: FrameIRNode): Layout {
+  const l = n.layout;
+  const centred =
+    (l.mode === "horizontal" && l.align === "CENTER") ||
+    (l.mode === "vertical" && l.justify === "CENTER");
+  const top = l.padding.top.value ?? 0;
+  const bottom = l.padding.bottom.value ?? 0;
+  if (!centred || top + bottom === 0) return l;
+  const kids = (n.children ?? []).filter((kid) => kid.layout.positioning !== "absolute");
+  if (kids.length === 0) return l;
+  const gaps = l.mode === "vertical" ? (l.gap?.value ?? 0) * (kids.length - 1) : 0;
+  const total = (heights: number[]) =>
+    l.mode === "vertical" ? heights.reduce((a, b) => a + b, 0) + gaps : Math.max(...heights);
+  const height = layoutBox(n).h;
+  const inked = total(kids.map((kid) => layoutBox(kid).h));
+  if (top + bottom + inked <= height + 0.5) return l;
+  const lined = total(
+    kids.map((kid) => {
+      const line = kid.text?.lineHeight;
+      return Math.max(layoutBox(kid).h, typeof line === "number" ? line : 0);
+    }),
+  );
+  const free = Math.max(0, height - lined);
+  const share = (side: number) =>
+    ({ value: Math.round((free * side) / (top + bottom)), unbound: true }) as typeof l.padding.top;
+  return { ...l, padding: { ...l.padding, top: share(top), bottom: share(bottom) } };
+}
+
+/**
+ * What a text layer says, as it is drawn. Figma can hold a carriage return in a layer it draws on
+ * one line, and a browser would break there; on a layer of several lines it is a line break.
+ */
+export function drawnText(n: FrameIRNode): string {
+  const characters = n.text?.characters ?? "";
+  return characters.replace(/\r\n?/g, n.text?.lines === 1 ? "" : "\n");
+}
+
 export function space(theme: NormalizedTheme, layout: Layout): SpaceProps | undefined {
   const t = length(theme, layout.padding.top);
   const r = length(theme, layout.padding.right);
@@ -658,7 +702,7 @@ export function button(theme: NormalizedTheme, n: FrameIRNode): ButtonProps | un
   const size = /^type\.button_(sm|md|lg)$/.exec(typeRef ?? "")?.[1];
 
   const out: ButtonProps = {
-    label: text.text.characters,
+    label: drawnText(text),
     variant: family?.variant ?? "filled",
     styleN: family?.styleN ?? 1,
     size: size ?? "md",
@@ -675,7 +719,7 @@ export function button(theme: NormalizedTheme, n: FrameIRNode): ButtonProps | un
     else out.iconEnd ??= iconRef(kid.name);
   }
 
-  const padding = space(theme, body.layout);
+  const padding = space(theme, fittedLayout(body));
   if (padding) out.space = padding;
 
   /**
@@ -801,7 +845,7 @@ export function text(theme: NormalizedTheme, n: FrameIRNode): TextProps | undefi
   if (!n.text) return undefined;
   const style = canonicalRef(theme, n.text.styleRef, "type") ?? matchTypeToken(theme, n);
   if (!style) return undefined;
-  const out: TextProps = { content: n.text.characters, style };
+  const out: TextProps = { content: drawnText(n), style };
   const tone = canonicalRef(theme, n.fill?.tokenRef, "color");
   if (tone) out.tone = tone;
   const clamp = truncateLines(n);

@@ -112,6 +112,10 @@ export function paintRef(
   raw: string | undefined,
   styleRef?: string,
 ): { ref: string; kind: "color" | "gradient" } | undefined {
+  // A paint style that is a gradient is the paint. The variable beside it may name another gradient
+  // that happens to share its first stop.
+  const style = canonicalRef(theme, styleRef, "gradient");
+  if (style) return { ref: style, kind: "gradient" };
   for (const name of [raw, styleRef]) {
     const color = canonicalRef(theme, name, "color");
     if (color) return { ref: color, kind: "color" };

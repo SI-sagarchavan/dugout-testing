@@ -136,6 +136,12 @@ export function resolveNode(
     dataAttrs["data-fos-clip"] = "true";
   }
 
+  // --- blend -------------------------------------------------------------
+  if (typeof props.blend === "string") {
+    style.mixBlendMode = props.blend;
+    classes.add("fos-blend");
+  }
+
   // --- space (padding) ---------------------------------------------------
   const space = props.space as Record<string, unknown> | undefined;
   if (space) {
@@ -158,6 +164,9 @@ export function resolveNode(
       dataAttrs["data-fos-z-override"] = String(place.z);
     }
   }
+
+  // --- column ------------------------------------------------------------
+  if (typeof props.column === "number") applyColumn(style, props.column, Boolean(place?.anchor));
 
   // --- reveal ------------------------------------------------------------
   if (typeof props.reveal === "string" && props.reveal !== "none") {
@@ -238,6 +247,26 @@ export function resolveNode(
     style,
     dataAttrs,
   };
+}
+
+/**
+ * Keeps a node's content in a centred column of the design's width. The gutter is what the parent
+ * has beyond that width, on each side, and is zero at the design width and under it. A percentage
+ * of padding or inset is of the parent's width in both cases, so one expression serves both.
+ */
+function applyColumn(style: CssProperties, width: number, placed: boolean): void {
+  const gutter = `max(0px, (100% - ${width}px) / 2)`;
+  if (placed) {
+    const offset = style.insetInlineStart ?? "0px";
+    style.insetInlineStart = `calc(${gutter} + ${offset})`;
+    return;
+  }
+  const both = style.paddingInline !== undefined;
+  const start = both ? "var(--px-base)" : "var(--pl-base, 0px)";
+  const end = both ? "var(--px-base)" : "var(--pr-base, 0px)";
+  delete style.paddingInline;
+  style.paddingInlineStart = `calc(${gutter} + ${start})`;
+  style.paddingInlineEnd = `calc(${gutter} + ${end})`;
 }
 
 function mapSpace(

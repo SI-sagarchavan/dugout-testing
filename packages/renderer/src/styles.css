@@ -211,6 +211,30 @@
   z-index: 1;
 }
 
+/**
+ * A z-index makes a stacking context, and a node blends only with what is in its
+ * own: a blended picture two Overlays down would mix with nothing. So on the way
+ * to a blended node the z-index goes. Positioned, the children still paint over
+ * the surface layer and in DOM order, which is all it was there for.
+ */
+.fos-overlay:has(.fos-blend) > .fos-node {
+  z-index: auto;
+}
+
+/**
+ * The other half of that. An Overlay with `z-index: auto` (because its parent
+ * holds a blend) makes no stacking context, so its own children's `z-index: 1`
+ * and its surface layer's `z-index: 0` leak into the parent's and paint over
+ * every later sibling: a full-section mask picture in one Overlay dimmed the
+ * heading and toggle of the next. So an Overlay that sits directly in one that
+ * holds a blend, and has nothing blended inside itself, closes its own context.
+ * Only there: a frame with no blend never had the rule above, and its Overlays
+ * keep the stacking they always had.
+ */
+.fos-overlay:has(.fos-blend) > .fos-overlay:not(:has(.fos-blend)) {
+  isolation: isolate;
+}
+
 /* --- Image + scrim ---------------------------------------------------- */
 
 .fos-image {

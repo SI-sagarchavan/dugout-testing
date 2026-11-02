@@ -46,6 +46,7 @@ import { IdAllocator, isMeaningful, slug } from "./ids.js";
 import { canonicalRef } from "./refs.js";
 import { layoutBox, quarterTurnOf } from "./geometry.js";
 import {
+  fittedLayout,
   button,
   childrenFillRow,
   iconRef,
@@ -100,6 +101,29 @@ export interface CompileOptions {
   cleanup?: CleanupOptions;
 }
 
+/**
+ * Figma's blend modes as CSS has them. Linear burn has no CSS form, so a layer that uses it is
+ * reported rather than given a near miss.
+ */
+const BLENDS: Partial<Record<NonNullable<FrameIRNode["blendMode"]>, string>> = {
+  DARKEN: "darken",
+  MULTIPLY: "multiply",
+  COLOR_BURN: "color-burn",
+  LIGHTEN: "lighten",
+  SCREEN: "screen",
+  LINEAR_DODGE: "plus-lighter",
+  COLOR_DODGE: "color-dodge",
+  OVERLAY: "overlay",
+  SOFT_LIGHT: "soft-light",
+  HARD_LIGHT: "hard-light",
+  DIFFERENCE: "difference",
+  EXCLUSION: "exclusion",
+  HUE: "hue",
+  SATURATION: "saturation",
+  COLOR: "color",
+  LUMINOSITY: "luminosity",
+};
+
 export interface CompileNote {
   /** Machine-readable reason, so callers can filter without parsing prose. */
   kind:
@@ -110,6 +134,7 @@ export interface CompileNote {
     | "absorbed"
     | "background-asset"
     | "decorative-vector"
+    | "unsupported-blend"
     | "pinned-size"
     | "fluid-band"
     | "unmapped-component"
@@ -402,6 +427,18 @@ function emit(
   if (type === "Stack" && node.clipsContent) props.clip = true;
   if (type === "Box" && node.clipsContent) props.clip = true;
 
+  if (node.blendMode) {
+    const blend = BLENDS[node.blendMode];
+    if (blend) props.blend = blend;
+    else
+      ctx.notes.push({
+        kind: "unsupported-blend",
+        irId: node.id,
+        nodeId: id,
+        message: `${node.name} blends ${node.blendMode}, which a browser cannot do, so it paints normally`,
+      });
+  }
+
   // A rule has no interior, so padding on it is meaningless — and ruinous: the
   // hairlines in the fixtures card declare 16px padding inside a 1px-tall box,
   // which Figma cannot honour and which CSS turns into a 33px bar. The IR's own
@@ -409,7 +446,7 @@ function emit(
   // A Button's padding comes from the frame that actually carries its box,
   // which is usually the master INSIDE the instance — see `button()`.
   const sp =
-    type === "Divider" || type === "Button" ? undefined : space(ctx.theme, node.layout);
+    type === "Divider" || type === "Button" ? undefined : space(ctx.theme, fittedLayout(node));
   if (sp) props.space = sp;
 
   const band = isRoot && isBand(node);
@@ -524,6 +561,29 @@ function emit(
           `spans its fluid parent, so its ${Math.round(box.w)}px width became a ` +
           `stretch with the side gaps as padding — it now follows the parent's width`,
       });
+    }
+  }
+
+  /**
+   * The rest of a page-width layout, as a site builds one: a bar's paint spans the window and what
+   * is in it stays in a centred column of the design's width, and so does anything placed on it.
+   * Both are the same rectangle at the design width, so the geometry gate sees no change there.
+   */
+  if (parent?.fluid && type !== "Button") {
+    const outer = layoutBox(parent.node);
+    const box = layoutBox(node);
+    const spans = Math.abs(box.x - outer.x) < 1 && Math.abs(box.w - outer.w) < 1;
+    if (!placed && type === "Stack" && spans) {
+      props.size = { ...(props.size as Record<string, unknown> | undefined), w: "full" };
+      props.column = outer.w;
+      ctx.notes.push({
+        kind: "fluid-band",
+        irId: node.id,
+        nodeId: id,
+        message: `spans its fluid parent, so its paint follows the window and its content stays in a ${Math.round(outer.w)}px column`,
+      });
+    } else if (placed && !stretched && (props.place as { anchor?: string })?.anchor === "top-start") {
+      props.column = outer.w;
     }
   }
 

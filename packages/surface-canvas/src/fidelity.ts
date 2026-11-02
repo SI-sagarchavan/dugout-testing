@@ -1,8 +1,8 @@
 /**
- * What a screenshot of a layer cannot say, read off the Figma node (IR 1.9.0).
+ * What a screenshot of a layer cannot say, read off the Figma node (IR 1.9.0, 1.10.0).
  *
- * Alignment, a mask, which part of a bitmap shows, and where a layer's pixels
- * really are. Each is a plain property Figma already holds; the IR just never
+ * Alignment, a mask, a blend, which part of a bitmap shows, and where a layer's
+ * pixels really are. Each is a plain property Figma already holds; the IR just never
  * wrote it down, and every consumer downstream was guessing it back from a
  * picture instead.
  *
@@ -15,6 +15,7 @@
  *
  * PURE. No Figma.
  */
+import { type BlendMode, blendModeSchema } from "./ir/schema";
 import type {
   ImageInfo,
   MaskType,
@@ -67,6 +68,22 @@ export function maskOf(node: {
   return kind === "ALPHA" || kind === "VECTOR" || kind === "LUMINANCE"
     ? { isMask: true, maskType: kind }
     : { isMask: true };
+}
+
+/**
+ * How a layer mixes with what is under it. Figma keeps this in two places: on the layer, or on a
+ * paint of a layer whose own mode is left alone. Only a single visible paint speaks for the whole
+ * layer; several mix among themselves first, which the layer's picture already shows.
+ */
+export function blendOf(node: { blendMode?: unknown; fills?: unknown }): BlendMode | undefined {
+  const own = blendModeSchema.safeParse(node.blendMode);
+  if (own.success) return own.data;
+  if (!Array.isArray(node.fills)) return undefined;
+  const shown = (node.fills as Array<{ visible?: unknown; blendMode?: unknown }>).filter(
+    (paint) => paint.visible !== false,
+  );
+  const paint = shown.length === 1 ? blendModeSchema.safeParse(shown[0]?.blendMode) : undefined;
+  return paint?.success ? paint.data : undefined;
 }
 
 /**
