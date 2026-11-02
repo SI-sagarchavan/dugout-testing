@@ -5,7 +5,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 ## Layout
 
 - `packages/contracts` — zod contracts (AgentSpec, Tool, RunEvent, Steps, ModelClient). No framework types cross these.
-- `packages/core` — loop over `Steps`, tool pipeline, redactor, Bedrock model client (ADR 0012), run log, `runLocal`; stop reasons, model retries and when `final` is accepted (ADR 0018)
+- `packages/core` — loop over `Steps`, tool pipeline, redactor, Bedrock model client (ADR 0012), run log, `runLocal`; stop reasons, model retries and when `final` is accepted (ADR 0018); run hooks, the per-turn rules the harness and an agent plug in (ADR 0023)
 - `packages/db` — Postgres pool, `withTenant` (row-level security), SQL migrations
 - `packages/memory` — semantic/episodic store, hybrid search, skills loader, context builder (stable memory in the system prompt, lessons and approved examples in the first user message; ADR 0013), consolidation
 - `packages/mcp` — typed `cast.*` tools over the Cast MCP server, per-tenant OAuth grants (ADR 0022); `card-match` uses its read tools

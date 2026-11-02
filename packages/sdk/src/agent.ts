@@ -7,6 +7,7 @@ import {
   type Message,
   type ModelClient,
   type RunContext,
+  type RunHook,
   type RunStore,
   type Tool,
 } from "@dugout/contracts";
@@ -97,6 +98,8 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
   completeFinal?: (output: unknown, run: { ctx: RunContext; messages: Message[] }) => unknown;
   /** Whether a run of this input is expected to write; see `AgentDefinition.writeExpected`. */
   writeExpected?: (input: unknown) => boolean;
+  /** Per-turn rules of this agent, run after the harness's own; see `AgentDefinition.hooks`. */
+  hooks?: RunHook[];
   /** The agent's folder: skills are read from `skills/`. Nothing in it is per tenant. */
   dir: string;
   /**
@@ -157,6 +160,7 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
     ...(config.verifyFinal ? { verifyFinal: config.verifyFinal } : {}),
     ...(config.completeFinal ? { completeFinal: config.completeFinal } : {}),
     ...(config.writeExpected ? { writeExpected: config.writeExpected } : {}),
+    ...(config.hooks ? { hooks: config.hooks } : {}),
   };
   const skillsDir = join(config.dir, "skills");
 

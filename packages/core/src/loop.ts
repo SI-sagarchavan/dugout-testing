@@ -14,15 +14,21 @@ import type {
   ToolCall,
 } from "@dugout/contracts";
 import { z } from "zod";
+import { SpecError } from "./errors.ts";
 import type { RunLog } from "./events.ts";
+import {
+  carryOverLegacyState,
+  changesMessage,
+  createHooks,
+  FINAL_NUDGE,
+  harnessHooks,
+} from "./hooks.ts";
 import { TransientModelError } from "./model/errors.ts";
 import { BUILTIN_TOOLS, preflight, type ToolRegistry, toolDefinition } from "./tools.ts";
 
 export const FINAL_TOOL = "final";
 /** Invalid `final` calls (or turns that skip it) tolerated before the run fails. */
 const MAX_INVALID_OUTPUTS = 2;
-/** The same call failing this many times in a row ends the run. */
-const MAX_SAME_FAILURES = 3;
 
 export interface RunAgentOptions {
   agent: AgentDefinition;
@@ -49,8 +55,6 @@ const TERMINAL_STOPS = new Set([
   "model_context_window_exceeded",
   "refusal",
 ]);
-/** Asks for the result; the turn after it must be `final`. */
-const FINAL_NUDGE = `Call the ${FINAL_TOOL} tool with your result.`;
 /** Stops where the reply is unusable but another try may work. */
 const CUT_OFF_STOPS = new Set(["max_tokens", "malformed_tool_use", "malformed_model_output"]);
 
@@ -68,7 +72,7 @@ export interface RejectedWrite {
   reason: string;
 }
 
-export class SpecError extends Error {}
+export { SpecError };
 
 /**
  * Thrown (by a store, say, that lost the run's lease) to stop this invocation at once without
@@ -164,6 +168,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         wrote: false,
         pendingChanges: {},
       };
+  carryOverLegacyState(state);
+  const hooks = createHooks([...harnessHooks(agent), ...(agent.hooks ?? [])], state);
   const { usage } = state;
   let savedMessages = saved?.messages.length ?? 0;
   let decision = resume?.decision;
@@ -315,7 +321,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           const value = agent.completeFinal
             ? agent.completeFinal(unwrapped, { ctx: opts.ctx, messages })
             : unwrapped;
-          const refusal = agent.verifyFinal?.(value, { ctx: opts.ctx, messages });
+          const refusal = hooks.beforeFinal({ value, ctx: opts.ctx, messages });
           if (refusal === undefined) return complete(value);
           if (++state.invalidOutputs > MAX_INVALID_OUTPUTS) return fail("invalid_output", refusal);
           await log.emit({
@@ -356,20 +362,24 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       });
       if (!checked.ok) {
         turn.failed = call.name;
-        const args = stableArgs(call.arguments);
-        // One refusal is feedback. The same call again is the model stuck, so the run stops
-        // instead of spending the rest of its steps on copies.
-        if (state.refused?.tool === call.name && state.refused.args === args) {
-          const message = `${call.name} was refused, and the same call was sent again unchanged`;
+        // One refusal is feedback. The same call again is the model stuck, so a hook stops the
+        // run instead of spending the rest of its steps on copies.
+        const stop = hooks.afterTool({
+          stage: "denied",
+          reason: checked.reason,
+          step,
+          call,
+          args: stableArgs(call.arguments),
+        });
+        if (stop !== undefined) {
           await log.emit({
             type: "tool.denied",
-            data: { ...ids, stage: checked.stage, reason: message },
+            data: { ...ids, stage: checked.stage, reason: stop },
           });
-          messages.push({ role: "tool", toolCallId: call.id, content: message, isError: true });
+          messages.push({ role: "tool", toolCallId: call.id, content: stop, isError: true });
           await save("tool");
-          return fail("invalid_output", message);
+          return fail("invalid_output", stop);
         }
-        state.refused = { tool: call.name, args };
         await log.emit({
           type: "tool.denied",
           data: { ...ids, stage: checked.stage, reason: checked.reason },
@@ -383,7 +393,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         await save("tool");
         continue;
       }
-      state.refused = undefined;
+      hooks.afterTool({
+        stage: "cleared",
+        step,
+        call,
+        args: stableArgs(call.arguments),
+      });
 
       // approved before a crash: the reviewer is not asked twice
       if (checked.needsApproval && !turn.approved.includes(call.id)) {
@@ -478,15 +493,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       const content = outcome.ok ? outcome.content : `Error: ${outcome.error}`;
       if (!outcome.ok) turn.failed = call.name;
       // the same call failing again and again is the model stuck, like a refused copy of it
-      const args = stableArgs(call.arguments);
-      const repeated = state.failedCall;
-      state.failedCall = outcome.ok
-        ? undefined
-        : {
-            tool: call.name,
-            args,
-            count: repeated?.tool === call.name && repeated.args === args ? repeated.count + 1 : 1,
-          };
+      const stop = hooks.afterTool({
+        stage: "ran",
+        ok: outcome.ok,
+        step,
+        call,
+        args: stableArgs(call.arguments),
+      });
       await log.emit({
         type: "tool.completed",
         data: { ...ids, ok: outcome.ok, content, durationMs: Date.now() - started },
@@ -499,12 +512,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       });
       if (outcome.ok && registry.get(call.name)?.effect === "write") state.wrote = true;
       await save("tool");
-      if (state.failedCall && state.failedCall.count >= MAX_SAME_FAILURES) {
-        return fail(
-          "invalid_output",
-          `${call.name} failed ${MAX_SAME_FAILURES} times with the same input`,
-        );
-      }
+      if (stop !== undefined) return fail("invalid_output", stop);
     }
     return undefined;
   };
@@ -515,27 +523,27 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         if (state.step >= spec.budget.maxSteps) {
           return fail("max_steps", `no result after ${spec.budget.maxSteps} steps`);
         }
-        // two turns left: one to spare for a mistake, then the last
-        if (spec.budget.maxSteps - state.step === 2 && !state.stepsWarned) {
-          state.stepsWarned = true;
-          messages.push({
-            role: "user",
-            content: `2 model turns left. Finish now.${output ? `\nCall ${FINAL_TOOL} with your result.` : ""}`,
-          });
+        const step = state.step + 1;
+        const before = hooks.beforeModel(
+          { step, maxSteps: spec.budget.maxSteps, hasOutput: output !== undefined },
+          messages,
+        );
+        if (before.append.length > 0) {
+          messages.push(...before.append);
           await save("model");
         }
-        const step = state.step + 1;
         // the last step, and the turn after a nudge, must end the run
         const last = messages.at(-1);
         const forceFinal =
           output !== undefined &&
           // A model forced to answer before it saved ends "completed" with nothing saved.
           (state.wrote || !writeExpected) &&
-          (step >= spec.budget.maxSteps || (last?.role === "user" && last.content === FINAL_NUDGE));
+          (step >= spec.budget.maxSteps ||
+            (last?.role === "user" && last.content.startsWith(FINAL_NUDGE)));
         const turn = await steps.model({
           step,
           model: spec.model,
-          messages,
+          messages: before.view,
           tools,
           ...(forceFinal ? { toolChoice: { tool: FINAL_TOOL } } : {}),
         });
@@ -570,23 +578,31 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           );
         }
 
+        // what to say to a turn that made no tool call comes from the hooks; the limits stay here
+        const nudge =
+          hooks.afterModel({
+            step,
+            hasOutput: output !== undefined,
+            finishReason: turn.finishReason,
+            cutOff,
+            toolCalls: turn.message.toolCalls?.length ?? 0,
+            pendingChanges: state.pendingChanges,
+          }) ?? FINAL_NUDGE;
+
         if (!turn.message.toolCalls?.length) {
           if (cutOff) {
-            messages.push({
-              role: "user",
-              content: `Your reply was cut off (${turn.finishReason}). Send it again, shorter.`,
-            });
+            messages.push({ role: "user", content: nudge });
           } else if (hasPendingChanges()) {
             if (++state.blockedFinishes > MAX_INVALID_OUTPUTS)
               return fail("invalid_output", UNMADE);
-            messages.push({ role: "user", content: pendingNote() });
+            messages.push({ role: "user", content: nudge });
           } else if (!output) {
             return complete(turn.message.content);
           } else {
             if (++state.invalidOutputs > MAX_INVALID_OUTPUTS) {
               return fail("invalid_output", `ended without calling ${FINAL_TOOL}`);
             }
-            messages.push({ role: "user", content: FINAL_NUDGE });
+            messages.push({ role: "user", content: nudge });
           }
           await save("model");
           continue;
@@ -619,16 +635,6 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
     if (err instanceof TransientModelError && steps.checkpoint) throw err;
     return fail("error", err instanceof Error ? err.message : String(err));
   }
-}
-
-/** What the reviewer says, as the user, when they send a call back for changes. */
-export function changesMessage(tool: string, changes: string): string {
-  return [
-    `I reviewed your ${tool} call and did not approve it yet. Please change this: ${JSON.stringify(changes)}`,
-    `Make only that change and keep everything else exactly as it was, then call ${tool} again with the full updated input.`,
-    "This request takes priority over the brief and your earlier choices.",
-    `Only if ${tool} itself would refuse the change (it fails validation), call ${tool} again with the closest input it accepts; I will decide.`,
-  ].join("\n");
 }
 
 /** Rejects specs that use features the harness doesn't have yet, instead of ignoring them. */

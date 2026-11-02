@@ -1,5 +1,6 @@
 export * from "./events.ts";
 export * from "./fork.ts";
+export * from "./hooks.ts";
 export * from "./local.ts";
 export * from "./loop.ts";
 export * from "./model/bedrock.ts";

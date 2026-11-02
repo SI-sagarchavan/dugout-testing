@@ -96,14 +96,16 @@ export const RunCheckpoint = z.object({
   blockedFinishes: z.number().int().nonnegative(),
   /** A tool that writes has completed in this run. Absent on a run saved before this existed. */
   wrote: z.boolean().default(false),
-  /** The last call that was refused before it ran, so a resumed run still stops on a copy of it. */
+  /** @deprecated Now `hooks.repeatedCalls`; read only, to carry a saved run over. */
   refused: z.object({ tool: z.string(), args: z.string() }).optional(),
-  /** The last call whose tool failed, and how many times in a row with this same input. */
+  /** @deprecated Now `hooks.repeatedCalls`; read only, to carry a saved run over. */
   failedCall: z
     .object({ tool: z.string(), args: z.string(), count: z.number().int().positive() })
     .optional(),
-  /** The "turns left" warning is in the transcript. */
+  /** @deprecated Now `hooks.stepsLeft`; read only, to carry a saved run over. */
   stepsWarned: z.boolean().optional(),
+  /** Each hook's state by hook id (ADR 0023). Absent on a run saved before hooks. */
+  hooks: z.record(z.string(), z.unknown()).optional(),
   /** Change requests not yet approved, by tool. */
   pendingChanges: z.record(z.string(), z.string()),
   /** Set while the calls of the last assistant message are being answered. */

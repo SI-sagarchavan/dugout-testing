@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { RunHook } from "./hooks.ts";
 import type { Message } from "./messages.ts";
 import type { RunContext } from "./runtime.ts";
 
@@ -53,4 +54,9 @@ export interface AgentDefinition {
    * does not on some runs (a draft the reviewer may not need) says so here.
    */
   writeExpected?: (input: unknown) => boolean;
+  /**
+   * The agent's own per-turn rules (ADR 0023). They run after the harness's, in list order.
+   * Pure and synchronous; see `RunHook`.
+   */
+  hooks?: RunHook[];
 }
