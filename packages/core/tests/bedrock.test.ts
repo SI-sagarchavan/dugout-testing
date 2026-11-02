@@ -578,6 +578,31 @@ describe("bedrock client", () => {
     expect(err.message).toMatch(/^Bedrock \w+Exception: later$/);
   });
 
+  it.each([
+    [
+      "a dropped DNS lookup, named only in the message",
+      new Error(
+        "The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.ap-south-1.amazonaws.com)",
+      ),
+    ],
+    [
+      "a reset connection, as a code on the cause",
+      new Error("socket hang up", {
+        cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }),
+      }),
+    ],
+    [
+      "a request that timed out in the SDK",
+      Object.assign(new Error("Connection timed out after 3000 ms"), { name: "TimeoutError" }),
+    ],
+  ])("treats %s as transient", async (_, failure) => {
+    const err = await fakeRuntime(failure)
+      .client.complete(request())
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(TransientModelError);
+    expect(err.cause).toBe(failure);
+  });
+
   it("does not treat a validation error in the stream as transient", async () => {
     const { client } = fakeRuntime([{ validationException: { message: "bad" } }]);
     const err = await client.complete(request()).catch((e) => e);

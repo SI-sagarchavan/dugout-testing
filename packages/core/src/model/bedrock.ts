@@ -461,10 +461,45 @@ const TRANSIENT = new Set([
   "ModelNotReadyException",
 ]);
 
+/** The network failing under the request, which a moment later may not: Node's codes, and the SDK's timeout. */
+const NETWORK_CODES = [
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EPIPE",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "UND_ERR_SOCKET",
+];
+const NETWORK_MESSAGE = new RegExp(`\\b(${NETWORK_CODES.join("|")})\\b`);
+
+/**
+ * Whether the network dropped. The SDK's HTTP/2 handler gives only a message ("The pending stream
+ * has been canceled (caused by: getaddrinfo ENOTFOUND ...)"), so the message is read as well as
+ * the code on each cause.
+ */
+function networkFailure(err: unknown): boolean {
+  for (let at = err, depth = 0; at && typeof at === "object" && depth < 5; depth++) {
+    const { name, code, message, cause } = at as {
+      name?: string;
+      code?: unknown;
+      message?: string;
+      cause?: unknown;
+    };
+    if (name === "TimeoutError") return true;
+    if (typeof code === "string" && NETWORK_CODES.includes(code)) return true;
+    if (message && NETWORK_MESSAGE.test(message)) return true;
+    at = cause;
+  }
+  return false;
+}
+
 /** An SDK exception as a plain error, named for the service's error code. */
 function bedrockError(err: unknown): Error {
   const { name, message } =
     err && typeof err === "object" ? (err as { name?: string; message?: string }) : {};
-  const Kind = name && TRANSIENT.has(name) ? TransientModelError : Error;
+  const Kind = (name && TRANSIENT.has(name)) || networkFailure(err) ? TransientModelError : Error;
   return new Kind(`Bedrock ${name ?? "error"}: ${message ?? String(err)}`, { cause: err });
 }
