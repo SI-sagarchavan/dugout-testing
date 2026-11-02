@@ -1,4 +1,4 @@
-import { agent as matchPreview } from "@dugout/agent-match-preview";
+import { agent as sitemap } from "@dugout/agent-sitemap";
 import { describe, expect, it } from "vitest";
 import {
   historyLine,
@@ -42,9 +42,9 @@ describe("commands", () => {
       agentId: "sitemap",
       argv: ["--tenant", "demo-cricket", "--brief", "A club"],
     });
-    expect(parseIntent(["run", "match-preview", "--tenant", "demo-cricket"])).toEqual({
+    expect(parseIntent(["run", "sitemap", "--tenant", "demo-cricket"])).toEqual({
       kind: "run",
-      agentId: "match-preview",
+      agentId: "sitemap",
       argv: ["--tenant", "demo-cricket"],
     });
     expect(parseIntent(["run"])).toEqual({ kind: "run", argv: [] });
@@ -149,10 +149,10 @@ describe("commands", () => {
   });
 
   it("shows an agent's flags", () => {
-    const help = plain(renderAgentHelp(matchPreview));
-    expect(help).toContain("match-preview");
-    expect(help).toContain("pnpm agent match-preview --tenant <id> --fixture <fixtureId>");
-    expect(help).toContain("--fixture <fixtureId>");
+    const help = plain(renderAgentHelp(sitemap));
+    expect(help).toContain("sitemap");
+    expect(help).toContain("pnpm agent sitemap --tenant <id> --brief <brief>");
+    expect(help).toContain("--brief <brief>");
     expect(help).toContain("Required");
     expect(help).toContain("--input <json>");
   });

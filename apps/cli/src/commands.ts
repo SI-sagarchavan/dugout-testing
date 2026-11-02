@@ -32,8 +32,8 @@ export const COMMANDS = [
       "pnpm agent <agent> --help lists that agent's flags.",
     ],
     examples: [
-      "pnpm agent run match-preview --tenant demo-cricket --fixture c-101",
-      "pnpm agent match-preview --tenant demo-cricket --fixture c-101",
+      'pnpm agent run sitemap --tenant demo-cricket --brief "T20 club: news, fixtures, squad"',
+      'pnpm agent sitemap --tenant demo-cricket --brief "T20 club: news, fixtures, squad"',
     ],
   },
   {
@@ -63,7 +63,7 @@ export const COMMANDS = [
     body: ["A running run stops at its worker's next step."],
     examples: [
       "pnpm agent cancel --tenant demo-cricket",
-      'pnpm agent cancel 4f2a --tenant demo-cricket --reason "wrong fixture"',
+      'pnpm agent cancel 4f2a --tenant demo-cricket --reason "wrong brief"',
     ],
   },
   {

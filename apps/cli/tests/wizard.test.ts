@@ -102,14 +102,9 @@ describe("input prompts", () => {
     expect(input).toEqual({ format: "T20", tags: ["news", "squad"] });
   });
 
-  it("suggests a tenant's sports and its fixtures", () => {
+  it("suggests a tenant's sports", () => {
     const cricket = loadTenants().require("demo-cricket");
     expect(fieldSuggestions(cricket, "sports")).toEqual([{ value: "cricket", label: "cricket" }]);
-    const opener = fieldSuggestions(cricket, "fixtureId").find(
-      (choice) => choice.value === "c-101",
-    );
-    expect(opener?.hint).toContain("Mumbai Mariners");
-    expect(opener?.hint).toContain("Wankhede Arena");
     expect(fieldSuggestions(cricket, "brief")).toEqual([]);
   });
 });

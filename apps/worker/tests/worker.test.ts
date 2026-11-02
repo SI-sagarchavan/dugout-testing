@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agent as matchPreview } from "@dugout/agent-match-preview";
 import type { ModelClient, RunCheckpoint, RunEvent } from "@dugout/contracts";
 import {
   correctedInput,
@@ -15,6 +14,7 @@ import { createPool, withTenant } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
 import { seedHouseFacts } from "@dugout/sdk";
+import { drafter } from "@dugout/sdk/testing";
 import { Valkey } from "iovalkey";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import {
@@ -32,7 +32,7 @@ const memory = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
 const events = createValkeyEventLog(valkey);
 const queue = createRunQueue({ pool, events });
 const TENANT = "demo-cricket";
-const INPUT = { fixtureId: "c-101" };
+const INPUT = { topicId: "t-101" };
 let runsDir: string;
 const errors: unknown[] = [];
 
@@ -46,9 +46,9 @@ afterAll(async () => {
 });
 
 const entry = (client: () => ModelClient): AgentEntry => ({
-  input: matchPreview.input,
+  input: drafter.input,
   run: (opts) =>
-    matchPreview.create({
+    drafter.create({
       store: memory,
       client: client(),
       models: scriptedModelConfig(),
@@ -67,7 +67,7 @@ const workerWith = (
   createWorker({
     pool,
     events,
-    agents: { "match-preview": entry(client) },
+    agents: { drafter: entry(client) },
     onError: (_, err) => errors.push(err),
     ...opts,
   });
@@ -116,7 +116,7 @@ const insertRun = (runId: string, leaseOwner: string) =>
   withTenant(pool, TENANT, (db) =>
     db.query(
       `insert into runs (id, tenant_id, agent_id, status, input, lease_owner, lease_until)
-       values ($1, $2, 'match-preview', 'running', $3, $4, now() - interval '1 second')`,
+       values ($1, $2, 'drafter', 'running', $3, $4, now() - interval '1 second')`,
       [runId, TENANT, INPUT, leaseOwner],
     ),
   );
@@ -133,18 +133,18 @@ const approve = { approved: true as const, by: "editor" };
 
 describe("workers", () => {
   it("queue a run on the model, at the effort, it was asked to use", async () => {
-    const runId = await queue.start(TENANT, "match-preview", INPUT, { model: "haiku@low" });
+    const runId = await queue.start(TENANT, "drafter", INPUT, { model: "haiku@low" });
     expect(await runRow(runId)).toMatchObject({ status: "queued", model: "haiku@low" });
     // no worker is meant to run it
     await withTenant(pool, TENANT, (db) => db.query("delete from runs where id = $1", [runId]));
     await expect(
-      queue.start(TENANT, "match-preview", INPUT, { model: "nova-micro@high" }),
+      queue.start(TENANT, "drafter", INPUT, { model: "nova-micro@high" }),
     ).rejects.toThrow("takes no effort");
   });
 
   it("start a queued run, and another worker finishes it once its approval is decided", async () => {
     const first = workerWith(writerModel);
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     expect(await runRow(runId)).toMatchObject({ status: "queued", lease_owner: null });
     expect(await first.poll()).toEqual([runId]);
     await eventsUntil(runId, lastType("approval.requested"));
@@ -197,7 +197,7 @@ describe("workers", () => {
     });
     const leaseMs = 600;
     const first = workerWith(dying, { leaseMs });
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     await first.poll();
     await first.idle();
     expect(await runRow(runId)).toMatchObject({ status: "running" });
@@ -219,7 +219,7 @@ describe("workers", () => {
     expect(all.at(-1)).toMatchObject({ type: "run.completed", data: { status: "completed" } });
     // the turns taken before the crash were not taken again
     expect(
-      all.filter((e) => e.type === "tool.started" && e.data.tool === "fixtures.get"),
+      all.filter((e) => e.type === "tool.started" && e.data.tool === "topics.get"),
     ).toHaveLength(1);
   });
 
@@ -237,7 +237,7 @@ describe("workers", () => {
     });
     const leaseMs = 600;
     const first = workerWith(throttled, { leaseMs });
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     await first.poll();
     await first.idle();
     // not failed: the error went to the worker, and the saved run waits for another try
@@ -271,7 +271,7 @@ describe("workers", () => {
       throw new RunInterrupted("handed over");
     });
     const first = workerWith(slow);
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     await first.poll();
     await eventsUntil(runId, (es) => es.some((e) => e.type === "tool.completed"));
 
@@ -297,7 +297,7 @@ describe("workers", () => {
   });
 
   it("claim each run once, and only runs of the agents they serve", async () => {
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     const other = createWorker({ pool, events, agents: { "other-agent": entry(writerModel) } });
     expect(await other.poll()).toEqual([]);
 
@@ -312,7 +312,7 @@ describe("workers", () => {
   it("give up on a run that keeps crashing", async () => {
     let calls = 0;
     const crashing: AgentEntry = {
-      input: matchPreview.input,
+      input: drafter.input,
       run: async () => {
         calls++;
         throw new Error("boom");
@@ -322,11 +322,11 @@ describe("workers", () => {
     const worker = createWorker({
       pool,
       events,
-      agents: { "match-preview": crashing },
+      agents: { drafter: crashing },
       leaseMs,
       maxAttempts: 2,
     });
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     for (let attempt = 1; attempt <= 3; attempt++) {
       expect(await worker.poll()).toEqual([runId]);
       await worker.idle();
@@ -346,14 +346,14 @@ describe("workers", () => {
   it("fail a run whose input doesn't match the agent's schema at once, not after retries", async () => {
     let started = 0;
     const counting: AgentEntry = {
-      input: matchPreview.input,
+      input: drafter.input,
       run: async () => {
         started++;
         throw new Error("not reached");
       },
     };
-    const worker = createWorker({ pool, events, agents: { "match-preview": counting } });
-    const runId = await queue.start(TENANT, "match-preview", { fixture: "c-101" });
+    const worker = createWorker({ pool, events, agents: { drafter: counting } });
+    const runId = await queue.start(TENANT, "drafter", { topic: "t-101" });
     expect(await worker.poll()).toEqual([runId]);
     expect(started).toBe(0);
     expect(await runRow(runId)).toMatchObject({ status: "failed", lease_owner: null });
@@ -374,7 +374,7 @@ describe("workers", () => {
       seq: 1,
       at: new Date().toISOString(),
       type: "run.started",
-      data: { agentId: "match-preview", agentVersion: 2, tenantId: TENANT, input: INPUT },
+      data: { agentId: "drafter", agentVersion: 1, tenantId: TENANT, input: INPUT },
     });
 
     const sweeper = workerWith(writerModel);
@@ -395,15 +395,15 @@ describe("workers", () => {
     await withTenant(pool, TENANT, (db) =>
       db.query(
         `insert into runs (id, tenant_id, agent_id, status, input, lease_owner, lease_until)
-         values ($1, $2, 'match-preview', 'running', '{}', 'the-new-owner', now() + interval '1 minute')`,
+         values ($1, $2, 'drafter', 'running', '{}', 'the-new-owner', now() + interval '1 minute')`,
         [runId, TENANT],
       ),
     );
     const stale = createPostgresRunStore(pool, { owner: "the-old-owner", leaseMs: 60_000 });
     const checkpoint: RunCheckpoint = {
       version: 1,
-      agentId: "match-preview",
-      agentVersion: 2,
+      agentId: "drafter",
+      agentVersion: 1,
       step: 0,
       usage: {
         inputTokens: 0,
@@ -431,12 +431,12 @@ describe("workers", () => {
 
 describe("cancelling a run", () => {
   it("ends a queued run at once, and no worker ever claims it", async () => {
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
-    expect(await queue.cancel(TENANT, runId, "editor", "wrong fixture")).toBe("queued");
+    const runId = await queue.start(TENANT, "drafter", INPUT);
+    expect(await queue.cancel(TENANT, runId, "editor", "wrong topic")).toBe("queued");
     expect(await runRow(runId)).toMatchObject({ status: "cancelled" });
     expect((await events.read(runId, 0)).at(-1)).toMatchObject({
       type: "run.cancelled",
-      data: { by: "editor", reason: "wrong fixture" },
+      data: { by: "editor", reason: "wrong topic" },
     });
     expect(await workerWith(writerModel).poll()).not.toContain(runId);
     // an ended run can't be cancelled again
@@ -444,7 +444,7 @@ describe("cancelling a run", () => {
   });
 
   it("ends a run waiting for an approval at once, and a later decision finds nothing", async () => {
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     await workerWith(writerModel).poll();
     const waiting = await eventsUntil(runId, lastType("approval.requested"));
     expect(await queue.cancel(TENANT, runId, "editor")).toBe("waiting");
@@ -468,7 +468,7 @@ describe("cancelling a run", () => {
         },
       };
     };
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     await workerWith(holding).poll();
     await eventsUntil(runId, (es) => es.some((e) => e.type === "tool.completed"));
     expect(await queue.cancel(TENANT, runId, "editor", "closed the job")).toBe("running");
@@ -489,7 +489,7 @@ describe("cancelling a run whose worker then died", () => {
     await withTenant(pool, TENANT, (db) =>
       db.query(
         `insert into runs (id, tenant_id, agent_id, status, input, lease_owner, lease_until)
-         values ($1, $2, 'match-preview', 'running', $3, 'dead-worker/x', now() + interval '300 milliseconds')`,
+         values ($1, $2, 'drafter', 'running', $3, 'dead-worker/x', now() + interval '300 milliseconds')`,
         [runId, TENANT, INPUT],
       ),
     );
@@ -526,7 +526,7 @@ describe("save points and forks", () => {
 
   it("lists every save point, and forks a run at its approval with the other decision; both end, neither changes the other", async () => {
     const worker = workerWith(writerModel);
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     const parentEvents = await untilWaiting(worker, runId);
 
     const history = await queue.history(TENANT, runId);
@@ -585,7 +585,7 @@ describe("save points and forks", () => {
       };
     };
     const worker = workerWith(recording);
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     await untilWaiting(worker, runId);
     const history = await queue.history(TENANT, runId);
     const firstTurn = history.find((p) => p.step === 1 && p.savedAfter === "tool" && !p.waiting);
@@ -598,10 +598,10 @@ describe("save points and forks", () => {
     expect(sent.length).toBeGreaterThan(0);
     expect(new Set(sent)).toEqual(new Set(["haiku"]));
 
-    const corrected = await queue.fork(TENANT, runId, 1, { input: { fixtureId: "c-102" } });
+    const corrected = await queue.fork(TENANT, runId, 1, { input: { topicId: "t-102" } });
     expect(await queue.find(TENANT, corrected.runId)).toMatchObject({
       status: "queued",
-      input: { fixtureId: "c-102" },
+      input: { topicId: "t-102" },
     });
     const { rows } = await withTenant(pool, TENANT, (db) =>
       db.query<{ message: { content: string } }>(
@@ -609,7 +609,7 @@ describe("save points and forks", () => {
         [corrected.runId],
       ),
     );
-    expect(rows[0]?.message.content).toBe(correctedInput({ fixtureId: "c-102" }));
+    expect(rows[0]?.message.content).toBe(correctedInput({ topicId: "t-102" }));
 
     await expect(queue.fork(TENANT, runId, 1, { model: "gpt" })).rejects.toThrow(
       "no model named gpt",
@@ -620,7 +620,7 @@ describe("save points and forks", () => {
 
   it("prunes save points past their time, but never a run's latest", async () => {
     const worker = createWorker({ pool, events, agents: {}, historyDays: 0 });
-    const runId = await queue.start(TENANT, "match-preview", INPUT);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
     await untilWaiting(workerWith(writerModel), runId);
     const before = await queue.history(TENANT, runId);
     expect(before.length).toBeGreaterThan(1);

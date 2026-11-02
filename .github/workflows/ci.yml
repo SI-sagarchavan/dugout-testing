@@ -33,5 +33,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       # The whole eval path against the scripted model: no API key, no cost.
-      - run: pnpm eval match-preview --scripted
       - run: pnpm eval sitemap --scripted

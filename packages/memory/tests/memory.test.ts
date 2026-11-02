@@ -23,7 +23,7 @@ import {
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
 const store: MemoryStore = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
-const AGENT = "match-preview";
+const AGENT = "drafter";
 const NOW = Date.parse("2026-11-01T00:00:00Z");
 
 let a: string;

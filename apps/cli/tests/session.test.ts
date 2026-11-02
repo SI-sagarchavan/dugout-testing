@@ -1,7 +1,6 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agent as matchPreview } from "@dugout/agent-match-preview";
 import { agent as sitemap } from "@dugout/agent-sitemap";
 import type { RunEvent } from "@dugout/contracts";
 import { createScriptedModel, scriptedModelConfig } from "@dugout/core";
@@ -9,6 +8,7 @@ import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
 import { type AnyAgent, seedHouseFacts } from "@dugout/sdk";
+import { drafter } from "@dugout/sdk/testing";
 import {
   type AgentEntry,
   createRunQueue,
@@ -29,10 +29,10 @@ const TENANT = "demo-cricket";
 let runsDir: string;
 
 const agents: Record<string, AgentEntry> = {
-  "match-preview": {
-    input: matchPreview.input,
+  drafter: {
+    input: drafter.input,
     run: (opts) =>
-      matchPreview.create({
+      drafter.create({
         store,
         client: createScriptedModel(writer()),
         models: scriptedModelConfig(),
@@ -124,24 +124,24 @@ const fanZone = { name: "Fan Zone", url: "/fanzone" };
 
 describe("the CLI", () => {
   it("follows a run a worker carries out, through its approval to the end", async () => {
-    const runId = await queue.start(TENANT, "match-preview", { fixtureId: "c-101" });
+    const runId = await queue.start(TENANT, "drafter", { topicId: "t-101" });
     const { terminal, asked, text } = scripted(["y"]);
-    const ending = await follow(matchPreview, runId, terminal);
+    const ending = await follow(drafter, runId, terminal);
 
     expect(ending).toMatchObject({ type: "run.completed", data: { status: "completed" } });
     expect(asked).toHaveLength(1);
     // the model's text as it streamed, the tools it called, and the draft as a reviewer reads it
-    expect(text()).toContain("Looking up the fixture.");
-    expect(text()).toContain("· fixtures.get");
-    expect(text()).toContain("── Draft for c-101");
+    expect(text()).toContain("Looking up the topic.");
+    expect(text()).toContain("· topics.get");
+    expect(text()).toContain("── Draft for t-101");
     expect(text()).toContain("· resumed by a worker (approval)");
     contiguous(await events.read(runId, 0));
   });
 
   it("approves without asking when told to, and records that it did", async () => {
-    const runId = await queue.start(TENANT, "match-preview", { fixtureId: "c-101" });
+    const runId = await queue.start(TENANT, "drafter", { topicId: "t-101" });
     const { terminal, asked, text } = scripted([]);
-    const ending = await follow(matchPreview, runId, terminal, { autoApprove: true });
+    const ending = await follow(drafter, runId, terminal, { autoApprove: true });
 
     expect(ending).toMatchObject({ type: "run.completed", data: { status: "completed" } });
     expect(asked).toHaveLength(0);
@@ -168,9 +168,9 @@ describe("the CLI", () => {
   });
 
   it("rejects with a reason", async () => {
-    const runId = await queue.start(TENANT, "match-preview", { fixtureId: "c-101" });
+    const runId = await queue.start(TENANT, "drafter", { topicId: "t-101" });
     const { terminal, asked } = scripted(["n", "not this week"]);
-    const ending = await follow(matchPreview, runId, terminal);
+    const ending = await follow(drafter, runId, terminal);
     expect(asked).toEqual([expect.stringContaining("y approve"), "Reason for rejecting: "]);
     expect(ending).toMatchObject({ type: "run.completed", data: { status: "rejected" } });
   });
@@ -190,8 +190,8 @@ describe("the CLI", () => {
   });
 
   it("replays an ended run from Postgres once its live stream has expired", async () => {
-    const runId = await queue.start(TENANT, "match-preview", { fixtureId: "c-101" });
-    await follow(matchPreview, runId, scripted(["y"]).terminal);
+    const runId = await queue.start(TENANT, "drafter", { topicId: "t-101" });
+    await follow(drafter, runId, scripted(["y"]).terminal);
     // the live stream gets the last event just before the permanent record does
     for (let i = 0; i < 100 && (await queue.find(TENANT, runId))?.status !== "completed"; i++) {
       await sleep(10);
@@ -199,12 +199,12 @@ describe("the CLI", () => {
     await valkey.del(`run:${runId}:events`);
 
     const { terminal, asked, text } = scripted([]);
-    const ending = await follow(matchPreview, runId, terminal, { afterSeq: 2 });
+    const ending = await follow(drafter, runId, terminal, { afterSeq: 2 });
     expect(ending).toMatchObject({ type: "run.completed", data: { status: "completed" } });
     expect(asked).toHaveLength(0);
     // the permanent record has no streamed text
-    expect(text()).not.toContain("Looking up the fixture.");
-    expect(text()).toContain("· fixtures.get");
+    expect(text()).not.toContain("Looking up the topic.");
+    expect(text()).toContain("· topics.get");
   });
 
   it("finds a run to attach to by the first characters of its id", async () => {
@@ -218,14 +218,14 @@ describe("the CLI", () => {
   });
 
   it("asks with a menu when the terminal offers choices", async () => {
-    const runId = await queue.start(TENANT, "match-preview", { fixtureId: "c-101" });
+    const runId = await queue.start(TENANT, "drafter", { topicId: "t-101" });
     const { terminal, asked } = scripted([]);
     const seen: string[] = [];
     terminal.choose = async (message, options) => {
       seen.push(message, ...options.map((option) => option.value));
       return "approve";
     };
-    const ending = await follow(matchPreview, runId, terminal);
+    const ending = await follow(drafter, runId, terminal);
     expect(ending).toMatchObject({ type: "run.completed", data: { status: "completed" } });
     expect(asked).toEqual([]);
     expect(seen).toEqual(["This step needs a decision", "approve", "reject", "change"]);
@@ -236,7 +236,7 @@ describe("the CLI", () => {
     const stop = new AbortController();
     setTimeout(() => stop.abort(), 300);
     const { terminal, text } = scripted([]);
-    const ending = await follow(matchPreview, runId, terminal, { signal: stop.signal, hintMs: 50 });
+    const ending = await follow(drafter, runId, terminal, { signal: stop.signal, hintMs: 50 });
     expect(ending).toBeUndefined();
     expect(text()).toContain("no worker has picked the run up yet; start one: pnpm worker");
   });

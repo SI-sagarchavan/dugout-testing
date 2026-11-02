@@ -1,5 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Tenant } from "@dugout/core";
 import {
   EFFORT_MARK,
@@ -9,7 +7,6 @@ import {
   modelEntry,
   modelFamily,
   runModel,
-  TENANTS_DIR,
 } from "@dugout/core";
 import { agentIds, loadAgent } from "@dugout/sdk";
 import { summaryOf } from "./commands.ts";
@@ -179,68 +176,10 @@ export function fieldLabel(field: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-/**
- * Values the prompts can offer without asking the model. Sports come from the tenant.
- * A fixture id comes from that tenant's sample feed, when it has one.
- */
+/** Values the prompts can offer without asking the model. Sports come from the tenant. */
 export function fieldSuggestions(tenant: Tenant, field: string): Choice[] {
   if (field === "sports") return tenant.sports.map((sport) => ({ value: sport, label: sport }));
-  if (field === "fixtureId") return fixtureChoices(tenant.id);
   return [];
-}
-
-function fixtureChoices(tenantId: string): Choice[] {
-  const dir = join(TENANTS_DIR, tenantId);
-  const file = join(dir, "fixtures.json");
-  if (!existsSync(file)) return [];
-  try {
-    const data = JSON.parse(readFileSync(file, "utf8")) as {
-      fixtures?: {
-        fixtureId?: string;
-        home?: string;
-        away?: string;
-        venue?: string;
-        date?: string;
-      }[];
-    };
-    const teams = teamNames(dir);
-    const choices: Choice[] = [];
-    for (const fixture of data.fixtures ?? []) {
-      if (!fixture.fixtureId) continue;
-      const home = fixture.home ? (teams.get(fixture.home) ?? fixture.home) : undefined;
-      const away = fixture.away ? (teams.get(fixture.away) ?? fixture.away) : undefined;
-      const parts = [
-        home && away ? `${home} vs ${away}` : undefined,
-        fixture.venue,
-        fixture.date,
-      ].filter((part): part is string => Boolean(part));
-      choices.push({
-        value: fixture.fixtureId,
-        label: fixture.fixtureId,
-        ...(parts.length > 0 ? { hint: parts.join(" · ") } : {}),
-      });
-    }
-    return choices;
-  } catch {
-    return [];
-  }
-}
-
-function teamNames(dir: string): Map<string, string> {
-  const file = join(dir, "teams.json");
-  if (!existsSync(file)) return new Map();
-  try {
-    const data = JSON.parse(readFileSync(file, "utf8")) as {
-      teams?: Record<string, { name?: string }>;
-    };
-    return new Map(
-      Object.entries(data.teams ?? {}).flatMap(([id, team]) =>
-        team.name ? [[id, team.name] as const] : [],
-      ),
-    );
-  } catch {
-    return new Map();
-  }
 }
 
 /**

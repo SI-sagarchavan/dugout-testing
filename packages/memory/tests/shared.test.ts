@@ -20,7 +20,7 @@ const adminPool = createPool(inject("adminDatabaseUrl"));
 const embeddings = createHashEmbeddings();
 const store = createMemoryStore({ pool, embeddings });
 const shared = createSharedMemory({ pool: adminPool, embeddings });
-const AGENT = "match-preview";
+const AGENT = "drafter";
 
 // a sport and tenants of their own, so these tests never meet other tests' memory
 const suffix = randomUUID().slice(0, 6);

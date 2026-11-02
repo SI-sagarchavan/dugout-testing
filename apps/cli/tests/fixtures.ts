@@ -10,7 +10,7 @@ export function writer(): Array<(req: ModelRequest) => ScriptedTurn> {
     toolCalls: [
       {
         name: "draft.save",
-        arguments: { fixtureId: "c-101", title: "Mariners v Chargers", body },
+        arguments: { topicId: "t-101", title: "Season opener", body },
       },
     ],
   });
@@ -19,18 +19,18 @@ export function writer(): Array<(req: ModelRequest) => ScriptedTurn> {
     const last = req.messages.at(-1);
     if (taken === 0) {
       return {
-        content: "Looking up the fixture.",
-        toolCalls: [{ name: "fixtures.get", arguments: { fixtureId: "c-101" } }],
+        content: "Looking up the topic.",
+        toolCalls: [{ name: "topics.get", arguments: { topicId: "t-101" } }],
       };
     }
     if (taken === 1) {
-      const f = JSON.parse(last?.content ?? "{}") as { home: string };
-      return { toolCalls: [{ name: "team.stats", arguments: { teamId: f.home } }] };
+      const t = JSON.parse(last?.content ?? "{}") as { topicId: string };
+      return { toolCalls: [{ name: "topics.history", arguments: { topicId: t.topicId } }] };
     }
-    if (taken === 2) return save("A measured preview of both sides.");
+    if (taken === 2) return save("A measured draft about the whole topic.");
     // when the reviewer asks for changes (a user message), save again with them
     if (last?.role === "user")
-      return save("A measured preview of both sides, naming both captains.");
+      return save("A measured draft about the whole topic, naming the captains.");
     return { content: "Saved." };
   };
   return Array.from({ length: 10 }, () => turn);

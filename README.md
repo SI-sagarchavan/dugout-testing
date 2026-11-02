@@ -16,7 +16,7 @@ pnpm agent                          # menu: run, attach, cancel, list, history, 
 pnpm agent --help
 pnpm agent history <runId> --tenant <tenant>
 pnpm agent fork <runId> --from <version> --tenant <tenant>
-pnpm agent match-preview --tenant demo-cricket --fixture c-101
+pnpm agent card-match --tenant demo-cricket --export <exportId>
 pnpm agent sitemap --tenant demo-cricket --sport cricket --brief "T20 club: news, fixtures, squad, standings"
 pnpm agent <id> --tenant <tenant> --<input field> <value>   # any agent in agents/
 # at an approval: Approve, Reject, or Request a change
@@ -24,8 +24,8 @@ pnpm agent <id> --tenant <tenant> --<input field> <value>   # any agent in agent
 # Ctrl-C leaves the run going in the worker; attach again with:
 pnpm agent attach --run <runId> --tenant <tenant>
 
-pnpm eval match-preview
 pnpm eval sitemap
+pnpm eval card-match
 ```
 
 `pnpm agent` does what wnm-fanxp-backend will do in production (ADR 0009): it queues the run in Postgres, follows its events from Valkey as the worker writes them, and queues your decision at each approval for a worker to resume the run. The worker and the CLI never talk to each other directly.

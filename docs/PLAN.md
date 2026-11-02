@@ -32,8 +32,8 @@ Built and tested locally, except H7, which is parked: Temporal replaces the work
 | H8    | done   | Langfuse via OpenTelemetry; off unless both keys are set                                                            |
 | H9    | done   | `pnpm eval smoke`                                                                                                   |
 | M1–M7 | done   | Consolidation runs right after each run, not as a workflow (ADR 0003)                                               |
-| S1–S4 | done   | S4 is the approval prompt in `pnpm agent match-preview`                                                             |
-| E1–E6 | done   | `pnpm eval match-preview`; the judge reports but does not gate                                                      |
+| S1–S4 | done   | S4 is the approval prompt in `pnpm agent`                                                                           |
+| E1–E6 | done   | `pnpm eval <agent>`; the judge reports but does not gate                                                            |
 | D1    | done   | Runs' working memory saved in Postgres; approvals end the invocation; crash recovery by lease (ADR 0006)            |
 | A2    | done   | Sitemap agent (`agents/sitemap`): first live use of `final` structured output; `pnpm eval sitemap`                  |
 | A3    | done   | `defineAgent` in `@dugout/sdk` (ADR 0007): both agents on it; `pnpm agent <id>`                                     |
@@ -46,4 +46,4 @@ Decided for now (ADR 0003): any OpenAI-compatible `/embeddings` endpoint at 1024
 
 ## Agents
 
-`match-preview` (the reference agent the harness's tests use), `sitemap` and `card-match`. `card`, `matchday` and the `round` program were removed on 2026-11-02: card-match does card's job from a real Send, and matchday and round had no use left. They are in git history before that date.
+`sitemap` and `card-match`. `card`, `matchday`, `match-preview` and the `round` program were removed on 2026-11-02: card-match does card's job from a real Send, and the others had no use left. They are in git history before that date. The harness's host tests run against `drafter`, a small test agent in `@dugout/sdk/testing`.
