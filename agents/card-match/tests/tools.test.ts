@@ -519,6 +519,40 @@ describe("frame.publish", () => {
     expect(named("frame.publish").block({}, ctx("g1"))).toBeUndefined();
   });
 
+  it("stops holding a publish after two refusals, so a run always ends with a preview link", async () => {
+    const finding = {
+      nodeId: "n",
+      src: "worst",
+      type: "Box",
+      mismatch: 500,
+      off: 40,
+      design: "#000000",
+      render: "#ffffff",
+      notes: [],
+      conform: [],
+    };
+    const { engine, plane } = setup(() => measured(80));
+    engine.firstPass = async (_b, start) => ({
+      overrides: start,
+      built: { tree: { nodes: [] }, cropped: [], addedTexts: [] } as unknown as Built,
+      measurement: { ...measured(90), findings: [finding] },
+    });
+    const dir = await mkdtemp(join(tmpdir(), "card-match-"));
+    const list = createMatchTools({ dir, engine, plane: () => plane });
+    const named = (name: string) =>
+      list.find((tool) => tool.name === name) as unknown as {
+        run(i: unknown, c: unknown): Promise<unknown>;
+        block(i: unknown, c: unknown): string | undefined;
+        resolve(i: unknown, c: unknown): Record<string, unknown>;
+      };
+    await named("frame.load").run({}, ctx("g3"));
+    expect(named("frame.publish").block({}, ctx("g3"))).toContain("1 of 2");
+    expect(named("frame.publish").block({}, ctx("g3"))).toContain("2 of 2");
+    // examined nothing, and it publishes anyway; the reviewer is shown what was left
+    expect(named("frame.publish").block({}, ctx("g3"))).toBeUndefined();
+    expect(named("frame.publish").resolve({}, ctx("g3")).unexamined).toEqual(["worst"]);
+  });
+
   it("doesn't hold a publish for a crop, which has no cause to find", async () => {
     const finding = {
       nodeId: "n",

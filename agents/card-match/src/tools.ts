@@ -117,6 +117,8 @@ const State = z.object({
   lookFailures: z.number().default(0),
   examined: z.array(z.string()).default([]),
   examinedSurfaces: z.array(z.string()).default([]),
+  /** Times frame.publish was refused for findings not yet examined. */
+  publishRefusals: z.number().default(0),
   published: Published.optional(),
 });
 type State = z.infer<typeof State>;
@@ -249,6 +251,12 @@ const GLYPH_EDGE_OFF = 15;
 const MUST_EXAMINE = 5;
 /** Enough looking: past this a run must be able to finish whatever is left. */
 const EXAMINED_ENOUGH = 12;
+/**
+ * Every fix reshuffles which findings are worst, so a gate that keeps naming new nodes can use up
+ * the whole step budget before the run is let publish, and then there is no preview link at all.
+ * After this many refusals frame.publish goes through, and the reviewer sees what was left.
+ */
+const MAX_PUBLISH_REFUSALS = 2;
 
 function unexamined(state: State): string[] {
   if (state.unmeasured) return [];
@@ -397,6 +405,7 @@ export function createMatchTools(
           lookFailures: 0,
           examined: [],
           examinedSurfaces: [],
+          publishRefusals: 0,
         };
         writeState(dir, ctx.runId, state);
         return {
@@ -548,6 +557,7 @@ export function createMatchTools(
         placeholderIcons: state.current.placeholderIcons,
         standIns: state.standIns,
         rawGradients: state.overrides.gradients.length,
+        unexamined: unexamined(state),
         remaining: state.current.findings
           .slice(0, 5)
           .map((f) => `${f.src} ${f.type}: ${f.mismatch}px`),
@@ -567,9 +577,10 @@ export function createMatchTools(
         return "Not yet. Call frame.look once: it shows what the score cannot, such as text on the wrong edge or a background nothing compares.";
       }
       const waiting = unexamined(state);
-      return waiting.length > 0
-        ? `Not yet. Examine these with frame.node, and fix what has a cause: ${waiting.join(", ")}`
-        : undefined;
+      if (waiting.length === 0 || state.publishRefusals >= MAX_PUBLISH_REFUSALS) return undefined;
+      const refusals = state.publishRefusals + 1;
+      writeState(dir, ctx.runId, { ...state, publishRefusals: refusals });
+      return `Not yet (${refusals} of ${MAX_PUBLISH_REFUSALS}; the next frame.publish goes through). Examine these with frame.node, and fix what has a cause: ${waiting.join(", ")}`;
     },
     async run(_input, ctx) {
       return inTurn(ctx.runId, async () => {
