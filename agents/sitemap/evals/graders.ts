@@ -5,16 +5,22 @@ import {
   type PageNode,
   pageUrls,
   type Sitemap,
+  type SiteResult,
   sitemapIssues,
+  toSiteResult,
 } from "../src/index.ts";
 
 const grade = (grader: string, pass: boolean, detail: string): Grade => ({ grader, pass, detail });
 
-/** The agent saved exactly what it ended the run with. */
-export function savedMatchesFinal(saved: Sitemap | undefined, final: Sitemap | undefined): Grade {
+/** The run returned exactly what the agent saved, as the backend's page tree. */
+export function savedMatchesFinal(
+  saved: Sitemap | undefined,
+  returned: SiteResult | undefined,
+  runId: string,
+): Grade {
   if (!saved) return grade("saved-matches-final", false, "no sitemap.save call");
-  if (!final) return grade("saved-matches-final", false, "no final result");
-  const same = JSON.stringify(saved) === JSON.stringify(final);
+  if (!returned) return grade("saved-matches-final", false, "no final result");
+  const same = JSON.stringify(toSiteResult(saved, runId)) === JSON.stringify(returned);
   return grade(
     "saved-matches-final",
     same,

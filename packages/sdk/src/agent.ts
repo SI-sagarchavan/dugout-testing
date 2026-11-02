@@ -96,6 +96,8 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
   ) => string | undefined;
   /** Sync, no I/O: fills `final` fields a tool already returned, before `verifyFinal` runs. */
   completeFinal?: (output: unknown, run: { ctx: RunContext; messages: Message[] }) => unknown;
+  /** The result's shape when `completeFinal` changes it; see `AgentDefinition.result`. */
+  result?: z.ZodType;
   /** Whether a run of this input is expected to write; see `AgentDefinition.writeExpected`. */
   writeExpected?: (input: unknown) => boolean;
   /** Per-turn rules of this agent, run after the harness's own; see `AgentDefinition.hooks`. */
@@ -159,6 +161,7 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
     ...(config.output ? { output: config.output } : {}),
     ...(config.verifyFinal ? { verifyFinal: config.verifyFinal } : {}),
     ...(config.completeFinal ? { completeFinal: config.completeFinal } : {}),
+    ...(config.result ? { result: config.result } : {}),
     ...(config.writeExpected ? { writeExpected: config.writeExpected } : {}),
     ...(config.hooks ? { hooks: config.hooks } : {}),
   };

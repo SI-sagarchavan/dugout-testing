@@ -20,7 +20,15 @@ import {
 } from "@dugout/evals";
 import type { MemoryStore } from "@dugout/memory";
 import { houseFacts, seedHouseFacts } from "@dugout/sdk";
-import { agent, type NavItem, type PageNode, type Sitemap, sitemapOf, spec } from "../src/index.ts";
+import {
+  agent,
+  type NavItem,
+  type PageNode,
+  type Result,
+  type Sitemap,
+  sitemapOf,
+  spec,
+} from "../src/index.ts";
 import { cases, type SitemapCase } from "./cases.ts";
 import {
   hasPages,
@@ -110,15 +118,17 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
       sinks: [sink],
     });
     const events = sink.events;
-    const final = result.status === "completed" ? (result.output as Sitemap) : undefined;
     const base = c.revise ? shown[0] : undefined;
     const saved = c.revise && shown.length < 2 ? undefined : shown.at(-1);
+    const returned = result.status === "completed" ? (result.output as Result) : undefined;
+    // the run returns the backend's tree; the graders below read the sitemap it was built from
+    const final = returned && saved ? saved : undefined;
 
     const grades: Grade[] = [
       writesGated(events, ["sitemap.save"]),
       endedGracefully(events),
       validatedBeforeSave(events),
-      savedMatchesFinal(saved, final),
+      savedMatchesFinal(saved, returned, result.runId),
     ];
     if (final) {
       grades.push(

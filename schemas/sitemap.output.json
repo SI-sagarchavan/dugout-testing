@@ -4,17 +4,30 @@
   "properties": {
     "pages": {
       "minItems": 1,
+      "maxItems": 1,
       "type": "array",
       "items": {
         "$ref": "#/$defs/__schema0"
       }
     },
     "navigation": {
-      "minItems": 1,
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/__schema1"
-      }
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema1"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "nodes"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -26,37 +39,79 @@
     "__schema0": {
       "type": "object",
       "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
         "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 60
+          "type": "string"
         },
-        "slug": {
-          "description": "One url segment: lowercase letters, numbers and single dashes, e.g. \"fan-zone\". Omit for a dynamic page.",
-          "anyOf": [
-            {
-              "type": "string",
-              "const": ""
-            },
-            {
-              "type": "string",
-              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-            }
-          ]
-        },
-        "dynamic": {
-          "description": "True for one template that renders many items. No slug, no children.",
-          "type": "boolean"
+        "plugin": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "children": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/__schema0"
           }
+        },
+        "theme_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "app_title": {
+          "type": "string"
+        },
+        "published": {
+          "type": "boolean"
+        },
+        "plugin_config": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "micro_theme_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "page_layout_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "breadcrumb_title": {
+          "type": "string"
+        },
+        "seo_complete": {
+          "type": "boolean"
         }
       },
       "required": [
-        "name"
+        "id",
+        "url",
+        "name",
+        "plugin",
+        "children",
+        "theme_id",
+        "app_title",
+        "published",
+        "plugin_config",
+        "micro_theme_id",
+        "page_layout_id",
+        "breadcrumb_title",
+        "seo_complete"
       ],
       "additionalProperties": false
     },
@@ -64,13 +119,25 @@
       "type": "object",
       "properties": {
         "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 60
+          "type": "string"
+        },
+        "icon_url": {
+          "type": "string"
+        },
+        "route_name": {
+          "type": "string"
         },
         "url": {
-          "type": "string",
-          "pattern": "^\\/(?:[a-z0-9]+(?:-[a-z0-9]+)*(?:\\/[a-z0-9]+(?:-[a-z0-9]+)*)*)?$"
+          "type": "string"
+        },
+        "open_in_new_tab": {
+          "type": "boolean"
+        },
+        "is_external": {
+          "type": "boolean"
+        },
+        "is_webview": {
+          "type": "boolean"
         },
         "children": {
           "type": "array",
@@ -81,7 +148,13 @@
       },
       "required": [
         "name",
-        "url"
+        "icon_url",
+        "route_name",
+        "url",
+        "open_in_new_tab",
+        "is_external",
+        "is_webview",
+        "children"
       ],
       "additionalProperties": false
     }

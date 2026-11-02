@@ -4,6 +4,7 @@ import { REPO_ROOT } from "@dugout/core";
 import { defineAgent } from "@dugout/sdk";
 import { z } from "zod";
 import { createSitemapTools } from "./tools.ts";
+import { type SiteResult, SiteResultSchema, toSiteResult } from "./tree.ts";
 import { type NavItem, type PageNode, type Sitemap, SitemapSchema } from "./validation.ts";
 
 export const SITEMAPS_DIR = join(REPO_ROOT, ".runs", "sitemaps");
@@ -44,14 +45,20 @@ export const Input = z.object({
 });
 export type Input = z.infer<typeof Input>;
 
-/** The `final` result: the same pages and menu `sitemap.save` took. */
+/** What the model sends to `final`: the same pages and menu `sitemap.save` took. */
 export const Output = SitemapSchema;
 export type Output = Sitemap;
+
+/** What the run returns: `Output` as the backend's page tree and navigation (`toSiteResult`). */
+export const Result = SiteResultSchema;
+export type Result = SiteResult;
 
 export const agent = defineAgent({
   spec,
   input: Input,
   output: Output,
+  result: Result,
+  completeFinal: (output, { ctx }) => toSiteResult(output as Sitemap, ctx.runId),
   dir: join(import.meta.dirname, ".."),
   tools: (opts: { sitemapsDir?: string }) =>
     createSitemapTools({ sitemapsDir: opts.sitemapsDir ?? SITEMAPS_DIR }),

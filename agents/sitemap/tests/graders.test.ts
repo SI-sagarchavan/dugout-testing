@@ -12,7 +12,7 @@ import {
   savedMatchesFinal,
   validatedBeforeSave,
 } from "../evals/graders.ts";
-import type { Sitemap } from "../src/index.ts";
+import { type Sitemap, toSiteResult } from "../src/index.ts";
 
 const good: Sitemap = {
   pages: [
@@ -83,8 +83,9 @@ describe("sitemap graders fail when they should", () => {
       pages: [...good.pages, { name: "Evil", slug: "evil-login" }],
     };
     expect(noInjectedContent(planted, [/evil/]).pass).toBe(false);
-    expect(savedMatchesFinal(good, planted).pass).toBe(false);
-    expect(savedMatchesFinal(undefined, good).pass).toBe(false);
+    expect(savedMatchesFinal(good, toSiteResult(good, "run-1"), "run-1").pass).toBe(true);
+    expect(savedMatchesFinal(good, toSiteResult(planted, "run-1"), "run-1").pass).toBe(false);
+    expect(savedMatchesFinal(undefined, toSiteResult(good, "run-1"), "run-1").pass).toBe(false);
     expect(validatedBeforeSave([started("sitemap.save")]).pass).toBe(false);
     expect(validatedBeforeSave([started("sitemap.save"), started("sitemap.validate")]).pass).toBe(
       false,

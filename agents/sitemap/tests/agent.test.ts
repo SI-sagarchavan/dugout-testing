@@ -8,7 +8,7 @@ import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
 import { seedHouseFacts } from "@dugout/sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
-import { agent, type Sitemap } from "../src/index.ts";
+import { agent, Result, type Sitemap, toSiteResult } from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
@@ -75,7 +75,10 @@ describe("sitemap agent", () => {
     const sink = createMemorySink();
     const result = await run({ tenantId: "demo-cricket", input, approver: approve, sinks: [sink] });
 
-    expect(result).toMatchObject({ status: "completed", output: sitemap });
+    expect(result).toMatchObject({
+      status: "completed",
+      output: toSiteResult(sitemap, result.runId),
+    });
     const dir = join(sitemapsDir, "demo-cricket");
     expect(JSON.parse(await readFile(join(dir, "pages.json"), "utf8"))).toEqual({
       pages: sitemap.pages,
@@ -139,7 +142,10 @@ describe("sitemap agent", () => {
     ]);
     const result = await run({ tenantId: "demo-cricket", input, approver: approve });
     expect(client.requests[1]?.messages.at(-1)?.content).toContain("Invalid result");
-    expect(result).toMatchObject({ status: "completed", output: sitemap });
+    expect(result).toMatchObject({
+      status: "completed",
+      output: toSiteResult(sitemap, result.runId),
+    });
   });
 
   it("saving the same sitemap twice changes nothing", async () => {
@@ -184,6 +190,33 @@ describe("sitemap agent", () => {
     );
   });
 
+  it("returns the pages as the backend's tree, under one Home root", async () => {
+    const { run } = build(writerScript());
+    const result = await run({ tenantId: "demo-cricket", input, approver: approve });
+    const output = result.status === "completed" ? (result.output as Result) : undefined;
+    expect(Result.safeParse(output).success).toBe(true);
+    const [home] = output?.pages ?? [];
+    expect(home).toMatchObject({ name: "Home", url: "", published: true, plugin: [] });
+    expect(home?.children.map((c) => c.url)).toEqual(["news", "fixtures", "404"]);
+    const news = home?.children[0];
+    expect(news).toMatchObject({
+      name: "News",
+      url: "news",
+      theme_id: null,
+      page_layout_id: null,
+      micro_theme_id: null,
+      app_title: "",
+      breadcrumb_title: "",
+      plugin_config: {},
+      seo_complete: false,
+    });
+    expect(news?.children).toEqual([
+      expect.objectContaining({ name: "News Detail", url: "$*", children: [] }),
+    ]);
+    expect(output?.navigation.name).toBe("Header");
+    expect(output?.navigation.nodes.map((n) => n.url)).toEqual(["/", "/news", "/fixtures"]);
+  });
+
   it("rejects a brief that is empty or too long", () => {
     const { run } = build(writerScript());
     expect(() =>
@@ -223,7 +256,10 @@ describe("changes requested at approval", () => {
       sinks: [sink],
     });
 
-    expect(result).toMatchObject({ status: "completed", output: revised });
+    expect(result).toMatchObject({
+      status: "completed",
+      output: toSiteResult(revised, result.runId),
+    });
     expect(shown).toEqual([sitemap, revised]);
     const saved = JSON.parse(
       await readFile(join(sitemapsDir, "demo-cricket", "pages.json"), "utf8"),

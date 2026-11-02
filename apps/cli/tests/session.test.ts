@@ -161,7 +161,12 @@ describe("the CLI", () => {
     expect(text()).toContain("· sent back for changes: Use /fanzone for the Fan Zone.");
     expect(ending).toMatchObject({
       type: "run.completed",
-      data: { status: "completed", output: { navigation: expect.arrayContaining([fanZone]) } },
+      data: {
+        status: "completed",
+        output: {
+          navigation: { nodes: expect.arrayContaining([expect.objectContaining(fanZone)]) },
+        },
+      },
     });
     const pages = await readFile(join(runsDir, "sitemaps", TENANT, "pages.json"), "utf8");
     expect(pages).toContain('"slug": "fanzone"');

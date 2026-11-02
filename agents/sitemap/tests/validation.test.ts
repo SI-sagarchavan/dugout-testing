@@ -137,7 +137,7 @@ describe("import rules (pinned to the admin app's schema)", () => {
 describe("sitemap with a menu", () => {
   const pages: PageNode[] = [
     { name: "News", slug: "news", children: [{ name: "News Detail", dynamic: true }] },
-    { name: "Fixtures", slug: "fixtures" },
+    { name: "Fixtures", slug: "fixtures", children: [{ name: "Matchcenter", dynamic: true }] },
   ];
 
   it("lists the static page urls, home included", () => {
@@ -223,6 +223,22 @@ describe("sitemap with a menu", () => {
     expect(issues[0]).toContain('"statistics" is a standard page and must be a top-level page');
   });
 
+  it("asks for the detail page under a listing that has none, at the top level only", () => {
+    const issues = sitemapIssues({
+      pages: [
+        { name: "News", slug: "news" },
+        { name: "Home", slug: "", children: [{ name: "Fixtures", slug: "fixtures" }] },
+        { name: "Club", slug: "club", children: [{ name: "Our news", slug: "club-news" }] },
+        { name: "About", slug: "about" },
+      ],
+      navigation: [{ name: "Home", url: "/" }],
+    });
+    expect(issues).toEqual([
+      'pages[0].children: "news" lists items, so it needs its detail page under it: { "name": "News Detail", "dynamic": true }',
+      'pages[1].children[0].children: "fixtures" lists items, so it needs its detail page under it: { "name": "Matchcenter", "dynamic": true }',
+    ]);
+  });
+
   it("catches a slug used both under a listed home entry and next to it, as the importer does", () => {
     const issues = sitemapIssues({
       pages: [
@@ -245,7 +261,7 @@ describe("sitemap with a menu", () => {
   it("treats the children of a listed home entry as top level", () => {
     expect(
       sitemapIssues({
-        pages: [{ name: "Home", slug: "", children: [{ name: "News", slug: "news" }] }],
+        pages: [{ name: "Home", slug: "", children: [{ name: "About", slug: "about" }] }],
         navigation: [{ name: "Home", url: "/" }],
       }),
     ).toEqual([]);

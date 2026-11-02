@@ -47,6 +47,12 @@ export interface AgentDefinition {
    */
   completeFinal?: (output: unknown, run: { ctx: RunContext; messages: Message[] }) => unknown;
   /**
+   * The run result's shape, when `completeFinal` turns the model's `final` into something else
+   * (sitemap: a compact tree in, the backend's page tree out). Hosts see this; the model never
+   * does. Defaults to `output`.
+   */
+  result?: z.ZodType;
+  /**
    * Whether this run is expected to write something. `final` is only FORCED (a forced tool choice,
    * on the last step or after the nudge) once a write has happened when one is expected, because a
    * model forced to answer before it saved ends `completed` with nothing saved and no approval ever

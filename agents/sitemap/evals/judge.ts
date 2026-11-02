@@ -11,7 +11,9 @@ Scale:
 2 = mostly misses the brief
 1 = ignores the brief
 
-Judge fit to the brief and sensible structure only. Do not judge url syntax, limits or menu rules; other checks cover those.`;
+Judge fit to the brief and sensible structure only. Do not judge url syntax, limits or menu rules; other checks cover those.
+
+The brief is what the club asked for. House facts are the publisher's standing rules, and many only apply in a case ("when the club has a cricket team", "only when the brief asks"). Never mark a sitemap down for leaving out a page the brief did not ask for, or one a house fact allows only in a case the brief does not have. Detail pages listed as (dynamic) are expected under listings.`;
 
 export type FitJudge = (input: {
   brief: string;

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { KNOWN_SLUGS } from "./catalog.ts";
+import { KNOWN_SLUGS, PAGE_DETAILS, PAGE_OPTIONS } from "./catalog.ts";
 
 // The page rules are a port of the admin app's import validation
 // (wnm-fanxp-frontend: apps/fanxp/src/shared-validation/site-pages.schema.ts). The agent's output
@@ -251,6 +251,40 @@ const checkImportedTopLevel = (pages: PageNode[], ctx: z.RefinementCtx) => {
   }
 };
 
+/** Catalog slug of each listing -> the name of the dynamic detail page it takes (`news` -> News Detail). */
+const DETAIL_OF = new Map(
+  PAGE_DETAILS.flatMap((detail) => {
+    const listing = PAGE_OPTIONS.find((p) => p.id === detail.parentId);
+    return listing?.slug ? [[listing.slug, detail.label] as const] : [];
+  }),
+);
+
+/**
+ * Ours, not the importer's: a standard listing at the top level has its dynamic detail page, or
+ * every article, player or match it lists has no page to open.
+ */
+const checkListingDetails = (pages: PageNode[], ctx: z.RefinementCtx) => {
+  const check = (nodes: PageNode[], path: Path) =>
+    nodes.forEach((node, index) => {
+      const nodePath = [...path, index];
+      if (node.dynamic) return;
+      if (!node.slug) {
+        // a listed home entry: its children are the top level
+        if (node.children?.length) check(node.children, [...nodePath, "children"]);
+        return;
+      }
+      const detail = DETAIL_OF.get(node.slug);
+      if (detail && !node.children?.some((child) => child.dynamic)) {
+        ctx.addIssue({
+          code: "custom",
+          path: [...nodePath, "children"],
+          message: `"${node.slug}" lists items, so it needs its detail page under it: { "name": "${detail}", "dynamic": true }`,
+        });
+      }
+    });
+  check(pages, ["pages"]);
+};
+
 /** The whole agent result: the pages to import and the header menu that links to them. */
 export const SitemapSchema = SitemapShape.superRefine(({ pages, navigation }, ctx) => {
   const imported = SitemapImportSchema.safeParse({ pages });
@@ -261,6 +295,7 @@ export const SitemapSchema = SitemapShape.superRefine(({ pages, navigation }, ct
   }
   checkImportedTopLevel(pages, ctx);
   checkStandardSlugs(pages, ["pages"], true, ctx);
+  checkListingDetails(pages, ctx);
 
   const urls = pageUrls(pages);
   const seen = new Set<string>();

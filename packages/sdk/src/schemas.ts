@@ -13,7 +13,8 @@ export const SCHEMAS_DIR = join(REPO_ROOT, "schemas");
  * result, without importing our code.
  */
 export function agentSchemas(agent: Pick<AnyAgent, "input" | "definition">) {
-  const output = agent.definition.output;
+  // what the host gets back, which is not always what the model sends to `final`
+  const output = agent.definition.result ?? agent.definition.output;
   return {
     input: z.toJSONSchema(agent.input, { io: "input" }),
     ...(output ? { output: z.toJSONSchema(output, { io: "output" }) } : {}),
