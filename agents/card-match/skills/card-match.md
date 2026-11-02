@@ -59,6 +59,10 @@ A finding is a node that paints the pixels that differ. It gives:
 
 `frame.load` returns `measured: false` when screenshots that line up with the frame cover under a quarter of it. Then there is no match, `frame.override` refuses every change, and the answer is to publish what the compiler and the automatic fixes made. Say in `remaining` that nothing was compared, and name the stand-ins and placeholders from `frame.load`. Do not describe it as matching.
 
+## Cast data
+
+`cast.listHooks`, `cast.describeHook`, `cast.listApis`, `cast.describeApi` and `cast.getTemplateBinding` read the tenant's Cast workflows. They are for knowing what a card's text or lists are fed by, such as the field behind a number or a repeated row, when that explains a finding. They never change the match, and you cannot create or edit anything in Cast. If a tool says there is no Cast grant for the tenant, go on without it.
+
 ## Stopping
 
 Findings are ranked by pixels, so the same cause can hide across many nodes: one surface may be behind ten of them. Fix causes, not nodes. After each kept change, read the new findings.

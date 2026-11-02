@@ -8,6 +8,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `packages/core` — loop over `Steps`, tool pipeline, redactor, Bedrock model client (ADR 0012), run log, `runLocal`; stop reasons, model retries and when `final` is accepted (ADR 0018)
 - `packages/db` — Postgres pool, `withTenant` (row-level security), SQL migrations
 - `packages/memory` — semantic/episodic store, hybrid search, skills loader, context builder (stable memory in the system prompt, lessons and approved examples in the first user message; ADR 0013), consolidation
+- `packages/mcp` — typed `cast.*` tools over the Cast MCP server, per-tenant OAuth grants (ADR 0022); `card-match` uses its read tools
 - `packages/evals` — graders, model judge, suite runner and pass-rate gate
 - `packages/tracing` — run events → OpenTelemetry spans → Langfuse
 - `packages/sdk` — `defineAgent` (what agent packages are written with), live deps, seeding, agent discovery (ADR 0007); `@dugout/sdk/testing` is the `drafter` test agent that the worker's, the terminal's and the SDK's tests run against
@@ -41,6 +42,7 @@ Thin TypeScript agent harness: loop, tools, guardrails, event stream, durability
 - `pnpm agent sitemap --tenant demo-cricket --brief "..." [--sport cricket]` — `pnpm agent sitemap`
 - `pnpm eval measure [--write [--all]]` — the code-only result for each eval frame and each held-out design (no model), next to `agents/card-match/evals/baseline.json`; `pnpm eval vision` — breaks frames in known ways and measures whether `frame.look` finds them, against the score; `CARD_MATCH_VISION=off pnpm eval card-match` — the same eval with `frame.look` answering "not available"
 - `pnpm agent watch --tenant demo-cricket [--project default] [--latest] [--model <name>] [--effort <level>] [--ask]` — press Send in the Figma plugin and a `card-match` run starts, followed here and published without asking (`--ask` brings the prompt back). Needs `pnpm worker` and the trial stack (control plane :4100, Studio :3000). `pnpm agent card-match --tenant <t> --export <id>` runs one export
+- `pnpm --filter @dugout/mcp cast:login --tenant <tenant> --site <code>` — one browser login per tenant for the Cast MCP (ADR 0022); needs `CAST_MCP_URL` in `.env`. The grant is kept in `CAST_MCP_TOKENS` (default `.runs/cast-mcp.json`). `card-match` gets its read-only `cast.*` tools only when `CAST_MCP_URL` is set; without it the agent runs as before. Run one worker per token file
 - `pnpm eval smoke [--model <name>]` — one minimal live run, on `nova-lite` unless named
 - `pnpm agent schemas` — write each agent's input and output JSON Schema to `schemas/` for hosts; a test fails when they are out of date
 

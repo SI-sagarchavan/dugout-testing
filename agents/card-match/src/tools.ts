@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineTool, type ToolContext } from "@dugout/contracts";
 import { describeImage, REPO_ROOT } from "@dugout/core";
+import { castTools, type McpClient } from "@dugout/mcp";
 import { z } from "zod";
 import { type ControlPlane, createControlPlane, studioUrl } from "./control-plane.ts";
 import {
@@ -296,6 +297,8 @@ export function createMatchTools(
      * lead: a model handed a list of leads early can follow them in place of the measured findings.
      */
     lookOrder?: "first" | "last";
+    /** Cast MCP client (ADR 0022). Its read tools are added; writes are never given to this agent. */
+    cast?: McpClient;
   } = {},
 ) {
   const dir = opts.dir ?? MATCH_DIR;
@@ -714,5 +717,14 @@ export function createMatchTools(
       }),
   });
 
-  return [load, node, tokens, override, opts.vision === false ? noEyes : lookTool, publish];
+  const cast = opts.cast ? castTools(opts.cast).filter((tool) => tool.effect === "read") : [];
+  return [
+    load,
+    node,
+    tokens,
+    override,
+    opts.vision === false ? noEyes : lookTool,
+    publish,
+    ...cast,
+  ];
 }

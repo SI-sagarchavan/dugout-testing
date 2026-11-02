@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { AgentSpec, Message } from "@dugout/contracts";
+import { castClientFromEnv, type McpClient } from "@dugout/mcp";
 import { defineAgent } from "@dugout/sdk";
 import { z } from "zod";
 import type { ControlPlane } from "./control-plane.ts";
@@ -30,6 +31,11 @@ export const spec: AgentSpec = {
     "frame.override",
     "frame.look",
     "frame.publish",
+    "cast.listHooks",
+    "cast.describeHook",
+    "cast.listApis",
+    "cast.describeApi",
+    "cast.getTemplateBinding",
   ],
   skills: ["card-match"],
   onDemandSkills: [],
@@ -137,6 +143,10 @@ export function verifyFinal(output: unknown, run: { messages: Message[] }): stri
   return undefined;
 }
 
+/** The Cast tools exist only where Cast is configured (`CAST_MCP_URL`), or a test hands one in. */
+const cast = (given?: McpClient): McpClient | undefined =>
+  given ?? (process.env.CAST_MCP_URL ? castClientFromEnv() : undefined);
+
 export const agent = defineAgent({
   spec,
   input: RunInput,
@@ -151,6 +161,7 @@ export const agent = defineAgent({
     vision?: boolean;
     see?: See;
     lookOrder?: "first" | "last";
+    cast?: McpClient;
   }) =>
     createMatchTools({
       ...(opts.matchDir ? { dir: opts.matchDir } : {}),
@@ -159,6 +170,7 @@ export const agent = defineAgent({
       ...(opts.vision === false ? { vision: false } : {}),
       ...(opts.see ? { see: opts.see } : {}),
       ...(opts.lookOrder ? { lookOrder: opts.lookOrder } : {}),
+      ...(cast(opts.cast) ? { cast: cast(opts.cast) as McpClient } : {}),
     }),
   cli: {
     flags: { export: "exportId" },
