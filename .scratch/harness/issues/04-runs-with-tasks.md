@@ -3,7 +3,7 @@
 Status: started
 Type: design + task
 
-The engine is in `packages/core/src/program.ts` (ADR 0017): `defineProgram`, `defineGraph`, `runProgram`. The first program is `agents/round`: it lists a tenant's fixtures and runs matchday as a task for each (`pnpm round`). A scripted test covers two steps and three tasks at a concurrency of two, tasks ending on `until` or `maxAttempts`, resume after a crash, and task-tagged events. The worker does not host a program yet, and the CLI does not follow one yet. Those are the rest of this issue.
+The engine is in `packages/core/src/program.ts` (ADR 0017): `defineProgram`, `defineGraph`, `runProgram`. The first programs were `agents/round` (matchday for each fixture) and card's repair graph; both were removed on 2026-11-02 with their agents, so no agent uses the engine today. A scripted test covers two steps and three tasks at a concurrency of two, tasks ending on `until` or `maxAttempts`, resume after a crash, and task-tagged events. The worker does not host a program yet, and the CLI does not follow one yet. Those are the rest of this issue.
 
 ## What
 

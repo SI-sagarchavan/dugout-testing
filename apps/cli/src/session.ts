@@ -196,7 +196,7 @@ export function shower(terminal: Terminal) {
       liveTool = e.data.tool;
       liveCall = e.data.callId;
       liveText += e.data.text;
-      // `{}` is card.figma and the other calls with no arguments. Leave those to tool.started.
+      // `{}` is frame.load and the other calls with no arguments. Leave those to tool.started.
       if (liveText === "{}") {
         liveTool = "";
         liveCall = "";

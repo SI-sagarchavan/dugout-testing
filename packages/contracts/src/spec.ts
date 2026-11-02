@@ -50,7 +50,7 @@ export interface AgentDefinition {
    * on the last step or after the nudge) once a write has happened when one is expected, because a
    * model forced to answer before it saved ends `completed` with nothing saved and no approval ever
    * asked for. Default: expected when the spec lists a tool that writes. An agent that can write but
-   * does not on some runs (a card made from a brief) says so here.
+   * does not on some runs (a draft the reviewer may not need) says so here.
    */
   writeExpected?: (input: unknown) => boolean;
 }

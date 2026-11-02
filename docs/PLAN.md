@@ -19,26 +19,31 @@ registry + spec check → tenant injection → policy check → approval (write/
 
 A phase ends when its gate is demonstrated, not when tasks close.
 
-## Status (2026-10-30)
+## Status (2026-11-02)
 
 Built and tested locally, except H7, which is parked: Temporal replaces the worker's claiming before production (ADR 0009).
 
-| Task  | State  | Notes                                                                                                    |
-| ----- | ------ | -------------------------------------------------------------------------------------------------------- |
-| H1–H5 | done   | H2 is a Bedrock client (ADR 0012, replacing ADR 0001); the loop runs over `Steps` (ADR 0002)             |
-| H6    | done   | Valkey stream per run, Postgres record, SSE resume (ADR 0004)                                            |
-| H7    | parked | Temporal kept out for local work; `docker compose --profile temporal up` still starts it                 |
-| H8    | done   | Langfuse via OpenTelemetry; off unless both keys are set                                                 |
-| H9    | done   | `pnpm eval smoke`                                                                                        |
-| M1–M7 | done   | Consolidation runs right after each run, not as a workflow (ADR 0003)                                    |
-| S1–S4 | done   | S4 is the approval prompt in `pnpm agent match-preview`                                                  |
-| E1–E6 | done   | `pnpm eval match-preview`; the judge reports but does not gate                                           |
-| D1    | done   | Runs' working memory saved in Postgres; approvals end the invocation; crash recovery by lease (ADR 0006) |
-| A2    | done   | Sitemap agent (`agents/sitemap`): first live use of `final` structured output; `pnpm eval sitemap`       |
-| A3    | done   | `defineAgent` in `@dugout/sdk` (ADR 0007): both agents on it; `pnpm agent <id>`                          |
-| H10   | done   | Tool-call arguments stream (ADR 0008); the per-request response modes left with the API (ADR 0009)       |
-| H11   | done   | `pnpm worker` runs agents, `pnpm agent` queues and follows runs; no HTTP API; Docker image (ADR 0009)    |
+| Task  | State  | Notes                                                                                                               |
+| ----- | ------ | ------------------------------------------------------------------------------------------------------------------- |
+| H1–H4 | done   | H2 is a Bedrock client (ADR 0012, replacing ADR 0001); the loop runs over `Steps` (ADR 0002)                        |
+| H5    | part   | No compaction: nothing trims a long transcript yet. Deferred on 2026-11-01 while runs stay far inside their windows |
+| H6    | done   | Valkey stream per run, Postgres record, SSE resume (ADR 0004)                                                       |
+| H7    | parked | Temporal kept out for local work; `docker compose --profile temporal up` still starts it                            |
+| H8    | done   | Langfuse via OpenTelemetry; off unless both keys are set                                                            |
+| H9    | done   | `pnpm eval smoke`                                                                                                   |
+| M1–M7 | done   | Consolidation runs right after each run, not as a workflow (ADR 0003)                                               |
+| S1–S4 | done   | S4 is the approval prompt in `pnpm agent match-preview`                                                             |
+| E1–E6 | done   | `pnpm eval match-preview`; the judge reports but does not gate                                                      |
+| D1    | done   | Runs' working memory saved in Postgres; approvals end the invocation; crash recovery by lease (ADR 0006)            |
+| A2    | done   | Sitemap agent (`agents/sitemap`): first live use of `final` structured output; `pnpm eval sitemap`                  |
+| A3    | done   | `defineAgent` in `@dugout/sdk` (ADR 0007): both agents on it; `pnpm agent <id>`                                     |
+| H10   | done   | Tool-call arguments stream (ADR 0008); the per-request response modes left with the API (ADR 0009)                  |
+| H11   | done   | `pnpm worker` runs agents, `pnpm agent` queues and follows runs; no HTTP API; Docker image (ADR 0009)               |
 
 ## Embedding model
 
 Decided for now (ADR 0003): any OpenAI-compatible `/embeddings` endpoint at 1024 dimensions, set by `EMBEDDING_BASE_URL`. Without one, a word-hashing embedder keeps hybrid search working with lexical matching only. Choosing the production model is still open.
+
+## Agents
+
+`match-preview` (the reference agent the harness's tests use), `sitemap` and `card-match`. `card`, `matchday` and the `round` program were removed on 2026-11-02: card-match does card's job from a real Send, and matchday and round had no use left. They are in git history before that date.

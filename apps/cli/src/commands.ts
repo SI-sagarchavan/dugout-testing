@@ -409,7 +409,6 @@ export function renderHelp(topic?: CommandName): string {
 
 const TOOLS: Array<[string, string]> = [
   ["watch", "A Send from the Figma plugin starts a card-match run"],
-  ["program <card|round>", "Run a card or a round as a program, in this process"],
   ["memory <review|promote>", "Approve proposed facts, or propose shared memory"],
   ["schemas", "Write each agent's input and output JSON Schema to schemas/"],
 ];

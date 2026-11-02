@@ -6,7 +6,7 @@ FanOS agent harness, agents and evals. See `CLAUDE.md` for layout/commands and `
 nvm use && pnpm install
 cp .env.example .env          # set AWS_PROFILE and AWS_REGION for Bedrock
 pnpm infra up && pnpm db migrate && pnpm db seed
-pnpm build           # the @fanos packages and apps; the card agents load their dist
+pnpm build           # the @fanos packages and apps; card-match loads their dist
 pnpm check
 
 pnpm worker                   # terminal 1: runs the agents, as the ECS service does in production
@@ -18,7 +18,6 @@ pnpm agent history <runId> --tenant <tenant>
 pnpm agent fork <runId> --from <version> --tenant <tenant>
 pnpm agent match-preview --tenant demo-cricket --fixture c-101
 pnpm agent sitemap --tenant demo-cricket --sport cricket --brief "T20 club: news, fixtures, squad, standings"
-pnpm agent matchday --tenant demo-cricket --fixture c-101 --channel social --brief "Season opener"
 pnpm agent <id> --tenant <tenant> --<input field> <value>   # any agent in agents/
 # at an approval: Approve, Reject, or Request a change
 # a pipe answers y, n, or the change ("change the Fan Zone path to /fanzone")
@@ -27,7 +26,6 @@ pnpm agent attach --run <runId> --tenant <tenant>
 
 pnpm eval match-preview
 pnpm eval sitemap
-pnpm eval matchday
 ```
 
 `pnpm agent` does what wnm-fanxp-backend will do in production (ADR 0009): it queues the run in Postgres, follows its events from Valkey as the worker writes them, and queues your decision at each approval for a worker to resume the run. The worker and the CLI never talk to each other directly.

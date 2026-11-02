@@ -17,14 +17,12 @@ describe("tools", () => {
   });
 
   it("leaves an agent id and the host's own commands to the host", () => {
-    // `card` is an agent; the graph is `program card`
-    expect(resolveTool(AGENT_TOOLS, ["card", "--tenant", "t"])).toBeUndefined();
+    expect(resolveTool(AGENT_TOOLS, ["sitemap", "--tenant", "t"])).toBeUndefined();
     expect(resolveTool(AGENT_TOOLS, ["attach", "--run", "r"])).toBeUndefined();
     expect(resolveTool(AGENT_TOOLS, [])).toBeUndefined();
   });
 
   it("lists what follows a group word", () => {
-    expect(subcommandsOf(AGENT_TOOLS, "program").sort()).toEqual(["card", "round"]);
     expect(subcommandsOf(AGENT_TOOLS, "memory").sort()).toEqual(["promote", "review"]);
     expect(subcommandsOf(AGENT_TOOLS, "watch")).toEqual([]);
   });

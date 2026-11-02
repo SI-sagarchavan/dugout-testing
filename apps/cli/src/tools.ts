@@ -27,7 +27,7 @@ export function resolveTool(table: ToolTable, argv: string[]): ToolHit | undefin
   return undefined;
 }
 
-/** The second words under a first word that has some (`program` -> card, round), or none. */
+/** The second words under a first word that has some (`memory` -> review, promote), or none. */
 export function subcommandsOf(table: ToolTable, first: string | undefined): string[] {
   if (!first) return [];
   return Object.keys(table)
