@@ -26,3 +26,7 @@ Loops that check their own work pile up tool output and images. Quality drops an
 
 - `packages/core/src/loop.ts` (request building), `packages/memory` (context builder)
 - ADR 0006 ("not yet: compaction of long transcripts")
+
+## Comments
+
+- 2026-11-02: the "old rounds trimmed" part is planned in `.scratch/harness-orchestration/issues/02-context-view.md`, as a view of the transcript built by a hook. The shared-prefix part stays here.

@@ -28,3 +28,7 @@ Complex agents need FanOS services (Cast now, more later). Writing a typed wrapp
 
 - `docs/PLAN.md` (stack line: "MCP as tool contract"), `packages/core/src/tools.ts` (pipeline: registry, spec, policy, approval)
 - Cast MCP auth in `wnm-fanxp-backend/src/routes/cast/`
+
+## Comments
+
+- 2026-11-02: planned in `.scratch/harness-orchestration/issues/03-mcp-manifests.md`: servers configured by a manifest plus a pinned lock of their schemas, superseding the "no generic passthrough" line of ADR 0022.
