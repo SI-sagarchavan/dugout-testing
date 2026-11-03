@@ -6,10 +6,11 @@ that produces a pixel — and the acceptance gate for everything downstream:
 
 ## Scope
 
-Seven node types only: **Box, Stack, Overlay, Text, Image, Icon, Divider**.
+Node types: **Box, Stack, Overlay, Text, Image, Icon, Divider, Button,
+Repeater, Carousel**. Others draw a diagnostic placeholder.
 
-Every component is a React Server Component. There is no `"use client"` in
-this package.
+Every component is a React Server Component, except the carousel's client
+root, which is its own entry (`@fanos/renderer/client`, below).
 
 ## Stack
 
@@ -51,6 +52,44 @@ div.fos-overlay          position:relative; overflow:visible (or hidden if clip)
 
 Surface is a sibling, not a background on the Overlay. Radius + clipping live
 on the surface layer; cutouts can bleed past the card top.
+
+## Carousel
+
+A Swiper slider whose first paint is drawn by the server. `Carousel` lays the
+slides out in a row exactly as the design does (the gap, the offset before the
+first slide, a centred active slide), using CSS custom properties
+(`--fos-carousel-gap`, `--fos-carousel-before`, `--fos-carousel-center`). That
+is all a screenshot sees, and all a visitor sees before the script loads.
+
+`@fanos/renderer/client` (`src/client.tsx`, built as its own entry so
+`"use client"` survives) renders the same markup and, after hydration, loads
+Swiper and mounts it on those elements (`src/carousel/mount.ts`). It reads the
+custom properties as computed style, so a token resolves to the tenant's
+pixels. Once Swiper runs, `data-fos-swiper` turns the first-paint rules off,
+and nothing moves.
+
+The carousel draws nothing but its slides, and `styles.css` holds only Swiper's
+structural rules and the first paint: no colours, no sizes. Every control is a
+node with `controlFor: { target, part }`, drawn with its own look. The browser
+side sets `data-fos-state` and the tree's `states` do the rest:
+
+- each slide's node is `active` or `inactive`;
+- `prev` / `next` (beside the carousel or on every slide) are `disabled` when
+  there is nowhere to go;
+- each dot of a `pagination` row is `active` or `inactive`, and a row of one
+  dot repeats it per page. A design's row without `states` moves the look of
+  the dot drawn differently to the current page;
+- a `counter` Text is written from its `format`; a `progress` node is scaled
+  along its long side.
+
+`stateRules` (`src/resolve/look.ts`) writes one rule per node and state from the
+tree's tokens; a state's surface is a class the token compiler emits.
+
+`tests/carousel.test.ts` runs real Swiper in Chromium on the server's markup. It
+checks that the first paint is the design, that nothing moves on mount, that
+the arrows, dots, counter and progress follow the carousel, that each state's
+look applies, that effects take their options, and that a centred carousel
+stays centred.
 
 ## Headless harness
 

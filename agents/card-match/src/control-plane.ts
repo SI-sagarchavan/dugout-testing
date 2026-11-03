@@ -23,9 +23,12 @@ export function controlPlaneUrl(env: NodeJS.ProcessEnv = process.env): string {
   return env.FANOS_API_URL ?? "http://localhost:4100";
 }
 
-/** Surface Studio, which renders a stored tree as a page. */
-export function studioUrl(env: NodeJS.ProcessEnv = process.env): string {
-  return env.FANOS_STUDIO_URL ?? "http://localhost:3000";
+/**
+ * The Next.js site (`apps/web`), which renders a stored tree as a page with the renderer's client
+ * components running, so a carousel swipes. Its preview is `/preview/<project>/<tree id>`.
+ */
+export function webUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.FANOS_WEB_URL ?? "http://localhost:3000").replace(/\/+$/, "");
 }
 
 export function createControlPlane(

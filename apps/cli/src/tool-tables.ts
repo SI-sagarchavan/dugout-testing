@@ -13,4 +13,5 @@ export const EVAL_TOOLS: ToolTable = {
   smoke: "packages/core/scripts/smoke.ts",
   measure: "agents/card-match/scripts/measure.ts",
   vision: "agents/card-match/scripts/vision-bench.ts",
+  layout: "agents/card-match/scripts/layout-eval.ts",
 };

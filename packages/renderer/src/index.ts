@@ -36,5 +36,9 @@ export { Divider } from "./components/Divider.js";
 // Fonts
 export { FONT_FACE_CSS, REQUIRED_FONTS } from "./fonts.js";
 
+// A stored tree made ready to render as a page (Studio's preview, apps/web)
+export { DEFAULT_PAGE_WIDTH, preparePage } from "./page.js";
+export type { PageSource, PreparedPage } from "./page.js";
+
 // Context
 export type { RenderConfig, NodeRenderContext } from "./context.js";

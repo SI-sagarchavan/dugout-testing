@@ -6,11 +6,11 @@
   "type": "module",
   "scripts": {
     "build": "next build",
-    "dev": "next dev --port 3415",
-    "start": "next start --port 3415",
+    "dev": "next dev --port 3000",
+    "start": "next start --port 3000",
     "test": "echo \"no tests in @fanos/web — rendering logic is tested in @fanos/renderer\" && exit 0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf .next"
+    "clean": "rm -rf .next .next-build"
   },
   "dependencies": {
     "@electric-sql/react": "^1.0.55",

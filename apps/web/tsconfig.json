@@ -15,6 +15,6 @@
     // keeps that from colliding with anything else in the workspace.
     "tsBuildInfoFile": "./.tsbuildinfo"
   },
-  "include": ["app/**/*", "next-env.d.ts", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", ".next"]
+  "include": ["app/**/*", "lib/**/*", "next-env.d.ts", ".next/types/**/*.ts", ".next-build/types/**/*.ts"],
+  "exclude": ["node_modules", ".next", ".next-build"]
 }

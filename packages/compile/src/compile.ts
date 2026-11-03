@@ -583,7 +583,29 @@ function emit(
         message: `spans its fluid parent, so its paint follows the window and its content stays in a ${Math.round(outer.w)}px column`,
       });
     } else if (placed && !stretched && (props.place as { anchor?: string })?.anchor === "top-start") {
-      props.column = outer.w;
+      // Paint flush with an edge of the window-wide parent belongs to that edge, not to the
+      // column: the fades over a strip's two ends stay on its ends at any width. Content (any
+      // text, such as a nav item that happens to touch the edge) stays in the column. At the
+      // design width each is the same box.
+      // Page coordinates, as `place` measures: a half-turned layer's relBbox starts at its far
+      // corner (the fixtures strip's right fade is turned, and reports x 1366 for a box at 1202).
+      const own = node.geometry.bbox;
+      const edges = parent.node.geometry.bbox;
+      const paint = !holdsText(node);
+      const atStart = paint && Math.abs(own.x - edges.x) < 1;
+      const atEnd = paint && Math.abs(own.x + own.w - (edges.x + edges.w)) < 1;
+      if (atEnd && !atStart) {
+        const place = props.place as { anchor: string; offset?: { block?: unknown; inline?: unknown } };
+        props.place = { anchor: "top-end", ...(place.offset?.block !== undefined ? { offset: { block: place.offset.block } } : {}) };
+        ctx.notes.push({
+          kind: "fluid-band",
+          irId: node.id,
+          nodeId: id,
+          message: "paint flush with the end edge of its fluid parent, so it is placed from that edge and follows the window",
+        });
+      } else if (!atStart) {
+        props.column = outer.w;
+      }
     }
   }
 
@@ -947,3 +969,8 @@ function applyPaint(
 }
 
 export type { Raw };
+
+/** Whether any layer of `n` is text: content, as against paint. */
+function holdsText(n: FrameIRNode): boolean {
+  return n.text !== undefined || (n.children ?? []).some(holdsText);
+}

@@ -4,7 +4,7 @@ import { defineTool, type ToolContext } from "@dugout/contracts";
 import { describeImage, REPO_ROOT } from "@dugout/core";
 import { castTools, type McpClient } from "@dugout/mcp";
 import { z } from "zod";
-import { type ControlPlane, createControlPlane, studioUrl } from "./control-plane.ts";
+import { type ControlPlane, createControlPlane, webUrl } from "./control-plane.ts";
 import {
   type Built,
   type Bundle,
@@ -22,6 +22,16 @@ import {
   type Unpainted,
   unpaintedLayers,
 } from "./frame.ts";
+import {
+  describeChoice,
+  describePlatform,
+  LayoutChoice,
+  type LayoutIntent,
+  type LayoutReport,
+  type PlatformRead,
+  questionCard,
+  withPlatform,
+} from "./layout.ts";
 import { type Looked, LookInputError, look, type See } from "./look.ts";
 import { loadToolchain, type Toolchain } from "./toolchain.ts";
 
@@ -49,6 +59,10 @@ export interface Engine {
     signal?: AbortSignal,
   ): Promise<Looked>;
   unpainted?(bundle: Bundle, built: Built): Unpainted[];
+  /** What each container of the frame is (`@fanos/compile` `detectLayout`). */
+  layouts?(bundle: Bundle): Promise<LayoutIntent[]>;
+  /** A platform carousel config as Carousel props, its colours checked against the theme. */
+  platform?(json: unknown, colors: ReadonlySet<string>): Promise<PlatformRead>;
 }
 
 export function pipelineEngine(tools?: Toolchain): Engine {
@@ -69,6 +83,8 @@ export function pipelineEngine(tools?: Toolchain): Engine {
         ...(signal ? { signal } : {}),
       }),
     unpainted: (bundle, built) => unpaintedLayers(bundle, built.tree, built.themeRaw),
+    layouts: async (bundle) => (await load()).detectLayout(bundle.doc),
+    platform: async (json, colors) => (await load()).fromPlatformCarousel(json, { colors }),
   };
 }
 
@@ -119,6 +135,8 @@ const State = z.object({
   examinedSurfaces: z.array(z.string()).default([]),
   /** Times frame.publish was refused for findings not yet examined. */
   publishRefusals: z.number().default(0),
+  /** What each container is: detected by frame.load, decided through frame.layout. */
+  layouts: z.array(z.custom<LayoutReport>()).default([]),
   published: Published.optional(),
 });
 type State = z.infer<typeof State>;
@@ -166,6 +184,7 @@ function standing(state: State) {
       why: state.unmeasured,
       coverage: current.coverage,
       placeholderIcons: current.placeholderIcons,
+      ...layoutsOf(state),
     };
   }
   return {
@@ -183,8 +202,37 @@ function standing(state: State) {
     ...(state.unpainted.length > 0 ? { unpainted: state.unpainted } : {}),
     surfaces: current.surfaces,
     findings: current.findings,
+    ...layoutsOf(state),
   };
 }
+
+/** The layouts, as the model reads them: what each container is, and what is still to ask. */
+function layoutsOf(state: State) {
+  if (state.layouts.length === 0) return {};
+  return {
+    layouts: state.layouts.map((l) => ({
+      src: l.src,
+      name: l.name,
+      kind: l.choice.kind,
+      confidence: l.confidence,
+      applied: l.applied,
+      decided: l.decided,
+      choice: l.choice,
+      ...(l.ask.length > 0 && !l.decided ? { ask: l.ask } : {}),
+      ...(l.note ? { note: l.note } : {}),
+    })),
+  };
+}
+
+/** Layouts with a question nobody has been asked yet. */
+const undecided = (state: Pick<State, "layouts">) =>
+  state.layouts.filter((l) => l.ask.length > 0 && !l.decided);
+
+/**
+ * A lowering must leave the first paint as it was: the carousel's server markup IS the design
+ * until Swiper runs. Within this, it is the same picture (anti-aliasing, a subpixel offset).
+ */
+const FIRST_PAINT_TOLERANCE = 0.05;
 
 /** Is this change worth keeping? Pixels must not drop, and layout must not get worse. */
 function refusal(
@@ -287,6 +335,7 @@ const merge = (a: Overrides, b: Overrides): Overrides => ({
   texts: [...new Set([...a.texts, ...b.texts])],
   surfaces: { ...a.surfaces, ...b.surfaces },
   props: [...a.props.filter((p) => !b.props.some((q) => q.src === p.src)), ...b.props],
+  layouts: [...a.layouts.filter((l) => !b.layouts.some((m) => m.src === l.src)), ...b.layouts],
 });
 
 export function createMatchTools(
@@ -294,7 +343,8 @@ export function createMatchTools(
     dir?: string;
     engine?: Engine;
     plane?: (project: string) => ControlPlane;
-    studio?: string;
+    /** Where the preview link points: the Next.js site, `FANOS_WEB_URL` by default. */
+    web?: string;
     /** `false` leaves frame.look out, which is how a run without eyes is made to compare with. */
     vision?: boolean;
     /** The vision call, replaceable in a test. */
@@ -361,6 +411,71 @@ export function createMatchTools(
     });
   };
 
+  /**
+   * What each container is, and the carousels the frame shows applied.
+   *
+   * A `certain` carousel (a card cut off by the clip, designed arrows or dots) is applied with no
+   * question: the frame shows it. It is kept only if the first paint is still the frame, measured;
+   * a lowering that moves pixels is reported and left out, never shipped. Everything else is a
+   * proposal until a person decides it through frame.layout.
+   */
+  async function detectLayouts(
+    bundle: Bundle,
+    overrides: Overrides,
+    current: Measurement,
+    measured: boolean,
+  ): Promise<{
+    layouts: LayoutReport[];
+    overrides: Overrides;
+    current: Measurement;
+    built?: Built;
+  }> {
+    const intents = (await engine.layouts?.(bundle)) ?? [];
+    const layouts: LayoutReport[] = intents.map((i) => ({
+      src: i.src,
+      name: i.name,
+      kind: i.kind,
+      confidence: i.confidence,
+      evidence: i.evidence,
+      ask: i.ask,
+      choice: i.choice,
+      // a list or a row is what the compiler drew already
+      applied: i.choice.kind === "list" || i.choice.kind === "row",
+      decided: false,
+      ...(i.alternative ? { alternative: i.alternative } : {}),
+      ...(Object.keys(i.chrome ?? {}).length > 0 ? { chrome: i.chrome } : {}),
+    }));
+    const certain = intents
+      .filter((i) => i.confidence === "certain" && i.choice.kind === "carousel")
+      .map((i) => i.choice);
+    if (certain.length === 0) return { layouts, overrides, current };
+    const next = { ...overrides, layouts: [...overrides.layouts, ...certain] };
+    const built = await engine.build(bundle, next);
+    const leftOut = (why: string) => {
+      for (const l of layouts) if (certain.some((c) => c.src === l.src)) l.note = why;
+      return { layouts, overrides, current };
+    };
+    if (built.errors.length > 0)
+      return leftOut(`not applied: the validator refused it: ${built.errors.join("; ")}`);
+    const after = measured ? await engine.measure(bundle, built) : current;
+    if (
+      measured &&
+      (after.match < current.match - FIRST_PAINT_TOLERANCE ||
+        after.conformErrors > current.conformErrors)
+    ) {
+      return leftOut(
+        `not applied: as a carousel the first paint moved (match ${current.match} → ${after.match}, conform errors ${current.conformErrors} → ${after.conformErrors}), so it stays as compiled`,
+      );
+    }
+    for (const l of layouts) {
+      const note = built.layoutNotes.find((n) => n.src === l.src);
+      if (!note) continue;
+      l.applied = note.applied;
+      if (!note.applied) l.note = note.message;
+    }
+    return { layouts, overrides: next, current: after, built };
+  }
+
   const load = defineTool({
     name: "frame.load",
     description:
@@ -386,17 +501,18 @@ export function createMatchTools(
               ? `Only ${before.coverage}% of the frame has a screenshot that lines up with it, so a match over that says nothing about the rest.${before.plates.some((p) => p.problem) ? ` ${before.plates.map((p) => `${p.name}: ${p.problem ?? "compared"}`).join("; ")}` : ""}`
               : undefined;
         const first = await engine.firstPass(bundle, noOverrides(), before);
+        const laid = await detectLayouts(bundle, first.overrides, first.measurement, !unmeasured);
         const state: State = {
           exportId: bundle.exportId,
           themeArtifactId: bundle.themeArtifactId,
-          overrides: first.overrides,
+          overrides: laid.overrides,
           found: Object.fromEntries(bundle.found ?? []),
           before: {
             match: before.match,
             conformErrors: before.conformErrors,
             placeholderIcons: before.placeholderIcons,
           },
-          current: first.measurement,
+          current: laid.current,
           ...(unmeasured ? { unmeasured } : {}),
           standIns: first.built.cropped.length,
           undone: first.undone ?? [],
@@ -406,6 +522,7 @@ export function createMatchTools(
           examined: [],
           examinedSurfaces: [],
           publishRefusals: 0,
+          layouts: laid.layouts,
         };
         writeState(dir, ctx.runId, state);
         return {
@@ -418,6 +535,13 @@ export function createMatchTools(
             // fixes tried and taken back because they made the match worse: leave them out
             undone: first.undone ?? [],
           },
+          ...(undecided(state).length > 0
+            ? {
+                layoutNote:
+                  "Some containers have questions the frame cannot answer (each layout's ask). Call frame.layout once for each, with its choice as proposed: a person reads the question and approves, or answers in plain words. Make the answer the choice and call frame.layout again.",
+                layoutEvidence: Object.fromEntries(state.layouts.map((l) => [l.src, l.evidence])),
+              }
+            : {}),
           ...(state.unpainted.length > 0
             ? {
                 unpainted: state.unpainted,
@@ -496,7 +620,8 @@ export function createMatchTools(
     name: "frame.override",
     description:
       "Add overrides, recompile and measure again. Pass any of props: [{ src, props }], surfaces: { name: spec }, crops: [src], gradients: [src], icons: { slug: glyph }. It is kept only if the match does not drop, conform errors do not rise, and something improved. Otherwise it is undone and the reason returned.",
-    input: Overrides,
+    // A layout is not the model's to set: frame.layout, behind an approval, is the only way.
+    input: Overrides.omit({ layouts: true }),
     effect: "read",
     timeoutMs: 120_000,
     alwaysInline: true,
@@ -510,11 +635,12 @@ export function createMatchTools(
           };
         }
         const bundle = await bundleOf(ctx, state);
-        const overrides = merge(state.overrides, change);
+        const asked = { ...change, layouts: [] };
+        const overrides = merge(state.overrides, asked);
         const built = await engine.build(bundle, overrides);
         const stale = built.errors.length > 0 || built.missing.length > 0;
         const measured = stale ? state.current : await engine.measure(bundle, built);
-        const refused = refusal(state.current, measured, built, paintsUnpainted(state, change));
+        const refused = refusal(state.current, measured, built, paintsUnpainted(state, asked));
         if (refused) {
           return { kept: false, reason: refused, match: state.current.match };
         }
@@ -527,6 +653,162 @@ export function createMatchTools(
         const { published: _stale, ...unpublished } = next;
         writeState(dir, ctx.runId, unpublished);
         return { kept: true, was: state.current.match, ...standing(next) };
+      }),
+  });
+
+  /** What the reviewer is shown, and what the call then runs with: the choice, in the card. */
+  type LayoutAsk = {
+    card: string[];
+    layout: string;
+    choice: LayoutChoice;
+    /** A platform carousel config the reviewer gave, applied in run with the design first. */
+    platform?: Record<string, unknown>;
+  };
+  // What the model sees is small: { src, kind, config } with config an open object. The full
+  // LayoutChoice is a union of kinds with many optional fields, and as a strict tool schema its
+  // grammar is more than Bedrock compiles. An open object leaves the tool out of strict mode (as
+  // frame.override is), and the pipe still refuses any choice LayoutChoice does not take.
+  const LayoutCall = z.object({
+    choice: LayoutChoice,
+    platform: z.record(z.string(), z.unknown()).optional(),
+  });
+  const layoutInput = z
+    .object({
+      choice: z
+        .object({
+          src: z.string().min(1),
+          kind: z.enum(["carousel", "grid", "tabs", "list", "row"]),
+          config: z
+            .record(z.string(), z.unknown())
+            .optional()
+            .describe(
+              'carousel: { slidesPerView: number or "auto", slidesPerGroup, centered, initialSlide, pages, loop, autoplay: false or { delayMs }, controls: { arrows: { placement: "edges" or "as-drawn", states }, pagination: { states } }, props: { effect, speed, easing, freeMode }, platform }. platform: a platform carousel config (slides_per_view, nav_arrows, nav_indicator, autoplay_progress, ...) the reviewer gave, passed whole as given. grid: { columns, rows }. tabs: { options, active }. list and row: none',
+            ),
+        })
+        .strict(),
+    })
+    .strict()
+    // A platform config rides beside the choice; code applies it, the model never translates it.
+    .transform(({ choice }) => {
+      const { platform, ...config } = (choice.config ?? {}) as Record<string, unknown>;
+      const bare = choice.kind === "list" || choice.kind === "row";
+      const kept =
+        choice.config && !(bare && Object.keys(config).length === 0)
+          ? { ...choice, config }
+          : { src: choice.src, kind: choice.kind };
+      // Pasted JSON may arrive as the text it was pasted as.
+      let given: unknown = platform;
+      if (typeof given === "string") {
+        try {
+          given = JSON.parse(given);
+        } catch {
+          // left as text: the pipe below refuses it, with zod's message
+        }
+      }
+      return { choice: kept, platform: given } as z.input<typeof LayoutCall>;
+    })
+    .pipe(LayoutCall);
+  const layout = defineTool<z.infer<typeof layoutInput>, Record<string, unknown>, LayoutAsk>({
+    name: "frame.layout",
+    description:
+      "Decide what one container is: a carousel, a fixed row, a list, a grid or tabs. Pass { choice: { src, kind, config } }: frame.load lists each container with its evidence, the questions the frame cannot answer (ask) and a proposed choice. Call it once for each layout with questions, with the proposal as it stands. When the reviewer gives a platform carousel config (JSON with slides_per_view, nav_arrows, nav_indicator ...), call it with the proposal's config and that JSON whole as config.platform: code applies it, the design first. Needs approval: the reviewer reads the question card and approves, or answers in plain words; make that answer the choice ('autoplay every 5 seconds' is autoplay { delayMs: 5000 }, 'keep it a row' is kind row) and call it again. A carousel's first paint is the frame, so the match should not move.",
+    input: layoutInput,
+    effect: "write",
+    timeoutMs: 120_000,
+    alwaysInline: true,
+    // the reviewer reads what the frame showed and what is proposed, not the model's account
+    resolve({ choice, platform }, ctx) {
+      const state = readState(dir, ctx.runId);
+      const report = state?.layouts.find((l) => l.src === choice.src);
+      const card = questionCard(report, choice);
+      if (platform) card.splice(card.length - 1, 0, ...describePlatform(platform));
+      return { card, choice, layout: describeChoice(choice), ...(platform ? { platform } : {}) };
+    },
+    run: ({ choice: asked, platform }, ctx) =>
+      inTurn(ctx.runId, async () => {
+        const state = requireState(ctx);
+        const report = state.layouts.find((l) => l.src === asked.src);
+        if (!report) {
+          return {
+            kept: false,
+            reason: `frame.load found no repeated items in ${asked.src}. Pass the src of one of its layouts: ${state.layouts.map((l) => l.src).join(", ") || "it found none"}`,
+          };
+        }
+        const bundle = await bundleOf(ctx, state);
+        let choice: LayoutChoice = asked;
+        let platformNotes: string[] | undefined;
+        if (platform) {
+          if (asked.kind !== "carousel") {
+            return {
+              kept: false,
+              reason:
+                "a platform carousel config applies to a carousel: pass kind carousel with it",
+            };
+          }
+          if (!engine.platform)
+            return {
+              kept: false,
+              reason: "platform configs are read by the pipeline, which is not loaded",
+            };
+          const colors = new Set(
+            tokensOf(bundle.themeRaw, "color", undefined, 10_000).map((t) =>
+              t.ref.replace(/^color\./, ""),
+            ),
+          );
+          const read: PlatformRead = await engine.platform(platform, colors);
+          const applied = withPlatform(asked, read, {
+            arrows: Boolean(report.chrome?.prev || report.chrome?.next),
+            indicator: Boolean(report.chrome?.pagination),
+          });
+          choice = applied.choice;
+          platformNotes = applied.notes;
+        }
+        const overrides = {
+          ...state.overrides,
+          layouts: [...state.overrides.layouts.filter((l) => l.src !== choice.src), choice],
+        };
+        const built = await engine.build(bundle, overrides);
+        if (built.errors.length > 0) {
+          return {
+            kept: false,
+            reason: `the validator refused it: ${built.errors.join("; ")}`,
+            match: state.current.match,
+          };
+        }
+        const note = built.layoutNotes.find((n) => n.src === choice.src);
+        const applied = choice.kind === "list" || choice.kind === "row" || note?.applied === true;
+        const measured = state.unmeasured ? state.current : await engine.measure(bundle, built);
+        const layouts = state.layouts.map((l): LayoutReport => {
+          if (l.src !== choice.src) return l;
+          const { note: _was, ...rest } = l;
+          return {
+            ...rest,
+            choice,
+            decided: true,
+            applied,
+            ...(applied || !note ? {} : { note: note.message }),
+          };
+        });
+        const next: State = {
+          ...state,
+          overrides,
+          current: measured,
+          layouts,
+          standIns: built.cropped.length,
+        };
+        const { published: _stale, ...unpublished } = next;
+        writeState(dir, ctx.runId, unpublished);
+        return {
+          kept: true,
+          layout: describeChoice(choice),
+          applied,
+          ...(note && !applied ? { note: note.message } : {}),
+          ...(platformNotes
+            ? { platform: platformNotes.length > 0 ? platformNotes : ["applied as given"] }
+            : {}),
+          ...(state.unmeasured ? {} : { was: state.current.match }),
+          ...standing(next),
+        };
       }),
   });
 
@@ -566,6 +848,12 @@ export function createMatchTools(
     block(_input, ctx) {
       const state = readState(dir, ctx.runId);
       if (!state) return "Nothing is loaded. Call frame.load first.";
+      // What a container is can only be asked of a person; a frame published without asking ships
+      // a guess. Each question is asked once: an answer, or an approval of the proposal, settles it.
+      const open = undecided(state);
+      if (open.length > 0) {
+        return `Not yet. Ask about these layouts with frame.layout, with each one's proposed choice: ${open.map((l) => `"${l.name}" (${l.src})`).join(", ")}`;
+      }
       // The score is blind to some of the worst defects, and a model that is only told to look
       // sometimes doesn't. A run made without eyes answers the call too, so the two read the same.
       if (
@@ -615,7 +903,7 @@ export function createMatchTools(
           treeArtifactId,
           surfaceArtifactId,
           themeArtifactId,
-          previewUrl: `${opts.studio ?? studioUrl()}/v1/preview/${treeArtifactId}?${query}`,
+          previewUrl: `${opts.web ?? webUrl()}/preview/${encodeURIComponent(project)}/${treeArtifactId}?${query}`,
           measured: !state.unmeasured,
           coverage: state.current.coverage,
           estimated: state.current.estimated,
@@ -734,6 +1022,7 @@ export function createMatchTools(
     node,
     tokens,
     override,
+    layout,
     opts.vision === false ? noEyes : lookTool,
     publish,
     ...cast,

@@ -1,6 +1,6 @@
 # Surface Studio
 
-The page board. Listens on `http://localhost:3000` for sends from
+The page board, on `http://localhost:3001` behind the Next.js site on `http://localhost:3000`, which forwards `/v1/*` and the board here. Listens for sends from
 **FanOS Surface Canvas**, and lets you look inside what the pipeline made of them.
 The ZIP in the plugin is the escape hatch for when this is down.
 

@@ -1992,6 +1992,18 @@ describe("page-width layouts", () => {
   it("is still deterministic and legal", () => {
     expect(JSON.stringify(page())).toBe(JSON.stringify(page()));
   });
+
+  it("keeps what is flush with an edge of the window-wide parent on that edge, not in the column", () => {
+    // The fixtures strip: a 164px fade over each end of the cards.
+    const nodes = compile(ir("fixtures-strip"), { theme }).tree.nodes;
+    const left = nodes.find((n) => n.src === "35:10554")!;
+    const right = nodes.find((n) => n.src === "35:10555")!;
+    expect(left.props.place).toEqual({ anchor: "top-start", offset: { block: { raw: 10, _unbound: true } } });
+    expect(left.props.column).toBeUndefined();
+    // Placed from the end edge, so a wider window carries it to the strip's end.
+    expect(right.props.place).toEqual({ anchor: "top-end", offset: { block: { raw: 10, _unbound: true } } });
+    expect(right.props.column).toBeUndefined();
+  });
 });
 
 describe("what Figma draws and CSS would not", () => {

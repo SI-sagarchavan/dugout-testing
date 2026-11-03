@@ -138,9 +138,13 @@ A few shapes worth the ink:
   That is what lets `Stack > Repeater` and `Carousel > Repeater` both work
   without duplicating layout props. Its prop schema is built without those
   fields, so an offending tree fails the parser as well as S5.
-- **Carousel controls are renderer chrome** and are never nodes in the tree.
-  S10 detects them heuristically and warns rather than errors, because it is a
-  guess about intent.
+- **Carousel is Swiper, and only behaviour and motion.** Each Carousel field maps to one Swiper option (the field docs name it), except `centerAt` and `clip`, which are about the server's first paint. `effect` is a name or `{ kind, ...options }` (`creative` takes `prev`/`next` transforms, `coverflow` its rotate, depth and scale, `cards` its offsets), and `easing` a token. A Carousel has no look and draws no controls.
+- **Controls are nodes; looks in a state are `states`.** An arrow, a dot row, a counter or a progress bar is any node with `controlFor: { target, part }` (S16): `prev`, `next`, `pagination` (its children are the dots; one child is repeated per page), `counter` (a Text, with `format`), `progress` (filled by scale; `of: autoplay | slides`). Arrows may be beside the carousel or on every slide. Any node takes `fill`, `opacity`, `transform`, `transition` and `states` (`hover`, `pressed`, `focus`, `active`, `inactive`, `disabled`, each a surface, fill, tone, opacity or transform). The pointer sets the first three; a carousel sets the rest on its slides' nodes, its dots and its arrows. So a hero with dimmed neighbours, a stacked deck or a pill-shaped current dot is a tree of tokens, with no CSS of its own. S10 warns about control-looking nodes AMONG the slides, because a control belongs beside them or inside a slide.
+- **Layout intents** (`layout.ts`): what a container is (list, row, grid,
+  carousel, tabs), detected from the Figma IR by `@fanos/compile` with its
+  evidence and the questions the frame cannot answer, and a `LayoutChoice` (the
+  decided kind and config) that lowering applies. Plain values: one DSL per
+  device (ADR 0024).
 - **One Tag, not Badge + Chip.** LIVE/RECENT and WOMEN/MEN are the same thing
   with different tones; two node types would be an encoding coin-flip.
 - **Tabs is a leaf.** It renders toggle chrome and writes state; the panels it
@@ -172,6 +176,8 @@ analyze(tree)                // metrics only, no validation
 | S10 | Carousel with control nodes among its children — **warning**, heuristic |
 | S11 | `Custom.ref` not `name@semver` |
 | S12 | a prop failed its schema (shape, not resolution) — *addition* |
+| S15 | Carousel options Swiper cannot combine (loop + rewind, rows + loop, vertical without a fixed height); one-at-a-time effect with several slides, or autoplay nobody can pause — **warnings** |
+| S16 | `controlFor` names a node that is not a Carousel; a carousel has two controls of one part outside its slides (two `next` arrows); a counter that is not a Text — errors. `format` or `of` on the wrong part — warning |
 
 **Duplicate anchors between Overlay siblings are LEGAL and never flagged** —
 that is how layering works. The card has two `bottom-center` children (the
@@ -449,6 +455,6 @@ pnpm --filter @fanos/dsl typecheck
    exactly the hand-maintained value this package exists to prevent.
 
 6. **`Val` is category-scoped.** Gaps/padding use `f.val()` → space tokens.
-   `revealDelay` and `Carousel.autoplay` use `f.val("duration")` against the
+   `revealDelay`, `Carousel.speed` and `Carousel.autoplay.delay` use `f.val("duration")` against the
    built-in `duration.*` scale in `@fanos/tokens`. A space token on a duration
    prop is T5. Raw ms still validates and is counted under `rawValueCount.duration`.

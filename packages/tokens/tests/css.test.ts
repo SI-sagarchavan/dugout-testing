@@ -182,9 +182,18 @@ describe("surfaces", () => {
     expect(before).toContain("border-radius: var(--fos-radius-xl);");
   });
 
+  it("gives the same look to a node in a state that asks for the surface", () => {
+    const { css } = emitCss(makeTheme(), { surfaces: makeSurfaces(THREE_LAYER_SURFACES) });
+    const rule = css.slice(css.indexOf(".fos-surface-card_player,"), css.indexOf("{", css.indexOf(".fos-surface-card_player,")));
+    expect(rule).toContain(".fos-s-hover-card_player:hover");
+    expect(rule).toContain(".fos-s-active-card_player[data-fos-state~=\"active\"]");
+    // An Overlay paints its surface on an inner layer: the state is on the layer's parent.
+    expect(rule).toContain("[data-fos-state~=\"disabled\"] > .fos-surface-layer > .fos-s-disabled-card_player");
+  });
+
   it("emits the flat border, radius and shadow on the base rule", () => {
     const { css } = emitCss(makeTheme(), { surfaces: makeSurfaces(THREE_LAYER_SURFACES) });
-    const base = css.slice(css.indexOf(".fos-surface-card_player {"), css.indexOf(".fos-surface-card_player::before"));
+    const base = css.slice(css.indexOf(".fos-surface-card_player,"), css.indexOf(".fos-surface-card_player::before"));
     expect(base).toContain("position: relative;");
     expect(base).toContain("border-radius: var(--fos-radius-2xl);");
     expect(base).toContain("border: 1px solid rgb(var(--fos-color-core-neu-00-rgb) / 20%);");

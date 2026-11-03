@@ -10,6 +10,7 @@
 **/node_modules
 **/dist
 **/.next
+**/.next-build
 **/coverage
 # the pipeline's local artifact store (hundreds of MB); compose mounts it
 **/.blobs

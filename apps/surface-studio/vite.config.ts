@@ -16,12 +16,15 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), surfaceStudioApi()],
+    // :3001 behind the Next.js site on :3000, which forwards `/v1/*` (the Figma plugin's API, whose
+    // manifest allows only :3000) and the board here. HMR connects straight to :3001.
     server: {
-      port: 3000,
+      port: 3001,
       strictPort: true,
+      hmr: { clientPort: 3001 },
     },
     preview: {
-      port: 3000,
+      port: 3001,
       strictPort: true,
     },
   };

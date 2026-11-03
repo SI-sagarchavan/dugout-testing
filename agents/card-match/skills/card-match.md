@@ -59,6 +59,16 @@ A finding is a node that paints the pixels that differ. It gives:
 
 `frame.load` returns `measured: false` when screenshots that line up with the frame cover under a quarter of it. Then there is no match, `frame.override` refuses every change, and the answer is to publish what the compiler and the automatic fixes made. Say in `remaining` that nothing was compared, and name the stand-ins and placeholders from `frame.load`. Do not describe it as matching.
 
+## Layouts
+
+A frame is one picture, but a container in it may be more than it shows: a row of cards cut off by its edge is a carousel. `frame.load` lists `layouts`, one per container of repeated items, with the evidence the frame gave (a card cut off by the clip, designed arrows, dots, one tab drawn selected), how sure it is, and a proposed `choice`.
+
+- A carousel the frame shows (`confidence: certain`) is applied already. Its first paint is the frame, so the match does not move. If lowering would have moved it, the layout carries a `note` and stays as compiled; report that in `compilerFindings`.
+- A layout with `ask` has questions only a person can answer: is a row that fits a fixed row or a carousel, how many items, autoplay, loop. Call `frame.layout` once for each, with `choice` exactly as proposed. Do not answer the questions yourself, and do not change the proposal before anyone has seen it.
+- The reviewer approves the proposal, or answers in plain words. Make the answer the choice, changing only what they asked for: "autoplay every 5 seconds" is `autoplay: { delayMs: 5000 }`, "loop" is `loop: true`, "keep it a row" is `{ src, kind: "row" }`, "make it a carousel" on a row is `{ src, kind: "carousel", config: { slidesPerView: "auto" } }`. Then call `frame.layout` again with it.
+- `frame.publish` is refused while a layout with questions has not been asked.
+- Tabs and grids are recorded but not lowered yet: the frame stays as compiled, and the result says so.
+
 ## Cast data
 
 `cast.listHooks`, `cast.describeHook`, `cast.listApis`, `cast.describeApi` and `cast.getTemplateBinding` read the tenant's Cast workflows. They are for knowing what a card's text or lists are fed by, such as the field behind a number or a repeated row, when that explains a finding. They never change the match, and you cannot create or edit anything in Cast. If a tool says there is no Cast grant for the tenant, go on without it.

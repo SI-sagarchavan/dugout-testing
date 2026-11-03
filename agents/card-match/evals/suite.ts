@@ -188,7 +188,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<(typeof
   }
 }
 
-const PREVIEW = "http://localhost:3000/v1/preview/dsl_tree-id?theme=t&surfaces=surface_set-id";
+const PREVIEW = "http://localhost:3000/preview/default/dsl_tree-id?theme=t&surfaces=surface_set-id";
 
 /** The tools' plumbing without a built pipeline: fixed numbers, nothing to find. */
 function fakeEngine(match: number): Engine {

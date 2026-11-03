@@ -16,6 +16,7 @@
  * When `clip: true`, the Overlay itself gets overflow:hidden.
  */
 
+import { stateClasses } from "../resolve/look.js";
 import type { ReactNode } from "react";
 import type { Node } from "@fanos/dsl";
 import { cssClassName } from "@fanos/tokens";
@@ -49,8 +50,10 @@ export function Overlay({
   const rootClass = classes
     .join(" ")
     .split(/\s+/)
-    .filter((c) => !c.startsWith("fos-surface-"))
+    .filter((c) => !c.startsWith("fos-surface-") && !c.startsWith("fos-s-"))
     .join(" ");
+  // A surface for a state is painted on the same layer as the base surface.
+  const stateSurfaces = stateClasses(props);
 
   const rootStyle = { ...resolved.style };
   /**
@@ -80,11 +83,11 @@ export function Overlay({
       data-fos-clip={clip ? "true" : "false"}
       {...resolved.dataAttrs}
     >
-      {surfaceLeaf ? (
+      {surfaceLeaf || stateSurfaces.length > 0 ? (
         <div className="fos-surface-layer" aria-hidden data-fos-surface-layer>
           <div
-            className={cssClassName("surface", surfaceLeaf)}
-            data-fos-surface={surfaceLeaf}
+            className={[...(surfaceLeaf ? [cssClassName("surface", surfaceLeaf)] : []), ...stateSurfaces].join(" ")}
+            data-fos-surface={surfaceLeaf ?? ""}
             style={{ width: "100%", height: "100%" }}
           />
         </div>

@@ -5,6 +5,7 @@
  * Other node types render a visible diagnostic placeholder.
  */
 
+import type { ReactNode } from "react";
 import type { FlatTree, Node } from "@fanos/dsl";
 import { childrenOf, evaluateWhen, lookup, reify, rootOf } from "@fanos/dsl";
 import type { NodeRenderContext, RenderConfig } from "../context.js";
@@ -16,6 +17,8 @@ import { Text } from "./Text.js";
 import { Image } from "./Image.js";
 import { Icon } from "./Icon.js";
 import { Divider } from "./Divider.js";
+import { Carousel } from "./Carousel.js";
+import { stateRules } from "../resolve/look.js";
 
 export interface RenderProps {
   tree: FlatTree;
@@ -60,12 +63,15 @@ export function Render({ tree, data, assets, themeSlug, origin, timeZone, width,
     designWidth && rw && rh && rw > 0 ? (designWidth * rh) / rw : undefined;
 
   const inner = <RenderNode node={root} tree={tree} ctx={ctx} />;
+  // How each node looks in its states, from the tree's tokens; scoped to this tree.
+  const states = stateRules(tree, root.id);
 
   return (
     <div
       className="fos-root"
       data-fos-theme={themeSlug}
       data-fos-root
+      data-fos-tree={root.id}
       {...(scaled ? { "data-fos-scale": scale.toFixed(4) } : {})}
       style={{
         ...(width ? { width: `${width}px` } : {}),
@@ -76,6 +82,7 @@ export function Render({ tree, data, assets, themeSlug, origin, timeZone, width,
           : {}),
       }}
     >
+      {states && <style>{states}</style>}
       {scaled ? (
         <div
           data-fos-scaler
@@ -100,6 +107,35 @@ function resolveList(path: string | undefined, data: unknown): unknown[] | undef
   if (!path) return undefined;
   const list = lookup(data, path);
   return Array.isArray(list) ? list : undefined;
+}
+
+/**
+ * The scopes a Repeater draws its children in: one per item of its window, or undefined when
+ * there is no list at `over`.
+ *
+ * `slice` windows the list; `limit` caps it from the front. Either/or, never both — S13 rejects
+ * a tree that sets the two, because they answer the same question twice. An index-tiered grid
+ * needs the window: one list of six articles drawn as a lead, two features and three briefs,
+ * where the tier is decided by POSITION and no field on the item marks it.
+ *
+ * `Array.prototype.slice` already clamps, so a window past the end of a short list draws what
+ * there is rather than throwing — the page renders short instead of not at all, which is the
+ * right failure for a section whose CMS came back with four items instead of six.
+ */
+function repetitions(node: Node, ctx: NodeRenderContext): NodeRenderContext[] | undefined {
+  const props = node.props as { over?: string; as?: string; limit?: number; slice?: [number, number] };
+  const items = resolveList(props.over, ctx.data);
+  if (items === undefined) {
+    console.warn(`[fos-render] Repeater "${node.id}" — no list at "${props.over}"`);
+    return undefined;
+  }
+  const capped = Array.isArray(props.slice)
+    ? items.slice(props.slice[0], props.slice[1])
+    : typeof props.limit === "number"
+      ? items.slice(0, props.limit)
+      : items;
+  const alias = props.as ?? "item";
+  return capped.map((item) => ({ ...ctx, data: { ...(ctx.data ?? {}), [alias]: item } }));
 }
 
 function RenderNode({
@@ -167,40 +203,11 @@ function RenderNode({
     case "Divider":
       return <Divider node={node} ctx={ctx} />;
     case "Repeater": {
-      const props = node.props as {
-        over?: string;
-        as?: string;
-        limit?: number;
-        slice?: [number, number];
-      };
-      const items = resolveList(props.over, ctx.data);
-      if (items === undefined) {
-        console.warn(`[fos-render] Repeater "${node.id}" — no list at "${props.over}"`);
-        return null;
-      }
-      /**
-       * `slice` windows the list; `limit` caps it from the front.
-       *
-       * Either/or, never both — S13 rejects a tree that sets the two, because
-       * they answer the same question twice. An index-tiered grid needs the
-       * window: one list of six articles drawn as a lead, two features and
-       * three briefs, where the tier is decided by POSITION and no field on the
-       * item marks it.
-       *
-       * `Array.prototype.slice` already clamps, so a window past the end of a
-       * short list draws what there is rather than throwing — the page renders
-       * short instead of not at all, which is the right failure for a section
-       * whose CMS came back with four items instead of six.
-       */
-      const capped = Array.isArray(props.slice)
-        ? items.slice(props.slice[0], props.slice[1])
-        : typeof props.limit === "number"
-          ? items.slice(0, props.limit)
-          : items;
-      const alias = props.as ?? "item";
+      const scopes = repetitions(node, ctx);
+      if (scopes === undefined) return null;
       return (
         <>
-          {capped.map((item, i) => (
+          {scopes.map((scope, i) => (
             // `display: contents` keeps each repetition out of the layout box
             // tree — a Repeater under a Stack must place its children directly
             // into that flex flow, not inside a wrapper. The attribute still
@@ -213,13 +220,40 @@ function RenderNode({
                   tree={tree}
                   // A fragment passes its OWN context down: its children are flex
                   // items of the Repeater's parent, not of the Repeater.
-                  ctx={{ ...ctx, data: { ...(ctx.data ?? {}), [alias]: item } }}
+                  ctx={scope}
                 />
               ))}
             </div>
           ))}
         </>
       );
+    }
+    case "Carousel": {
+      // Each child is one slide, and each repetition of a Repeater child is one slide. A slide is
+      // a box of its own, so what is in it lays out as in any block, not as a flex item.
+      const slideCtx: NodeRenderContext = { ...ctx, flexChild: false, flexRow: false, overlayChild: false };
+      const slides: ReactNode[] = [];
+      for (const child of kids) {
+        if (child.type === "Repeater") {
+          const scopes = repetitions(child, slideCtx) ?? [];
+          scopes.forEach((scope, i) => {
+            slides.push(
+              <div key={`${child.id}-${i}`} className="swiper-slide" data-fos-repeat={i} data-fos-repeat-of={child.id}>
+                {childrenOf(tree, child.id).map((grand) => (
+                  <RenderNode key={grand.id} node={grand} tree={tree} ctx={scope} />
+                ))}
+              </div>,
+            );
+          });
+        } else {
+          slides.push(
+            <div key={child.id} className="swiper-slide">
+              <RenderNode node={child} tree={tree} ctx={slideCtx} />
+            </div>,
+          );
+        }
+      }
+      return <Carousel node={node} ctx={ctx} slides={slides} />;
     }
     default:
       console.warn(`[fos-render] node type "${node.type}" is out of scope for phase 1`);

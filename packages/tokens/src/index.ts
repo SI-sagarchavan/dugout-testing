@@ -66,15 +66,19 @@ export {
   CLASS_PREFIX,
   cssClassName,
   cssRgbVarName,
+  cssStateClassName,
   cssVar,
   cssVarName,
   dashify,
+  NODE_STATES,
   parseRef,
   refExists,
   resolveRef,
+  stateCondition,
+  surfaceStateSelectors,
   VAR_PREFIX,
 } from "./refs.js";
-export type { ParsedRef } from "./refs.js";
+export type { NodeState, ParsedRef } from "./refs.js";
 export { formatNumber, hexToRgb, isValidHex, normalizeHex, opacityToUnit, rgbaFn, rgbTriplet } from "./color.js";
 export type { Rgb } from "./color.js";
 export { coalesceStops, decreasingStopIndexes, stopRuns } from "./gradient.js";

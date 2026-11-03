@@ -2,6 +2,7 @@
  * The node registry — the single list every consumer walks.
  */
 
+import { REPEATER_FORBIDDEN_PROPS } from "../universal.js";
 import type { Fields } from "../field.js";
 import { universalFields } from "../universal.js";
 import { STRUCTURAL_NODES, type NodeSpec } from "./structural.js";
@@ -33,6 +34,9 @@ export function isNodeType(type: string): boolean {
  */
 export function allFields(spec: NodeSpec): Fields {
   if (!spec.fragment) return { ...universalFields, ...spec.fields };
-  const { surface: _surface, space: _space, size: _size, place: _place, ...rest } = universalFields;
+  // A fragment has no box: nothing about a box, or how one looks, applies to it.
+  const rest = Object.fromEntries(
+    Object.entries(universalFields).filter(([name]) => !(REPEATER_FORBIDDEN_PROPS as readonly string[]).includes(name)),
+  );
   return { ...rest, ...spec.fields };
 }

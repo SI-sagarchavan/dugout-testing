@@ -16,6 +16,12 @@ const external = [
   "pixelmatch",
   "pngjs",
   "zod",
+  "swiper",
+  "swiper/react",
+  "swiper/modules",
+  // The client components live in their own entry, so the "use client" boundary survives the
+  // build. Everything else imports them by package name and never bundles them.
+  "@fanos/renderer/client",
 ];
 
 const jsx = (options: { jsx?: string }) => {
@@ -32,6 +38,20 @@ export default defineConfig([
     clean: true,
     sourcemap: true,
     target: "node22",
+    external,
+    esbuildOptions: jsx,
+  },
+  {
+    // `@fanos/renderer/client`: the carousel's client root. Its "use client" must stay the
+    // module's first statement for Next.js to see the boundary; esbuild keeps it. Swiper is loaded by a dynamic import, in
+    // its own chunk, with the first carousel on a page.
+    entry: ["src/client.tsx"],
+    format: ["esm"],
+    dts: true,
+    clean: false,
+    sourcemap: true,
+    target: "es2022",
+    splitting: true,
     external,
     esbuildOptions: jsx,
   },

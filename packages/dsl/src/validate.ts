@@ -14,7 +14,7 @@ import { reify, ReifyError, rootOf, type FlatNode, type FlatTree } from "./flat.
 import { allFields, nodeSpec } from "./nodes/index.js";
 import { analyze, type Metrics } from "./metrics.js";
 import { suggestRefs } from "./suggest.js";
-import { isRespObject, isSignedTokenRef, refCategory, SEMVER_REF_RE, unsignRef } from "./values.js";
+import { isRespObject, isSignedTokenRef, respValues, refCategory, SEMVER_REF_RE, unsignRef } from "./values.js";
 import { LAYOUT_PROP_NAMES, REPEATER_FORBIDDEN_PROPS } from "./universal.js";
 import { walkProps } from "./walk.js";
 import { zodOfFields, type FieldType } from "./field.js";
@@ -35,6 +35,8 @@ export const ISSUE_CODES = [
   "S12", // a prop failed its schema (shape, not resolution)
   "S13", // Repeater.slice is malformed, out of order, or paired with limit
   "S14", // two Repeaters over one source draw overlapping slices (warning)
+  "S15", // Carousel options Swiper cannot combine, or a moving carousel nobody can pause
+  "S16", // controlFor names no Carousel, or a carousel has two of one control part
   "T1", // token ref does not resolve
   "T2", // Text.style is not a TypeToken
   "T3", // Resp<> wrapper around a TypeToken
@@ -353,8 +355,61 @@ export function validate(tree: FlatTree, options: ValidateOptions): ValidationRe
           code: "S10",
           severity: "warning",
           nodeId: child.id,
-          message: `"${child.id}" (${child.type}, src ${child.src}) looks like Carousel chrome — controls are rendered by the Carousel and are never nodes in the tree`,
+          message: `"${child.id}" (${child.type}, src ${child.src}) looks like a control, and a Carousel's children are its slides — put it beside the carousel (in an Overlay) or inside a slide, with controlFor`,
         });
+      }
+    }
+
+    // --- S15 -------------------------------------------------------------
+    if (node.type === "Carousel") {
+      const controls = tree.nodes.filter(
+        (n) => (n.props["controlFor"] as { target?: unknown } | undefined)?.target === node.id,
+      );
+      checkCarousel(node, controls.length > 0, add);
+    }
+
+    // --- S16 -------------------------------------------------------------
+    const control = node.props["controlFor"] as { target?: unknown; part?: unknown } | undefined;
+    if (control && typeof control.target === "string") {
+      const target = tree.nodes.find((n) => n.id === control.target);
+      if (target?.type !== "Carousel") {
+        add({
+          code: "S16",
+          severity: "error",
+          nodeId: node.id,
+          path: "controlFor.target",
+          message: target
+            ? `"${node.id}" controls "${control.target}", which is a ${target.type}, not a Carousel`
+            : `"${node.id}" controls "${control.target}", which is not in the tree`,
+        });
+      } else if (
+        // Inside a slide, every slide may carry its own: an arrow pair drawn on each card.
+        !descendsFrom(tree, node, control.target) &&
+        tree.nodes.some(
+          (n) =>
+            n.id !== node.id &&
+            (n.props["controlFor"] as { target?: unknown; part?: unknown } | undefined)?.target === control.target &&
+            (n.props["controlFor"] as { part?: unknown }).part === control.part &&
+            tree.nodes.findIndex((m) => m.id === n.id) < tree.nodes.findIndex((m) => m.id === node.id),
+        )
+      ) {
+        add({
+          code: "S16",
+          severity: "error",
+          nodeId: node.id,
+          path: "controlFor.part",
+          message: `Carousel "${control.target}" already has a ${String(control.part)} control`,
+        });
+      }
+      const extra = control as { format?: unknown; of?: unknown };
+      if (extra.format !== undefined && control.part !== "counter") {
+        add({ code: "S16", severity: "warning", nodeId: node.id, path: "controlFor.format", message: `format is for a counter; "${node.id}" is ${String(control.part)}` });
+      }
+      if (extra.of !== undefined && control.part !== "progress") {
+        add({ code: "S16", severity: "warning", nodeId: node.id, path: "controlFor.of", message: `of is for a progress bar; "${node.id}" is ${String(control.part)}` });
+      }
+      if (control.part === "counter" && node.type !== "Text") {
+        add({ code: "S16", severity: "error", nodeId: node.id, path: "controlFor.part", message: `a counter is a Text; "${node.id}" is a ${node.type}` });
       }
     }
 
@@ -562,4 +617,57 @@ function slicesBySource(tree: FlatTree): Map<string, SliceWindow[]> {
 
 export function issuesByCode(result: ValidationResult, code: IssueCode): Issue[] {
   return [...result.errors, ...result.warnings].filter((i) => i.code === code);
+}
+
+/**
+ * S15 — Carousel options that Swiper cannot honour together.
+ *
+ * Each of these is schema-legal and silently wrong at runtime: Swiper drops
+ * `rewind` under `loop`, refuses `grid.rows` with `loop`, draws a vertical
+ * slider with no height as a zero-height box, and forces one slide per view
+ * for the stacking effects. The validator says so before a person sees it.
+ *
+ * The last check is accessibility, not Swiper: content that moves by itself
+ * must be pausable (WCAG 2.2.2). Pausing on hover is the default; a carousel
+ * that turns it off and has no controls at some width cannot be stopped there.
+ */
+function checkCarousel(node: FlatNode, hasControls: boolean, add: (issue: Issue) => void): void {
+  const p = node.props;
+  const error = (path: string, message: string) =>
+    add({ code: "S15", severity: "error", nodeId: node.id, path, message });
+  const warn = (path: string, message: string) =>
+    add({ code: "S15", severity: "warning", nodeId: node.id, path, message });
+
+  if (p["loop"] === true && p["rewind"] === true) {
+    error("rewind", `Carousel "${node.id}" sets both loop and rewind; Swiper ignores rewind under loop. Pick one`);
+  }
+  if (p["loop"] === true && respValues(p["rows"]).some((r) => typeof r === "number" && r > 1)) {
+    error("rows", `Carousel "${node.id}" has rows > 1 with loop; Swiper's grid cannot loop`);
+  }
+  if (p["direction"] === "vertical") {
+    const h = (p["size"] as { h?: unknown } | undefined)?.h;
+    if (h === undefined || respValues(h).some((v) => v === "auto" || v === "full" || (typeof v === "string" && v.endsWith("%")))) {
+      error("direction", `Carousel "${node.id}" is vertical without a fixed size.h; a vertical slider has no height of its own`);
+    }
+  }
+  const effectProp = p["effect"];
+  const effect = typeof effectProp === "object" && effectProp !== null ? (effectProp as { kind?: unknown }).kind : effectProp;
+  if (effect === "fade" || effect === "cube" || effect === "flip" || effect === "cards") {
+    if (respValues(p["slidesPerView"]).some((v) => v !== 1)) {
+      warn("slidesPerView", `Carousel "${node.id}" uses effect "${effect}", which shows one slide at a time; slidesPerView is treated as 1`);
+    }
+  }
+  const autoplay = p["autoplay"];
+  if (autoplay && typeof autoplay === "object" && (autoplay as { pauseOnHover?: unknown }).pauseOnHover === false) {
+    if (!hasControls) {
+      warn("autoplay.pauseOnHover", `Carousel "${node.id}" autoplays, does not pause on hover and has no controls; moving content must be pausable (WCAG 2.2.2)`);
+    }
+  }
+}
+
+/** Is `node` inside the subtree of `ancestorId`? */
+function descendsFrom(tree: FlatTree, node: FlatNode, ancestorId: string): boolean {
+  const byId = new Map(tree.nodes.map((n) => [n.id, n]));
+  for (let p = node.parent; p; p = byId.get(p)?.parent ?? null) if (p === ancestorId) return true;
+  return false;
 }

@@ -10,7 +10,8 @@
     "allowJs": false,
     "noEmit": true,
     "incremental": true,
-    "tsBuildInfoFile": "./.tsbuildinfo"
+    "tsBuildInfoFile": "./.tsbuildinfo",
+    "paths": { "@fanos/renderer/client": ["./src/client.tsx"] }
   },
   "include": ["src/**/*", "src/types-shim.d.ts", "tests/**/*", "tsup.config.ts", "vitest.config.ts"],
   "exclude": ["node_modules", "dist"]

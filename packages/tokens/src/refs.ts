@@ -77,6 +77,44 @@ export function cssClassName(kind: "type" | "surface", leaf: string): string {
   return `${CLASS_PREFIX}${kind}-${leaf}`;
 }
 
+/** The states a node can take a look in (`@fanos/dsl` `states`). */
+export const NODE_STATES = ["hover", "pressed", "focus", "active", "inactive", "disabled"] as const;
+export type NodeState = (typeof NODE_STATES)[number];
+
+/** The class that gives a node surface `leaf` while it is in `state`. */
+export function cssStateClassName(state: NodeState, leaf: string): string {
+  return `${CLASS_PREFIX}s-${state}-${leaf}`;
+}
+
+/**
+ * Where a node is in `state`, as a CSS condition on the node (`self`) or on the node a surface
+ * layer belongs to (`parent`, an Overlay paints its surface on an inner layer). The pointer and
+ * keyboard states are pseudo-classes; the rest are set by what the node belongs to, a carousel's
+ * slide on show or its arrow with nowhere to go, as `data-fos-state`.
+ */
+export function stateCondition(state: NodeState): string {
+  switch (state) {
+    case "hover":
+      return ":hover";
+    case "pressed":
+      return ":active";
+    case "focus":
+      return ":focus-visible";
+    default:
+      return `[data-fos-state~="${state}"]`;
+  }
+}
+
+/** Every selector that gives a node surface `leaf` in some state. */
+export function surfaceStateSelectors(leaf: string): string[] {
+  return NODE_STATES.flatMap((state) => {
+    const cls = `.${cssStateClassName(state, leaf)}`;
+    const when = stateCondition(state);
+    // An Overlay paints its surface on an inner layer: the state is on the Overlay.
+    return [`${cls}${when}`, `${when} > .fos-surface-layer > ${cls}`];
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Resolution
 // ---------------------------------------------------------------------------

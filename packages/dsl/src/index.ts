@@ -126,6 +126,25 @@ export {
 } from "./subtree-signature.js";
 export { sha1Hex } from "./sha1.js";
 export { proposeCollapse } from "./collapse.js";
+export {
+  CONFIDENCE,
+  LAYOUT_KINDS,
+  carouselConfigSchema,
+  gridConfigSchema,
+  layoutChoiceSchema,
+  tabsConfigSchema,
+} from "./layout.js";
+export type { CarouselConfig, Confidence, LayoutChoice, LayoutChrome, LayoutIntent, LayoutKind } from "./layout.js";
+export { fromPlatformCarousel, toPlatformCarousel } from "./platform-carousel.js";
+export type {
+  PlatformArrows,
+  PlatformCarousel,
+  PlatformIndicator,
+  PlatformProgress,
+  PlatformRead,
+  PlatformReadOptions,
+  StateLook,
+} from "./platform-carousel.js";
 export type { CollapseProposal, VaryingContent } from "./collapse.js";
 export { applyBindingPlan, hasBindings } from "./bind.js";
 export type { BindingPlan, BindResult, Drift, DriftReason, PlanBinding, PlanCollapse, PlanSet } from "./bind.js";

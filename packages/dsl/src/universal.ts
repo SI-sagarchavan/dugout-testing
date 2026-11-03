@@ -125,6 +125,41 @@ export const BLENDS = [
   "plus-lighter",
 ] as const;
 
+/**
+ * A move, a scale or a turn of the node's own box, after layout: siblings do not move. Shifts are
+ * space tokens (or Raw px); scale is a factor; rotate is degrees.
+ */
+const transformFields: Fields = {
+  scale: opt(f.num(), { doc: "1 is as laid out" }),
+  x: opt(f.val(), { doc: "inline shift; a negative token (`-space.4`) moves it back" }),
+  y: opt(f.val(), { doc: "block shift" }),
+  rotate: opt(f.num(), { doc: "degrees, clockwise" }),
+};
+
+/** What a state may change: the look, never the layout. */
+const stateFields: Fields = {
+  surface: opt(f.token("surface")),
+  fill: opt(f.token("color"), { doc: "a plain background colour, in place of the surface" }),
+  tone: opt(f.token("color"), { doc: "text and glyph colour, on a Text, Icon or Button" }),
+  opacity: opt(f.token("opacity")),
+  transform: opt(f.obj(transformFields)),
+};
+
+/**
+ * The states a node can be in, and how it looks in each. `hover`, `pressed` and `focus` come from
+ * the pointer and keyboard. `active`, `inactive` and `disabled` are set by what the node belongs
+ * to: a carousel's slide on show and the others, its current page's dot, an arrow with nowhere
+ * to go. A state the node is not in changes nothing.
+ */
+const statesFields: Fields = {
+  hover: opt(f.obj(stateFields)),
+  pressed: opt(f.obj(stateFields)),
+  focus: opt(f.obj(stateFields), { doc: "keyboard focus" }),
+  active: opt(f.obj(stateFields)),
+  inactive: opt(f.obj(stateFields)),
+  disabled: opt(f.obj(stateFields)),
+};
+
 export const universalFields: Fields = {
   surface: opt(f.token("surface"), { resp: true }),
   space: opt(f.obj(spaceFields)),
@@ -150,6 +185,45 @@ export const universalFields: Fields = {
    * scope, so inside a Repeater it can test the item. See `binding.ts`.
    */
   when: opt(f.predicate(), { doc: '{ path, eq|ne|in|exists|gt|gte|lt|lte } or a list (all must hold)' }),
+  /**
+   * This node is a designed control of a Carousel elsewhere in the tree: its previous or next
+   * arrow, or its row of pagination dots.
+   *
+   * A design draws its own arrows and dots, and they have to look exactly as drawn, so they stay
+   * nodes, OUTSIDE the Carousel (S10 is about chrome among its slides). The renderer wires them:
+   * prev and next move the carousel; in `pagination` each child is one page's dot, and the one
+   * drawn active moves its look to the page on show. `target` is the Carousel's node id (S16).
+   */
+  controlFor: opt(
+    f.obj({
+      target: req(f.str()),
+      part: req(f.enum("prev", "next", "pagination", "counter", "progress")),
+      format: opt(f.str(), { doc: 'counter only: the text, with {index} and {count} (default "{index} / {count}")' }),
+      of: opt(f.enum("autoplay", "slides"), {
+        doc: "progress only: the time left on this slide (default), or how far through the slides",
+      }),
+    }),
+    {
+      doc: "a control of the Carousel `target`, as a node with its own look: prev, next, pagination (its children are the dots; one child is repeated per page), counter (a Text), progress (filled by scale) (S16)",
+    },
+  ),
+  /**
+   * A plain background colour from the theme, for a node with no surface: a dot, a bar, an arrow's
+   * disc. A surface is a bundle (layers, border, radius); this is one colour.
+   */
+  fill: opt(f.token("color")),
+  /** See-through, as a theme opacity token. */
+  opacity: opt(f.token("opacity")),
+  transform: opt(f.obj(transformFields)),
+  states: opt(f.obj(statesFields), { doc: "how it looks when hovered, pressed, focused, active, inactive or disabled" }),
+  /** How a change of state or of a carousel's slide eases in, rather than snapping. */
+  transition: opt(
+    f.obj({
+      duration: req(f.val("duration")),
+      easing: opt(f.token("easing")),
+      delay: opt(f.val("duration")),
+    }),
+  ),
   _meta: opt(f.obj(metaFields)),
 };
 
@@ -161,7 +235,18 @@ export const UNIVERSAL_PROP_NAMES = Object.keys(universalFields);
  * children into its parent's layout. Everything here would give it a box of its
  * own and quietly break `Stack > Repeater`.
  */
-export const REPEATER_FORBIDDEN_PROPS = ["surface", "space", "size", "place"] as const;
+export const REPEATER_FORBIDDEN_PROPS = [
+  "surface",
+  "space",
+  "size",
+  "place",
+  // a look needs a box to paint, and a fragment has none
+  "fill",
+  "opacity",
+  "transform",
+  "states",
+  "transition",
+] as const;
 
 /**
  * Layout props belonging to the container types.

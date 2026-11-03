@@ -25,3 +25,7 @@ export { canonicalRef, candidates, paintRef } from "./refs.js";
 export { length, place, raw, round, size, space, stack, text } from "./props.js";
 export { SurfaceResolver, specOf } from "./surfaces.js";
 export type { RequiredSurface } from "./surfaces.js";
+export { detectLayout, describeIntent } from "./layout/detect.js";
+export type { DetectOptions } from "./layout/detect.js";
+export { lowerLayout } from "./layout/lower.js";
+export type { LowerNote, LowerResult } from "./layout/lower.js";

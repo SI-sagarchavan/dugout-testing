@@ -21,25 +21,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { applyBindingPlan, hasBindings, type BindingPlan, type FlatTree } from "@fanos/dsl";
-import { FONT_FACE_CSS, Render } from "@fanos/renderer";
-import {
-  emitCss,
-  LOCAL_ASSET_CONTEXT,
-  parseSurfaceFile,
-  parseThemeJson,
-  type AssetContext,
-  type SurfaceSet,
-} from "@fanos/tokens";
-
-/**
- * Fallback page width when the tree's root does not state one.
- *
- * Also the iframe's viewport, which is what the emitted media queries key off
- * — a preview at 800 would resolve tablet type for a desktop design and look
- * subtly wrong in a way that is very hard to attribute.
- */
-const DEFAULT_WIDTH = 1280;
+import type { BindingPlan } from "@fanos/dsl";
+import { FONT_FACE_CSS, preparePage, Render } from "@fanos/renderer";
 
 export interface PreviewSource {
   tree: unknown;
@@ -105,51 +88,17 @@ export async function renderPreview(source: PreviewSource): Promise<RenderedPrev
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { createElement } = await import("react");
 
-  const themes = parseThemeJson(source.theme);
-  const theme = themes[0];
-  if (!theme) throw new Error("token set holds no themes");
-
-  const surfaces = surfaceSetOf(source.surfaces);
-  const assets = assetContextOf(surfaces);
-  const { css } = emitCss(theme, {
-    assets,
-    scope: "root",
-    ...(surfaces ? { surfaces } : {}),
+  // The same recipe apps/web follows, so a Send looks the same in both.
+  const page = preparePage({
+    tree: source.tree,
+    theme: source.theme,
+    ...(source.surfaces !== undefined ? { surfaces: source.surfaces } : {}),
+    ...(source.width ? { width: source.width } : {}),
+    ...(source.plan ? { plan: source.plan } : {}),
   });
-
-  const compiled = source.tree as FlatTree;
-  const applied =
-    source.plan && !hasBindings(compiled) ? applyBindingPlan(compiled, source.plan) : undefined;
-  if (applied?.drift.length) {
-    // Named, never silent: what a plan could not land is the review queue, and
-    // a preview that quietly showed less than was asked for is how it is missed.
-    for (const d of applied.drift) console.warn(`[preview] plan drift (${d.reason}): ${d.message}`);
-  }
-  const tree = applied?.tree ?? compiled;
-  const width = source.width ?? rootWidthOf(tree) ?? DEFAULT_WIDTH;
-
-  /**
-   * A fluid tree is laid out by the window, not by a number.
-   *
-   * `width` is still the width this preview is FOR — it sizes the iframe, and
-   * the emitted media queries key off that viewport. But writing it onto the
-   * root as `width: 1280px` pins the very thing a full-width band exists to
-   * avoid: the compiler emits `size.w: "full"`, the band resolves it to 100% of
-   * a 1280px wrapper, and the page shows a 1280px strip in a 1512px window with
-   * bare background beside it — which looks exactly like the bug the fluid band
-   * was meant to fix, one layer further out.
-   *
-   * So for a fluid root the wrapper and the body are left to fill whatever they
-   * are given. Inside the studio's iframe that IS `width`, so the chips behave
-   * as before; opened directly in a browser it is the window, which is the
-   * honest answer to "how does this look on my monitor".
-   *
-   * The harness deliberately keeps pinning — `renderToPng` and
-   * `measureNodeBoxes` pass a width because C2 needs one definite layout to
-   * compare against the IR, and a measurement that drifted with the window
-   * would make every geometry number meaningless.
-   */
-  const fluid = rootIsFluid(tree);
+  // Named, never silent: what a plan could not land is the review queue.
+  for (const d of page.binding?.drift ?? []) console.warn(`[preview] plan drift ${d}`);
+  const { tree, css, assets, width, fluid } = page;
 
   const markup = renderToStaticMarkup(
     createElement(Render, {
@@ -180,110 +129,7 @@ ${markup}
 </body>
 </html>`;
 
-  return {
-    html,
-    width,
-    ...(applied
-      ? {
-          binding: {
-            bound: applied.bound,
-            collapsed: applied.collapsed,
-            drift: applied.drift.map((d) => `${d.reason}: ${d.message}`),
-          },
-        }
-      : {}),
-  };
-}
-
-/**
- * Parse a stored surface-set artifact into the form `emitCss` wants.
- *
- * `parseSurfaceFile` rather than a hand-rolled shape check: it is the same
- * parser the CLI and the harness use, and it validates each spec. A surface the
- * compiler derived but that does not satisfy the schema should fail loudly here
- * rather than emit no CSS and leave a blank plate to be explained later.
- *
- * Returns null for a run that stored no set — those predate the pipeline
- * storing one, and they render plateless rather than not at all.
- */
-/**
- * Asset refs -> URLs, from the run's own surface set and nothing else.
- *
- * This used to seed a table of hardcoded Southern Brave URLs, which meant a
- * preview of ANY tenant's frame painted their listing pattern wherever a
- * texture ref appeared. The run resolves its own assets now — see the
- * `AssetPublisher` port — so whatever is in the set is what the designer
- * actually marked.
- *
- * `data:` is accepted alongside `http(s):`, because the default publisher
- * inlines the bytes: that is what makes a preview work with no credential and
- * no round trip back to the control plane. A ref with no entry resolves through
- * the CDN convention in `LOCAL_ASSET_CONTEXT` and, failing that, renders as
- * nothing — which is the honest outcome for an asset nobody can find.
- */
-function assetContextOf(surfaces: SurfaceSet | null): AssetContext {
-  const urls: Record<string, string> = {};
-  if (surfaces) {
-    for (const [leaf, url] of surfaces.assets) {
-      if (typeof url === "string" && /^(?:https?:|data:)/.test(url)) {
-        urls[leaf] = url;
-        urls[`asset.${leaf}`] = url;
-      }
-    }
-  }
-  return { ...LOCAL_ASSET_CONTEXT, urls };
-}
-
-function surfaceSetOf(value: unknown): SurfaceSet | null {
-  if (!value || typeof value !== "object") return null;
-
-  const set = value as { surfaces?: unknown };
-  if (!set.surfaces || typeof set.surfaces !== "object") return null;
-  if (Object.keys(set.surfaces as object).length === 0) return null;
-
-  return parseSurfaceFile(value);
-}
-
-/**
- * The width the frame was designed at, taken from the root node.
- *
- * The compiler records an unbound width as `{_unbound: true, raw: 1170}` — the
- * raw pixel value it could not tie to a token. For a preview that number is
- * exactly right: it is the Figma frame's width.
- *
- * A full-width band has no such number — it compiles to `"full"`, because the
- * page is what it fills — and this returns null for it. That is the honest
- * answer, not a gap: a caller that knows the design width should pass it (see
- * `compilePreview`, which reads it from the IR), and one that does not gets
- * `DEFAULT_WIDTH`, at which a fluid tree lays out correctly anyway.
- */
-/**
- * Does the root size itself from what it is given?
- *
- * `"full"` is the compiler saying "the page is my width" — see `isBand` in
- * @fanos/compile. Anything else is a number the design chose.
- */
-function rootIsFluid(tree: FlatTree): boolean {
-  const nodes = (tree as { nodes?: unknown }).nodes;
-  if (!Array.isArray(nodes)) return false;
-
-  const root = nodes.find((n) => (n as { parent?: unknown }).parent === null);
-  return (root as { props?: { size?: { w?: unknown } } } | undefined)?.props?.size?.w === "full";
-}
-
-function rootWidthOf(tree: FlatTree): number | null {
-  const nodes = (tree as { nodes?: unknown }).nodes;
-  if (!Array.isArray(nodes)) return null;
-
-  const root = nodes.find((n) => (n as { parent?: unknown }).parent === null);
-  const w = (root as { props?: { size?: { w?: unknown } } } | undefined)?.props?.size?.w;
-
-  if (typeof w === "number" && w > 0) return Math.round(w);
-  if (w && typeof w === "object" && "raw" in w) {
-    const raw = Number((w as { raw: unknown }).raw);
-    if (Number.isFinite(raw) && raw > 0) return Math.round(raw);
-  }
-  return null;
+  return { html, width, ...(page.binding ? { binding: page.binding } : {}) };
 }
 
 // ---------------------------------------------------------------------------

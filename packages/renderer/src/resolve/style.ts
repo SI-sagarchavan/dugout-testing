@@ -6,6 +6,7 @@
  * tenant re-theming works without regenerating trees.
  */
 
+import { lookStyle, stateClasses, stateNames } from "./look.js";
 import { cssClassName, cssVar, type AssetContext } from "@fanos/tokens";
 import { resolveAnchor, type CssProperties, type PlaceInput } from "./anchor.js";
 import {
@@ -124,6 +125,30 @@ export function resolveNode(
     const base = (surface as { base?: string }).base;
     if (typeof base === "string" && base.startsWith("surface.")) {
       classes.add(cssClassName("surface", base.slice("surface.".length)));
+    }
+  }
+
+  // --- fill, opacity, transform, transition, and a surface per state ------------
+  Object.assign(style, lookStyle(props));
+  for (const cls of stateClasses(props)) classes.add(cls);
+  const states = stateNames(props);
+  if (states.length > 0) dataAttrs["data-fos-states"] = states.join(" ");
+
+  // --- a designed control of a Carousel ------------------------------------
+  // The arrow or dot row stays exactly as drawn; these attributes are how the carousel finds it
+  // once it runs, and what makes a drawn arrow a control a keyboard and a screen reader can use.
+  const control = props.controlFor as
+    | { target?: unknown; part?: unknown; format?: unknown; of?: unknown }
+    | undefined;
+  if (control && typeof control.target === "string" && typeof control.part === "string") {
+    dataAttrs["data-fos-control-for"] = control.target;
+    dataAttrs["data-fos-control"] = control.part;
+    if (typeof control.format === "string") dataAttrs["data-fos-format"] = control.format;
+    if (typeof control.of === "string") dataAttrs["data-fos-of"] = control.of;
+    if (control.part === "prev" || control.part === "next") {
+      dataAttrs.role = "button";
+      dataAttrs.tabIndex = "0";
+      dataAttrs["aria-label"] = control.part === "next" ? "Next" : "Previous";
     }
   }
 

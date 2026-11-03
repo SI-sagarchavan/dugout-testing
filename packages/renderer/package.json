@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
     "./harness": {
       "types": "./dist/harness.d.ts",
       "import": "./dist/harness.js"
@@ -35,6 +39,7 @@
     "@fanos/dsl": "workspace:*",
     "@fanos/tokens": "workspace:*",
     "react": "^19.0.0",
+    "swiper": "^14.4.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -42,6 +47,7 @@
     "@types/pngjs": "^6.0.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "esbuild": "^0.24.0",
     "pixelmatch": "^6.0.0",
     "playwright": "^1.49.0",
     "pngjs": "^7.0.0",

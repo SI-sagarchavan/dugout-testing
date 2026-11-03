@@ -1,0 +1,43 @@
+{
+  "icon": "icon_sb_left-small",
+  "loop": false,
+  "variant": "1",
+  "autoplay": true,
+  "direction": "horizontal",
+  "free_mode": false,
+  "nav_arrows": {
+    "variant": "1",
+    "position": "center",
+    "visibility": true,
+    "sub_variant": "nearby",
+    "enabled_color": {
+      "text_color": "button_outline_style_3_text_default",
+      "background_color": ""
+    },
+    "disabled_color": {
+      "text_color": "color_nue_700",
+      "background_color": "color_nue_200"
+    }
+  },
+  "nav_indicator": {
+    "type": "fraction",
+    "stack": "h",
+    "offset": -20,
+    "variant": "1",
+    "position": "bottom",
+    "visibility": true,
+    "sub_variant": "rounded",
+    "enabled_color": "text_invert_high",
+    "enabled_width": 30,
+    "disabled_color": "core_neu_50"
+  },
+  "space_between": 0,
+  "centered_slides": false,
+  "slides_per_view": 1,
+  "autoplay_interval": 3000,
+  "autoplay_progress": {
+    "type": "linear",
+    "color": "text_main_prim",
+    "visibility": true
+  }
+}

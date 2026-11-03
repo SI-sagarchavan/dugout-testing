@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { REPO_ROOT } from "@dugout/core";
+import type { LayoutChoice, LayoutIntent, PlatformRead } from "./layout.ts";
 
 export interface Box {
   id: string;
@@ -98,6 +99,16 @@ export interface Toolchain {
     options: { theme: unknown; boxes: Box[]; rootSrc: string },
   ): Conformed;
   validate(tree: Tree, theme: unknown, surfaces: unknown): { errors: Issue[]; warnings: Issue[] };
+  /** What each container of the frame is: a carousel, a list, tabs (`@fanos/compile`). */
+  detectLayout(doc: IrDoc): LayoutIntent[];
+  /** A platform carousel config read into Carousel props (`@fanos/dsl` `fromPlatformCarousel`). */
+  fromPlatformCarousel(json: unknown, options: { colors?: ReadonlySet<string> }): PlatformRead;
+  /** Decided layouts applied to the compiled tree. */
+  lowerLayout(
+    tree: Tree,
+    doc: IrDoc,
+    choices: LayoutChoice[],
+  ): { tree: Tree; notes: Array<{ src: string; message: string }>; lowered: string[] };
   themeCss(theme: unknown, surfaces: unknown): string;
   fontCss: string;
   publicDir: string;
@@ -132,7 +143,10 @@ async function load(): Promise<Toolchain> {
   const root = REPO_ROOT;
   const from = async <T>(path: string) =>
     (await import(pathToFileURL(join(root, "packages", path)).href)) as T;
-  const compiler = await from<{ compile: Toolchain["compile"] }>("compile/dist/index.js");
+  const compiler =
+    await from<Pick<Toolchain, "compile" | "detectLayout" | "lowerLayout">>(
+      "compile/dist/index.js",
+    );
   const conformer = await from<{ conform: Toolchain["conform"] }>("conform/dist/index.js");
   const ir = await from<{ parseFrameIRDocument(json: unknown): IrDoc }>(
     "surface-canvas/dist/ir/index.js",
@@ -140,6 +154,7 @@ async function load(): Promise<Toolchain> {
   const dsl = await from<{
     flatTreeSchema: { parse(tree: unknown): unknown };
     validate(tree: unknown, options: { registry: unknown }): { errors: Issue[]; warnings: Issue[] };
+    fromPlatformCarousel: Toolchain["fromPlatformCarousel"];
   }>("dsl/dist/index.js");
   const tokens = await from<{
     parseThemeJson(json: unknown): unknown[];
@@ -183,6 +198,9 @@ async function load(): Promise<Toolchain> {
     },
     parseSurfaces: (json) => tokens.parseSurfaceFile(json),
     compile: compiler.compile,
+    detectLayout: compiler.detectLayout,
+    lowerLayout: compiler.lowerLayout,
+    fromPlatformCarousel: dsl.fromPlatformCarousel,
     conform: conformer.conform,
     validate: (tree, theme, surfaces) =>
       dsl.validate(dsl.flatTreeSchema.parse(tree), {

@@ -7,11 +7,11 @@ already shipped. That is what lives here today.
 
 ## Apps
 
-| App                                               | What it is                                                                                                                       |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| [`@fanos/surface-studio`](../apps/surface-studio) | Page board. Listens on `:3000` for **Send to Surface Studio** from the plugin.                                                   |
-| [`@fanos/api`](../apps/api)                       | Control plane on `:4100`. Artifact store, surface versioning, pipeline runs, fidelity gate. Postgres + Redis.                    |
-| [`@fanos/web`](../apps/web)                       | Client-facing site on `:3415`. Next.js 15. Owns routing, data fetching and streaming; renders through the `@fanos/renderer` SDK. |
+| App                                               | What it is                                                                                                                                                                  |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@fanos/surface-studio`](../apps/surface-studio) | Page board. Runs on `:3001`; the plugin's **Send to Surface Studio** reaches it through the site on `:3000`.                                                                |
+| [`@fanos/api`](../apps/api)                       | Control plane on `:4100`. Artifact store, surface versioning, pipeline runs, fidelity gate. Postgres + Redis.                                                               |
+| [`@fanos/web`](../apps/web)                       | Client-facing site on `:3000` (forwards `/v1/*` and the board to Studio). Next.js 15. Owns routing, data fetching and streaming; renders through the `@fanos/renderer` SDK. |
 
 ## Packages
 
@@ -56,7 +56,7 @@ pnpm build           # build every package and app
 pnpm infra up                 # dugout's Valkey (the job queue, database 1) and Postgres
 pnpm infra up pipeline        # Electric :3010, and the `fanos` database in dugout's Postgres (ADR 0021)
 pnpm db migrate fanos
-pnpm dev             # studio :3000, web :3415, api :4100, and the worker
+pnpm dev             # web :3000 (Studio behind it on :3001), api :4100, and the worker
 pnpm --filter "@fanos/*" -r test        # every pipeline package's tests
 pnpm --filter "@fanos/*" -r typecheck
 ```

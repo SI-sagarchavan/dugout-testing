@@ -31,7 +31,7 @@ const Env = z.object({
   API_KEYS: z.string().default(""),
 
   /** Comma-separated browser origins allowed to call this API. Empty = none. */
-  CORS_ORIGINS: z.string().default("http://localhost:3415"),
+  CORS_ORIGINS: z.string().default("http://localhost:3000"),
 
   /** Worker concurrency per process. Pipeline steps are CPU-bound, so keep it near core count. */
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),

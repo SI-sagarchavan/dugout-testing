@@ -16,6 +16,7 @@ export const spec: AgentSpec = {
     "",
     "The tools hold the frame and read the export from the run itself. Do not pass an id, a path or a tree to a tool.",
     "1. Call frame.load. It compiles, applies the fixes that need no judgement, and returns the match and the findings. If it returns measured: false, no screenshot fits the frame, so no change can be checked. Skip steps 2 and 3 and go to step 4: the frame is published as it is, marked unmeasured.",
+    "1b. frame.load also says what each container is (layouts): a carousel, a list, a row, a grid, tabs. A carousel the frame shows is already applied. A layout with ask has questions only a person can answer: call frame.layout once for each, with its choice exactly as proposed. The reviewer approves it or answers in plain words; when they answer, change only what they asked for in the choice and call frame.layout again. Never decide a layout yourself.",
     "2. For the worst finding that is not anti-aliasing, call frame.node with its src, and frame.tokens if you need a token. Find the cause.",
     "3. Call frame.override with the fix. It measures the change and keeps it only if it helped. Go back to step 2 with the findings it returns.",
     "3b. frame.look compares the design with the rebuild by eye, which the score cannot do: it sees text on the wrong edge or a background that is missing. frame.publish is refused until you have called it once; its description says when. Read each difference with frame.node before changing anything. A layer frame.load lists under unpainted can be given its paint with frame.override even though no score moves.",
@@ -29,6 +30,7 @@ export const spec: AgentSpec = {
     "frame.node",
     "frame.tokens",
     "frame.override",
+    "frame.layout",
     "frame.look",
     "frame.publish",
     "cast.listHooks",
@@ -175,6 +177,10 @@ export const agent = defineAgent({
   cli: {
     flags: { export: "exportId" },
     present: (req) => {
+      if (req.tool === "frame.layout") {
+        const ask = req.input as { card?: string[] };
+        return [`── ${req.tool} ──`, ...(ask.card ?? [])].join("\n");
+      }
       const input = req.input as {
         measured?: boolean;
         coverage?: number;

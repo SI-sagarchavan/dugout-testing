@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ControlPlane } from "./control-plane.ts";
+import { LayoutChoice } from "./layout.ts";
 import type {
   Box,
   CompileNote,
@@ -136,6 +137,11 @@ export const Overrides = z
     props: z
       .array(z.object({ src: z.string(), props: z.record(z.string(), z.unknown()) }))
       .default([]),
+    /**
+     * What a container IS, beyond the one frame: a carousel, a list, tabs. Detected from the IR,
+     * applied when the frame shows it and decided by a person when it does not (frame.layout).
+     */
+    layouts: z.array(LayoutChoice).default([]),
   })
   .strict();
 export type Overrides = z.infer<typeof Overrides>;
@@ -148,6 +154,7 @@ export const noOverrides = (): Overrides => ({
   texts: [],
   surfaces: {},
   props: [],
+  layouts: [],
 });
 
 export interface Rect {
@@ -398,6 +405,8 @@ export interface Built {
   errors: string[];
   warnings: number;
   missing: string[];
+  /** One per layout override: what lowering did with it, and whether the tree has it. */
+  layoutNotes: Array<{ src: string; message: string; applied: boolean }>;
 }
 
 const channels = (value: string) =>
@@ -815,7 +824,16 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
     for (const node of found) node.props = { ...node.props, ...change.props };
   }
 
-  const tree: Tree = { schemaVersion: compiled.tree.schemaVersion, nodes };
+  // Last: a carousel is made of the nodes every other override has already settled.
+  let tree: Tree = { schemaVersion: compiled.tree.schemaVersion, nodes };
+  const layoutNotes: Built["layoutNotes"] = [];
+  if (overrides.layouts.length > 0) {
+    const lowered = tools.lowerLayout(tree, bundle.doc, overrides.layouts);
+    tree = lowered.tree;
+    for (const note of lowered.notes) {
+      layoutNotes.push({ ...note, applied: lowered.lowered.includes(note.src) });
+    }
+  }
   const surfaceSet = tools.parseSurfaces(surfaces);
   const check = tools.validate(tree, theme, surfaceSet);
   return {
@@ -830,6 +848,7 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
     errors: check.errors.map((e) => `${e.code} ${e.nodeId ?? ""}: ${e.message}`),
     warnings: check.warnings.length,
     missing,
+    layoutNotes,
   };
 }
 

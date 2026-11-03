@@ -188,11 +188,8 @@ describe("S10 — Carousel chrome (warning, heuristic)", () => {
         src: "1:1",
         props: {
           slidesPerView: 3,
-          snap: "start",
           loop: false,
           autoplay: false,
-          controls: ["arrows"],
-          controlsPlacement: "edge",
         },
       },
       { id: "arrow", parent: "c", idx: 0, type: "Icon", src: "1:2-arrow-right", props: { name: "chevron" } },
@@ -201,6 +198,105 @@ describe("S10 — Carousel chrome (warning, heuristic)", () => {
     expect(result.errors).toEqual([]);
     expect(issuesByCode(result, "S10")).toHaveLength(1);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("S15 — Carousel options Swiper cannot combine", () => {
+  const carousel = (props: Record<string, unknown>) =>
+    tinyTree([
+      {
+        id: "c",
+        parent: null,
+        idx: 0,
+        type: "Carousel",
+        src: "1:1",
+        props: { slidesPerView: 1, autoplay: false, ...props },
+      },
+      { id: "s", parent: "c", idx: 0, type: "Box", src: "1:2", props: {} },
+    ]);
+
+  it("accepts the full Swiper option set when nothing conflicts", () => {
+    const result = check(
+      carousel({
+        slidesPerView: { base: 1.2, md: 2, lg: 3 },
+        slidesPerGroup: { base: 1, lg: 3 },
+        gap: "space.md",
+        centered: true,
+        effect: "coverflow",
+        speed: { raw: 450, _unbound: true },
+        loop: true,
+        autoplay: { delay: { raw: 5000, _unbound: true }, pauseOnHover: true, stopOnInteraction: false },
+        freeMode: { momentum: true, sticky: true },
+        easing: "easing.spring",
+        keyboard: true,
+        grabCursor: true,
+      }),
+    );
+    expect(issuesByCode(result, "S15")).toEqual([]);
+    expect(issuesByCode(result, "S12")).toEqual([]);
+  });
+
+  it("rejects loop with rewind", () => {
+    const [issue] = issuesByCode(check(carousel({ loop: true, rewind: true })), "S15");
+    expect(issue?.severity).toBe("error");
+    expect(issue?.path).toBe("rewind");
+  });
+
+  it("rejects rows with loop, at any width", () => {
+    const [issue] = issuesByCode(check(carousel({ loop: true, rows: { base: 1, lg: 2 } })), "S15");
+    expect(issue?.path).toBe("rows");
+  });
+
+  it("rejects a vertical carousel without a fixed height", () => {
+    expect(issuesByCode(check(carousel({ direction: "vertical" })), "S15")).toHaveLength(1);
+    expect(issuesByCode(check(carousel({ direction: "vertical", size: { h: "full" } })), "S15")).toHaveLength(1);
+    expect(issuesByCode(check(carousel({ direction: "vertical", size: { h: { raw: 480, _unbound: true } } })), "S15")).toEqual([]);
+  });
+
+  it("warns when a one-at-a-time effect is given several slides per view", () => {
+    const [issue] = issuesByCode(check(carousel({ effect: "fade", slidesPerView: { base: 1, lg: 3 } })), "S15");
+    expect(issue?.severity).toBe("warning");
+  });
+
+  it("warns when an autoplaying carousel cannot be paused: no hover pause and no control", () => {
+    const tree = carousel({ autoplay: { delay: { raw: 4000, _unbound: true }, pauseOnHover: false } });
+    const [issue] = issuesByCode(check(tree), "S15");
+    expect(issue?.path).toBe("autoplay.pauseOnHover");
+    expect(issue?.severity).toBe("warning");
+    // An arrow is a way to stop it.
+    const withArrow = tinyTree([
+      ...tree.nodes,
+      { id: "n", parent: null, idx: 1, type: "Box", src: "1:3", props: { controlFor: { target: "c", part: "next" } } },
+    ] as never);
+    expect(issuesByCode(check(withArrow), "S15")).toEqual([]);
+  });
+
+  it("takes every Swiper effect with its options, a stack of cards among them", () => {
+    const stacked = {
+      kind: "creative",
+      prev: { translate: ["-45%", 0, -120], scale: 0.82 },
+      next: { translate: ["45%", 0, -120], scale: 0.82 },
+      limitProgress: 2,
+    };
+    for (const effect of [
+      stacked,
+      { kind: "coverflow", rotate: 0, depth: 160, stretch: 40, modifier: 1, shadows: false },
+      { kind: "fade", crossFade: true },
+      { kind: "cards", perSlideOffset: 12 },
+    ]) {
+      const result = check(carousel({ effect }));
+      expect(issuesByCode(result, "S12"), JSON.stringify(effect)).toEqual([]);
+    }
+    expect(issuesByCode(check(carousel({ effect: { kind: "creative", prev: { scale: 0.8 } } })), "S12").length).toBeGreaterThan(0);
+  });
+
+  it("no longer takes renderer-drawn controls: a control is a node", () => {
+    expect(issuesByCode(check(carousel({ controls: ["arrows"] })), "S12").length).toBeGreaterThan(0);
+  });
+
+  it("rejects options Swiper does not have", () => {
+    expect(issuesByCode(check(carousel({ snap: "start" })), "S12").length).toBeGreaterThan(0);
+    expect(issuesByCode(check(carousel({ effect: "parallax" })), "S12").length).toBeGreaterThan(0);
   });
 });
 
@@ -418,5 +514,107 @@ describe("metrics", () => {
     expect(m.rawValueCount.size).toBe(base.rawValueCount.size);
     expect(m.rawValueCount.space).toBe(base.rawValueCount.space);
     expect(m.rawValueCount.total).toBe(base.rawValueCount.total + 1);
+  });
+});
+
+describe("S16 — a designed control names its Carousel", () => {
+  const tree = (control: Record<string, unknown>, extra: Array<Record<string, unknown>> = []) =>
+    tinyTree([
+      { id: "root", parent: null, idx: 0, type: "Stack", src: "1:0", props: {} },
+      {
+        id: "c",
+        parent: "root",
+        idx: 0,
+        type: "Carousel",
+        src: "1:1",
+        props: { slidesPerView: "auto", autoplay: false },
+      },
+      { id: "s", parent: "c", idx: 0, type: "Box", src: "1:2", props: {} },
+      { id: "next", parent: "root", idx: 1, type: "Box", src: "1:3", props: { controlFor: control } },
+      ...extra,
+    ] as never);
+
+  it("accepts an arrow outside the carousel that names it", () => {
+    const result = check(tree({ target: "c", part: "next" }));
+    expect(issuesByCode(result, "S16")).toEqual([]);
+    expect(issuesByCode(result, "S12")).toEqual([]);
+    // Outside the carousel, the arrow is not the S10 smell either.
+    expect(issuesByCode(result, "S10")).toEqual([]);
+  });
+
+  it("rejects a target that is not a Carousel, or not in the tree", () => {
+    expect(issuesByCode(check(tree({ target: "s", part: "next" })), "S16")[0]?.message).toContain("is a Box");
+    expect(issuesByCode(check(tree({ target: "gone", part: "next" })), "S16")[0]?.message).toContain("not in the tree");
+  });
+
+  it("rejects a second control of the same part", () => {
+    const twice = tree({ target: "c", part: "next" }, [
+      { id: "next2", parent: "root", idx: 2, type: "Box", src: "1:4", props: { controlFor: { target: "c", part: "next" } } },
+    ]);
+    const issues = issuesByCode(check(twice), "S16");
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.nodeId).toBe("next2");
+  });
+
+  it("lets each slide carry its own arrows", () => {
+    const perSlide = tree({ target: "c", part: "prev" }, [
+      { id: "s2", parent: "c", idx: 1, type: "Box", src: "1:5", props: {} },
+      { id: "n1", parent: "s", idx: 0, type: "Box", src: "1:6", props: { controlFor: { target: "c", part: "next" } } },
+      { id: "n2", parent: "s2", idx: 0, type: "Box", src: "1:7", props: { controlFor: { target: "c", part: "next" } } },
+    ]);
+    expect(issuesByCode(check(perSlide), "S16")).toEqual([]);
+  });
+
+  it("takes a counter as a Text with its format, and a progress bar of the autoplay", () => {
+    const ok = tree({ target: "c", part: "prev" }, [
+      { id: "count", parent: "root", idx: 2, type: "Text", src: "1:8", props: { content: "1 / 3", style: "type.body_sm_regular", tone: "color.text_main_high", controlFor: { target: "c", part: "counter", format: "{index} of {count}" } } },
+      { id: "bar", parent: "root", idx: 3, type: "Box", src: "1:9", props: { surface: "surface.button_filled_style_1", controlFor: { target: "c", part: "progress", of: "autoplay" } } },
+    ]);
+    expect(issuesByCode(check(ok), "S16")).toEqual([]);
+    const boxCounter = tree({ target: "c", part: "counter" });
+    expect(issuesByCode(check(boxCounter), "S16")[0]?.message).toContain("a counter is a Text");
+  });
+
+  it("rejects an unknown part by its schema", () => {
+    expect(issuesByCode(check(tree({ target: "c", part: "skip" })), "S12")).not.toEqual([]);
+  });
+});
+
+describe("states, opacity, transform and transition on any node", () => {
+  const box = (props: Record<string, unknown>) =>
+    tinyTree([{ id: "b", parent: null, idx: 0, type: "Box", src: "1:1", props }] as never);
+
+  it("takes a look per state, all in tokens", () => {
+    const result = check(
+      box({
+        surface: "surface.button_filled_style_1",
+        opacity: "opacity.100",
+        transform: { scale: 1, y: "space.2", rotate: 0 },
+        states: {
+          hover: { transform: { scale: 1.04 } },
+          pressed: { opacity: "opacity.80" },
+          inactive: { opacity: "opacity.40", transform: { scale: 0.9 } },
+          disabled: { opacity: "opacity.30" },
+        },
+        transition: { duration: "duration.base", easing: "easing.standard" },
+      }),
+    );
+    expect(result.errors).toEqual([]);
+  });
+
+  it("refuses a state token the theme does not have, and a layout change in a state", () => {
+    const bad = check(box({ states: { hover: { surface: "surface.nope" } } }));
+    expect(bad.errors.length).toBeGreaterThan(0);
+    const layout = check(box({ states: { hover: { size: { w: "full" } } } }));
+    expect(issuesByCode(layout, "S12").length).toBeGreaterThan(0);
+  });
+
+  it("keeps a look off a Repeater, which has no box to paint", () => {
+    const tree = tinyTree([
+      { id: "s", parent: null, idx: 0, type: "Stack", src: "1:0", props: {} },
+      { id: "r", parent: "s", idx: 0, type: "Repeater", src: "1:1", props: { over: "items", as: "item", opacity: "opacity.50" } },
+      { id: "c", parent: "r", idx: 0, type: "Box", src: "1:2", props: {} },
+    ] as never);
+    expect(check(tree).errors.length).toBeGreaterThan(0);
   });
 });

@@ -12,7 +12,15 @@ import { BREAKPOINTS } from "../types.js";
 import { compareTokenNames, sortedEntries, typeIntersection, typeUnion } from "../normalize.js";
 import { formatNumber, formatPercent, hexToRgb, opacityToUnit, rgbaFn } from "../color.js";
 import { coalesceStops } from "../gradient.js";
-import { cssClassName, cssRgbVarName, cssVar, cssVarName, parseRef, VAR_PREFIX } from "../refs.js";
+import {
+  cssClassName,
+  cssRgbVarName,
+  cssVar,
+  cssVarName,
+  parseRef,
+  surfaceStateSelectors,
+  VAR_PREFIX,
+} from "../refs.js";
 import { breakpointMinWidth, DEFAULT_CONFIG, type TokensConfig } from "../config.js";
 import type { Surface, SurfaceBorder, SurfaceLayer, SurfaceSet } from "../raw-schema.js";
 import {
@@ -319,7 +327,8 @@ function emitSurface(
   const shadows = [...(surface.shadow ? [cssVar(surface.shadow)] : []), ...rings];
   if (shadows.length > 0) body.push(`box-shadow: ${shadows.join(", ")};`);
 
-  lines.push(`${selector} {`, ...body.map((l) => INDENT + l), "}");
+  // The same look, for a node in a state that asks for this surface (hovered, active, …).
+  lines.push(`${[selector, ...surfaceStateSelectors(name)].join(",\n")} {`, ...body.map((l) => INDENT + l), "}");
 
   if (insetBorder) {
     const beforeBody = [

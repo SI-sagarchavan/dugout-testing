@@ -3,7 +3,7 @@ import { FONT_FACE_CSS } from "@fanos/renderer";
 // import "@fanos/renderer/styles.css";
 
 export const metadata = {
-  title: "fos-render harness",
+  title: "FanOS preview",
 };
 
 /** Next serves `public/` at `/`, so font URLs drop the `/public` prefix. */
@@ -43,7 +43,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
         <style dangerouslySetInnerHTML={{ __html: FONT_CSS_FOR_NEXT }} />
       </head>
-      <body style={{ margin: 0, background: "#0a0a0a", minHeight: "100vh" }}>{children}</body>
+      {/* Each page paints its own background: a preview takes the Send's. */}
+      <body style={{ margin: 0 }}>{children}</body>
     </html>
   );
 }

@@ -91,18 +91,126 @@ export const STRUCTURAL_NODES: NodeSpec[] = [
   {
     type: "Carousel",
     kind: "structural",
-    doc: "Controls are renderer chrome and are NEVER nodes in the tree (S10).",
+    doc: "A Swiper slider: behaviour and motion only, it draws nothing of its own. Every child is one slide, and every repetition of a Repeater child is one slide; a slide's look on show and off it is its `states.active` / `states.inactive`. Arrows, dots, a counter and a progress bar are ordinary nodes anywhere in the tree (beside it in an Overlay, or inside a slide) with `controlFor` naming this carousel. Each field maps to one Swiper option, named in its doc.",
     fields: {
-      slidesPerView: req(f.union(f.num(), f.enum("auto")), { resp: true }),
-      gap: opt(f.val(), { resp: true }),
-      peek: opt(f.val(), { resp: true }),
-      snap: req(f.enum("start", "center", "none")),
-      loop: req(f.bool()),
-      autoplay: req(f.union(f.val("duration"), f.literals(false)), {
-        doc: "duration token / Raw ms, or false",
+      // --- Layout ---------------------------------------------------------
+      slidesPerView: req(f.union(f.num(), f.enum("auto")), {
+        resp: true,
+        doc: 'slidesPerView. A fraction shows part of the next slide (1.2 = one slide and a peek); "auto" takes each slide\'s own width',
       }),
-      controls: req(f.arr(f.enum("arrows", "dots", "progress", "counter"))),
-      controlsPlacement: req(f.enum("edge", "overlay", "below-start", "below-center", "below-end")),
+      slidesPerGroup: opt(f.num(true), { resp: true, doc: "slidesPerGroup: slides moved per step (default 1)" }),
+      gap: opt(f.val(), { resp: true, doc: "spaceBetween, as a space token" }),
+      offsetBefore: opt(f.val(), { resp: true, doc: "slidesOffsetBefore: space before the first slide" }),
+      offsetAfter: opt(f.val(), { resp: true, doc: "slidesOffsetAfter: space after the last slide" }),
+      centered: opt(f.bool(), { doc: "centeredSlides: the active slide sits in the middle" }),
+      centeredBounds: opt(f.bool(), { doc: "centeredSlidesBounds: centred, without gaps at the ends" }),
+      /**
+       * Where the active slide's centre lies, from the first slide's start, as designed.
+       *
+       * Not a Swiper option: Swiper centres once it runs and measures. Until then the server's
+       * markup is all there is (and all a screenshot sees), so the first paint centres the
+       * active slide with this. As a distance from the slides' own start it stays centred at any
+       * container width.
+       */
+      centerAt: opt(f.num(), { doc: "centered only: px from the first slide's start to the active slide's centre, for the first paint" }),
+      /**
+       * A carousel that bleeds: slides past its box stay on show until something above clips
+       * them, as a design runs a row of cards off to the page edge. Swiper still scrolls by the
+       * carousel's own width.
+       */
+      clip: opt(f.bool(), { doc: "default true: slides past the carousel's box are hidden. false: they show until an ancestor clips" }),
+      direction: opt(f.enum("horizontal", "vertical"), {
+        doc: 'direction (default "horizontal"); vertical needs a fixed size.h (S15)',
+      }),
+      align: opt(f.enum("start", "center", "end", "stretch"), {
+        doc: 'where slides of different heights sit across the row (default "stretch"), as the Stack the design drew',
+      }),
+      rows: opt(f.num(true), { resp: true, doc: "grid.rows: slides in several rows (not with loop, S15)" }),
+      rowFill: opt(f.enum("row", "column"), { doc: 'grid.fill (default "column")' }),
+      autoHeight: opt(f.bool(), { doc: "autoHeight: the carousel takes the height of the active slide" }),
+      initialSlide: opt(f.num(true), { doc: "initialSlide: index of the slide shown first (default 0)" }),
+
+      // --- Motion -----------------------------------------------------------
+      /**
+       * How slides move: Swiper's effect and all its options. A string is the effect with its
+       * defaults. `creative` places the slides beside the active one anywhere in 3D, which is how
+       * a stack of cards, a fan or a peek with dimmed neighbours is said.
+       */
+      effect: opt(
+        f.union(
+          f.enum("slide", "fade", "cube", "coverflow", "flip", "cards", "creative"),
+          f.obj({ kind: req(f.literals("slide")) }),
+          f.obj({ kind: req(f.literals("fade")), crossFade: opt(f.bool(), { doc: "default true" }) }),
+          f.obj({
+            kind: req(f.literals("coverflow")),
+            rotate: opt(f.num(), { doc: "degrees each side slide turns (default 50)" }),
+            stretch: opt(f.num(), { doc: "px the slides draw together" }),
+            depth: opt(f.num(), { doc: "px the side slides sit back (default 100)" }),
+            scale: opt(f.num(), { doc: "side slides' scale (default 1)" }),
+            modifier: opt(f.num(), { doc: "multiplies the above (default 1)" }),
+            shadows: opt(f.bool()),
+          }),
+          f.obj({
+            kind: req(f.literals("cards")),
+            rotate: opt(f.bool(), { doc: "the cards behind tilt (default true)" }),
+            perSlideOffset: opt(f.num(), { doc: "px between the cards behind (default 8)" }),
+            perSlideRotate: opt(f.num(), { doc: "degrees per card behind (default 2)" }),
+            shadows: opt(f.bool()),
+          }),
+          f.obj({
+            kind: req(f.literals("creative")),
+            prev: req(f.obj({
+              translate: opt(f.arr(f.union(f.num(), f.str())), { doc: "[x, y, z]: px, or a percent of the slide (\"-45%\")" }),
+              rotate: opt(f.arr(f.num()), { doc: "[x, y, z] in degrees" }),
+              scale: opt(f.num()),
+              opacity: opt(f.num(), { doc: "0 to 1" }),
+              origin: opt(f.str(), { doc: 'transform-origin, e.g. "center bottom"' }),
+              shadow: opt(f.bool()),
+            }), { doc: "where the slide before the active one sits" }),
+            next: req(f.obj({
+              translate: opt(f.arr(f.union(f.num(), f.str())), { doc: "[x, y, z]: px, or a percent of the slide (\"-45%\")" }),
+              rotate: opt(f.arr(f.num()), { doc: "[x, y, z] in degrees" }),
+              scale: opt(f.num()),
+              opacity: opt(f.num(), { doc: "0 to 1" }),
+              origin: opt(f.str(), { doc: 'transform-origin, e.g. "center bottom"' }),
+              shadow: opt(f.bool()),
+            }), { doc: "where the slide after it sits" }),
+            limitProgress: opt(f.num(true), { doc: "how many slides each side take the transform, scaled (default 1)" }),
+            perspective: opt(f.bool(), { doc: "default true" }),
+          }),
+          f.obj({ kind: req(f.literals("cube")), shadow: opt(f.bool()), slideShadows: opt(f.bool()) }),
+          f.obj({ kind: req(f.literals("flip")), slideShadows: opt(f.bool()) }),
+        ),
+        { doc: 'effect (default "slide"). Every effect but slide, coverflow and creative shows one slide at a time (S15)' },
+      ),
+      easing: opt(f.token("easing"), { doc: "how a slide change eases (Swiper's wrapper transition)" }),
+      speed: opt(f.val("duration"), { doc: "speed: duration of one transition (default 300ms)" }),
+      loop: opt(f.bool(), { doc: "loop: wrap around without an end (default false)" }),
+      rewind: opt(f.bool(), { doc: "rewind: next on the last slide goes back to the first; not with loop (S15)" }),
+      autoplay: req(
+        f.union(
+          f.literals(false),
+          f.obj({
+            delay: req(f.val("duration"), { doc: "autoplay.delay: time on each slide" }),
+            pauseOnHover: opt(f.bool(), { doc: "autoplay.pauseOnMouseEnter (default true)" }),
+            stopOnInteraction: opt(f.bool(), { doc: "autoplay.disableOnInteraction (default false)" }),
+            stopOnLast: opt(f.bool(), { doc: "autoplay.stopOnLastSlide (default false)" }),
+            reverse: opt(f.bool(), { doc: "autoplay.reverseDirection (default false)" }),
+          }),
+        ),
+        { doc: "false, or autoplay options" },
+      ),
+      freeMode: opt(
+        f.union(f.bool(), f.obj({ momentum: opt(f.bool()), sticky: opt(f.bool(), { doc: "snap to a slide when it stops" }) })),
+        { doc: "freeMode: scroll freely instead of slide by slide" },
+      ),
+
+      // --- Input ------------------------------------------------------------
+      draggable: opt(f.bool(), { doc: "allowTouchMove: swipe and drag (default true)" }),
+      grabCursor: opt(f.bool(), { doc: "grabCursor (default false)" }),
+      keyboard: opt(f.bool(), { doc: "keyboard: arrow keys while in view (default true)" }),
+      mousewheel: opt(f.bool(), { doc: "mousewheel (default false)" }),
+      slideToClicked: opt(f.bool(), { doc: "slideToClickedSlide (default false)" }),
     },
   },
 

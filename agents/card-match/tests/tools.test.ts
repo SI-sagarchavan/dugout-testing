@@ -80,7 +80,7 @@ const ctx = (runId: string) =>
 async function tools(score: (o: Overrides) => Measurement, errors?: string[]) {
   const { engine, plane, uploads } = setup(score, errors);
   const dir = await mkdtemp(join(tmpdir(), "card-match-"));
-  const list = createMatchTools({ dir, engine, plane: () => plane, studio: "http://studio" });
+  const list = createMatchTools({ dir, engine, plane: () => plane, web: "http://web" });
   const named = (name: string) => {
     const found = list.find((tool) => tool.name === name);
     if (!found) throw new Error(name);
@@ -100,6 +100,7 @@ const change = (props: Overrides["props"] = []): Overrides => ({
   texts: [],
   surfaces: {},
   props,
+  layouts: [],
 });
 
 describe("frame.override", () => {
@@ -599,7 +600,7 @@ describe("frame.publish", () => {
     const again = await named("frame.publish").run({}, ctx("p2"));
     expect(uploads.map((upload) => upload.kind)).toEqual(["token_set", "surface_set", "dsl_tree"]);
     expect(first.previewUrl).toBe(
-      "http://studio/v1/preview/dsl_tree-id?theme=token_set-id&surfaces=surface_set-id&width=100&bg=808080",
+      "http://web/preview/default/dsl_tree-id?theme=token_set-id&surfaces=surface_set-id&width=100&bg=808080",
     );
     expect(again).toEqual(first);
   });
@@ -643,7 +644,7 @@ describe("an export with no screenshot that fits", () => {
     const published = await named("frame.publish").run({}, ctx("u1"));
     expect(published).toMatchObject({ measured: false });
     expect(published).not.toHaveProperty("match");
-    expect(published.previewUrl).toContain("http://studio/v1/preview/dsl_tree-id");
+    expect(published.previewUrl).toContain("http://web/preview/default/dsl_tree-id");
     expect(uploads.map((upload) => upload.kind)).toContain("dsl_tree");
   });
 

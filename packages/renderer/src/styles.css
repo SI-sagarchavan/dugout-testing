@@ -507,3 +507,136 @@
 .fos-text-clamp.fos-text-fixed-h {
   margin-block: calc((1cap - 1lh) / 2) calc((1lh - 1cap) / 2);
 }
+
+/* --- Carousel ------------------------------------------------------------
+ *
+ * Swiper's own layout rules (it ships them as swiper.css; these are the ones a
+ * slider needs, written for this markup), then the FIRST PAINT: what the server
+ * draws before Swiper runs, and all a screenshot ever sees. Once Swiper runs it
+ * sets `data-fos-swiper` and does the gap (slide margins), the offset and the
+ * centring (the wrapper's translate) itself, so the first-paint rules step aside
+ * and nothing is applied twice.
+ *
+ * Slides keep their designed width ("auto"): a slide is as wide as the card in
+ * it, exactly as the Stack it was compiled from laid it out.
+ */
+.fos-carousel {
+  position: relative;
+  min-width: 0;
+}
+
+.fos-carousel > .swiper {
+  position: relative;
+  overflow: hidden;
+  z-index: 1;
+}
+
+/* A bleeding carousel: slides past its box show until an ancestor clips them. */
+.fos-carousel[data-fos-carousel-clip="false"] > .swiper {
+  overflow: visible;
+}
+
+.fos-carousel .swiper-wrapper {
+  position: relative;
+  display: flex;
+  width: 100%;
+  box-sizing: content-box;
+  transition-property: transform;
+  transition-timing-function: var(--swiper-wrapper-transition-timing-function, initial);
+  z-index: 1;
+}
+
+.fos-carousel .swiper-slide {
+  position: relative;
+  flex-shrink: 0;
+  display: block;
+}
+
+.fos-carousel[data-fos-align="start"] .swiper-wrapper { align-items: flex-start; }
+.fos-carousel[data-fos-align="center"] .swiper-wrapper { align-items: center; }
+.fos-carousel[data-fos-align="end"] .swiper-wrapper { align-items: flex-end; }
+.fos-carousel[data-fos-align="stretch"] .swiper-wrapper { align-items: stretch; }
+
+/* First paint: the gap, and the first slide where the design starts it. */
+.fos-carousel:not([data-fos-swiper]) .swiper-wrapper {
+  gap: var(--fos-carousel-gap, 0px);
+  transform: translateX(var(--fos-carousel-before, 0px));
+}
+
+/*
+ * First paint of a centred carousel: the active slide's centre (`centerAt`, from
+ * the first slide's start) on the middle of the carousel. 50% of the wrapper is
+ * 50% of the carousel, so it stays centred at any width.
+ */
+.fos-carousel[data-fos-centered]:not([data-fos-swiper]) .swiper-wrapper {
+  transform: translateX(calc(50% - var(--fos-carousel-center)));
+}
+
+/*
+ * A carousel draws no controls and has no look. Its arrows, dots, counter and progress are nodes
+ * of the tree (`controlFor`) with their own look and `states`; the browser sets `data-fos-state`
+ * on them and on each slide's node. Only what makes them usable is here.
+ */
+[data-fos-control="prev"],
+[data-fos-control="next"],
+[data-fos-control="pagination"] > * {
+  cursor: pointer;
+}
+[data-fos-control][data-fos-state~="disabled"] {
+  cursor: default;
+}
+[data-fos-control="progress"] {
+  transform-origin: left center;
+  will-change: transform;
+}
+
+/*
+ * The effects (`effect`), as Swiper's own stylesheet lays them out: depth for the 3D ones, and
+ * which slide takes the pointer when slides stack. How much a slide turns, scales or fades is in
+ * the effect's options, and so in the DSL.
+ */
+.fos-carousel .swiper-3d { perspective: 1200px; }
+.fos-carousel .swiper-3d .swiper-wrapper,
+.fos-carousel .swiper-3d .swiper-slide { transform-style: preserve-3d; }
+.fos-carousel .swiper-fade .swiper-slide,
+.fos-carousel .swiper-cube .swiper-slide,
+.fos-carousel .swiper-flip .swiper-slide { pointer-events: none; }
+.fos-carousel .swiper-fade .swiper-slide { transition-property: opacity; }
+.fos-carousel .swiper-fade .swiper-slide-active,
+.fos-carousel .swiper-cube .swiper-slide-active,
+.fos-carousel .swiper-flip .swiper-slide-active { pointer-events: auto; }
+.fos-carousel .swiper-creative .swiper-slide {
+  backface-visibility: hidden;
+  transition-property: transform, opacity, height;
+}
+.fos-carousel .swiper-cards,
+.fos-carousel .swiper-cube,
+.fos-carousel .swiper-flip { overflow: visible; }
+.fos-carousel .swiper-cards .swiper-slide {
+  transform-origin: center bottom;
+  backface-visibility: hidden;
+}
+.fos-carousel .swiper-cube .swiper-slide {
+  backface-visibility: hidden;
+  visibility: hidden;
+  transform-origin: 0 0;
+  width: 100%;
+  height: 100%;
+}
+.fos-carousel .swiper-cube .swiper-slide-active,
+.fos-carousel .swiper-cube .swiper-slide-next,
+.fos-carousel .swiper-cube .swiper-slide-prev { visibility: visible; pointer-events: auto; }
+.fos-carousel .swiper-flip .swiper-slide { backface-visibility: hidden; }
+
+/* An effect's `shadows`: Swiper's shade over a slide turned away. */
+.fos-carousel [class*="swiper-slide-shadow"] {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+.fos-carousel .swiper-slide-shadow { background: rgb(0 0 0 / 0.15); }
+.fos-carousel .swiper-slide-shadow-left { background-image: linear-gradient(to left, rgb(0 0 0 / 0.5), transparent); }
+.fos-carousel .swiper-slide-shadow-right { background-image: linear-gradient(to right, rgb(0 0 0 / 0.5), transparent); }
+.fos-carousel .swiper-slide-shadow-top { background-image: linear-gradient(to top, rgb(0 0 0 / 0.5), transparent); }
+.fos-carousel .swiper-slide-shadow-bottom { background-image: linear-gradient(to bottom, rgb(0 0 0 / 0.5), transparent); }

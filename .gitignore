@@ -17,6 +17,7 @@ coverage/
 # @fanos apps and packages: Next.js and Playwright output, the API's local artifact store
 out/
 .next/
+.next-build/
 test-results/
 playwright-report/
 .blobs/
