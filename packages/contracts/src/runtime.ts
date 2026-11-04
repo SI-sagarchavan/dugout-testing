@@ -10,6 +10,10 @@ export interface RunContext {
   readonly tenantId: string;
   /** The host's parsed run input. Tools may read it. The model cannot change it. */
   readonly input?: unknown;
+  /** 0, or unset, for a run a host started; a child run is one below the run that called it. */
+  readonly depth?: number;
+  /** A child run's parent: the run and the call that started it. */
+  readonly parent?: { readonly runId: string; readonly callId: string };
 }
 
 /**
@@ -41,6 +45,8 @@ export interface ToolStepRequest {
   call: ToolCall;
   /** Already parsed and validated by preflight. */
   input: unknown;
+  /** What the run has left of its budget, in budget dollars. A child run gets no more. */
+  usdLeft?: number;
 }
 
 export interface ApprovalRequest {
@@ -133,6 +139,29 @@ export const RunCheckpoint = z.object({
   savedAfter: SavedAfter.optional(),
   /** The run and save point this run was forked from. */
   forkedFrom: z.object({ runId: z.string(), version: z.number().int().positive() }).optional(),
+  /**
+   * How the run ended, on its last save. A run resumed after it ended returns this instead of
+   * going on: a parent resumed mid-call finds its child's answer here. Absent before it ended.
+   */
+  ended: z
+    .discriminatedUnion("status", [
+      z.object({ status: z.literal("completed"), output: z.unknown() }),
+      z.object({
+        status: z.literal("rejected"),
+        output: z.object({
+          tool: z.string(),
+          input: z.unknown(),
+          by: z.string(),
+          reason: z.string(),
+        }),
+      }),
+      z.object({
+        status: z.literal("failed"),
+        reason: z.enum(["budget", "max_steps", "invalid_output", "model_stop", "error"]),
+        message: z.string(),
+      }),
+    ])
+    .optional(),
 });
 export type RunCheckpoint = z.infer<typeof RunCheckpoint>;
 

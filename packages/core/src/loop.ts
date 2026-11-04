@@ -199,11 +199,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
     }
   };
   const fail = async (reason: FailureReason, message: string): Promise<RunResult> => {
+    state.ended = { status: "failed", reason, message };
     await finalSave();
     await log.emit({ type: "run.failed", data: { reason, message, usage: { ...usage } } });
     return { status: "failed", reason, message, usage };
   };
   const complete = async (result: unknown): Promise<RunResult> => {
+    state.ended = { status: "completed", output: result };
     await finalSave();
     await log.emit({
       type: "run.completed",
@@ -211,6 +213,17 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
     });
     return { status: "completed", output: result, usage };
   };
+
+  // A run that already ended answers with its ending, and does nothing else: what a parent finds
+  // when it resumes mid-call and starts the same child again.
+  if (saved && state.ended) {
+    const ended = state.ended;
+    return ended.status === "failed"
+      ? { status: "failed", reason: ended.reason, message: ended.message, usage }
+      : ended.status === "rejected"
+        ? { status: "rejected", output: ended.output, usage }
+        : { status: "completed", output: ended.output, usage };
+  }
 
   if (saved) {
     await log.emit({
@@ -234,6 +247,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         agentVersion: spec.version,
         tenantId: opts.ctx.tenantId,
         input: opts.input,
+        ...(opts.ctx.parent ? { parent: { ...opts.ctx.parent } } : {}),
       },
     });
     if (opts.context) {
@@ -448,6 +462,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           const { by, reason } = answer;
           await log.emit({ type: "approval.rejected", data: { ...ids, by, reason } });
           const rejected = { tool: call.name, input: checked.input, by, reason };
+          state.ended = { status: "rejected", output: rejected };
           await save("decision");
           await log.emit({
             type: "run.completed",
@@ -467,7 +482,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       // Started before a crash and never answered: run it again only if that is safe.
       if (turn.started.includes(call.id)) {
         const tool = registry.get(call.name);
-        if (tool?.effect !== "read" && !tool?.retries) {
+        if (tool?.effect !== "read" && !tool?.retries && !tool?.resumable) {
           await log.emit({
             type: "tool.completed",
             data: { ...ids, ok: false, content: UNKNOWN_OUTCOME, durationMs: 0 },
@@ -489,9 +504,16 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
 
       await log.emit({ type: "tool.started", data: { ...ids, input: checked.input } });
       const started = Date.now();
-      const outcome = await steps.tool({ step, call, input: checked.input });
+      const outcome = await steps.tool({
+        step,
+        call,
+        input: checked.input,
+        usdLeft: Math.max(0, spec.budget.usdPerRun - usage.budgetCostUsd),
+      });
       const content = outcome.ok ? outcome.content : `Error: ${outcome.error}`;
       if (!outcome.ok) turn.failed = call.name;
+      // a child run's spend is the run's spend: its tokens and dollars, not its turns
+      if (outcome.usage) addSpend(usage, outcome.usage);
       // the same call failing again and again is the model stuck, like a refused copy of it
       const stop = hooks.afterTool({
         stage: "ran",
@@ -502,7 +524,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       });
       await log.emit({
         type: "tool.completed",
-        data: { ...ids, ok: outcome.ok, content, durationMs: Date.now() - started },
+        data: {
+          ...ids,
+          ok: outcome.ok,
+          content,
+          durationMs: Date.now() - started,
+          ...(outcome.usage ? { usage: { ...outcome.usage } } : {}),
+        },
       });
       messages.push({
         role: "tool",
@@ -513,6 +541,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       if (outcome.ok && registry.get(call.name)?.effect === "write") state.wrote = true;
       await save("tool");
       if (stop !== undefined) return fail("invalid_output", stop);
+      if (usage.budgetCostUsd > spec.budget.usdPerRun) {
+        return fail(
+          "budget",
+          `spent $${usage.budgetCostUsd.toFixed(4)} of $${spec.budget.usdPerRun} budget`,
+        );
+      }
     }
     return undefined;
   };
@@ -647,7 +681,9 @@ export function assertSupportedSpec(
   if ((spec.memory.read.length > 0 || skills > 0) && !hasContext) {
     throw new SpecError(`${spec.id}: reads memory or skills but the run has no memory context`);
   }
-  if (spec.budget.maxDepth > 0) throw new SpecError(`${spec.id}: sub-agents are not supported yet`);
+  if ((spec.agents?.length ?? 0) > 0 && spec.budget.maxDepth < 1) {
+    throw new SpecError(`${spec.id}: calls agents, so budget.maxDepth must be 1 or more`);
+  }
   for (const name of spec.tools) {
     if (name === FINAL_TOOL) throw new SpecError(`${spec.id}: ${FINAL_TOOL} is reserved`);
     if (!registry.get(name)) throw new SpecError(`${spec.id}: unknown tool ${name}`);
@@ -708,6 +744,17 @@ function parseFinal(
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false, error: z.prettifyError(parsed.error) };
+}
+
+/** Adds what a tool call spent (a child run) to the run's usage. Its turns are the child's own. */
+function addSpend(total: RunUsage, spent: RunUsage): void {
+  total.inputTokens += spent.inputTokens;
+  total.cachedInputTokens += spent.cachedInputTokens;
+  total.cacheWriteInputTokens += spent.cacheWriteInputTokens;
+  total.outputTokens += spent.outputTokens;
+  total.reasoningTokens += spent.reasoningTokens;
+  total.costUsd += spent.costUsd;
+  total.budgetCostUsd += spent.budgetCostUsd;
 }
 
 function addUsage(total: RunUsage, step: StepUsage): void {

@@ -1,0 +1,33 @@
+# 0025 — Subagents are tools that start a child run
+
+Date: 2026-11-04 · Status: accepted · Extends ADR 0017 and ADR 0023 · Resolves harness-orchestration ticket 07
+
+## Context
+
+Only code (a program, ADR 0017) could run several agents. Binding a frame to its data needs an open-ended search first: which of a tenant's Cast hooks gives what the design shows. That means listing hooks, reading their definitions (a few thousand tokens each) and running one. Done inside `bind` it fills `bind`'s context with hook prose it never needs again. The search is a separate job with a short answer, so it belongs in its own run with its own context.
+
+## Decision
+
+- **A spec lists the agents it may call** (`defineAgent({ agents: [castResearcher] })`, so `spec.agents: ["cast-researcher"]`). Each is a tool, `agent.<camelId>` (`agent.castResearcher`), whose input is that agent's input schema and whose description is the child's `spec.description`. The model never names an agent that isn't listed. `budget.maxDepth` must be 1 or more for a spec that lists agents.
+- **A call starts a child run**, in the parent's tool step, in the same process:
+  - its own transcript, checkpoint, save points and events, under the parent's tenant;
+  - the child gets only its typed input, never the parent's transcript;
+  - its run id is derived from the parent run id and the call id (a version-5 UUID layout), so a parent resumed mid-call starts the same child, which carries on from its save;
+  - the tool result is `{ runId, output }`; a child that fails is a tool error naming its run.
+- **A run that ended keeps its ending.** The checkpoint has an optional `ended` (`completed`, `rejected` or `failed`, with the output or reason). A run resumed after it ended returns that and does nothing else: no events, no model call, no `afterRun`. This is how a resumed parent gets its child's answer. A fork drops `ended`.
+- **Budget is shared.** The loop passes each tool step what the run has left (`usdLeft`). The child runs with the smaller of its own `usdPerRun` and that. A tool reports what it spent besides the run's own turns through `ctx.spend(usage)`. The loop adds it to the run's usage (tokens and dollars, not steps), puts it on `tool.completed` as `usage`, and ends the run with `budget` as soon as a call takes it over.
+- **Depth.** A run's context has `depth` (0 for a run a host started). A child runs one level below its caller, and is refused when that would be deeper than the calling agent's `maxDepth`.
+- **A child that writes is approved as one call** (amended 2026-11-04, for `cast-builder`). The parent's tool to it is a write, so the parent's call waits for a person like any write, in the worker too. That yes covers the child's own writes: its approver grants each, `by` "the call that started this run (<parent run> <call>)", so the record says whose yes it was. What the child may write is bounded by its own tools, in code (cast-builder writes only the one `dugout_` hook it creates). A child that only reads is called without approval, and its approver refuses any write that reaches it.
+- **A child that writes builds one thing per parent run, and may be tried again when a try fails** (amended 2026-11-04). A try that completed is final: its answer is kept, and a later call to the child is refused before anyone is asked, with that answer, so nothing is built twice. Found live: `bind` called the builder a second time with a better input, and two hooks were built. A try that failed is not kept: the next call starts a new child (its run id is the agent's id and which try it is, the first keeping the id it always had), after a person approves that call too. The approval shows which try it is and what the last one failed on (the call's input gets a `retry` note, which the child never sees). After `MAX_WRITING_ATTEMPTS` (3) failed tries the call is refused and the run says a person has to look, so unattended approval cannot loop. Which tries ended is read from the run store, so a restarted worker counts them right. A child that reads runs per call.
+- **The builder checks for what exists first.** It lists its hooks and finishes one that already fits, or a draft an earlier try left, instead of creating another; its finish check needs the hook run with its transform and published after the last change this run made to it, not a create (a create never overwrites, so a retry that wants a fresh hook takes a new id).
+- **The agent tool is `resumable`.** A crash mid-call is safe to run again even when the child writes: the child carries on from its save. A write tool without `resumable` (or `retries`) is still reported as an unknown outcome and not run again.
+- **A child runs on its own spec's model, unless the host named one.** `--model` (the run's `model`) applies to the whole tree: the run it started and every child below it (amended 2026-11-04: it was for the started run only, and a run meant to be on one model was half on another). Without it, each runs on its spec's model.
+- **In the worker** a child has a `runs` row of its own (`apps/worker/src/children.ts`): `parent_run_id`, and `parent_call_id` (migration 012), held by the parent's lease, saving through the parent's run store and writing to the same sinks under its own run id. `claim_runs` skips rows with a `parent_call_id`: a child is never claimed on its own, only started again by its resumed parent. A fork names its parent too, with `parent_version`, and is queued like any other run.
+
+## Consequences
+
+- `bind` hands "find the data" to `cast-researcher`. bind's context gets about a dozen lines (the hook, its input, covers, missing) instead of the hook definitions. The researcher's run is in `pnpm agent runs` and can be attached to by its id.
+- One model call can start a whole run. The shared budget and `maxDepth` cap that. The child's events go to its own stream: a host following the parent sees `agent.castResearcher` start and complete, with the child's run id and spend.
+- The tool's timeout (15 minutes) doesn't stop a child that is still running. The child is bounded by its own steps and budget.
+- `run.started` carries `parent: { runId, callId }` on a child, so traces and hosts can link the two.
+- A person approving a writing child approves its whole job at once, without seeing each write. That is the point (a build is a dozen writes), and it is safe only while the child's tools confine what it writes. A child whose writes need a person each would make the parent wait on the child's approval: not built.

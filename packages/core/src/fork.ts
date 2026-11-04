@@ -33,9 +33,11 @@ export function forkRun(
     messages.push({ role: "user", content: correctedInput(change.input) });
   }
   const usage = Object.fromEntries(Object.keys(checkpoint.usage).map((k) => [k, 0]));
+  // a fork of the last save point goes on from there; the parent's ending is not the fork's
+  const { ended: _, ...kept } = structuredClone(checkpoint);
   return {
     checkpoint: {
-      ...structuredClone(checkpoint),
+      ...kept,
       usage: usage as SavedRun["checkpoint"]["usage"],
       messages: messages.length,
       savedAfter: "fork",

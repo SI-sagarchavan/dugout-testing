@@ -170,6 +170,9 @@ export interface RunLocalOptions {
   input: unknown;
   /** Must already be verified by the caller (the CLI checks it against the tenant registry). */
   tenantId: string;
+  /** A child run's place: how far below the host's run, and the run and call that started it. */
+  depth?: number;
+  parent?: { runId: string; callId: string };
   tools: Tool[];
   client: ModelClient;
   models: ModelConfig;
@@ -218,6 +221,8 @@ export async function runLocal(opts: RunLocalOptions) {
     runId,
     tenantId: opts.tenantId,
     ...(opts.input !== undefined ? { input: opts.input } : {}),
+    ...(opts.depth ? { depth: opts.depth } : {}),
+    ...(opts.parent ? { parent: opts.parent } : {}),
   };
   const outputs = opts.outputs ?? createFileOutputStore(runsDir);
   const registry = createToolRegistry([...opts.tools, createReadOutputTool(outputs)]);
@@ -265,7 +270,8 @@ export async function runLocal(opts: RunLocalOptions) {
       : {}),
   });
   let afterRunError: string | undefined;
-  if (result.status !== "waiting") {
+  // a run resumed after it ended only answered with its ending: its afterRun has run already
+  if (result.status !== "waiting" && !saved?.checkpoint.ended) {
     try {
       await opts.afterRun?.({ ctx, result, events: recorded.events });
     } catch (err) {

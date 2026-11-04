@@ -1,6 +1,6 @@
 # 08 · Subagents that write: approval through the parent
 
-Status: wontfix
+Status: in part (2026-11-04), ADR 0025: a writing child is approved as one call, its writes bounded by its tools, once per parent run (`bind` → `cast-builder`). A child whose writes each wait for a person, with the parent waiting on it, is still open.
 
 Skipped by decision on 2026-11-02, with 07. Reopen when an agent needs to hand a part of its work to another.
 Type: design

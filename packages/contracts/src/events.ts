@@ -34,6 +34,8 @@ export const RunEvent = z.discriminatedUnion("type", [
       agentVersion: z.number(),
       tenantId: z.string(),
       input: z.unknown(),
+      // a child run: the run and call that started it (ADR 0025)
+      parent: z.object({ runId: z.string(), callId: z.string() }).optional(),
     }),
   ),
   // a later invocation picked the run up from its saved state
@@ -95,6 +97,8 @@ export const RunEvent = z.discriminatedUnion("type", [
       ok: z.boolean(),
       content: z.string(),
       durationMs: z.number(),
+      // what the call spent besides the run's own model turns: a child run's (ADR 0025)
+      usage: RunUsage.optional(),
     }),
   ),
   event(

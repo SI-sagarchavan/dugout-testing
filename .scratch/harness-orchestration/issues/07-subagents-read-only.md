@@ -1,8 +1,9 @@
 # 07 · Subagents: an agent calls another as a tool (read-only children)
 
-Status: wontfix
+Status: done (2026-11-04), ADR 0025
 
-Skipped by decision on 2026-11-02: no subagents in this round. Reopen when an agent needs to hand a part of its work to another.
+Reopened 2026-11-04 for `bind`: finding which Cast hook feeds a frame is the open-ended search this
+was for. Built as specified below; the one real use is `bind` → `cast-researcher`.
 Type: design + task
 Blocked by: none
 

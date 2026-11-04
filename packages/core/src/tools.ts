@@ -2,6 +2,7 @@ import type {
   AgentSpec,
   DenialStage,
   RunContext,
+  RunUsage,
   Tool,
   ToolCall,
   ToolContext,
@@ -135,20 +136,35 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
   const maxInline = opts.maxInlineChars ?? 16_000;
 
   return {
-    async execute({ call, input }, ctx) {
+    async execute({ call, input, usdLeft }, ctx) {
       const tool = opts.registry.get(call.name);
       if (!tool) return { ok: false, error: `unknown tool ${call.name}` };
+
+      // what the call spent besides the run's own turns (a child run), every attempt counted
+      let spent: RunUsage | undefined;
+      const spend = (usage: RunUsage) => {
+        spent = spent ? sumUsage(spent, usage) : { ...usage };
+      };
+      const forCall = {
+        callId: call.id,
+        ...(usdLeft !== undefined ? { usdLeft } : {}),
+        spend,
+      };
+      const withSpend = (outcome: ToolOutcome): ToolOutcome =>
+        spent ? { ...outcome, usage: spent } : outcome;
 
       let lastError = "";
       for (let attempt = 0; attempt <= (tool.retries ?? 0); attempt++) {
         try {
-          const output = await runWithTimeout(tool, input, ctx);
+          const output = await runWithTimeout(tool, input, ctx, forCall);
           const content = redactor.text(
             typeof output === "string" ? output : JSON.stringify(output ?? null),
           );
-          if (tool.alwaysInline || content.length <= maxInline) return { ok: true, content };
+          if (tool.alwaysInline || content.length <= maxInline) {
+            return withSpend({ ok: true, content });
+          }
           const ref = await opts.outputs.put(ctx.runId, content);
-          return {
+          return withSpend({
             ok: true,
             content: JSON.stringify({
               ref,
@@ -156,17 +172,35 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
               preview: content.slice(0, PREVIEW_CHARS),
               note: `Output truncated. Call ${READ_OUTPUT_TOOL} with this ref to read the rest.`,
             }),
-          };
+          });
         } catch (err) {
           lastError = redactor.text(err instanceof Error ? err.message : String(err));
         }
       }
-      return { ok: false, error: lastError };
+      return withSpend({ ok: false, error: lastError });
     },
   };
 }
 
-async function runWithTimeout(tool: Tool, input: unknown, ctx: RunContext): Promise<unknown> {
+function sumUsage(a: RunUsage, b: RunUsage): RunUsage {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    cacheWriteInputTokens: a.cacheWriteInputTokens + b.cacheWriteInputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    reasoningTokens: a.reasoningTokens + b.reasoningTokens,
+    costUsd: a.costUsd + b.costUsd,
+    budgetCostUsd: a.budgetCostUsd + b.budgetCostUsd,
+    steps: a.steps + b.steps,
+  };
+}
+
+async function runWithTimeout(
+  tool: Tool,
+  input: unknown,
+  ctx: RunContext,
+  call: Pick<ToolContext, "callId" | "usdLeft" | "spend">,
+): Promise<unknown> {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   const timedOut = new Promise<never>((_, reject) => {
@@ -177,11 +211,13 @@ async function runWithTimeout(tool: Tool, input: unknown, ctx: RunContext): Prom
     }, tool.timeoutMs);
   });
   try {
-    const toolCtx = {
+    const toolCtx: ToolContext = {
       tenantId: ctx.tenantId,
       runId: ctx.runId,
       signal: controller.signal,
       ...(ctx.input !== undefined ? { input: ctx.input } : {}),
+      depth: ctx.depth ?? 0,
+      ...call,
     };
     return await Promise.race([tool.run(input, toolCtx), timedOut]);
   } finally {

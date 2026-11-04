@@ -4,6 +4,7 @@ import { type Approver, RunInterrupted } from "@dugout/core";
 import { type Pool, withTenant } from "@dugout/db";
 import { z } from "zod";
 import type { AgentEntry, ResumeOptions } from "./agents.ts";
+import { createChildRuns } from "./children.ts";
 import { createPostgresEventSink, readStoredEvents, type ValkeyEventLog } from "./event-log.ts";
 import { appendEnding, cancelledEvent, lastSeq } from "./records.ts";
 import { createPostgresRunStore } from "./run-store.ts";
@@ -154,6 +155,8 @@ export function createWorker(opts: WorkerOptions) {
         runId,
         sinks: [opts.events.sink(), createPostgresEventSink(opts.pool, tenantId)],
         store: createPostgresRunStore(opts.pool, { owner: lease, leaseMs }),
+        // a child saves through the same store and sinks, to a row of its own under this lease
+        children: createChildRuns(opts.pool, opts.events, tenantId, lease),
         ...(model ? { model } : {}),
         ...(resume ? { resume } : {}),
       }))()

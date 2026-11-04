@@ -15,6 +15,7 @@ import { z } from "zod";
 import {
   type Approver,
   createMemoryOutputStore,
+  createMemoryRunStore,
   createMemorySink,
   createScriptedModel,
   type ModelConfig,
@@ -109,6 +110,34 @@ const wholeRead = defineTool({
   run: async () => `${"x".repeat(20_000)}END`,
 });
 
+/** Spends like a child run would, and keeps what it was told about the run's budget. */
+const spendCalls: Array<{
+  callId?: string | undefined;
+  usdLeft?: number | undefined;
+  depth?: number | undefined;
+}> = [];
+const spendRead = defineTool({
+  name: "spend.read",
+  description: "A read that spends, like a child run",
+  input: z.object({ usd: z.number() }),
+  effect: "read",
+  timeoutMs: 1_000,
+  async run({ usd }, ctx) {
+    spendCalls.push({ callId: ctx.callId, usdLeft: ctx.usdLeft, depth: ctx.depth });
+    ctx.spend?.({
+      inputTokens: 100,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      outputTokens: 10,
+      reasoningTokens: 0,
+      costUsd: usd,
+      budgetCostUsd: usd,
+      steps: 2,
+    });
+    return { ok: true };
+  },
+});
+
 const spec = (overrides: Partial<AgentSpec> = {}): AgentSpec => ({
   id: "test-agent",
   version: 1,
@@ -141,6 +170,7 @@ beforeEach(async () => {
   seen.length = 0;
   saved.length = 0;
   slowAttempts = 0;
+  spendCalls.length = 0;
 });
 
 async function run(
@@ -158,7 +188,7 @@ async function run(
     agent: opts.agent ?? { spec: spec(), output: Output },
     input: opts.input ?? "Write a preview",
     tenantId: "demo-cricket",
-    tools: [statsGet, draftSave, slowRead, bigRead, wholeRead, flakySave, maybeSave],
+    tools: [statsGet, draftSave, slowRead, bigRead, wholeRead, flakySave, maybeSave, spendRead],
     client: model,
     models: opts.models ?? scriptedModelConfig(),
     approver: opts.approver ?? approveAll,
@@ -971,12 +1001,71 @@ describe("runAgent", () => {
     ["memory without context", spec({ memory: { read: ["semantic"], write: [] } })],
     ["skills without context", spec({ skills: ["x"] })],
     ["skills to load without context", spec({ onDemandSkills: ["x"] })],
-    ["sub-agents", spec({ budget: { usdPerRun: 1, maxSteps: 3, maxDepth: 1 } })],
+    ["agents without depth", spec({ agents: ["helper"] })],
     ["unknown tool", spec({ tools: ["missing.tool"] })],
     ["reserved", spec({ tools: ["final"] })],
     ["approval", spec({ approvals: ["missing.tool"] })],
   ])("rejects an unsupported spec (%s) before the run starts", async (_, bad) => {
     await expect(run([final("ok")], { agent: { spec: bad } })).rejects.toBeInstanceOf(SpecError);
+  });
+});
+
+describe("what a tool call spends (ADR 0025)", () => {
+  const spends = spec({
+    tools: ["spend.read"],
+    budget: { usdPerRun: 0.01, maxSteps: 6, maxDepth: 0 },
+  });
+
+  it("tells the call what the run has left, and counts what it spent against the budget", async () => {
+    const { result, of } = await run([call("spend.read", { usd: 0.004 }), final("done")], {
+      agent: { spec: spends, output: Output },
+    });
+    expect(result.status).toBe("completed");
+    // one scripted turn ($0.0012) before the call; the call's id names a child run after it
+    expect(spendCalls).toEqual([{ callId: "call_1_0", usdLeft: 0.01 - 0.0012, depth: 0 }]);
+    // two turns of the run, and the call's spend; its turns are not the run's
+    expect(result.usage.costUsd).toBeCloseTo(2 * 0.0012 + 0.004, 6);
+    expect(result.usage.steps).toBe(2);
+    expect(result.usage.inputTokens).toBe(2 * 1_000 + 100);
+    expect(of("tool.completed")[0]?.data.usage?.costUsd).toBe(0.004);
+  });
+
+  it("ends the run over budget as soon as a call's spend takes it there", async () => {
+    const { result, model } = await run([call("spend.read", { usd: 0.02 }), final("done")], {
+      agent: { spec: spends, output: Output },
+    });
+    expect(result).toMatchObject({ status: "failed", reason: "budget" });
+    // no turn after the call that spent too much
+    expect(model.requests).toHaveLength(1);
+  });
+
+  it("answers with its ending, and does nothing else, when resumed after it ended", async () => {
+    const store = createMemoryRunStore();
+    const sink = createMemorySink();
+    const go = (script: ScriptStep[], resume?: { reason: "recovery" }) =>
+      runLocal({
+        agent: { spec: spec({ tools: ["stats.get"] }), output: Output },
+        input: "Write a preview",
+        tenantId: "demo-cricket",
+        tools: [statsGet],
+        client: createScriptedModel(script),
+        models: scriptedModelConfig(),
+        approver: approveAll,
+        runsDir,
+        sinks: [sink],
+        outputs: createMemoryOutputStore(),
+        runId: "ended-run",
+        store,
+        ...(resume ? { resume } : {}),
+      });
+    const first = await go([final("Lions have won 7")]);
+    expect(first).toMatchObject({ status: "completed", output: { summary: "Lions have won 7" } });
+    const emitted = sink.events.length;
+
+    const again = await go([], { reason: "recovery" });
+    expect(again).toMatchObject({ status: "completed", output: { summary: "Lions have won 7" } });
+    expect(again.usage).toEqual(first.usage);
+    expect(sink.events).toHaveLength(emitted);
   });
 });
 
