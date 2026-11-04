@@ -479,7 +479,8 @@ export function dryRun(
         if (choosy) {
           // a card's own clock is in scope in its `when`, as the renderer reads it
           const drew = children.filter((c) => {
-            const clock = c.props.clock && dsl.clockScope(c.props.clock, inner, now);
+            const clock =
+              c.props.clock === undefined ? undefined : dsl.clockScope(c.props.clock, inner, now);
             const at = clock?.values ? { ...inner, [clock.as]: clock.values } : inner;
             return dsl.evaluateWhen(c.props.when, at);
           }).length;

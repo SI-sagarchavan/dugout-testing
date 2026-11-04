@@ -11,7 +11,7 @@ These replace the matching recommendations below wherever they differ:
 - **Binding stays ours**: `{path | pipe:arg}`, closed and simple. The widget's `{{ }}` is not adopted.
 - **State is XState**: the workflow (statuses, transitions, triggers, actions) is generated as an XState machine from the DSL.
 - **Server state is TanStack Query**: Cast sources, polling, server prefetch and hydration to the client.
-- **No separate client runtime or island layer.** Interactive primitives are Next.js client components inside the server-rendered tree. Extracting the widget's engine (§2 point 5, §6 point 4) is dropped; we take its *vocabulary and semantics*, not its code.
+- **No separate client runtime or island layer.** Interactive primitives are Next.js client components inside the server-rendered tree. Extracting the widget's engine (§2 point 5, §6 point 4) is dropped; we take its _vocabulary and semantics_, not its code.
 
 See `from-widget-builder.md` for what else the Widget Builder has that we haven't planned.
 
@@ -21,20 +21,20 @@ The two systems are halves of the same thing. **`@sikit/widgets`** has the behav
 
 ## 1 · Where each side stands
 
-| | `@fanos/dsl` + `@fanos/renderer` | `@sikit/widgets` |
-| --- | --- | --- |
-| Primitives | 18 in the vocabulary, **9 rendered** (Box, Stack, Overlay, Text, Image, Icon, Divider, Button, Repeater). The others draw a placeholder | 76, all rendered, each with meta, examples and a contract test |
-| Layout precision | high: tokens, `place.anchor`/`offset`, `span`, `blend`, `column`, `size` with fill/hug, responsive `md`/`lg` on each prop | medium: flex props, raw CSS lengths, `responsive: { tablet, desktop }` prop overrides, `className` + `definition.css` |
-| Styling | token-strict: surfaces bundle layers, borders, radius and shadow; `deviations` record exceptions | theme tokens plus raw lengths, per-edge borders, `backgroundOverlay`, free CSS in the Shadow DOM |
-| State | none. `Tabs.bind` writes a key that nothing reads | `state`, `computed` (JSONata), `status` |
-| Events | `Button.action` (`navigate`, `open`, `submit`, `custom`) | `on: { click, change, submit, input, select }` → a workflow event; `bind` |
-| Data | the tree binds paths. The source lives in Studio's manifest. No fetching | `data.<source>` = a Cast hook + `inputMapping` (JSONata over props and state) + `sample`; `fetch` action; `initialData` from the server |
-| Live updates | none | `interval` trigger (≥ 5 s, paused off-screen and in hidden tabs) + `fetch { silent }` |
-| Motion | `reveal` adds a class with no CSS behind it | `motion { enter, duration, easing, delay, stagger, press }`, theme motion tokens, reduced motion respected, `Transition` |
-| Responsive | per prop: `{ base, md, lg }` | per node: `responsive` overrides, `hideOn`, `show`, measured on the container |
-| Runtime | React Server Components, no client | Preact client runtime in a Shadow DOM; server prefetch of first Cast calls (`initialFetches`, `widget-prefetch.ts`) |
-| Carousel | rich schema (`peek`, `snap`, responsive `slidesPerView`, `controlsPlacement`), not rendered | rendered: `effect` slide/fade/cards/coverflow, pagination, arrows, loop, autoplay, controlled `index`, `change`. **No swipe** (translate only, no pointer or scroll-snap handling), no pause on hover, no bleed |
-| Self-description | `emit/json-schema.ts`, `emit/docs.ts` | `describe()`, a manifest, generated docs, `llms.txt`, `PROP_DOCS` |
+|                  | `@fanos/dsl` + `@fanos/renderer`                                                                                                        | `@sikit/widgets`                                                                                                                                                                                                |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Primitives       | 18 in the vocabulary, **9 rendered** (Box, Stack, Overlay, Text, Image, Icon, Divider, Button, Repeater). The others draw a placeholder | 76, all rendered, each with meta, examples and a contract test                                                                                                                                                  |
+| Layout precision | high: tokens, `place.anchor`/`offset`, `span`, `blend`, `column`, `size` with fill/hug, responsive `md`/`lg` on each prop               | medium: flex props, raw CSS lengths, `responsive: { tablet, desktop }` prop overrides, `className` + `definition.css`                                                                                           |
+| Styling          | token-strict: surfaces bundle layers, borders, radius and shadow; `deviations` record exceptions                                        | theme tokens plus raw lengths, per-edge borders, `backgroundOverlay`, free CSS in the Shadow DOM                                                                                                                |
+| State            | none. `Tabs.bind` writes a key that nothing reads                                                                                       | `state`, `computed` (JSONata), `status`                                                                                                                                                                         |
+| Events           | `Button.action` (`navigate`, `open`, `submit`, `custom`)                                                                                | `on: { click, change, submit, input, select }` → a workflow event; `bind`                                                                                                                                       |
+| Data             | the tree binds paths. The source lives in Studio's manifest. No fetching                                                                | `data.<source>` = a Cast hook + `inputMapping` (JSONata over props and state) + `sample`; `fetch` action; `initialData` from the server                                                                         |
+| Live updates     | none                                                                                                                                    | `interval` trigger (≥ 5 s, paused off-screen and in hidden tabs) + `fetch { silent }`                                                                                                                           |
+| Motion           | `reveal` adds a class with no CSS behind it                                                                                             | `motion { enter, duration, easing, delay, stagger, press }`, theme motion tokens, reduced motion respected, `Transition`                                                                                        |
+| Responsive       | per prop: `{ base, md, lg }`                                                                                                            | per node: `responsive` overrides, `hideOn`, `show`, measured on the container                                                                                                                                   |
+| Runtime          | React Server Components, no client                                                                                                      | Preact client runtime in a Shadow DOM; server prefetch of first Cast calls (`initialFetches`, `widget-prefetch.ts`)                                                                                             |
+| Carousel         | rich schema (`peek`, `snap`, responsive `slidesPerView`, `controlsPlacement`), not rendered                                             | rendered: `effect` slide/fade/cards/coverflow, pagination, arrows, loop, autoplay, controlled `index`, `change`. **No swipe** (translate only, no pointer or scroll-snap handling), no pause on hover, no bleed |
+| Self-description | `emit/json-schema.ts`, `emit/docs.ts`                                                                                                   | `describe()`, a manifest, generated docs, `llms.txt`, `PROP_DOCS`                                                                                                                                               |
 
 The production page renderer on the same branch already places a widget on a page as a template (`content_type: "widget"`, `PageWidget { definition, render: "server" | "client", props }`) and prefetches its Cast data on the server. Pages are already a list of templates, and a widget is one kind of template. That is the slot a Figma-built section fits into.
 
@@ -53,10 +53,10 @@ interface FlatTree {
   schemaVersion: string;
   nodes: FlatNode[];
   // new; same shapes as WidgetDefinition
-  props?: EmbedProp[];                       // page and placement params: teamId, seriesId …
-  state?: Record<string, unknown>;           // initial values: tab, filter, slide, form …
-  computed?: Record<string, Jsonata>;        // derived, pure, in declaration order
-  data?: Record<string, CastBinding>;        // { hookId, hookUuid, inputMapping, sample, sampledAt }
+  props?: EmbedProp[]; // page and placement params: teamId, seriesId …
+  state?: Record<string, unknown>; // initial values: tab, filter, slide, form …
+  computed?: Record<string, Jsonata>; // derived, pure, in declaration order
+  data?: Record<string, CastBinding>; // { hookId, hookUuid, inputMapping, sample, sampledAt }
   workflow?: { initial: string; statuses: Status[]; transitions: Transition[] };
   analytics?: AnalyticsConfig;
 }
@@ -69,18 +69,18 @@ interface FlatTree {
 
 ## 4 · Node-level additions (universal props)
 
-| Prop | Shape | Why | From |
-| --- | --- | --- | --- |
-| `on` | `{ click?, change?, submit?, input?, select? }` → event name | every interaction goes through the workflow | widgets |
-| `bind` | state path | two-way for Tabs, Select, inputs, Carousel index | widgets |
-| `visibleIn` | status[] | loading, ready, error and empty views without `when` chains | widgets |
-| `when` | **extend**: may read `state.*`, `computed.*`, `status` | tab panels, filters | ours, extended |
-| `hideOn` | `("base" \| "md" \| "lg")[]` | a column hidden on phones. Today only `platform` exists | widgets (our breakpoint names) |
-| `motion` | `{ enter, duration, easing, delay, stagger, press, hover }` with theme tokens | replaces `reveal` (kept as an alias that maps `fade-up` → `enter: slide-up`). `hover` is new: card lift and image zoom are on every club site | widgets + `hover` |
-| `action` (on containers) | the existing `action` union | **the whole card is a link**. Their page check lists "click on a tile" as a gap, and today we can only put an action on a Button | new |
-| `pin` | `{ mode: sticky \| fixed, edge: top \| bottom, offset, scope: page \| section, onScroll: none \| hide-down-show-up \| compact }` | sticky headers and subnavs, floating CTAs; neither system has it (the widget only has a sticky table header) | new (`spec.md` §5) |
-| `slot` | `trigger \| panel \| header \| footer \| media \| empty \| loading` | a child declares its role in an Accordion, Menu, Dialog or Carousel; checked against the parent type, like `place.anchor` | new |
-| `variants` | `{ hover?, active?, selected?, compact? }` → a partial prop override | the selected tab, the active slide, a compact header after scrolling, hover states from Figma interactive components | new |
+| Prop                     | Shape                                                                                                                            | Why                                                                                                                                           | From                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `on`                     | `{ click?, change?, submit?, input?, select? }` → event name                                                                     | every interaction goes through the workflow                                                                                                   | widgets                        |
+| `bind`                   | state path                                                                                                                       | two-way for Tabs, Select, inputs, Carousel index                                                                                              | widgets                        |
+| `visibleIn`              | status[]                                                                                                                         | loading, ready, error and empty views without `when` chains                                                                                   | widgets                        |
+| `when`                   | **extend**: may read `state.*`, `computed.*`, `status`                                                                           | tab panels, filters                                                                                                                           | ours, extended                 |
+| `hideOn`                 | `("base" \| "md" \| "lg")[]`                                                                                                     | a column hidden on phones. Today only `platform` exists                                                                                       | widgets (our breakpoint names) |
+| `motion`                 | `{ enter, duration, easing, delay, stagger, press, hover }` with theme tokens                                                    | replaces `reveal` (kept as an alias that maps `fade-up` → `enter: slide-up`). `hover` is new: card lift and image zoom are on every club site | widgets + `hover`              |
+| `action` (on containers) | the existing `action` union                                                                                                      | **the whole card is a link**. Their page check lists "click on a tile" as a gap, and today we can only put an action on a Button              | new                            |
+| `pin`                    | `{ mode: sticky \| fixed, edge: top \| bottom, offset, scope: page \| section, onScroll: none \| hide-down-show-up \| compact }` | sticky headers and subnavs, floating CTAs; neither system has it (the widget only has a sticky table header)                                  | new (`spec.md` §5)             |
+| `slot`                   | `trigger \| panel \| header \| footer \| media \| empty \| loading`                                                              | a child declares its role in an Accordion, Menu, Dialog or Carousel; checked against the parent type, like `place.anchor`                     | new                            |
+| `variants`               | `{ hover?, active?, selected?, compact? }` → a partial prop override                                                             | the selected tab, the active slide, a compact header after scrolling, hover states from Figma interactive components                          | new                            |
 
 `className` and free CSS are **not** adopted. Our path for "props cannot say it" stays a `deviations` entry plus a `vocabularyGap` report, so the vocabulary grows instead of leaking.
 
@@ -90,16 +90,16 @@ Legend: **keep** = exists, render it as it is · **extend** = exists, needs prop
 
 ### Layout
 
-| Primitive | Status | What to do |
-| --- | --- | --- |
-| Box, Stack, Overlay | keep | already rendered |
-| Grid | keep → render | the vocabulary is complete; add `autoFlow: row \| dense` only if a design needs it |
-| Section | extend → render | add `pin`; `backdrop` already exists. Sections carry `data`/`workflow` scope boundaries for islands |
-| Repeater | extend → render | adopt `key` (stable identity for animation and polling diffs), `stagger`, and an `empty` slot child. Implement `paginate` (`more`, `pages`) as `fetch` with a page param |
-| **ScrollRow** | add | a horizontal scroll strip with snap and no paging (the widget's `ScrollArea`). Different from a Carousel: no controls, free scroll. Many Figma "rails" are this |
-| Carousel | extend → render | see below |
-| Custom | keep | stays for opaque renderers |
-| **Widget** | add | `{ id, version, props, render: server \| client }`, placing a Builder widget in the page |
+| Primitive           | Status          | What to do                                                                                                                                                               |
+| ------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Box, Stack, Overlay | keep            | already rendered                                                                                                                                                         |
+| Grid                | keep → render   | the vocabulary is complete; add `autoFlow: row \| dense` only if a design needs it                                                                                       |
+| Section             | extend → render | add `pin`; `backdrop` already exists. Sections carry `data`/`workflow` scope boundaries for islands                                                                      |
+| Repeater            | extend → render | adopt `key` (stable identity for animation and polling diffs), `stagger`, and an `empty` slot child. Implement `paginate` (`more`, `pages`) as `fetch` with a page param |
+| **ScrollRow**       | add             | a horizontal scroll strip with snap and no paging (the widget's `ScrollArea`). Different from a Carousel: no controls, free scroll. Many Figma "rails" are this          |
+| Carousel            | extend → render | see below                                                                                                                                                                |
+| Custom              | keep            | stays for opaque renderers                                                                                                                                               |
+| **Widget**          | add             | `{ id, version, props, render: server \| client }`, placing a Builder widget in the page                                                                                 |
 
 **Carousel**, the merged schema (ours + the widget's + both systems' gaps):
 
@@ -128,53 +128,53 @@ The renderer builds it on CSS scroll-snap, which gives native touch swipe, momen
 
 ### Navigation and disclosure
 
-| Primitive | Status | What to do |
-| --- | --- | --- |
-| Tabs | extend | `options` per item gain `icon` and `count`; `variant` gains `chips` (this also covers the widget's `FilterChips` and `ToggleGroup`, one node in the spirit of `Tag`); add `multiple` (chips only), `scroll`, `block`, `align`; `bind` + `on.change`. Panels stay elsewhere and use `when: { path: "state.tab", eq }` |
-| **Select** (dropdown) | add | `options` (literal or binding), `bind`, `placeholder`, `label`, `variant: field \| inline \| pill`, `size`, `on.change`. A native `<select>` on mobile and a listbox on desktop. Season and competition pickers, "sort by" |
-| **Menu** | add | a structural dropdown for navigation and overflow menus: children `slot: trigger` + `slot: panel`; `openOn: click \| hover`, `placement`, `bind` (open state). Header nav mega menus |
-| **Accordion** | add | structural: one item with `slot: trigger` (or a `title`) + panel; `defaultOpen`, `bind`, `group` (only one open at a time across siblings). FAQ, squad by position, ticket info |
-| **Dialog** | add | `mode: modal \| drawer`, `side` (drawer), `bind` (open), `dismissible`. Covers the widget's Dialog and Drawer as one node: mobile nav, video lightbox, filters on mobile |
-| **Pagination** | add | `bind` page, `pages` binding, `variant: numbers \| compact \| more` (`more` is a "Load more" button that fetches the next page and appends) |
-| Link | keep → render | add `on.click` for tracking |
+| Primitive             | Status        | What to do                                                                                                                                                                                                                                                                                                           |
+| --------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tabs                  | extend        | `options` per item gain `icon` and `count`; `variant` gains `chips` (this also covers the widget's `FilterChips` and `ToggleGroup`, one node in the spirit of `Tag`); add `multiple` (chips only), `scroll`, `block`, `align`; `bind` + `on.change`. Panels stay elsewhere and use `when: { path: "state.tab", eq }` |
+| **Select** (dropdown) | add           | `options` (literal or binding), `bind`, `placeholder`, `label`, `variant: field \| inline \| pill`, `size`, `on.change`. A native `<select>` on mobile and a listbox on desktop. Season and competition pickers, "sort by"                                                                                           |
+| **Menu**              | add           | a structural dropdown for navigation and overflow menus: children `slot: trigger` + `slot: panel`; `openOn: click \| hover`, `placement`, `bind` (open state). Header nav mega menus                                                                                                                                 |
+| **Accordion**         | add           | structural: one item with `slot: trigger` (or a `title`) + panel; `defaultOpen`, `bind`, `group` (only one open at a time across siblings). FAQ, squad by position, ticket info                                                                                                                                      |
+| **Dialog**            | add           | `mode: modal \| drawer`, `side` (drawer), `bind` (open), `dismissible`. Covers the widget's Dialog and Drawer as one node: mobile nav, video lightbox, filters on mobile                                                                                                                                             |
+| **Pagination**        | add           | `bind` page, `pages` binding, `variant: numbers \| compact \| more` (`more` is a "Load more" button that fetches the next page and appends)                                                                                                                                                                          |
+| Link                  | keep → render | add `on.click` for tracking                                                                                                                                                                                                                                                                                          |
 
 ### Content and media
 
-| Primitive | Status | What to do |
-| --- | --- | --- |
-| Text | keep | `orientation` already covers rotated text (a gap in the widget list) |
-| RichText | keep → render | `prose` style |
-| Image | extend | add `lightbox` (opens a Dialog), `loading: lazy \| eager` (we have `priority`) |
-| Icon, Divider | keep | |
-| Tag | keep → render | `LiveIndicator` = Tag + `motion: { enter: "pulse" }` (a new preset) |
-| Button | extend | `selected` (bound), `on`. `variant`/`styleN` stay token-bound (the widget's "custom button colours" gap is a surface token here) |
-| **Video** | add | `src` (mp4 or HLS), `poster`, `autoplay` (muted only), `loop`, `controls`, `on.change` for play, pause and progress (analytics). A P1 gap in both systems |
-| **Embed** | add | YouTube, X, Instagram or a ticketing iframe from an allow-list of providers by `provider` + `id`, never a free URL; `ratio`. Needs a policy decision, as the widget docs note |
-| **AdSlot** | add | the widget's AdSlot: `slotId`, `size`, viewability event. Sponsors and ads are on every club page |
-| Countdown | extend → render | ticks on the client; `on.change` at zero so the workflow can switch status ("sales open"). Fills the widget's missing "at time X" trigger |
+| Primitive     | Status          | What to do                                                                                                                                                                    |
+| ------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Text          | keep            | `orientation` already covers rotated text (a gap in the widget list)                                                                                                          |
+| RichText      | keep → render   | `prose` style                                                                                                                                                                 |
+| Image         | extend          | add `lightbox` (opens a Dialog), `loading: lazy \| eager` (we have `priority`)                                                                                                |
+| Icon, Divider | keep            |                                                                                                                                                                               |
+| Tag           | keep → render   | `LiveIndicator` = Tag + `motion: { enter: "pulse" }` (a new preset)                                                                                                           |
+| Button        | extend          | `selected` (bound), `on`. `variant`/`styleN` stay token-bound (the widget's "custom button colours" gap is a surface token here)                                              |
+| **Video**     | add             | `src` (mp4 or HLS), `poster`, `autoplay` (muted only), `loop`, `controls`, `on.change` for play, pause and progress (analytics). A P1 gap in both systems                     |
+| **Embed**     | add             | YouTube, X, Instagram or a ticketing iframe from an allow-list of providers by `provider` + `id`, never a free URL; `ratio`. Needs a policy decision, as the widget docs note |
+| **AdSlot**    | add             | the widget's AdSlot: `slotId`, `size`, viewability event. Sponsors and ads are on every club page                                                                             |
+| Countdown     | extend → render | ticks on the client; `on.change` at zero so the workflow can switch status ("sales open"). Fills the widget's missing "at time X" trigger                                     |
 
 ### Data display
 
-| Primitive | Status | What to do |
-| --- | --- | --- |
-| **Table** | add | standings are on every sports site and we have nothing that draws one correctly. Structural: `Table { columns: [{ key, width, align, sticky, hideOn }], stickyHeader, scroll: x, striped, dense }` > `TableRow { header?, highlight? }` (inside a Repeater) > `TableCell { span }`. Structural rather than a `DataTable` with column JSON, so a Figma-drawn table compiles cell by cell and conformance still works. Sorting is `on.click` on a header cell → `set state.sort` → `computed` sorts |
-| **Progress** | add | a bar or ring with a bound `value`/`max`: possession, poll results, budget. Hard to compose from boxes because the width is data |
-| Chart | defer | embed through `Widget` for now (LineChart, Chart, StatCompare live there) |
+| Primitive    | Status | What to do                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Table**    | add    | standings are on every sports site and we have nothing that draws one correctly. Structural: `Table { columns: [{ key, width, align, sticky, hideOn }], stickyHeader, scroll: x, striped, dense }` > `TableRow { header?, highlight? }` (inside a Repeater) > `TableCell { span }`. Structural rather than a `DataTable` with column JSON, so a Figma-drawn table compiles cell by cell and conformance still works. Sorting is `on.click` on a header cell → `set state.sort` → `computed` sorts |
+| **Progress** | add    | a bar or ring with a bound `value`/`max`: possession, poll results, budget. Hard to compose from boxes because the width is data                                                                                                                                                                                                                                                                                                                                                                  |
+| Chart        | defer  | embed through `Widget` for now (LineChart, Chart, StatCompare live there)                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### Input and forms
 
-| Primitive | Status | What to do |
-| --- | --- | --- |
-| **Input**, **Checkbox**, **Switch**, **Form** | add | newsletter sign-up, contact forms and fan preferences. Same props as the widget (`bind`, `label`, `placeholder`, `error`, `required`), plus `Input` with an `action` slot (a button inside the field, a gap in the widget list) and `Checkbox` with a RichText label (a link in the consent text, also a gap). Submitting goes through the workflow (`validate`, then `sdk.call` or a Cast write hook) |
-| Everything else (Slider, DatePicker, OTP, Chat, Rating) | defer | through `Widget` |
+| Primitive                                               | Status | What to do                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Input**, **Checkbox**, **Switch**, **Form**           | add    | newsletter sign-up, contact forms and fan preferences. Same props as the widget (`bind`, `label`, `placeholder`, `error`, `required`), plus `Input` with an `action` slot (a button inside the field, a gap in the widget list) and `Checkbox` with a RichText label (a link in the consent text, also a gap). Submitting goes through the workflow (`validate`, then `sdk.call` or a Cast write hook) |
+| Everything else (Slider, DatePicker, OTP, Chat, Rating) | defer  | through `Widget`                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ### Feedback and states
 
-| Primitive | Status | What to do |
-| --- | --- | --- |
-| **Skeleton** | add | `lines`, or `shape: box \| text \| circle` with size. The renderer can also **derive** a skeleton from a Repeater template (the same boxes, filled with a shimmer), so most data sections need no hand-built loading state |
-| **Empty / error** | through slots | `Repeater`'s `slot: empty` child, and Section `visibleIn: ["error"]` children. No new node type |
-| Spinner, Alert, Tooltip, Toast | defer | Toast is on the widget's P1 list; add when a page needs it |
+| Primitive                      | Status        | What to do                                                                                                                                                                                                                 |
+| ------------------------------ | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Skeleton**                   | add           | `lines`, or `shape: box \| text \| circle` with size. The renderer can also **derive** a skeleton from a Repeater template (the same boxes, filled with a shimmer), so most data sections need no hand-built loading state |
+| **Empty / error**              | through slots | `Repeater`'s `slot: empty` child, and Section `visibleIn: ["error"]` children. No new node type                                                                                                                            |
+| Spinner, Alert, Tooltip, Toast | defer         | Toast is on the widget's P1 list; add when a page needs it                                                                                                                                                                 |
 
 **Totals:** 18 → 32 node types: add ScrollRow, Widget, Select, Menu, Accordion, Dialog, Pagination, Video, Embed, AdSlot, Table, TableRow, TableCell, Progress, Input, Checkbox, Switch, Form, Skeleton (19), and fold Tabs/Chips/ToggleGroup into one. Fewer than the widget's 76 on purpose: sports-specific and chart primitives come through `Widget`, and the Figma design composes the rest from layout primitives.
 
@@ -202,10 +202,10 @@ The renderer builds it on CSS scroll-snap, which gives native touch swipe, momen
 
 ## 8 · Order of work
 
-1. **Registry and renderer catch-up (no new vocabulary).** A primitive registry with meta. Render Grid, Section, Carousel (scroll-snap, static), Tabs (static first tab), Countdown (static), Link, Tag and RichText on the server, plus the CSS for `reveal`. Contract tests. *Done when* no placeholder renders for any current node type.
-2. **The page runtime.** Extract the widget core (store, workflow, JSONata, cast-client) into a shared package. Add the `state`/`computed`/`data`/`workflow`/`props` envelope, `on`, `bind`, `visibleIn`, extended `when`, and the island boundary. Hydrate Carousel, Tabs and Countdown. *Done when* a section with tabs filters a Cast list and polls every 15 s while live, and the server render is unchanged.
-3. **Interactive primitives.** Select, Menu, Accordion, Dialog, Pagination, ScrollRow, Table, Progress, Skeleton. *Done when* each has meta, a contract test and a behaviour scenario.
-4. **Universal behaviour.** `motion` (replacing `reveal`), `hover` variants, `action` on containers, `pin`, `hideOn`, `slot`, `variants`. *Done when* sticky headers and subnavs stack, cards are clickable, and reduced motion turns everything off.
+1. **Registry and renderer catch-up (no new vocabulary).** A primitive registry with meta. Render Grid, Section, Carousel (scroll-snap, static), Tabs (static first tab), Countdown (static), Link, Tag and RichText on the server, plus the CSS for `reveal`. Contract tests. _Done when_ no placeholder renders for any current node type.
+2. **The page runtime.** Extract the widget core (store, workflow, JSONata, cast-client) into a shared package. Add the `state`/`computed`/`data`/`workflow`/`props` envelope, `on`, `bind`, `visibleIn`, extended `when`, and the island boundary. Hydrate Carousel, Tabs and Countdown. _Done when_ a section with tabs filters a Cast list and polls every 15 s while live, and the server render is unchanged.
+3. **Interactive primitives.** Select, Menu, Accordion, Dialog, Pagination, ScrollRow, Table, Progress, Skeleton. _Done when_ each has meta, a contract test and a behaviour scenario.
+4. **Universal behaviour.** `motion` (replacing `reveal`), `hover` variants, `action` on containers, `pin`, `hideOn`, `slot`, `variants`. _Done when_ sticky headers and subnavs stack, cards are clickable, and reduced motion turns everything off.
 5. **Media and forms.** Video, Embed (once there is a policy), AdSlot, Input, Checkbox, Switch, Form.
 6. **The `Widget` node**, rendered through the page renderer's widget template path.
 
