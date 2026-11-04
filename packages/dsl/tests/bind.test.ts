@@ -175,3 +175,136 @@ describe("drift — what a plan cannot land, it reports", () => {
     expect(JSON.stringify(result.tree)).toBe(JSON.stringify(tree));
   });
 });
+
+/**
+ * One component drawn in two variants, the way a fixtures strip is: a slide per day, a block per
+ * match, and the match drawn RESULT in one card and UPCOMING in another. Sizes differ between
+ * instances (text widths), so no exact signature groups them.
+ */
+describe("applyBindingPlan — variants of one component", () => {
+  const n = (id: string, parent: string | null, idx: number, type: string, props: Record<string, unknown> = {}): FlatNode => ({
+    id,
+    src: `s:${id}`,
+    parent,
+    idx,
+    type,
+    props,
+  });
+  const strip = () =>
+    tinyTree([
+      n("page", null, 0, "Stack", { direction: "row" }),
+      // day 1: two result blocks
+      n("day1", "page", 0, "Stack", { size: { w: { raw: 280, _unbound: true } } }),
+      n("date1", "day1", 0, "Text", { content: "21 JULY", style: "type.body" }),
+      n("r1", "day1", 1, "Stack", {}),
+      n("r1_crest", "r1", 0, "Icon", { name: "team", size: { raw: 52, _unbound: true } }),
+      n("r1_runs", "r1", 1, "Text", { content: "166/5", style: "type.body" }),
+      n("r2", "day1", 2, "Stack", { size: { w: { raw: 33, _unbound: true } } }),
+      n("r2_crest", "r2", 0, "Icon", { name: "team" }),
+      n("r2_runs", "r2", 1, "Text", { content: "172/3", style: "type.body" }),
+      // day 2: an upcoming block, drawn wider
+      n("day2", "page", 1, "Stack", {}),
+      n("date2", "day2", 0, "Text", { content: "22 JULY", style: "type.body" }),
+      n("u1", "day2", 1, "Stack", {}),
+      n("u1_venue", "u1", 0, "Text", { content: "Utilita Bowl", style: "type.body" }),
+    ]);
+  const plan: BindingPlan = {
+    collapse: [
+      {
+        over: "day.matches",
+        as: "match",
+        members: ["s:r1", "s:r2"],
+        shape: "varies",
+        when: { path: "match.state", ne: "upcoming" },
+        fields: [
+          { src: "s:r1_crest", prop: "src", path: "teams.0.logo" },
+          { src: "s:r1_crest", prop: "alt", path: "teams.0.name" },
+          { src: "s:r1_runs", prop: "content", template: "{match.teams.0.score} ({match.teams.0.progress})" },
+        ],
+        variants: [
+          {
+            src: "s:u1",
+            when: { path: "match.state", eq: "upcoming" },
+            fields: [{ src: "s:u1_venue", prop: "content", path: "venue" }],
+          },
+        ],
+      },
+      {
+        over: "fixtures.items",
+        as: "day",
+        members: ["s:day1", "s:day2"],
+        shape: "varies",
+        fields: [{ src: "s:date1", prop: "content", path: 'date | date:"DD MMMM"' }],
+      },
+    ],
+  };
+
+  it("folds the days and the matches, with every shape of a match in one template", () => {
+    const { tree, drift, collapsed } = applyBindingPlan(strip(), plan);
+    expect(drift).toEqual([]);
+    expect(collapsed).toBe(2);
+    const byId = new Map(tree.nodes.map((node) => [node.id, node]));
+    const kids = (id: string) => tree.nodes.filter((node) => node.parent === id).sort((a, b) => a.idx - b.idx);
+
+    expect(byId.get("day1__repeat")?.props).toMatchObject({ over: "fixtures.items", as: "day" });
+    expect(byId.has("day2")).toBe(false);
+    expect(byId.get("date1")?.props.content).toBe('{day.date | date:"DD MMMM"}');
+
+    // the match template and the upcoming variant, side by side under one Repeater
+    expect(kids("r1__repeat").map((node) => node.id)).toEqual(["r1", "u1"]);
+    expect(byId.get("r1")?.props.when).toEqual({ path: "match.state", ne: "upcoming" });
+    expect(byId.get("u1")?.props.when).toEqual({ path: "match.state", eq: "upcoming" });
+    expect(byId.get("u1_venue")?.props.content).toBe("{match.venue}");
+    expect(byId.get("r1_runs")?.props.content).toBe("{match.teams.0.score} ({match.teams.0.progress})");
+  });
+
+  it("makes a glyph that is bound to a picture an Image in the glyph's box", () => {
+    const { tree } = applyBindingPlan(strip(), plan);
+    const crest = tree.nodes.find((node) => node.id === "r1_crest");
+    expect(crest?.type).toBe("Image");
+    expect(crest?.props).toMatchObject({
+      src: "{match.teams.0.logo}",
+      alt: "{match.teams.0.name}",
+      fit: "contain",
+      size: { w: { raw: 52, _unbound: true }, h: { raw: 52, _unbound: true } },
+    });
+    expect(crest?.props.name).toBeUndefined();
+  });
+
+  it("still refuses members that differ, unless the plan says their shapes vary", () => {
+    const strict = { collapse: [{ ...plan.collapse![1]!, shape: undefined }] } as BindingPlan;
+    const { drift, collapsed } = applyBindingPlan(strip(), strict);
+    expect(collapsed).toBe(0);
+    expect(drift[0]?.reason).toBe("not-a-run");
+  });
+
+  it("keeps a member named as a variant: a whole card drawn in another state", () => {
+    const whole: BindingPlan = {
+      collapse: [
+        {
+          over: "fixtures.items",
+          as: "day",
+          members: ["s:day1", "s:day2"],
+          shape: "varies",
+          when: { path: "day.state", ne: "upcoming" },
+          variants: [{ src: "s:day2", when: { path: "day.state", eq: "upcoming" } }],
+        },
+      ],
+    };
+    const { tree, drift } = applyBindingPlan(strip(), whole);
+    expect(drift).toEqual([]);
+    const under = tree.nodes.filter((node) => node.parent === "day1__repeat").sort((a, b) => a.idx - b.idx);
+    expect(under.map((node) => node.id)).toEqual(["day1", "day2"]);
+    expect(under[1]?.props.when).toEqual({ path: "day.state", eq: "upcoming" });
+    expect(tree.nodes.filter((node) => node.parent === "page").map((node) => node.id)).toEqual(["day1__repeat"]);
+  });
+
+  it("reports a variant that is not in the tree, and draws the rest", () => {
+    const lost: BindingPlan = {
+      collapse: [{ ...plan.collapse![0]!, variants: [{ src: "s:gone", when: { path: "match.state", eq: "x" } }] }],
+    };
+    const { drift, collapsed } = applyBindingPlan(strip(), lost);
+    expect(collapsed).toBe(1);
+    expect(drift.map((d) => d.src)).toEqual(["s:gone"]);
+  });
+});

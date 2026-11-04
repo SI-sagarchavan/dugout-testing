@@ -2,6 +2,7 @@
 // or left by a worker that died), runs them, and writes their events to Valkey and Postgres. It has
 // no port. AGENTS=sitemap,... limits it to some agents, so an agent can have workers of its own.
 
+import { agent as bind } from "@dugout/agent-bind";
 import { agent as cardMatch } from "@dugout/agent-card-match";
 import { agent as sitemap } from "@dugout/agent-sitemap";
 import { liveDeps } from "@dugout/sdk";
@@ -9,7 +10,7 @@ import { Valkey } from "iovalkey";
 import { createValkeyEventLog, createWorker, hostAgents, LOCAL_VALKEY_URL } from "../src/index.ts";
 
 // every agent a worker can run, by id
-const all = [sitemap, cardMatch];
+const all = [sitemap, cardMatch, bind];
 const only = process.env.AGENTS?.split(",").map((id) => id.trim());
 const unknown = only?.filter((id) => !all.some((a) => a.spec.id === id)) ?? [];
 if (unknown.length) {

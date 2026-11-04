@@ -4,6 +4,8 @@ import { interpolate, formatUnresolvedWarnings } from "../resolve/data.js";
 import { resolveNode } from "../resolve/style.js";
 import type { NodeRenderContext } from "../context.js";
 import { styleToReact } from "./dom.js";
+import { clockParts } from "../resolve/clock.js";
+import { ClockText } from "@fanos/renderer/client";
 
 const AS_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6", "p", "span"]);
 
@@ -15,7 +17,19 @@ export function Text({ node, ctx }: { node: Node; ctx: NodeRenderContext }) {
   const resolved = resolveNode(props, { flexChild: ctx.flexChild, parentDirection: ctx.flexRow ? "row" : "column", alignIsTextAlign: true });
 
   const contentRaw = typeof props.content === "string" ? props.content : "";
-  const { value, unresolved } = interpolate(contentRaw, ctx.data, { timeZone: ctx.timeZone });
+  const { value: drawnNow, unresolved } = interpolate(contentRaw, ctx.data, { timeZone: ctx.timeZone });
+  // Characters that read a clock tick in the browser; the server draws them as they read now.
+  const ticking = clockParts(contentRaw, ctx);
+  const value = ticking ? (
+    <ClockText
+      parts={ticking.parts}
+      clocks={ticking.clocks}
+      now={ctx.now ?? Date.now()}
+      {...(ctx.timeZone ? { timeZone: ctx.timeZone } : {})}
+    />
+  ) : (
+    drawnNow
+  );
   if (unresolved.length) {
     for (const w of formatUnresolvedWarnings(node.id, "content", unresolved)) {
       console.warn(w);
@@ -64,6 +78,20 @@ export function Text({ node, ctx }: { node: Node; ctx: NodeRenderContext }) {
   // Capital W: React maps `WebkitLineClamp` to `-webkit-line-clamp`;
   // a lowercase key emits the invalid `webkit-line-clamp`.
   if (truncate !== undefined) style.WebkitLineClamp = String(truncate);
+  /**
+   * Figma draws every clamped line, even past a box too short for them: the fixtures card's result
+   * line is a 30px box holding two 18px lines, the second hanging into the padding below. So the
+   * text is drawn as tall as its lines, and the footprint stays the declared box (the stylesheet
+   * takes the difference back off the bottom margin), so nothing around it moves. Cut to the box,
+   * the second line showed only its top half.
+   */
+  if (truncate !== undefined && hasFixedHeight(props.size) && style.height !== undefined) {
+    const declared = String(style.height);
+    const drawn = `max(${declared}, calc(${truncate} * 1lh))`;
+    (style as Record<string, unknown>)["--fos-text-h"] = declared;
+    (style as Record<string, unknown>)["--fos-text-drawn"] = drawn;
+    style.height = "var(--fos-text-drawn)";
+  }
 
   const as = typeof props.as === "string" && AS_TAGS.has(props.as) ? props.as : "span";
   const Tag = as as "span";

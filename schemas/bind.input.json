@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "preview": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/",
+      "description": "The preview link card-match published: /preview/<project>/<tree>?theme=…&surfaces=…"
+    },
+    "data": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$",
+      "description": "The sample data: a sample_data artifact id, or the name of a dataset the API serves"
+    }
+  },
+  "required": [
+    "preview",
+    "data"
+  ]
+}

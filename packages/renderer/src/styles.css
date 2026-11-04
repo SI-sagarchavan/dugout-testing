@@ -505,7 +505,8 @@
  * instead of losing the leading a second time. Occupied = h − half + half = h.
  */
 .fos-text-clamp.fos-text-fixed-h {
-  margin-block: calc((1cap - 1lh) / 2) calc((1lh - 1cap) / 2);
+  margin-block: calc((1cap - 1lh) / 2)
+    calc((1lh - 1cap) / 2 + var(--fos-text-h, 0px) - var(--fos-text-drawn, 0px));
 }
 
 /* --- Carousel ------------------------------------------------------------
@@ -584,6 +585,29 @@
 }
 [data-fos-control][data-fos-state~="disabled"] {
   cursor: default;
+}
+
+/*
+ * A layer laid over others catches the pointer only where it draws something. Its empty, unpainted
+ * space lets the pointer through to what is underneath. The fixtures strip's arrows sit in a row as
+ * wide as the strip, laid over the cards: a drag that started in that band landed on the row and the
+ * carousel never saw it. Text, pictures, glyphs, buttons, controls and painted boxes inside it still
+ * take the pointer. Decoration takes none anywhere: a box that only paints (`data-fos-decor`), like
+ * the strip's edge fades, which sit right under its arrows. Structural, not a look.
+ */
+[data-fos-decor] {
+  pointer-events: none;
+}
+/* Unless it is part of a control: a pagination dot only paints, and is pressed. */
+[data-fos-control] [data-fos-decor] {
+  pointer-events: auto;
+}
+.fos-overlay > [data-fos-type]:is([data-fos-type="Stack"], [data-fos-type="Box"], [data-fos-type="Overlay"]):not([class*="fos-surface-"]) {
+  pointer-events: none;
+}
+.fos-overlay > [data-fos-type]:is([data-fos-type="Stack"], [data-fos-type="Box"], [data-fos-type="Overlay"]):not([class*="fos-surface-"])
+  :is([data-fos-type="Text"], [data-fos-type="Image"], [data-fos-type="Icon"], [data-fos-type="Button"], [data-fos-type="Carousel"], [class*="fos-surface-"], [data-fos-control], a, button, input):not([data-fos-decor]) {
+  pointer-events: auto;
 }
 [data-fos-control="progress"] {
   transform-origin: left center;

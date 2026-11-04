@@ -445,6 +445,59 @@ describe("in a browser", () => {
     await page.close();
   });
 
+  it("lets a drag through a row laid over the slides, where the row draws nothing", async () => {
+    // The fixtures strip: its arrows sit in a row as wide as the strip, laid over the cards.
+    const tree = {
+      schemaVersion: "1",
+      nodes: [
+        { id: "page", parent: null, idx: 0, type: "Overlay", src: "1:0", props: { size: { w: raw(600), h: raw(140) } } },
+        {
+          id: "rail",
+          parent: "page",
+          idx: 0,
+          type: "Carousel",
+          src: "1:1",
+          props: { slidesPerView: "auto", gap: "space.4", clip: true, speed: raw(0), loop: false, autoplay: false, place: { anchor: "top-fill" } },
+        },
+        ...[0, 1, 2, 3, 4].map((i) => box(`slide${i}`, "rail", i, 200, 100)),
+        {
+          id: "arrows",
+          parent: "page",
+          idx: 1,
+          type: "Stack",
+          src: "1:2",
+          props: { direction: "row", gap: "space.2", place: { anchor: "top-fill", offset: { block: raw(30) } } },
+        },
+        box("back", "arrows", 0, 40, 40, { controlFor: { target: "rail", part: "prev" } }),
+        box("fwd", "arrows", 1, 40, 40, { controlFor: { target: "rail", part: "next" } }),
+        // An edge fade over the end of the slides: paint and nothing else.
+        box("fade", "page", 2, 160, 100, { surface: "surface.button_prim", place: { anchor: "top-end" } }),
+      ],
+    } as FlatTree;
+    const page = await open(tree);
+    await mount(page);
+    await settle(page);
+    const under = (x: number, y: number) =>
+      page.evaluate(([x, y]) => {
+        const el = document.elementFromPoint(x, y);
+        return el?.closest(".swiper-slide") ? "slide" : (el?.closest("[data-fos-id]")?.getAttribute("data-fos-id") ?? null);
+      }, [x, y] as const);
+    // In the row's band, past the arrows: the slide. On an arrow: the arrow.
+    expect(await under(400, 50)).toBe("slide");
+    expect(await under(20, 50)).toBe("back");
+    // Under the fade, the slide too: decoration takes no pointer.
+    expect(await under(560, 50)).toBe("slide");
+
+    const before = await lefts(page);
+    await page.mouse.move(400, 50);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) await page.mouse.move(400 - i * 30, 50);
+    await page.mouse.up();
+    await settle(page);
+    expect(await lefts(page)).not.toEqual(before);
+    await page.close();
+  });
+
   it("centres the active slide in the first paint and keeps it there", async () => {
     // Slide 1 of 300px slides, 16px apart: its centre is 316 + 150 = 466 from the first's start.
     const tree = strip({ centered: true, initialSlide: 1, centerAt: 466, offsetBefore: undefined }, 300);

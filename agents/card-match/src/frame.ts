@@ -401,6 +401,8 @@ export interface Built {
   addedTexts: Array<{ src: string; style: string; exact: boolean }>;
   /** Figma ids drawn from the screenshot. Fewer than asked for when no screenshot fits a node. */
   cropped: string[];
+  /** Tokenless gradients the theme had no token for, added to a copy of it under their layer's id. */
+  rawGradients: number;
   themeCss: string;
   errors: string[];
   warnings: number;
@@ -451,6 +453,60 @@ export function gradientOf(node: IrNode): RawGradient | undefined {
   if (stops.length < 2) return undefined;
   const degree = (90 + (alongU ? 0 : 90) + (slope < 0 ? 180 : 0) + rotation + 360) % 360;
   return { type: "linear-gradient", degree, stops };
+}
+
+/** The theme's linear gradients, by token name (`sec_fade_left` for `gradient.sec_fade_left`). */
+function themeGradients(raw: unknown): Array<{ name: string; gradient: RawGradient }> {
+  type Body = { gradient?: { light?: Record<string, unknown> } };
+  const tokens = (raw as { tokens?: Record<string, Body> }).tokens;
+  const out: Array<{ name: string; gradient: RawGradient }> = [];
+  for (const body of Object.values(tokens ?? {})) {
+    for (const [key, value] of Object.entries(body.gradient?.light ?? {})) {
+      const gradient = value as Partial<RawGradient>;
+      const name = /^gradient_(.+)_gradient$/.exec(key)?.[1];
+      if (!name || gradient.type !== "linear-gradient" || !Array.isArray(gradient.stops)) continue;
+      out.push({ name, gradient: gradient as RawGradient });
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether two linear gradients draw the same paint: same direction, and along it the colour and
+ * opacity never differ by more than a person would see. Stops may be placed differently: a fade
+ * that reaches nothing at 83% and one that adds a stop at 100% are the same fade.
+ */
+export function sameGradient(a: RawGradient, b: RawGradient): boolean {
+  if ((((a.degree - b.degree) % 360) + 360) % 360 !== 0) return false;
+  for (let at = 0; at <= 100; at += 2) {
+    const x = paintAt(a, at);
+    const y = paintAt(b, at);
+    if (!x || !y || Math.abs(x.alpha - y.alpha) > 6) return false;
+    const seen = Math.max(x.alpha, y.alpha) > 5;
+    if (seen && x.rgb.some((c, i) => Math.abs(c - (y.rgb[i] ?? 0)) > 12)) return false;
+  }
+  return true;
+}
+
+/** Colour and opacity (0-100) of a gradient at a point along it, in percent. */
+function paintAt(g: RawGradient, at: number) {
+  const stops = [...g.stops].sort((p, q) => p.percent - q.percent);
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  if (!first || !last || stops.some((s) => !/^#[0-9a-fA-F]{6}$/.test(s.color))) return undefined;
+  const look = (s: RawGradient["stops"][number]) => ({ rgb: channels(s.color), alpha: s.opacity });
+  if (at <= first.percent) return look(first);
+  if (at >= last.percent) return look(last);
+  const i = stops.findIndex((s) => s.percent >= at);
+  const from = stops[i - 1] ?? first;
+  const to = stops[i] ?? last;
+  const t = to.percent === from.percent ? 0 : (at - from.percent) / (to.percent - from.percent);
+  const p = look(from);
+  const q = look(to);
+  return {
+    rgb: p.rgb.map((c, k) => c + ((q.rgb[k] ?? 0) - c) * t),
+    alpha: p.alpha + (q.alpha - p.alpha) * t,
+  };
 }
 
 /** A frame's paints with no token go in a copy of its theme, so they are named and countable. */
@@ -716,11 +772,24 @@ export function unpaintedLayers(bundle: Bundle, tree: Tree, themeRaw: unknown): 
 export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Overrides): Built {
   const gradients = new Map<string, RawGradient>();
   const missing: string[] = [];
+  // Each tokenless gradient is drawn with the theme's token for the same paint when there is one,
+  // and only otherwise with a token named after its layer, added to a copy of the theme.
+  const tokenOf = new Map<string, string>();
+  const named = themeGradients(bundle.themeRaw);
   for (const src of overrides.gradients) {
     const ir = bundle.byId.get(src);
     const gradient = ir && gradientOf(ir);
-    if (gradient) gradients.set(gradientName(src), gradient);
-    else missing.push(src);
+    if (!gradient) {
+      missing.push(src);
+      continue;
+    }
+    const same = named.find((token) => sameGradient(token.gradient, gradient));
+    if (same) {
+      tokenOf.set(src, same.name);
+      continue;
+    }
+    gradients.set(gradientName(src), gradient);
+    tokenOf.set(src, gradientName(src));
   }
   const themeRaw = withGradients(bundle.themeRaw, gradients);
   const theme = tools.parseTheme(themeRaw);
@@ -736,8 +805,8 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
 
   buttonGlyphs(tools, bundle, nodes);
   for (const src of overrides.gradients) {
-    const name = gradientName(src);
-    if (!gradients.has(name)) continue;
+    const name = tokenOf.get(src);
+    if (!name) continue;
     surfaces.surfaces[name] = { layers: [{ type: "gradient", ref: `gradient.${name}` }] };
     const found = nodesOf(src);
     if (found.length === 0) missing.push(src);
@@ -843,6 +912,7 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
     themeRaw,
     surfaces,
     cropped,
+    rawGradients: gradients.size,
     addedTexts,
     themeCss: tools.themeCss(theme, surfaceSet),
     errors: check.errors.map((e) => `${e.code} ${e.nodeId ?? ""}: ${e.message}`),
@@ -1833,6 +1903,9 @@ function artGroups(tools: Toolchain, bundle: Bundle, base: Built): string[] {
 /**
  * Vector art the compiler could only draw as a plain box, which has a layer picture of its own
  * (IR 1.9.0 art pictures). The picture is exactly the layer, so the crop carries nothing else.
+ *
+ * A rectangle painted with a gradient is not art: the box is its shape, and the gradient is a
+ * token (`unboundGradients`). Cropped, the fixtures strip's edge fades shipped as PNGs.
  */
 export function vectorArt(tools: Toolchain, bundle: Bundle, base: Built): string[] {
   const drawnAsBoxes = new Set(
@@ -1841,12 +1914,25 @@ export function vectorArt(tools: Toolchain, bundle: Bundle, base: Built): string
   const out: string[] = [];
   for (const plate of bundle.plates) {
     if (!plate.name.startsWith("art-vector-") || plate.nodeId === bundle.doc.rootNodeId) continue;
+    const layer = bundle.byId.get(plate.nodeId);
+    if (layer && gradientRectangle(layer)) continue;
     if (![...subtreeOf(bundle, plate.nodeId)].some((id) => drawnAsBoxes.has(id))) continue;
     const place = placeOf(bundle, plate.nodeId, plateImage(tools, plate.png));
     if (!place || "problem" in place.fit || place.fit.extraW !== undefined) continue;
     if (base.tree.nodes.some((n) => n.src === plate.nodeId)) out.push(plate.nodeId);
   }
   return out;
+}
+
+/** A childless rectangle with no stroke, painted with a linear gradient a token can hold. */
+export function gradientRectangle(node: IrNode): boolean {
+  return (
+    node.type === "VECTOR" &&
+    (node.children ?? []).length === 0 &&
+    /^rectangle( \d+)?$/i.test(node.name.trim()) &&
+    node.stroke == null &&
+    gradientOf(node) !== undefined
+  );
 }
 
 /**

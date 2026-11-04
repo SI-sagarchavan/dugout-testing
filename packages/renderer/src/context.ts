@@ -4,6 +4,7 @@
  */
 
 import type { AssetContext } from "@fanos/tokens";
+import type { ClockRef } from "@fanos/renderer/client";
 import type { DataBag } from "./resolve/data.js";
 
 export interface RenderConfig {
@@ -22,6 +23,11 @@ export interface RenderConfig {
   origin?: string;
   /** IANA zone for the `date` pipe. Defaults to UTC, so SSR is deterministic. */
   timeZone?: string;
+  /**
+   * The time the page is drawn at, epoch ms, for a node's `clock`. Defaults to the time of the
+   * render; a test or a screenshot fixes it so the digits are the same every time.
+   */
+  now?: number;
 }
 
 export interface NodeRenderContext extends RenderConfig {
@@ -38,4 +44,6 @@ export interface NodeRenderContext extends RenderConfig {
   flexRow?: boolean;
   /** Parent is an Overlay — children may use place.anchor. */
   overlayChild?: boolean;
+  /** The clocks in scope, by the name they are read by: what ticks in the browser. */
+  clocks?: Record<string, ClockRef>;
 }

@@ -19,6 +19,8 @@ import { Icon } from "./Icon.js";
 import { Divider } from "./Divider.js";
 import { Carousel } from "./Carousel.js";
 import { stateRules } from "../resolve/look.js";
+import { splitWhen, withClock } from "../resolve/clock.js";
+import { ClockGate } from "@fanos/renderer/client";
 
 export interface RenderProps {
   tree: FlatTree;
@@ -27,6 +29,8 @@ export interface RenderProps {
   themeSlug?: string;
   origin?: RenderConfig["origin"];
   timeZone?: RenderConfig["timeZone"];
+  /** The time to draw clocks at, epoch ms. Defaults to now. */
+  now?: RenderConfig["now"];
   /** Optional root width in px (harness sets this). */
   width?: number;
   /**
@@ -45,13 +49,14 @@ export interface RenderProps {
   designWidth?: number;
 }
 
-export function Render({ tree, data, assets, themeSlug, origin, timeZone, width, designWidth }: RenderProps) {
+export function Render({ tree, data, assets, themeSlug, origin, timeZone, now, width, designWidth }: RenderProps) {
   // Validate structure early — reify throws on broken trees.
   reify(tree);
   const root = rootOf(tree);
   if (!root) return null;
 
-  const ctx: NodeRenderContext = { data, assets, themeSlug, origin, timeZone };
+  // Read once: every clock on the page is drawn at the same moment.
+  const ctx: NodeRenderContext = { data, assets, themeSlug, origin, timeZone, now: now ?? Date.now() };
   const scale = width && designWidth && designWidth > 0 ? width / designWidth : 1;
   const scaled = scale !== 1;
 
@@ -141,19 +146,44 @@ function repetitions(node: Node, ctx: NodeRenderContext): NodeRenderContext[] | 
 function RenderNode({
   node,
   tree,
+  ctx: outer,
+}: {
+  node: Node;
+  tree: FlatTree;
+  ctx: NodeRenderContext;
+}) {
+  const props = node.props as Record<string, unknown>;
+  // A clock is in scope on the node that carries it, its own `when` included.
+  const ctx = withClock(props, outer);
+  /**
+   * `when` gates the node and its whole subtree, in the node's own scope — so
+   * inside a Repeater it tests the item: the play badge on a video, the
+   * duration chip only when there is a duration. A node that does not draw
+   * leaves no box, exactly as fanxp's `WithVisibilityControl` returns null.
+   *
+   * A condition on a clock changes as time passes, so the browser decides it: the node is drawn,
+   * and shown while the clock's conditions hold.
+   */
+  const when = splitWhen(props.when, ctx);
+  if (!evaluateWhen(when.now, ctx.data)) return null;
+  const drawn = <DrawNode node={node} tree={tree} ctx={ctx} />;
+  if (when.ticking.length === 0) return drawn;
+  return (
+    <ClockGate conditions={when.ticking} clocks={when.clocks} now={ctx.now ?? Date.now()}>
+      {drawn}
+    </ClockGate>
+  );
+}
+
+function DrawNode({
+  node,
+  tree,
   ctx,
 }: {
   node: Node;
   tree: FlatTree;
   ctx: NodeRenderContext;
 }) {
-  /**
-   * `when` gates the node and its whole subtree, in the node's own scope — so
-   * inside a Repeater it tests the item: the play badge on a video, the
-   * duration chip only when there is a duration. A node that does not draw
-   * leaves no box, exactly as fanxp's `WithVisibilityControl` returns null.
-   */
-  if (!evaluateWhen((node.props as { when?: unknown }).when, ctx.data)) return null;
 
   const kids = childrenOf(tree, node.id);
   const childCtxFor = (parentType: string): NodeRenderContext => {

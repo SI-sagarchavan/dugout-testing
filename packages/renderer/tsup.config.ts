@@ -11,6 +11,7 @@ const external = [
   "react/jsx-runtime",
   "react/jsx-dev-runtime",
   "@fanos/dsl",
+  "@fanos/dsl/runtime",
   "@fanos/tokens",
   "playwright",
   "pixelmatch",

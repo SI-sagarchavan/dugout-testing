@@ -25,6 +25,7 @@ const PURE_MODULES = [
   "collapse.ts",
   "bind.ts",
   "binding.ts",
+  "clock.ts",
   "cast.ts",
   "contract.ts",
   "flat.ts",

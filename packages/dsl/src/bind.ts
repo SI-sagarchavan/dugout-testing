@@ -27,15 +27,36 @@
 import type { FlatNode, FlatTree } from "./flat.js";
 import { allFields, nodeSpec } from "./nodes/index.js";
 import { proposeCollapse } from "./collapse.js";
-import { applyCollapse, setProp, TreeOpError } from "./ops.js";
-import { hasRef } from "./binding.js";
+import { applyCollapse, moveNode, replaceNode, setProp, TreeOpError } from "./ops.js";
+import { hasRef, type Predicate } from "./binding.js";
 
 export interface PlanBinding {
   /** The Figma node id, NOT the DSL node id. */
   src: string;
   prop: string;
   /** Dotted path, relative to the document — or to the item inside a collapse. */
-  path: string;
+  path?: string;
+  /**
+   * The whole value, written as is, when the design puts words around the data: `({m.overs})`.
+   * Its refs name what is in scope, the item's alias included. One of `path` or `template`.
+   */
+  template?: string;
+}
+
+/**
+ * Another shape the same item takes, drawn by another instance of the component.
+ *
+ * A fixtures card is drawn RECENT in one instance and UPCOMING in the next; both are what one
+ * item may look like. The variant's subtree is moved into the template, beside it, and each draws
+ * behind its own `when`. Which state picks which variant is the plan's to say, not this file's.
+ */
+export interface PlanVariant {
+  /** The variant's root, by `src`, in another instance. */
+  src: string;
+  /** When this variant draws, tested against the item. */
+  when: Predicate;
+  /** Bound inside the variant, as `fields` are inside the template. */
+  fields?: PlanBinding[];
 }
 
 export interface PlanCollapse {
@@ -48,6 +69,16 @@ export interface PlanCollapse {
   members: string[];
   /** Bound inside the template, so paths are relative to one item. */
   fields?: PlanBinding[];
+  /**
+   * `identical` (the default): the members must be the run `proposeCollapse` detects, so a plan
+   * cannot fold a card that differs. `varies`: they are one component drawn with different text
+   * widths, repairs or variants, which no exact signature groups; the plan names them, and they
+   * must share a parent. What the template lacks comes back through `variants`.
+   */
+  shape?: "identical" | "varies";
+  /** When the template itself draws, when it is one variant among several. */
+  when?: Predicate;
+  variants?: PlanVariant[];
 }
 
 /**
@@ -122,15 +153,17 @@ export function applyBindingPlan(tree: FlatTree, plan: BindingPlan): BindResult 
       });
       continue;
     }
-    if (!accepts(node.type, entry.prop)) {
+    next = asPicture(next, node, entry.prop);
+    const target = find(next, entry.src)!;
+    if (!accepts(target.type, entry.prop)) {
       drift.push({
         reason: "wrong-type",
         src: entry.src,
-        message: `src ${entry.src} compiled to a ${node.type}, which has no "${entry.prop}" — ${entry.path} not bound`,
+        message: `src ${entry.src} compiled to a ${target.type}, which has no "${entry.prop}" — ${describe(entry)} not bound`,
       });
       continue;
     }
-    next = setProp(next, node.id, entry.prop, `{${entry.path}}`);
+    next = setProp(next, target.id, entry.prop, valueOf(entry, ""));
     bound += 1;
   }
 
@@ -151,46 +184,70 @@ export function applyBindingPlan(tree: FlatTree, plan: BindingPlan): BindResult 
      * are the same shape. A plan that names three nodes the signature does not
      * group would fold a card that is not a repeat — losing whatever made it
      * different — so disagreement is drift, not something to push through.
+     * Unless the plan says the shapes vary: then they need only share a parent.
      */
-    const proposal = proposeCollapse(next).find((p) => p.templateId === templateNode.id);
     const memberIds = (members as FlatNode[]).map((m) => m.id);
+    const proposal =
+      group.shape === "varies"
+        ? templateNode.parent === null
+          ? undefined
+          : { parentId: templateNode.parent, memberIds }
+        : proposeCollapse(next).find((p) => p.templateId === templateNode.id);
     if (!proposal || proposal.memberIds.join() !== memberIds.join()) {
       drift.push({
         reason: "not-a-run",
         src: group.members[0] ?? "",
         message: proposal
-          ? `the plan's ${group.over} members ${memberIds.join(", ")} do not match the detected run ${proposal.memberIds.join(", ")}`
-          : `${templateNode.id} is not a detected run in this tree — not collapsed`,
+          ? `the plan's ${group.over} members ${group.members.join(", ")} do not match the detected run ${srcsOf(next, proposal.memberIds).join(", ")}`
+          : group.shape === "varies"
+            ? `${templateNode.src} is the root — not collapsed`
+            : `${templateNode.src} and the other members are not one shape in this tree — not collapsed (shape "varies" folds them anyway)`,
       });
       continue;
     }
 
     const fieldMap: Record<string, { prop: string; path: string }> = {};
+    /** Fields written as a whole template: set once the template is in place. */
+    const templated: Array<{ id: string; prop: string; value: string }> = [];
     for (const field of group.fields ?? []) {
       const node = find(next, field.src);
       if (!node) {
         drift.push({
           reason: "missing",
           src: field.src,
-          message: `src ${field.src} is not in this tree — nothing bound to ${group.as}.${field.path}`,
+          message: `src ${field.src} is not in this tree — nothing bound to ${describe(field, group.as)}`,
         });
         continue;
       }
-      if (!accepts(node.type, field.prop)) {
+      next = asPicture(next, node, field.prop);
+      const target = find(next, field.src)!;
+      if (!accepts(target.type, field.prop)) {
         drift.push({
           reason: "wrong-type",
           src: field.src,
-          message: `src ${field.src} compiled to a ${node.type}, which has no "${field.prop}" — ${group.as}.${field.path} not bound`,
+          message: `src ${field.src} compiled to a ${target.type}, which has no "${field.prop}" — ${describe(field, group.as)} not bound`,
         });
         continue;
       }
-      fieldMap[node.id] = { prop: field.prop, path: field.path };
+      // `fieldMap` holds one prop per node: a second (a crest's `alt` beside its `src`) is set after.
+      if (field.template !== undefined || target.id in fieldMap) {
+        templated.push({ id: target.id, prop: field.prop, value: valueOf(field, group.as) });
+      } else if (field.path) fieldMap[target.id] = { prop: field.prop, path: field.path };
     }
+
+    /**
+     * A member can be a variant of the template: a whole card drawn in another state. It stays, to
+     * be moved beside the template, instead of being removed with the other members.
+     */
+    const variantRoots = new Set((group.variants ?? []).map((v) => v.src));
+    const folded = (members as FlatNode[])
+      .filter((m) => m.id === templateNode.id || !variantRoots.has(m.src))
+      .map((m) => m.id);
 
     try {
       next = applyCollapse(
         next,
-        { parentId: proposal.parentId, memberIds, templateId: templateNode.id },
+        { parentId: proposal.parentId, memberIds: folded, templateId: templateNode.id },
         {
           over: group.over,
           as: group.as,
@@ -198,8 +255,48 @@ export function applyBindingPlan(tree: FlatTree, plan: BindingPlan): BindResult 
           fieldMap,
         },
       );
-      bound += Object.keys(fieldMap).length;
+      for (const t of templated) next = setProp(next, t.id, t.prop, t.value);
+      bound += Object.keys(fieldMap).length + templated.length;
       collapsed += 1;
+
+      // The item's other shapes, beside the template, each behind its own condition.
+      const repeater = next.nodes.find((n) => n.id === `${templateNode.id}__repeat`);
+      if (repeater && (group.variants?.length || group.when)) {
+        if (group.when) next = setProp(next, templateNode.id, "when", group.when);
+        for (const variant of group.variants ?? []) {
+          const root = find(next, variant.src);
+          if (!root) {
+            drift.push({ reason: "missing", src: variant.src, message: `variant ${variant.src} is not in this tree (the frame lost it, or another collapse removed it as a member) — not drawn` });
+            continue;
+          }
+          const place = next.nodes.filter((n) => n.parent === repeater.id).length;
+          next = moveNode(next, root.id, repeater.id, place);
+          next = setProp(next, root.id, "when", variant.when);
+          for (const field of variant.fields ?? []) {
+            const node = find(next, field.src);
+            if (!node) {
+              drift.push({
+                reason: "missing",
+                src: field.src,
+                message: `src ${field.src} is not in this tree — nothing bound to ${describe(field, group.as)}`,
+              });
+              continue;
+            }
+            next = asPicture(next, node, field.prop);
+            const target = find(next, field.src)!;
+            if (!accepts(target.type, field.prop)) {
+              drift.push({
+                reason: "wrong-type",
+                src: field.src,
+                message: `src ${field.src} compiled to a ${target.type}, which has no "${field.prop}" — ${describe(field, group.as)} not bound`,
+              });
+              continue;
+            }
+            next = setProp(next, target.id, field.prop, valueOf(field, group.as));
+            bound += 1;
+          }
+        }
+      }
     } catch (err) {
       // A rejected op is the plan disagreeing with the tree, which is drift by
       // another name — never a reason to hand back a half-applied tree.
@@ -233,6 +330,36 @@ export function applyBindingPlan(tree: FlatTree, plan: BindingPlan): BindResult 
   }
 
   return { tree: next, bound, collapsed, drift };
+}
+
+/** The Figma ids of tree nodes, for a message a plan's author can act on. */
+const srcsOf = (tree: FlatTree, ids: readonly string[]) =>
+  ids.map((id) => tree.nodes.find((n) => n.id === id)?.src ?? id);
+
+/** What a binding writes: its template as is, or its path as one ref (under the item's alias). */
+function valueOf(entry: PlanBinding, as: string): string {
+  if (entry.template !== undefined) return entry.template;
+  return `{${as ? `${as}.` : ""}${entry.path ?? ""}}`;
+}
+
+const describe = (entry: PlanBinding, as = "") =>
+  entry.template ?? `${as ? `${as}.` : ""}${entry.path ?? ""}`;
+
+/**
+ * A glyph the design drew where the data supplies a picture becomes an Image.
+ *
+ * A crest in a mock-up is often a vector, which compiles to an Icon; a team's crest in the data is
+ * a URL. Binding `src` says it is a picture, so the node takes the Icon's box and becomes one.
+ * Nothing else changes type: any other prop an Icon lacks is still drift.
+ */
+function asPicture(tree: FlatTree, node: FlatNode, prop: string): FlatTree {
+  if (node.type !== "Icon" || (prop !== "src" && prop !== "alt")) return tree;
+  const { name, tone: _tone, size, ...rest } = node.props as Record<string, unknown>;
+  const box = size === undefined ? {} : { size: typeof size === "object" && size !== null && !("raw" in size) ? size : { w: size, h: size } };
+  return replaceNode(tree, node.id, {
+    type: "Image",
+    props: { ...rest, ...box, src: "", alt: typeof name === "string" ? name : "", fit: "contain" },
+  });
 }
 
 /** Does this node type declare that prop at all? Guards the S12 case above. */

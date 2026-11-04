@@ -256,6 +256,56 @@ describe("clamped text with a fixed height", () => {
     expect(await render({ h: { raw: 30, _unbound: true } })).toContain("fos-text-fixed-h");
   });
 
+  /**
+   * Figma draws every clamped line, even past a box too short for them: two 18px lines in a 30px
+   * box, the second hanging into the padding. Cut at the box, the second line showed its top half;
+   * grown to 36px, the card around it grew and the strip moved 4px.
+   */
+  it("draws every clamped line and still occupies the declared box", async () => {
+    if (!enabled) return;
+    const browser = await chromium.launch({ headless: true });
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const { Render } = await import("../src/components/Render.js");
+    const tree = {
+      schemaVersion: "1",
+      nodes: [
+        { id: "root", type: "Stack", parent: null, idx: 0, src: "1:1", props: { size: { w: { raw: 120, _unbound: true } } } },
+        {
+          id: "t",
+          type: "Text",
+          parent: "root",
+          idx: 0,
+          src: "1:2",
+          props: {
+            content: "Southern Brave Women beat Welsh Fire Women by 6 wickets",
+            style: "type.body_sm_medium",
+            truncate: 2,
+            size: { w: "full", h: { raw: 30, _unbound: true } },
+          },
+        },
+        { id: "after", type: "Box", parent: "root", idx: 1, src: "1:3", props: { size: { w: { raw: 10, _unbound: true }, h: { raw: 10, _unbound: true } } } },
+      ],
+    };
+    const css = emitCss(loadTheme(THEME), { surfaces: loadSurfaces(SURFACES) }).css;
+    const page = await browser.newPage();
+    await page.setContent(
+      `<!DOCTYPE html><html><head><style>${css}${readFileSync(STYLES, "utf8")} body{margin:0}</style></head><body>${renderToStaticMarkup(createElement(Render, { tree, width: 120 } as never))}</body></html>`,
+    );
+    const probe = await page.evaluate(() => {
+      const t = document.querySelector('[data-fos-id="t"]') as HTMLElement;
+      const after = document.querySelector('[data-fos-id="after"]') as HTMLElement;
+      const lh = parseFloat(getComputedStyle(t).lineHeight);
+      // A negative top margin draws the box above its slot: the slot starts that much lower.
+      const top = t.getBoundingClientRect().top - parseFloat(getComputedStyle(t).marginTop);
+      return { drawn: t.getBoundingClientRect().height, lh, occupied: after.getBoundingClientRect().top - top };
+    });
+    await browser.close();
+    expect(probe.lh).toBe(18);
+    expect(probe.drawn).toBeCloseTo(2 * probe.lh, 0);
+    expect(probe.occupied).toBeCloseTo(30, 0);
+  });
+
   it("is not when the height is auto or fill, which is the case the clamp margins are for", async () => {
     expect(await render({ h: "auto" })).not.toContain("fos-text-fixed-h");
     expect(await render({ h: "full" })).not.toContain("fos-text-fixed-h");

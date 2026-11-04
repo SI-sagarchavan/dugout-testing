@@ -1,0 +1,383 @@
+{
+  "fixtures": {
+    "castFlow": {
+      "data": {
+        "1": [
+          {
+            "date": "2026-05-26",
+            "matches": [
+              {
+                "match_id": "270965",
+                "competition": "IPL",
+                "event_name": "Qualifier 1",
+                "state": "result",
+                "status_label": "Recent",
+                "gender": "Men",
+                "start_time": "2026-05-26T19:30:00+05:30",
+                "local_time": "19:30",
+                "venue": "Himachal Pradesh Cricket Association Stadium, Dharamshala",
+                "teams": [
+                  {
+                    "id": "1105",
+                    "name": "Royal Challengers Bengaluru",
+                    "short_name": "RCB",
+                    "logo": "https://sb.dev-fanxp.sportz.io/static-assets/images/teams/1105.png?v=1.02&w=50&h=50",
+                    "score": "254/5",
+                    "progress": "20.0 Ov",
+                    "is_winner": true,
+                    "is_batting": false
+                  },
+                  {
+                    "id": "2955",
+                    "name": "Gujarat Titans",
+                    "short_name": "GT",
+                    "logo": "https://sb.dev-fanxp.sportz.io/static-assets/images/teams/2955.png?v=1.02&w=50&h=50",
+                    "score": "162/10",
+                    "progress": "19.3 Ov",
+                    "is_winner": false,
+                    "is_batting": false
+                  }
+                ],
+                "result": "Royal Challengers Bengaluru beat Gujarat Titans by 92 runs",
+                "tickets_url": null,
+                "matchcenter_url": "/matches/rcb-vs-gt-bcahm05262026270965"
+              }
+            ]
+          },
+          {
+            "date": "2026-05-27",
+            "matches": [
+              {
+                "match_id": "270966",
+                "competition": "IPL",
+                "event_name": "Eliminator",
+                "state": "result",
+                "status_label": "Recent",
+                "gender": "Men",
+                "start_time": "2026-05-27T19:30:00+05:30",
+                "local_time": "19:30",
+                "venue": "New International Cricket Stadium, New Chandigarh",
+                "teams": [
+                  {
+                    "id": "1379",
+                    "name": "Sunrisers Hyderabad",
+                    "short_name": "SRH",
+                    "logo": "https://sb.dev-fanxp.sportz.io/static-assets/images/teams/1379.png?v=1.02&w=50&h=50",
+                    "score": "196/10",
+                    "progress": "19.2 Ov",
+                    "is_winner": false,
+                    "is_batting": false
+                  },
+                  {
+                    "id": "1110",
+                    "name": "Rajasthan Royals",
+                    "short_name": "RR",
+                    "logo": "https://sb.dev-fanxp.sportz.io/static-assets/images/teams/1110.png?v=1.02&w=50&h=50",
+                    "score": "243/8",
+                    "progress": "20.0 Ov",
+                    "is_winner": true,
+                    "is_batting": false
+                  }
+                ],
+                "result": "Rajasthan Royals beat Sunrisers Hyderabad by 47 runs",
+                "tickets_url": null,
+                "matchcenter_url": "/matches/srh-vs-rr-shrr05272026270966"
+              }
+            ]
+          },
+          {
+            "date": "2026-05-29",
+            "matches": [
+              {
+                "match_id": "270967",
+                "competition": "IPL",
+                "event_name": "Qualifier 2",
+                "state": "result",
+                "status_label": "Recent",
+                "gender": "Men",
+                "start_time": "2026-05-29T19:30:00+05:30",
+                "local_time": "19:30",
+                "venue": "New International Cricket Stadium, New Chandigarh",
+                "teams": [
+                  {
+                    "id": "2955",
+                    "name": "Gujarat Titans",
+                    "short_name": "GT",
+                    "logo": "https://sb.dev-fanxp.sportz.io/static-assets/images/teams/2955.png?v=1.02&w=50&h=50",
+                    "score": "219/3",
+                    "progress": "18.4 Ov",
+                    "is_winner": true,
+                    "is_batting": false
+                  },
+                  {
+                    "id": "1110",
+                    "name": "Rajasthan Royals",
+                    "short_name": "RR",
+                    "logo": "https://sb.dev-fanxp.sportz.io/static-assets/images/teams/1110.png?v=1.02&w=50&h=50",
+                    "score": "214/6",
+                    "progress": "20.0 Ov",
+                    "is_winner": false,
+                    "is_batting": false
+                  }
+                ],
+                "result": "Gujarat Titans beat Rajasthan Royals by 7 wickets",
+                "tickets_url": null,
+                "matchcenter_url": "/matches/gt-vs-rr-ahmrr05292026270967"
+              }
+            ]
+          },
+          {
+            "date": "2026-05-31",
+            "matches": [
+              {
+                "match_id": "270968",
+                "competition": "IPL",
+                "event_name": "Final",
+                "state": "result",
+                "status_label": "Recent",
+                "gender": "Men",
+                "start_time": "2026-05-31T19:30:00+05:30",
+                "local_time": "19:30",
+                "venue": "Narendra Modi Stadium, Ahmedabad",
+                "teams": [
+                  {
+                    "id": "1105",
+                    "name": "Royal Challengers Bengaluru",
+                    "short_name": "RCB",
+                    "logo": "https://sb.dev-fanxp.sportz.io/static-assets/images/teams/1105.png?v=1.02&w=50&h=50",
+                    "score": "161/5",
+                    "progress": "18.0 Ov",
+                    "is_winner": true,
+                    "is_batting": false
+                  },
+                  {
+                    "id": "2955",
+                    "name": "Gujarat Titans",
+                    "short_name": "GT",
+                    "logo": "https://sb.dev-fanxp.sportz.io/static-assets/images/teams/2955.png?v=1.02&w=50&h=50",
+                    "score": "155/8",
+                    "progress": "20.0 Ov",
+                    "is_winner": false,
+                    "is_batting": false
+                  }
+                ],
+                "result": "Royal Challengers Bengaluru beat Gujarat Titans by 5 wickets",
+                "tickets_url": null,
+                "matchcenter_url": "/matches/rcb-vs-gt-bcahm05312026270968"
+              }
+            ]
+          },
+          {
+            "date": "2026-08-14",
+            "matches": [
+              {
+                "match_id": "900101",
+                "competition": "The Hundred",
+                "event_name": "",
+                "state": "result",
+                "status_label": "Recent",
+                "gender": "Women",
+                "start_time": "2026-08-14T14:30:00+01:00",
+                "local_time": "14:30",
+                "venue": "Sophia Gardens, Cardiff",
+                "teams": [
+                  {
+                    "id": "2036",
+                    "name": "Welsh Fire Women",
+                    "short_name": "WEF-W",
+                    "logo": "https://www.southernbrave.com/static-assets/images/teams/2036.png?v=1.01",
+                    "score": "138/7",
+                    "progress": "100 Balls",
+                    "is_winner": false,
+                    "is_batting": false
+                  },
+                  {
+                    "id": "2034",
+                    "name": "Southern Brave Women",
+                    "short_name": "SOB-W",
+                    "logo": "https://www.southernbrave.com/static-assets/images/teams/2034.png?v=1.01",
+                    "score": "142/4",
+                    "progress": "94 Balls",
+                    "is_winner": true,
+                    "is_batting": false
+                  }
+                ],
+                "result": "Southern Brave Women beat Welsh Fire Women by 6 wickets",
+                "tickets_url": null,
+                "matchcenter_url": "/matches/900101"
+              },
+              {
+                "match_id": "900102",
+                "competition": "The Hundred",
+                "event_name": "",
+                "state": "live",
+                "status_label": "Live",
+                "gender": "Men",
+                "start_time": "2026-08-14T18:00:00+01:00",
+                "local_time": "18:00",
+                "venue": "Sophia Gardens, Cardiff",
+                "teams": [
+                  {
+                    "id": "2044",
+                    "name": "Welsh Fire Men",
+                    "short_name": "WEF",
+                    "logo": "https://www.southernbrave.com/static-assets/images/teams/2044.png?v=1.01",
+                    "score": "168/6",
+                    "progress": "100 Balls",
+                    "is_winner": false,
+                    "is_batting": false
+                  },
+                  {
+                    "id": "2042",
+                    "name": "Southern Brave Men",
+                    "short_name": "SOB",
+                    "logo": "https://www.southernbrave.com/static-assets/images/teams/2042.png?v=1.01",
+                    "score": "112/3",
+                    "progress": "68 Balls",
+                    "is_winner": false,
+                    "is_batting": true
+                  }
+                ],
+                "result": "Southern Brave Men need 57 runs from 32 balls",
+                "tickets_url": null,
+                "matchcenter_url": "/matches/900102"
+              }
+            ]
+          },
+          {
+            "date": "2026-08-20",
+            "matches": [
+              {
+                "match_id": "900105",
+                "competition": "The Hundred",
+                "event_name": "",
+                "state": "abandoned",
+                "status_label": "Abandoned",
+                "gender": "Men",
+                "start_time": "2026-08-20T18:00:00+01:00",
+                "local_time": "18:00",
+                "venue": "Trent Bridge, Nottingham",
+                "teams": [
+                  {
+                    "id": "2043",
+                    "name": "Trent Rockets Men",
+                    "short_name": "TRT",
+                    "logo": "https://www.southernbrave.com/static-assets/images/teams/2043.png?v=1.01",
+                    "score": null,
+                    "progress": null,
+                    "is_winner": false,
+                    "is_batting": false
+                  },
+                  {
+                    "id": "2042",
+                    "name": "Southern Brave Men",
+                    "short_name": "SOB",
+                    "logo": "https://www.southernbrave.com/static-assets/images/teams/2042.png?v=1.01",
+                    "score": null,
+                    "progress": null,
+                    "is_winner": false,
+                    "is_batting": false
+                  }
+                ],
+                "result": "Match abandoned without a ball bowled",
+                "tickets_url": null,
+                "matchcenter_url": "/matches/900105"
+              }
+            ]
+          },
+          {
+            "date": "2026-11-17",
+            "matches": [
+              {
+                "match_id": "900103",
+                "competition": "The Hundred",
+                "event_name": "",
+                "state": "upcoming",
+                "status_label": "Upcoming",
+                "gender": "Women",
+                "start_time": "2026-11-04T04:50:39+00:00",
+                "local_time": "14:30",
+                "venue": "Utilita Bowl, Southampton",
+                "teams": [
+                  {
+                    "id": "2034",
+                    "name": "Southern Brave Women",
+                    "short_name": "SOB-W",
+                    "logo": "https://www.southernbrave.com/static-assets/images/teams/2034.png?v=1.01",
+                    "score": null,
+                    "progress": null,
+                    "is_winner": false,
+                    "is_batting": false
+                  },
+                  {
+                    "id": "2035",
+                    "name": "Trent Rockets Women",
+                    "short_name": "TRT-W",
+                    "logo": "https://www.southernbrave.com/static-assets/images/teams/2035.png?v=1.01",
+                    "score": null,
+                    "progress": null,
+                    "is_winner": false,
+                    "is_batting": false
+                  }
+                ],
+                "result": null,
+                "tickets_url": "https://www.southernbrave.com/tickets",
+                "matchcenter_url": "/matches/900103"
+              },
+              {
+                "match_id": "900104",
+                "competition": "The Hundred",
+                "event_name": "",
+                "state": "upcoming",
+                "status_label": "Upcoming",
+                "gender": "Men",
+                "start_time": "2026-11-17T18:00:00+00:00",
+                "local_time": "18:00",
+                "venue": "Utilita Bowl, Southampton",
+                "teams": [
+                  {
+                    "id": "2042",
+                    "name": "Southern Brave Men",
+                    "short_name": "SOB",
+                    "logo": "https://www.southernbrave.com/static-assets/images/teams/2042.png?v=1.01",
+                    "score": null,
+                    "progress": null,
+                    "is_winner": false,
+                    "is_batting": false
+                  },
+                  {
+                    "id": "2043",
+                    "name": "Trent Rockets Men",
+                    "short_name": "TRT",
+                    "logo": "https://www.southernbrave.com/static-assets/images/teams/2043.png?v=1.01",
+                    "score": null,
+                    "progress": null,
+                    "is_winner": false,
+                    "is_batting": false
+                  }
+                ],
+                "result": null,
+                "tickets_url": "https://www.southernbrave.com/tickets",
+                "matchcenter_url": "/matches/900104"
+              }
+            ]
+          }
+        ]
+      },
+      "meta": {
+        "note": "Dummy Cast flow response for the fixtures strip. Days 1-4: the IPL 2026 playoffs from flow 1cff832f (results) joined with its meta.polling schedule (scores). Days 5-7: made up, Southern Brave in The Hundred, so live, upcoming, abandoned and a day of mixed states all draw. The IPL crests are the flow's own logo paths, which the dev CDN serves as 1x1 placeholders.",
+        "pagination": {
+          "total": 7,
+          "count": 7,
+          "per_page": 100,
+          "current_page": 1,
+          "total_pages": 1
+        },
+        "polling": {
+          "url": "https://sb.dev-fanxp.sportz.io/cricket/v1/schedule?client_id=39aaf6cdc737&timezone=0530&lang=en&series_ids=13469&game_count=4",
+          "interval": 10
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,255 @@
+{
+  "note": "The fixtures strip bound to the fixtures Cast flow (apps/api/data/fixtures-strip.json). A slide is a day; a block is a match, drawn as the RESULT block of the first card or the UPCOMING block of the second, chosen by match.state. Live and abandoned matches use the result block with their own label. Hand-written: the reference answer for the bind agent. Both cards carry a clock to match.start_time: the upcoming card shows while the start is ahead, its digits tick, and at zero the page switches to the result/live card (match.state is not read: a started match is one whose start has passed).",
+  "collapse": [
+    {
+      "over": "day.matches",
+      "as": "match",
+      "members": [
+        "I35:10546;18621:42501",
+        "I35:10546;18621:42524"
+      ],
+      "shape": "varies",
+      "when": {
+        "path": "countdown.past",
+        "eq": true
+      },
+      "fields": [
+        {
+          "src": "I35:10546;18621:42503",
+          "prop": "content",
+          "path": "status_label"
+        },
+        {
+          "src": "I35:10546;18621:42504",
+          "prop": "content",
+          "path": "gender"
+        },
+        {
+          "src": "I35:10546;18621:43142",
+          "prop": "content",
+          "path": "local_time"
+        },
+        {
+          "src": "I35:10546;18621:42508",
+          "prop": "src",
+          "path": "teams.0.logo"
+        },
+        {
+          "src": "I35:10546;18621:42508",
+          "prop": "alt",
+          "path": "teams.0.name"
+        },
+        {
+          "src": "I35:10546;18621:42512",
+          "prop": "content",
+          "template": "{match.teams.0.score | default:\"–\"}"
+        },
+        {
+          "src": "I35:10546;18621:42513",
+          "prop": "content",
+          "template": "({match.teams.0.progress})"
+        },
+        {
+          "src": "I35:10546;18621:42515",
+          "prop": "src",
+          "path": "teams.1.logo"
+        },
+        {
+          "src": "I35:10546;18621:42515",
+          "prop": "alt",
+          "path": "teams.1.name"
+        },
+        {
+          "src": "I35:10546;18621:42520",
+          "prop": "content",
+          "template": "{match.teams.1.score | default:\"–\"}"
+        },
+        {
+          "src": "I35:10546;18621:42521",
+          "prop": "content",
+          "template": "({match.teams.1.progress})"
+        },
+        {
+          "src": "I35:10546;18621:42523",
+          "prop": "content",
+          "path": "result"
+        }
+      ],
+      "variants": [
+        {
+          "src": "I35:10547;18621:42553",
+          "when": {
+            "path": "countdown.past",
+            "eq": false
+          },
+          "fields": [
+            {
+              "src": "I35:10547;18621:42555",
+              "prop": "content",
+              "path": "status_label"
+            },
+            {
+              "src": "I35:10547;18746:28519",
+              "prop": "content",
+              "path": "gender"
+            },
+            {
+              "src": "I35:10547;18746:28521",
+              "prop": "content",
+              "path": "local_time"
+            },
+            {
+              "src": "I35:10547;18621:42561",
+              "prop": "src",
+              "path": "teams.0.logo"
+            },
+            {
+              "src": "I35:10547;18621:42561",
+              "prop": "alt",
+              "path": "teams.0.name"
+            },
+            {
+              "src": "I35:10547;18621:42568",
+              "prop": "src",
+              "path": "teams.1.logo"
+            },
+            {
+              "src": "I35:10547;18621:42568",
+              "prop": "alt",
+              "path": "teams.1.name"
+            },
+            {
+              "src": "I35:10547;18621:42605",
+              "prop": "content",
+              "path": "venue"
+            },
+            {
+              "src": "I35:10547;18621:42579",
+              "prop": "content",
+              "template": "{countdown.d | pad:2}"
+            },
+            {
+              "src": "I35:10547;18621:42585",
+              "prop": "content",
+              "template": "{countdown.h | pad:2}"
+            },
+            {
+              "src": "I35:10547;18621:42591",
+              "prop": "content",
+              "template": "{countdown.m | pad:2}"
+            },
+            {
+              "src": "I35:10547;18621:42597",
+              "prop": "content",
+              "template": "{countdown.s | pad:2}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "over": "fixtures.items",
+      "as": "day",
+      "members": [
+        "35:10546",
+        "35:10547",
+        "35:10548"
+      ],
+      "shape": "varies",
+      "fields": [
+        {
+          "src": "I35:10546;18621:42498",
+          "prop": "content",
+          "path": "date | date:\"DD MMMM\""
+        }
+      ]
+    }
+  ],
+  "set": [
+    {
+      "src": "I35:10546;18621:42498",
+      "prop": "textCase",
+      "value": "upper"
+    },
+    {
+      "src": "I35:10546;18621:42503",
+      "prop": "textCase",
+      "value": "upper"
+    },
+    {
+      "src": "I35:10546;18621:42504",
+      "prop": "textCase",
+      "value": "upper"
+    },
+    {
+      "src": "I35:10547;18621:42555",
+      "prop": "textCase",
+      "value": "upper"
+    },
+    {
+      "src": "I35:10547;18746:28519",
+      "prop": "textCase",
+      "value": "upper"
+    },
+    {
+      "src": "I35:10546;18621:42513",
+      "prop": "when",
+      "value": {
+        "path": "match.teams.0.progress",
+        "exists": true
+      }
+    },
+    {
+      "src": "I35:10546;18621:42521",
+      "prop": "when",
+      "value": {
+        "path": "match.teams.1.progress",
+        "exists": true
+      }
+    },
+    {
+      "src": "I35:10546;18621:42523",
+      "prop": "when",
+      "value": {
+        "path": "match.result",
+        "exists": true
+      }
+    },
+    {
+      "src": "I35:10547;18621:42599",
+      "prop": "when",
+      "value": {
+        "path": "match.tickets_url",
+        "exists": true
+      }
+    },
+    {
+      "src": "I35:10546;18621:42501",
+      "prop": "clock",
+      "value": {
+        "to": "{match.start_time}",
+        "as": "countdown",
+        "units": [
+          "d",
+          "h",
+          "m",
+          "s"
+        ]
+      }
+    },
+    {
+      "src": "I35:10547;18621:42553",
+      "prop": "clock",
+      "value": {
+        "to": "{match.start_time}",
+        "as": "countdown",
+        "units": [
+          "d",
+          "h",
+          "m",
+          "s"
+        ]
+      }
+    }
+  ]
+}

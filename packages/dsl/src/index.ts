@@ -155,6 +155,7 @@ export {
   CDN_RATIOS,
   CONDITION_OPS,
   conditionSchema,
+  conditionsOf,
   evaluateCondition,
   evaluateWhen,
   fillImageRatio,
@@ -170,6 +171,18 @@ export {
   resolveTemplate,
 } from "./binding.js";
 export type { Condition, Pipe, PipeSpec, Ref, ResolveOptions, ResolveResult, Scalar } from "./binding.js";
+export {
+  CLOCK_UNITS,
+  clockAlias,
+  clockInstant,
+  clockSchema,
+  clockScope,
+  clockTick,
+  clockUnits,
+  clockValues,
+  parseInstant,
+} from "./clock.js";
+export type { Clock, ClockScope, ClockUnit, ClockValues } from "./clock.js";
 export { fromCastFlow } from "./cast.js";
 export type { CastData, CastPagination } from "./cast.js";
 export { checkBindings, checkPipes, inferShape } from "./contract.js";

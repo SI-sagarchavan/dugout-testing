@@ -11,6 +11,7 @@ import {
   fitOf,
   frameBox,
   gradientOf,
+  gradientRectangle,
   gridNudge,
   isArtPlate,
   keepWhatHelps,
@@ -18,6 +19,7 @@ import {
   measuredPlates,
   noOverrides,
   placeOf,
+  sameGradient,
   tokensOf,
   vectorArt,
   viewportOf,
@@ -402,6 +404,43 @@ describe("pictures of single layers (IR 1.9.0)", () => {
     it("leaves art the compiler already drew properly", () => {
       expect(vectorArt(tools, b, built([]))).toEqual([]);
     });
+
+    it("leaves a gradient rectangle to be a gradient token, not a picture", () => {
+      const fade = {
+        id: "fade",
+        name: "Rectangle 34646508",
+        type: "VECTOR",
+        stroke: null,
+        fill: {
+          raw: "GRADIENT_LINEAR(#0f1855 0%, #0f1855b2 44.8%, #0f185500 100%; m=[1.2103,0.0126,-0.0063,0,8.7457,-3.8925])",
+          unbound: true,
+        },
+        geometry: {
+          bbox: { x: 0, y: 0, w: 164, h: 227 },
+          renderBbox: { x: 0, y: 0, w: 164, h: 227 },
+        },
+      };
+      const withFade = {
+        ...b,
+        doc: { rootNodeId: "root", root: { ...root, children: [fade] } },
+        byId: new Map<string, unknown>([
+          ["root", root],
+          ["fade", fade],
+        ]),
+        parents: new Map<string, string | null>([
+          ["root", null],
+          ["fade", "root"],
+        ]),
+        plates: [{ nodeId: "fade", name: "art-vector-Rectangle-fade.png", png: Buffer.from("x") }],
+      } as unknown as Bundle;
+      const drawn = {
+        notes: [{ kind: "decorative-vector", irId: "fade" }],
+        tree: { nodes: [{ id: "fade", src: "fade" }] },
+      } as never;
+      expect(vectorArt(tools, withFade, drawn)).toEqual([]);
+      expect(gradientRectangle(fade as never)).toBe(true);
+      expect(gradientRectangle({ ...fade, name: "Swoosh" } as never)).toBe(false);
+    });
   });
 });
 
@@ -780,5 +819,52 @@ describe("buttonGlyphs", () => {
     buttonGlyphs({ iconNames: ["ticket"] }, bundle, nodes);
     expect(nodes[0]?.props.iconStart).toBe("ticket");
     expect(nodes[0]?.props.iconSize).toBeUndefined();
+  });
+});
+
+describe("sameGradient", () => {
+  const fade = (degree: number, stops: Array<[number, number]>) => ({
+    type: "linear-gradient" as const,
+    degree,
+    stops: stops.map(([opacity, percent]) => ({ color: "#0f1855", opacity, percent })),
+  });
+  // the strip's left edge fade as Figma paints it, and the tenant's `gradient.sec_fade_left`
+  const drawn = fade(90, [
+    [100, 0.52],
+    [69.8, 37.54],
+    [0, 83.14],
+  ]);
+  const token = fade(90, [
+    [100, 0],
+    [70, 37],
+    [0, 82.6],
+    [0, 100],
+  ]);
+
+  it("is the theme's token when it draws the same fade with its stops placed differently", () => {
+    expect(sameGradient(drawn, token)).toBe(true);
+  });
+
+  it("is not a fade the other way, or one that fades at a different place", () => {
+    expect(sameGradient(drawn, { ...token, degree: 270 })).toBe(false);
+    expect(
+      sameGradient(
+        drawn,
+        fade(90, [
+          [100, 0],
+          [70, 60],
+          [0, 100],
+        ]),
+      ),
+    ).toBe(false);
+  });
+
+  it("is not another colour", () => {
+    expect(
+      sameGradient(drawn, {
+        ...token,
+        stops: token.stops.map((s) => ({ ...s, color: "#2939a3" })),
+      }),
+    ).toBe(false);
   });
 });

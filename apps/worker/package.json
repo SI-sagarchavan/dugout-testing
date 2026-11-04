@@ -11,6 +11,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@dugout/agent-bind": "workspace:^",
     "@dugout/agent-card-match": "workspace:^",
     "@dugout/agent-sitemap": "workspace:^",
     "@dugout/contracts": "workspace:^",

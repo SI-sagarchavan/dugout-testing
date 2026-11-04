@@ -28,6 +28,7 @@
  * PURE.
  */
 
+import { clockAlias, clockSchema, clockUnits } from "./clock.js";
 import type { FlatNode, FlatTree } from "./flat.js";
 import type { Issue } from "./validate.js";
 import {
@@ -52,6 +53,15 @@ export type Shape =
   | { kind: "array"; of: Shape | null; nullable: boolean };
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+
+/** What a clock puts in scope: the units it draws, `past` and `total`. */
+function clockShape(units: readonly string[]): Shape {
+  const num = (): Shape => ({ kind: "scalar", types: new Set<ScalarType>(["number"]), isoDate: false, ratioSlot: false });
+  const fields = new Map<string, Shape>(units.map((unit) => [unit, num()]));
+  fields.set("total", num());
+  fields.set("past", { kind: "scalar", types: new Set<ScalarType>(["boolean"]), isoDate: false, ratioSlot: false });
+  return { kind: "object", fields, nullable: false };
+}
 
 /** The merged shape of a sample. Arrays merge every element. */
 export function inferShape(value: unknown): Shape {
@@ -223,6 +233,11 @@ export function checkBindings(tree: FlatTree, data: unknown): Issue[] {
         scope = { ...scope, fields: new Map(scope.fields).set(as, list.shape.of) };
       }
     }
+    // a clock's values are in scope on the node that carries it, and under it
+    const clock = clockSchema.safeParse(node.props.clock);
+    if (clock.success && scope.kind === "object") {
+      scope = { ...scope, fields: new Map(scope.fields).set(clockAlias(clock.data), clockShape(clockUnits(clock.data))) };
+    }
     scopes.set(node.id, scope);
     return scope;
   };
@@ -258,6 +273,19 @@ export function checkBindings(tree: FlatTree, data: unknown): Issue[] {
         if (w.pageKey) pageKey(node, t.prop, ref.text, w.pageKey);
         if (!w.ok) {
           if (!ref.pipes.some((p) => p.name === "default")) missing(node, t.prop, ref.text, ref.path, w);
+          continue;
+        }
+        // a clock counts to the instant: it is read, never drawn
+        if (t.prop === "clock.to") {
+          if (w.shape.kind !== "scalar" || (!w.shape.isoDate && !w.shape.types.has("number"))) {
+            add({
+              code: "B4",
+              severity: "warning",
+              nodeId: node.id,
+              path: t.prop,
+              message: `clock.to ${ref.text}: the sample values are not instants (ISO-8601 or epoch ms)`,
+            });
+          }
           continue;
         }
         checkRef(node, t.prop, ref, w.shape, add);

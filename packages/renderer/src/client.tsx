@@ -3,6 +3,9 @@
 /**
  * `@fanos/renderer/client` — the renderer's only client components.
  *
+ * It reads data through `@fanos/dsl/runtime`, never the package's main entry, which brings the
+ * theme loader and its file reads into the browser.
+ *
  * Everything else is a Server Component. A carousel needs the browser for one thing: starting
  * Swiper once the server's markup is on the page. So this draws the same markup the server
  * would, and mounts Swiper after hydration. In a host without React on the client (the
@@ -12,7 +15,15 @@
  * components import it by package name, never by path.
  */
 
-import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  clockTick,
+  clockValues,
+  evaluateCondition,
+  resolveTemplate,
+  type ClockUnit,
+  type Condition,
+} from "@fanos/dsl/runtime";
 import type { CarouselSpec } from "./carousel/shared.js";
 
 export interface CarouselRootProps {
@@ -54,4 +65,95 @@ export function CarouselRoot({ spec, className, style, dataAttrs, children }: Ca
       </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Clocks
+// ---------------------------------------------------------------------------
+
+/** A clock as the client needs it: the instant, already read from the data, and its units. */
+export interface ClockRef {
+  to: number;
+  units: ClockUnit[];
+}
+
+/** One timer for every clock on the page, running only while something reads it. */
+const listeners = new Set<() => void>();
+let timer: ReturnType<typeof setInterval> | undefined;
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  timer ??= setInterval(() => {
+    for (const each of listeners) each();
+  }, 1000);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && timer !== undefined) {
+      clearInterval(timer);
+      timer = undefined;
+    }
+  };
+}
+
+/**
+ * The time, starting at the server's (so the first client render matches the markup), then the
+ * browser's, changing once per the smallest unit any of these clocks draws.
+ */
+function useNow(initial: number, clocks: Record<string, ClockRef>): number {
+  const [now, setNow] = useState(initial);
+  const tick = clockTick(Object.values(clocks).flatMap((clock) => clock.units));
+  useEffect(() => {
+    let last = Date.now();
+    setNow(last);
+    return subscribe(() => {
+      const at = Date.now();
+      if (Math.floor(at / tick) !== Math.floor(last / tick)) {
+        last = at;
+        setNow(at);
+      }
+    });
+  }, [tick]);
+  return now;
+}
+
+const scopeAt = (clocks: Record<string, ClockRef>, now: number) =>
+  Object.fromEntries(Object.entries(clocks).map(([as, c]) => [as, clockValues(c.units, c.to, now)]));
+
+export interface ClockTextProps {
+  /** The text in pieces: literal text, and the refs that read a clock, as written. */
+  parts: Array<string | { ref: string }>;
+  clocks: Record<string, ClockRef>;
+  /** When the server drew it. */
+  now: number;
+  timeZone?: string;
+}
+
+/** The characters of a Text that reads a clock. Its look is the Text's, drawn by the server. */
+export function ClockText({ parts, clocks, now: initial, timeZone }: ClockTextProps) {
+  const now = useNow(initial, clocks);
+  const scope = scopeAt(clocks, now);
+  return (
+    <>
+      {parts
+        .map((part) =>
+          typeof part === "string" ? part : resolveTemplate(part.ref, scope, timeZone ? { timeZone } : {}).value,
+        )
+        .join("")}
+    </>
+  );
+}
+
+export interface ClockGateProps {
+  /** The conditions of the node's `when` that read a clock; the rest were decided by the server. */
+  conditions: Condition[];
+  clocks: Record<string, ClockRef>;
+  now: number;
+  children: ReactNode;
+}
+
+/** Draws its node while every condition holds: the digits until kick-off, a label after. */
+export function ClockGate({ conditions, clocks, now: initial, children }: ClockGateProps) {
+  const now = useNow(initial, clocks);
+  const scope = scopeAt(clocks, now);
+  return conditions.every((c) => evaluateCondition(c, scope)) ? <>{children}</> : null;
 }

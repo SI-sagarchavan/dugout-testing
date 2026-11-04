@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "previewUrl": {
+      "type": "string"
+    },
+    "planArtifactId": {
+      "type": "string"
+    },
+    "dataArtifactId": {
+      "type": "string"
+    },
+    "bound": {
+      "type": "number",
+      "description": "Props the plan bound"
+    },
+    "collapsed": {
+      "type": "number",
+      "description": "Lists the plan made"
+    },
+    "remaining": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Problems still in the published plan, and what the design shows that the data lacks"
+    }
+  },
+  "required": [
+    "previewUrl",
+    "planArtifactId",
+    "dataArtifactId",
+    "bound",
+    "collapsed",
+    "remaining"
+  ],
+  "additionalProperties": false
+}

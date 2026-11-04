@@ -11,6 +11,16 @@ export default defineConfig([
     external: ["zod", "@fanos/tokens"],
   },
   {
+    // the browser-safe part: binding and clocks, no tokens
+    entry: ["src/runtime.ts"],
+    format: ["esm"],
+    dts: true,
+    clean: false,
+    sourcemap: true,
+    target: "es2022",
+    external: ["zod"],
+  },
+  {
     entry: ["src/bin.ts"],
     format: ["esm"],
     dts: false,

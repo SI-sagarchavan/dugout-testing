@@ -45,6 +45,7 @@ function setup(score: (overrides: Overrides) => Measurement, errors: string[] = 
       themeRaw: { extended: true },
       surfaces: { assets: {}, surfaces: {} },
       cropped: [],
+      rawGradients: overrides.gradients.length,
       addedTexts: [],
       errors: overrides.props.length ? errors : [],
       missing: [],
@@ -54,11 +55,10 @@ function setup(score: (overrides: Overrides) => Measurement, errors: string[] = 
     bundle: async () => bundle,
     build: async (_b, overrides) => built(overrides),
     measure: async (_b, b) => score((b as unknown as { overrides: Overrides }).overrides),
-    firstPass: async (_b, start) => ({
-      overrides: { ...start, gradients: ["g"] },
-      built: built(start),
-      measurement: measured(90),
-    }),
+    firstPass: async (_b, start) => {
+      const overrides = { ...start, gradients: ["g"] };
+      return { overrides, built: built(overrides), measurement: measured(90) };
+    },
   };
   const plane = {
     upload: async (kind: string, json: unknown) => {

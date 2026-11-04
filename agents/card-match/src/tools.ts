@@ -123,6 +123,8 @@ const State = z.object({
   /** Why nothing could be compared, when that is so. */
   unmeasured: z.string().optional(),
   standIns: z.number().default(0),
+  /** Tokenless gradients drawn with a token the theme did not have. */
+  rawGradients: z.number().default(0),
   /** Fixes the first pass took back out because the frame scored worse with them. */
   undone: z.array(z.string()).default([]),
   /** Layers the design paints and the compile does not: the score cannot see these. */
@@ -515,6 +517,7 @@ export function createMatchTools(
           current: laid.current,
           ...(unmeasured ? { unmeasured } : {}),
           standIns: first.built.cropped.length,
+          rawGradients: first.built.rawGradients,
           undone: first.undone ?? [],
           unpainted: engine.unpainted?.(bundle, first.built) ?? [],
           looks: 0,
@@ -649,6 +652,7 @@ export function createMatchTools(
           overrides,
           current: measured,
           standIns: built.cropped.length,
+          rawGradients: built.rawGradients,
         };
         const { published: _stale, ...unpublished } = next;
         writeState(dir, ctx.runId, unpublished);
@@ -795,6 +799,7 @@ export function createMatchTools(
           current: measured,
           layouts,
           standIns: built.cropped.length,
+          rawGradients: built.rawGradients,
         };
         const { published: _stale, ...unpublished } = next;
         writeState(dir, ctx.runId, unpublished);
@@ -838,7 +843,7 @@ export function createMatchTools(
         conformErrors: state.current.conformErrors,
         placeholderIcons: state.current.placeholderIcons,
         standIns: state.standIns,
-        rawGradients: state.overrides.gradients.length,
+        rawGradients: state.rawGradients,
         unexamined: unexamined(state),
         remaining: state.current.findings
           .slice(0, 5)

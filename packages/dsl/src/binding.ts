@@ -139,6 +139,7 @@ export interface PipeSpec {
 export const PIPES: Readonly<Record<string, PipeSpec>> = {
   date: { arity: [1, 2], doc: 'date:"MMM DD, YYYY" or date:"hh:mm a":"Asia/Kolkata" — formatDate tokens; zone defaults to the render\'s' },
   default: { arity: [1], doc: 'default:"—" — used when the value is missing, null or ""' },
+  pad: { arity: [1], doc: 'pad:2 — a whole number drawn with at least that many digits ("02"), as the design draws it' },
 };
 
 export interface ResolveOptions {
@@ -156,6 +157,13 @@ function applyPipe(pipe: Pipe, value: unknown, options: ResolveOptions): unknown
     }
     case "default":
       return isEmpty(value) ? (pipe.args[0] ?? "") : value;
+    case "pad": {
+      const width = Number(pipe.args[0]);
+      const whole = typeof value === "number" ? value : typeof value === "string" && /^-?\d+$/.test(value) ? Number(value) : undefined;
+      if (whole === undefined || !Number.isInteger(width) || width < 1) return value;
+      const digits = String(Math.abs(whole)).padStart(width, "0");
+      return whole < 0 ? `-${digits}` : digits;
+    }
     default:
       return undefined;
   }

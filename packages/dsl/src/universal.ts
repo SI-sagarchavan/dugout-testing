@@ -9,6 +9,7 @@
  * retrofitting direction into a shipped vocabulary is miserable.
  */
 
+import { CLOCK_UNITS } from "./clock.js";
 import { f, opt, req, type Fields } from "./field.js";
 
 /**
@@ -206,6 +207,22 @@ export const universalFields: Fields = {
     {
       doc: "a control of the Carousel `target`, as a node with its own look: prev, next, pagination (its children are the dots; one child is repeated per page), counter (a Text), progress (filled by scale) (S16)",
     },
+  ),
+  /**
+   * A clock over this node's subtree: the time left until an instant, or since it. Inside,
+   * `{<as>.d}` `{<as>.h}` `{<as>.m}` `{<as>.s}` read the units listed, `{<as>.past}` is true once
+   * the instant has come, and `{<as>.total}` is the difference in seconds. The designed digits bind
+   * to those, and `when` on them decides what shows either side of the instant. See `clock.ts`.
+   */
+  clock: opt(
+    f.obj({
+      to: req(f.str(), { doc: "the instant: ISO-8601, or a ref to one, `{match.start_time}`" }),
+      as: opt(f.str(), { doc: "the name the subtree reads it by (default `clock`)" }),
+      units: opt(f.arr(f.enum(...CLOCK_UNITS)), {
+        doc: "the units the design draws; the largest carries the rest (`h m`: 51 hours, not 2 days 3 hours). Default d h m s",
+      }),
+    }),
+    { doc: "a ticking clock the subtree binds to: {as.d} {as.h} {as.m} {as.s} {as.past} {as.total}" },
   ),
   /**
    * A plain background colour from the theme, for a node with no surface: a dot, a bar, an arrow's

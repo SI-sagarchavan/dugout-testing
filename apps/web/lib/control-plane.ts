@@ -9,7 +9,7 @@
  * run or the project supplies.
  */
 
-import type { BindingPlan } from "@fanos/dsl";
+import { type BindingPlan, fromCastFlow } from "@fanos/dsl";
 
 const API_URL = (process.env.FANOS_API_URL ?? "http://localhost:4100").replace(/\/+$/, "");
 const API_KEY = process.env.FANOS_API_KEY?.trim() || null;
@@ -105,8 +105,8 @@ export async function readSend(project: string, ref: string, query: Query): Prom
     json(tree),
     json(theme),
     surfaces ? json(surfaces) : undefined,
-    data ? readData(data, json) : undefined,
-    planRef ? json(planRef) : undefined,
+    data ? readData(data, json).then(asBag) : undefined,
+    planRef ? readData(planRef, json) : undefined,
   ]);
   return {
     tree: treeJson,
@@ -119,7 +119,25 @@ export async function readSend(project: string, ref: string, query: Query): Prom
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** `?data=` is a `sample_data` artifact id, or the name of a dataset file the API serves. */
+/**
+ * A dataset whose value is `{ "castFlow": <response> }` is a saved Cast flow response, unwrapped by
+ * `fromCastFlow` as a live flow will be (Studio's sections do the same): the tree binds `items`,
+ * never the page key `data.1`. Any other value is used as it is.
+ */
+function asBag(data: unknown): Record<string, unknown> {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return {};
+  return Object.fromEntries(
+    Object.entries(data).map(([key, value]) => {
+      const flow = (value as { castFlow?: unknown } | null)?.castFlow;
+      return [key, flow === undefined ? value : fromCastFlow(flow)];
+    }),
+  );
+}
+
+/**
+ * `?data=` and `?plan=` are an artifact id, or the name of a file the API serves from
+ * `apps/api/data/`: a plan being written by hand is edited there, not uploaded on every change.
+ */
 async function readData(ref: string, json: (id: string) => Promise<unknown>): Promise<unknown> {
   if (UUID.test(ref)) return json(ref);
   const response = await fetch(`${API_URL}/v1/data/${encodeURIComponent(ref)}`, {
