@@ -5,6 +5,7 @@ A compiled frame shows the designer's placeholder copy. You decide where the rea
 - **The outline** is the compiled tree. Every line starts with the Figma id (`src`) the plan names a node by. Text lines show the design's placeholder in quotes, pictures say `[picture]` or `[glyph]`. A line `— same shape as X` is a sibling built like X: one more of the same thing.
 - **What repeats** lists siblings that are one thing several times. `of one shape`: a plain list. `«Name» in N shapes`: instances of one Figma component drawn in different variants. The shapes are the groups in brackets.
 - **The data** lists every path. `[]` means "each item of this list". `list of 1–2` is how long each list was. `present 6/9` means some items lack the field. `one of "a"×3, "b"×1` lists every value a few-valued field took: the fields a variant is chosen by.
+- A hook's data can have any shape: its lists keep their own names (`fixtures.days`, `fixtures.days[].matches`). Every source also lists `items`, `pagination` and `pages`; when the data has lists of its own they are empty (`list of 0`) and are not data, so bind the lists it has.
 
 ## Writing the plan
 

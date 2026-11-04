@@ -2,7 +2,6 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineTool, type ToolContext } from "@dugout/contracts";
 import { describeImage, REPO_ROOT } from "@dugout/core";
-import { castTools, type McpClient } from "@dugout/mcp";
 import { z } from "zod";
 import { type ControlPlane, createControlPlane, webUrl } from "./control-plane.ts";
 import {
@@ -358,7 +357,6 @@ export function createMatchTools(
      */
     lookOrder?: "first" | "last";
     /** Cast MCP client (ADR 0022). Its read tools are added; writes are never given to this agent. */
-    cast?: McpClient;
   } = {},
 ) {
   const dir = opts.dir ?? MATCH_DIR;
@@ -1021,15 +1019,5 @@ export function createMatchTools(
       }),
   });
 
-  const cast = opts.cast ? castTools(opts.cast).filter((tool) => tool.effect === "read") : [];
-  return [
-    load,
-    node,
-    tokens,
-    override,
-    layout,
-    opts.vision === false ? noEyes : lookTool,
-    publish,
-    ...cast,
-  ];
+  return [load, node, tokens, override, layout, opts.vision === false ? noEyes : lookTool, publish];
 }

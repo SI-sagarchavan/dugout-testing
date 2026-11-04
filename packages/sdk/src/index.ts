@@ -23,3 +23,4 @@ export * from "./live.ts";
 export * from "./registry.ts";
 export * from "./schemas.ts";
 export * from "./seed.ts";
+export * from "./subagents.ts";

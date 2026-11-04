@@ -410,6 +410,10 @@ export function renderHelp(topic?: CommandName): string {
 const TOOLS: Array<[string, string]> = [
   ["watch", "A Send from the Figma plugin starts a card-match run"],
   ["memory <review|promote>", "Approve proposed facts, or propose shared memory"],
+  [
+    "mcp <list|sync|login>",
+    "The registry's MCP servers: list them, lock a server's tools, log a tenant in",
+  ],
   ["schemas", "Write each agent's input and output JSON Schema to schemas/"],
 ];
 const toolWidth = Math.max(...TOOLS.map(([name]) => name.length));

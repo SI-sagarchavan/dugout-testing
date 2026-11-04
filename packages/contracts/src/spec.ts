@@ -10,8 +10,23 @@ export const AgentSpec = z.object({
   id: z.string(),
   version: z.number().int().positive(),
   owner: z.string(),
+  /** One line on what the agent does: what a parent's model reads when it may call this agent. */
+  description: z.string().optional(),
   instructions: z.string(),
   tools: z.array(z.string()), // names in the tool registry
+  /**
+   * Agents this one may hand a part of its work to (ADR 0025). Each is a tool, `agent.<camelId>`,
+   * whose input is that agent's input; a call starts a child run. Needs `budget.maxDepth` of 1 or more.
+   */
+  agents: z.array(z.string()).optional(),
+  /**
+   * What the agent needs from MCP servers, by capability, never by server (ADR 0026):
+   * `hooks.author`. The registry (`config/mcp`) says which servers have it and which of their
+   * tools it grants; those tools are added to `tools` when the agent is created.
+   */
+  requires: z.array(z.string()).optional(),
+  /** Capabilities used when a server that has them is configured here, and left out otherwise. */
+  optional: z.array(z.string()).optional(),
   skills: z.array(z.string()).default([]), // procedural memory, in full in the instructions
   // listed by name and description only; the agent loads one with `skill.load` when it needs it
   onDemandSkills: z.array(z.string()).default([]),

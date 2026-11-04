@@ -1,0 +1,1939 @@
+{
+  "server": "cast",
+  "syncedAt": "2026-11-04T12:52:29.183Z",
+  "serverInfo": {
+    "name": "cast",
+    "version": "0.5.1"
+  },
+  "protocolVersion": "2025-11-25",
+  "instructions": "cast is a visual API-hook builder: each hook wires API connectors into a DAG and\napplies a JSONata transform to produce a shaped JSON output.\n\nBuilding a hook from nothing:\n  1. cast_list_apis        — the connectors available, and which {{input.x}}\n                             each one already references.\n  2. cast_create_hook      — id, name, and the caller inputs those refs need.\n  3. cast_add_step         — one per API call / branch / transformer. Steps with\n                             no edge between them run in PARALLEL; an\n                             inputOverride of {{steps.nX...}} makes a call\n                             DEPEND on an earlier one.\n  4. cast_wire_steps       — the edges. Branch arms wire as case-<id> / default.\n  5. cast_run_hook         — real step responses, once the graph is wired.\n  6. cast_eval_jsonata     — iterate the JSONata. Free, local, no persistence.\n  7. cast_set_transform    — persist into a transformer step.\n  8. cast_lint_hook        — confirm.\n\nWorking on a hook that already exists: start at cast_list_hooks, then\ncast_describe_hook for the DAG, the input schema and EVERY reference path that\nresolves — anything not on that list is a dead ref.\n\nEvery write lints before it saves and refuses on errors, so build incrementally\nand read what comes back. cast_remove_step undoes a step; cast_update_step\nchanges one in place; cast_update_hook renames it or redeclares its inputs.\n\nEdits save as DRAFTS — even on a published hook — so live pages keep the last\npublished version. cast_publish_hook is the only way anything goes live.\ncast_list_versions / cast_revert_hook cover history; cast_duplicate_hook copies\na hook; cast_set_template_binding attaches one to a page template.\n\nConnectors: cast_list_providers / cast_upsert_provider and cast_describe_api /\ncast_upsert_api. They are shared across hooks, so read the impact each write\nreports. Published hooks bundle their connectors: after changing one, re-snapshot\nthem with cast_publish_hook refresh: true.\n\nDeletes (hooks, bindings, APIs, providers) need a confirm that repeats the id\nand are refused while something still uses the target. Ask the user first.\n\nTransforms are evaluated against the whole run context, not one API body:\n  { \"input\": { ... }, \"steps\": { \"n1\": { \"response\": { ... } } } }\n\nAny change of shape — an API response, an input, anything — belongs in a\ntransformer STEP on the canvas. cast_set_transform does that by default,\ncreating the step and wiring it into output when the hook has none. The\nhook-level transform slot (target: \"hook\") is a field on the hook record that\nthe canvas cannot draw: a hook using it renders as input -> n1 -> output while\nemitting reshaped JSON, and the next person to open it cannot see why. Do not\nreach for it.\n\nCredential values are never readable through this server. Runs execute\nserver-side, where the backend decrypts secrets and strips them from results.\n\nAnswers come twice: prose for you, and the same facts as structuredContent\n(declared as each tool's outputSchema) for a client that must act on them.\ncast_run_hook returns the hook's output whole there, and each step's body only\nwith includeSteps. cast_fetch_sample shows one GET connector's real answer\nwithout building a hook, and cast_validate checks an output against the JSON\nSchema a design needs. The output contract, a JSONata cheat sheet and example\nhooks are resources (cast://contract/output, cast://guide/jsonata,\ncast://examples/hooks). cast_publish_hook and cast_describe_hook give the\nworkflowId a page fetches the hook by.\n\nThe tool list is fixed for the life of this server version. This server is\nstateless, so it advertises listChanged but never sends the notification:\nre-read tools/list on connect, not on a signal.",
+  "instructionsHash": "sha256:2c4c718aa1fb83e1fa6ea768e10a13587203dad548a051a2a8107c3531cff2e7",
+  "tools": {
+    "cast_list_hooks": {
+      "title": "List cast hooks",
+      "description": "List the hooks in this cast workspace — id, name, status, version and node count. Identity only, never the canvas. Start here when you do not already know the hook id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["draft", "published", "any"],
+            "description": "Filter by publication status. Defaults to any."
+          },
+          "nameContains": {
+            "type": "string",
+            "description": "Case-insensitive substring match on the hook name."
+          },
+          "idPrefix": {
+            "type": "string",
+            "description": "Only hooks whose id starts with this, e.g. a namespace such as `dugout_`."
+          },
+          "query": {
+            "type": "string",
+            "description": "Words to find in a hook's id, name, description or input names. Every word must match; it is word matching, not meaning."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "description": "Hooks in the workspace, before any filter."
+          },
+          "hooks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["draft", "published"]
+                },
+                "version": {
+                  "type": "number"
+                },
+                "workflowId": {
+                  "type": "string",
+                  "description": "The public flow id; what /cast/api/flow/<id> takes."
+                },
+                "nodeCount": {
+                  "type": "number"
+                },
+                "transform": {
+                  "type": "string",
+                  "enum": ["none", "whole", "per-field"]
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": ["id", "name", "status", "nodeCount", "transform"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["total", "hooks"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:5b3ef96bff4580ad3cec4220dcdb53f702a6422a78640ce424c37987f57e9d3c"
+    },
+    "cast_describe_hook": {
+      "title": "Describe a cast hook",
+      "description": "Render one hook as compact prose: its input schema, its steps in topological order, what each step calls, which branch arm gates which step, the saved transform, and the exhaustive list of reference paths (input.*, steps.*, env.*, cred.*) that resolve at run time. Read this before writing any JSONata or template — treat any path it does not list as a dead ref.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Hook id, as returned by cast_list_hooks."
+          },
+          "includeSamples": {
+            "type": "boolean",
+            "description": "Include each API's stored sample response shape under its step. Useful when writing a transform without spending a live run; off by default because samples are large."
+          }
+        },
+        "required": ["hookId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["draft", "published"]
+          },
+          "version": {
+            "type": "number"
+          },
+          "workflowId": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "default": {},
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": ["name", "type", "required"],
+              "additionalProperties": false
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "dependsOn": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "gate": {
+                  "type": "object",
+                  "properties": {
+                    "branchId": {
+                      "type": "string"
+                    },
+                    "caseId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["branchId", "caseId"],
+                  "additionalProperties": false
+                },
+                "apiId": {
+                  "type": "string"
+                },
+                "apiName": {
+                  "type": "string"
+                },
+                "method": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "hookId": {
+                  "type": "string"
+                },
+                "inputOverrides": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "inputMapping": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "transform": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": ["whole", "per-field"]
+                        },
+                        "expression": {
+                          "type": "string",
+                          "description": "The JSONata, for mode 'whole'."
+                        },
+                        "fields": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "expression": {
+                                "type": "string"
+                              },
+                              "required": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": ["id", "expression"],
+                            "additionalProperties": false
+                          },
+                          "description": "One JSONata per output field, for mode 'per-field'."
+                        }
+                      },
+                      "required": ["mode"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "onCycle": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["id", "kind", "dependsOn"],
+              "additionalProperties": false
+            },
+            "description": "In execution order; same-level steps run in parallel."
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "sourceHandle": {
+                  "type": "string"
+                }
+              },
+              "required": ["from", "to"],
+              "additionalProperties": false
+            }
+          },
+          "transform": {
+            "anyOf": [
+              {
+                "$ref": "#/properties/steps/items/properties/transform/anyOf/0"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The hook-level transform slot, if any."
+          },
+          "outputSourceStepId": {
+            "type": "string"
+          },
+          "referencePaths": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "cred": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["input", "steps", "env", "cred"],
+            "additionalProperties": false
+          },
+          "readOnly": {
+            "type": "boolean",
+            "description": "True when every api_call is a GET and no step calls another hook."
+          },
+          "callsHooks": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "inputs",
+          "steps",
+          "edges",
+          "transform",
+          "referencePaths",
+          "readOnly",
+          "callsHooks",
+          "warnings"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:796ac43e74d79b66fec9c420d0e29a42467b3b54a906d701b684f338e271e05c"
+    },
+    "cast_list_apis": {
+      "title": "List cast API connectors",
+      "description": "List the API connectors this workspace can call — id, name, method, url, provider, and every {{input.x}} the connector already references. Start here when building an api_call step: `apiId` is otherwise an opaque id with no way to discover it, and the input refs tell you which fields the hook has to declare.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "nameContains": {
+            "type": "string",
+            "description": "Case-insensitive substring match on the api name."
+          },
+          "providerId": {
+            "type": "string",
+            "description": "Restrict to one provider."
+          },
+          "query": {
+            "type": "string",
+            "description": "Words to find in an api's name, description, url or input names, or its provider's name. Every word must match; it is word matching, not meaning."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "description": "Connectors in the workspace, before any filter."
+          },
+          "apis": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "method": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "providerId": {
+                  "type": "string"
+                },
+                "providerName": {
+                  "type": "string"
+                },
+                "inputs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The {{input.x}} names it needs."
+                },
+                "hasSample": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["id", "name", "method", "url", "providerId", "inputs", "hasSample"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["total", "apis"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:812c1b273be0defd6bc366f623b8af23c3a48a5babd291356385f226fa8ea08f"
+    },
+    "cast_describe_api": {
+      "title": "Describe an API connector",
+      "description": "One API connector in full: method, URL, headers, query params, body, the {{input.x}} it needs, the hooks that call it, and optionally its stored sample response. Read before cast_upsert_api.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "apiId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "From cast_list_apis."
+          },
+          "includeSample": {
+            "type": "boolean",
+            "description": "Show the stored sample response's shape."
+          },
+          "maxChars": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Budget for the sample. Default 1500."
+          }
+        },
+        "required": ["apiId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "providerName": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["key", "value", "enabled"],
+              "additionalProperties": false
+            }
+          },
+          "queryParams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/properties/headers/items"
+            }
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string"
+              }
+            },
+            "required": ["mode"],
+            "additionalProperties": true
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "usedByHooks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hasSample": {
+            "type": "boolean"
+          },
+          "sampleResponse": {
+            "description": "The stored sample, whole; only present with includeSample."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "providerId",
+          "method",
+          "url",
+          "headers",
+          "queryParams",
+          "body",
+          "inputs",
+          "usedByHooks",
+          "hasSample"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:0521c0392fe3efd5bd39320ab8c9341c67fa0fd645b815b0b6b3c80b7065ee87"
+    },
+    "cast_get_template_binding": {
+      "title": "Read a template's hook binding",
+      "description": "Which hook feeds a layout-builder template, with which input mapping, and whether it is pinned to one published snapshot.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "templateId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Template id (a UUID) from the layout builder."
+          }
+        },
+        "required": ["templateId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:a7f5e9b04af02b78d9d2f6db94c7c03f12f9756733fe1b5ecbbcd87fa8dcdcac"
+    },
+    "cast_list_versions": {
+      "title": "List a hook's versions",
+      "description": "A hook's version history, newest first: version, status, which is current and who saved it. Shows the latest published version — the one pages render. Use before cast_revert_hook.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "limit": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Newest first. Default 20."
+          }
+        },
+        "required": ["hookId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:e7c1e8555846d3941151e0d2aa05b1fc63f645724721d5cd7a58c8a04c0ee259"
+    },
+    "cast_lint_hook": {
+      "title": "Lint a cast hook",
+      "description": "Static checks on a hook: unwired nodes, missing api ids, dead {{env.x}} / {{cred.x}} template refs, dependency cycles, transform expressions that do not compile, references to steps that do not exist, and references to a step that only runs on one branch arm (the silent cause of a field vanishing from the output).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Hook id to lint."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["error", "all"],
+            "description": "'error' shows only blocking problems; 'all' (default) includes warnings."
+          }
+        },
+        "required": ["hookId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "number"
+          },
+          "warnings": {
+            "type": "number"
+          },
+          "clean": {
+            "type": "boolean",
+            "description": "No errors, and no warnings among those shown."
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": ["error", "warning"]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "stepId": {
+                  "type": "string"
+                },
+                "field": {
+                  "type": "string"
+                }
+              },
+              "required": ["code", "severity", "message"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["hookId", "name", "errors", "warnings", "clean", "findings"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:8a4912f75277cbde5b67c89db7492a9f3dd2ff5029253b8fd4a7f8135334bd9f"
+    },
+    "cast_eval_jsonata": {
+      "title": "Evaluate a JSONata expression",
+      "description": "Compile and evaluate a JSONata expression locally against a value you supply. No network, no persistence, no cost — this is the inner loop, so iterate here freely before persisting anything. Shape the input like the run context ({ input, steps }) or the expression will behave differently in production.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The JSONata expression to compile and evaluate."
+          },
+          "input": {
+            "description": "The value to evaluate against. To mirror run time, shape it like the run context: { \"input\": {...}, \"steps\": { \"n1\": { \"response\": {...} } } } — copy it from a cast_run_hook result."
+          },
+          "maxChars": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Character budget for the rendered result. Default 3000."
+          }
+        },
+        "required": ["expression"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "result": {
+            "description": "The evaluated value, whole. Absent when it is undefined."
+          },
+          "resultIsUndefined": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "type": "string",
+                "enum": ["compile", "evaluate"]
+              },
+              "message": {
+                "type": "string"
+              },
+              "position": {
+                "type": "number"
+              },
+              "token": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              }
+            },
+            "required": ["stage", "message"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["ok"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      },
+      "hash": "sha256:3b8ab50a17c88bc6cfe9f52d7d75781b5edf936e48f02288be3b695b4ee4e8e0"
+    },
+    "cast_run_hook": {
+      "title": "Run a cast hook",
+      "description": "Execute a hook server-side against LIVE partner APIs and return each step's request, HTTP status and response shape. This spends real API quota and may mutate partner state on POST connectors, so run it once and reuse the result for iteration. Leave applyTransform false while you are still learning the response shapes. Subject to a per-session run budget.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Hook id to execute."
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Caller input, keyed by the input field names from cast_describe_hook. Required fields must be present or the run fails validation."
+          },
+          "applyTransform": {
+            "type": "boolean",
+            "description": "Run the saved JSONata transform and return the final output. Default false — leave it off while you are still learning the step response shapes."
+          },
+          "maxCharsPerStep": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Character budget for each step's response in the TEXT answer. Default 1500. The structured answer is not cut by it."
+          },
+          "includeSteps": {
+            "type": "boolean",
+            "description": "Put every step's whole response body in the structured answer. Default false: steps report status and timing only, and the output comes back whole. Turn on to read a raw connector answer."
+          }
+        },
+        "required": ["hookId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "hookId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ok", "error"]
+          },
+          "durationMs": {
+            "type": "number"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "stepId": {
+                "type": "string"
+              }
+            },
+            "required": ["code", "message"],
+            "additionalProperties": false
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "stepId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["ok", "skipped", "error"]
+                },
+                "branchTaken": {
+                  "type": "string"
+                },
+                "request": {
+                  "type": "object",
+                  "properties": {
+                    "method": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["method", "url"],
+                  "additionalProperties": false
+                },
+                "response": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number"
+                    },
+                    "durationMs": {
+                      "type": "number"
+                    },
+                    "body": {
+                      "description": "Whole response; only present with includeSteps."
+                    }
+                  },
+                  "required": ["status", "durationMs"],
+                  "additionalProperties": false
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "$ref": "#/properties/error/properties/code"
+                    },
+                    "message": {
+                      "$ref": "#/properties/error/properties/message"
+                    }
+                  },
+                  "required": ["code", "message"],
+                  "additionalProperties": false
+                },
+                "nested": {
+                  "type": "object",
+                  "properties": {
+                    "hookId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "$ref": "#/properties/error"
+                    }
+                  },
+                  "required": ["hookId", "status"],
+                  "additionalProperties": false
+                }
+              },
+              "required": ["stepId", "kind", "status"],
+              "additionalProperties": false
+            }
+          },
+          "outputComputed": {
+            "type": "boolean",
+            "description": "False when applyTransform was off; there is no output."
+          },
+          "output": {
+            "description": "The hook's output, whole, when outputComputed."
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "remaining": {
+                "type": "number"
+              },
+              "used": {
+                "type": "number"
+              }
+            },
+            "required": ["remaining", "used"],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "runId",
+          "hookId",
+          "status",
+          "durationMs",
+          "steps",
+          "outputComputed",
+          "budget"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      },
+      "hash": "sha256:711810524b5daa45f1e8cc6d452051abe6a4f8d1bc1cb099a37651928216d845"
+    },
+    "cast_fetch_sample": {
+      "title": "Fetch a connector's real answer",
+      "description": "Call one GET connector once, with the inputs you give, and return its whole response — no hook needed. Use it when a connector has no stored sample, or to see real data before building. It calls a LIVE partner API and spends one run from the live-run budget; a connector that is not a GET is refused. The structured answer carries the whole body; the text is cut to maxChars.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "apiId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "From cast_list_apis."
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Values for the {{input.x}} the connector needs (cast_list_apis shows them). Inputs reach a connector as strings, as a page sends them."
+          },
+          "maxChars": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Character budget for the TEXT answer. Default 1500. The structured answer is whole."
+          }
+        },
+        "required": ["apiId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "apiId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ok", "error"]
+          },
+          "durationMs": {
+            "type": "number"
+          },
+          "request": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": ["method", "url"],
+            "additionalProperties": false
+          },
+          "response": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "number"
+              },
+              "durationMs": {
+                "type": "number"
+              },
+              "body": {
+                "description": "The connector's whole answer."
+              }
+            },
+            "required": ["status"],
+            "additionalProperties": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["code", "message"],
+            "additionalProperties": false
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "remaining": {
+                "type": "number"
+              },
+              "used": {
+                "type": "number"
+              }
+            },
+            "required": ["remaining", "used"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["apiId", "status", "budget"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:7d8f9eefad86c164dec228a82e2b5364b4e210de7da9f8f8dd4b3aed91f1cee2"
+    },
+    "cast_validate": {
+      "title": "Validate an output against a schema",
+      "description": "Check an output against a JSON Schema — the fields a design binds — and list every difference as { path, expected, got }. Pass `output` to check a value you already have (free, nothing runs). Pass `hookId` to run a read-only hook with its transform applied and check what comes out (spends one live run; refused if any connector is not a GET or a step calls another hook).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "A JSON Schema for the output: the fields a design binds. Supports type, properties, required, items, enum, const, additionalProperties, min/max bounds, pattern, anyOf, oneOf and allOf. Other keywords are listed as unchecked."
+          },
+          "output": {
+            "description": "The value to check. Free: nothing is run. Give this or hookId, not both."
+          },
+          "hookId": {
+            "type": "string",
+            "description": "Run this hook with the transform applied and check its output. Spends one live run; refused unless every connector is a GET and no step calls another hook."
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Caller input for the run, when hookId is given."
+          }
+        },
+        "required": ["schema"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "differences": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "expected": {
+                  "type": "string"
+                },
+                "got": {
+                  "type": "string"
+                }
+              },
+              "required": ["path", "expected", "got"],
+              "additionalProperties": false
+            }
+          },
+          "unchecked": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Schema keywords this check ignored."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["output", "run"],
+            "description": "Whether the output was supplied or produced by a run."
+          },
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": ["ok", "differences", "unchecked", "source"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:4a8bec7367c95f9b87cb4f808a2911e78ad38035506a539f1af29815ea8ddab9"
+    },
+    "cast_create_hook": {
+      "title": "Create a cast hook",
+      "description": "Create a new draft hook with the input and output terminals and the caller inputs you declare. Never overwrites: an existing id is refused, because the underlying write is an upsert. Build the graph afterwards with cast_add_step and cast_wire_steps.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Stable hook id, lower_snake_case. This is what callers and cast_* tools address, so pick it deliberately — renaming means creating a new hook."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "Human-facing name shown in the hook library."
+          },
+          "description": {
+            "type": "string",
+            "description": "What this hook is for. Worth writing — it is what the next reader sees first."
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Name callers pass and templates read as `{{input.<key>}}`."
+                },
+                "type": {
+                  "type": "string",
+                  "enum": ["string", "number", "boolean", "object", "array"]
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": ["key"],
+              "additionalProperties": false
+            },
+            "description": "Caller inputs. Every `{{input.x}}` an API step references should be declared here, or the reference is a dead ref at run time."
+          }
+        },
+        "required": ["id", "name"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "hash": "sha256:20ed93a5fb00335ca2eead3e530041ff5745485f37e6efa7c8e6b9b3a499205f"
+    },
+    "cast_update_hook": {
+      "title": "Update a hook's name, description or inputs",
+      "description": "Rename a hook, edit its description, or redeclare its caller inputs (the full list; existing keys keep their field ids). The id never changes — cast_duplicate_hook copies under a new one. Lints before saving; removed inputs that are still referenced come back as warnings. Saves as a draft.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The hook's id never changes; cast_duplicate_hook makes a copy under a new one."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "description": {
+            "type": "string",
+            "description": "Pass \"\" to clear it."
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Name callers pass and templates read as `{{input.<key>}}`."
+                },
+                "type": {
+                  "type": "string",
+                  "enum": ["string", "number", "boolean", "object", "array"]
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": ["key"],
+              "additionalProperties": false
+            },
+            "description": "The COMPLETE caller-input list — it replaces the current one. Keys that already exist keep their field id; omitted keys are removed."
+          }
+        },
+        "required": ["hookId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:84174fd20f6c05a1d3577140c56989bac7f7be0034e0da1ad6d07664682d34a0"
+    },
+    "cast_add_step": {
+      "title": "Add a step to a hook",
+      "description": "Add one step to a hook's canvas: api_call, transformer, branch, constant or hook_call. Takes the canvas's next free `nN` id unless you override it. For api_call, `inputOverrides` with a `{{steps.nX.response...}}` value is what makes the call depend on an earlier step rather than on caller input. connectFrom/connectTo wire it in the same call. Lints before saving and refuses on errors.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["api_call", "transformer", "branch", "constant", "hook_call"],
+            "description": "What kind of step to add."
+          },
+          "stepId": {
+            "type": "string",
+            "description": "Override the assigned id. Omit to get the canvas's next free `nN`, which is normal."
+          },
+          "apiId": {
+            "type": "string",
+            "description": "Required for kind 'api_call'. From cast_list_apis."
+          },
+          "targetHookId": {
+            "type": "string",
+            "description": "Required for kind 'hook_call' — the hook to call."
+          },
+          "inputOverrides": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Input name to override, matching an `{{input.<name>}}` ref."
+                },
+                "value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Template for the value. `{{steps.nX.response.a.b}}` is what makes this call depend on an earlier step; `{{input.y}}` and literals also work."
+                }
+              },
+              "required": ["name", "value"],
+              "additionalProperties": false
+            },
+            "description": "api_call only. Use `{{steps.nX...}}` values to build a dependent call."
+          },
+          "inputMapping": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Input name on the called hook."
+                },
+                "value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Template for the value, e.g. `{{input.page}}` or `{{steps.n1.response.id}}`."
+                }
+              },
+              "required": ["name", "value"],
+              "additionalProperties": false
+            },
+            "description": "hook_call only. The inputs passed to the called hook."
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Case id. Wire this arm with sourceHandle `case-<id>` in cast_wire_steps."
+                },
+                "predicate": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "group"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": ["and", "or"]
+                    },
+                    "children": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "atom"
+                              },
+                              "left": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Left side, e.g. `input.mode` or `steps.n1.response.status`."
+                              },
+                              "op": {
+                                "type": "string",
+                                "enum": [
+                                  "eq",
+                                  "neq",
+                                  "gt",
+                                  "gte",
+                                  "lt",
+                                  "lte",
+                                  "contains",
+                                  "not_contains",
+                                  "in",
+                                  "not_in",
+                                  "starts_with",
+                                  "ends_with",
+                                  "matches",
+                                  "is_empty",
+                                  "is_not_empty",
+                                  "truthy",
+                                  "falsy"
+                                ],
+                                "description": "is_empty / is_not_empty / truthy / falsy ignore `right`; every other op needs a non-empty `right`."
+                              },
+                              "right": {
+                                "type": "string",
+                                "description": "Right side, compared as a literal. Pass \"\" for unary ops."
+                              }
+                            },
+                            "required": ["id", "kind", "left", "op", "right"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "group"
+                              },
+                              "op": {
+                                "type": "string",
+                                "enum": ["and", "or"]
+                              },
+                              "children": {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "$ref": "#/properties/conditions/items/properties/predicate/properties/children/items/anyOf/0"
+                                    },
+                                    {
+                                      "$ref": "#/properties/conditions/items/properties/predicate/properties/children/items/anyOf/1"
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            "required": ["id", "kind", "op", "children"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": ["id", "kind", "op", "children"],
+                  "additionalProperties": false,
+                  "description": "A group predicate; wrap a single atom in an and-group."
+                }
+              },
+              "required": ["id", "predicate"],
+              "additionalProperties": false
+            },
+            "description": "branch only. Each case gets its own outlet, wired as `case-<id>`."
+          },
+          "value": {
+            "description": "constant only. The JSON value this step emits."
+          },
+          "connectFrom": {
+            "type": "string",
+            "description": "Wire this step's input from an existing step in the same call, e.g. 'input' or 'n1'. Saves a separate cast_wire_steps round trip."
+          },
+          "connectTo": {
+            "type": "string",
+            "description": "Wire this step's output into an existing step, e.g. 'output' or 'n9'."
+          },
+          "x": {
+            "type": "number",
+            "description": "Canvas x. Omit and the step is laid out below the deepest row."
+          },
+          "y": {
+            "type": "number",
+            "description": "Canvas y."
+          }
+        },
+        "required": ["hookId", "kind"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "hash": "sha256:c9a42344f11b6dff491e2cd47fc6a97f7ccb7d10d3ccc3d011f31b97407d4503"
+    },
+    "cast_update_step": {
+      "title": "Update a step",
+      "description": "Change a step in place — its api, input overrides, branch conditions, constant value, called hook and its input mapping, label or position — keeping its id and edges. Fields replace what is there. Use cast_set_transform for a transformer's JSONata and cast_update_hook for caller inputs. Lints before saving; saves as a draft.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stepId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Step to change. Its id and edges are kept."
+          },
+          "label": {
+            "type": "string",
+            "description": "Display label on the canvas."
+          },
+          "apiId": {
+            "type": "string",
+            "description": "api_call only. Point the step at another connector."
+          },
+          "inputOverrides": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "value": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": ["name", "value"],
+              "additionalProperties": false
+            },
+            "description": "api_call only. Replaces the whole override list; pass [] to clear it."
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Case id. Wire this arm with sourceHandle `case-<id>` in cast_wire_steps."
+                },
+                "predicate": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "group"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": ["and", "or"]
+                    },
+                    "children": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "atom"
+                              },
+                              "left": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Left side, e.g. `input.mode` or `steps.n1.response.status`."
+                              },
+                              "op": {
+                                "type": "string",
+                                "enum": [
+                                  "eq",
+                                  "neq",
+                                  "gt",
+                                  "gte",
+                                  "lt",
+                                  "lte",
+                                  "contains",
+                                  "not_contains",
+                                  "in",
+                                  "not_in",
+                                  "starts_with",
+                                  "ends_with",
+                                  "matches",
+                                  "is_empty",
+                                  "is_not_empty",
+                                  "truthy",
+                                  "falsy"
+                                ],
+                                "description": "is_empty / is_not_empty / truthy / falsy ignore `right`; every other op needs a non-empty `right`."
+                              },
+                              "right": {
+                                "type": "string",
+                                "description": "Right side, compared as a literal. Pass \"\" for unary ops."
+                              }
+                            },
+                            "required": ["id", "kind", "left", "op", "right"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "group"
+                              },
+                              "op": {
+                                "type": "string",
+                                "enum": ["and", "or"]
+                              },
+                              "children": {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "$ref": "#/properties/conditions/items/properties/predicate/properties/children/items/anyOf/0"
+                                    },
+                                    {
+                                      "$ref": "#/properties/conditions/items/properties/predicate/properties/children/items/anyOf/1"
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            "required": ["id", "kind", "op", "children"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": ["id", "kind", "op", "children"],
+                  "additionalProperties": false,
+                  "description": "A group predicate; wrap a single atom in an and-group."
+                }
+              },
+              "required": ["id", "predicate"],
+              "additionalProperties": false
+            },
+            "description": "branch only. Replaces every case. Keep a case's id to keep its wired arm; a removed case that still has an edge is refused."
+          },
+          "value": {
+            "description": "constant only. The new JSON value."
+          },
+          "targetHookId": {
+            "type": "string",
+            "description": "hook_call only. The hook to call instead."
+          },
+          "inputMapping": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Input name on the called hook."
+                },
+                "value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Template for the value, e.g. `{{input.page}}` or `{{steps.n1.response.id}}`."
+                }
+              },
+              "required": ["name", "value"],
+              "additionalProperties": false
+            },
+            "description": "hook_call only. Replaces the inputs passed to the called hook."
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          }
+        },
+        "required": ["hookId", "stepId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:83b512a879b8df7ee86daa6912dc241e026c7bf04789bfd24702a83f4c462390"
+    },
+    "cast_remove_step": {
+      "title": "Remove a step from a hook",
+      "description": "Delete a step and every edge touching it. Terminals cannot be removed. Refused when the resulting hook would not lint — something still referencing the step is reported instead of leaving a dead ref behind.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stepId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Step to delete. Its edges go with it."
+          }
+        },
+        "required": ["hookId", "stepId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "hash": "sha256:8837a6010d94d12af1112fc8efa7c4f2a7b02e56c9f65ee65992c4215303a191"
+    },
+    "cast_wire_steps": {
+      "title": "Wire a hook's steps",
+      "description": "Add or remove edges in one batch. Edges are what make steps sequential — two steps with no path between them run in parallel — and `sourceHandle` (case-<conditionId> or default) is what gates a step on a branch arm. A handle naming a case the branch does not have is refused, since that step could never run. Lints once for the whole batch.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "connect": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Source step id, or 'input'."
+                },
+                "to": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Target step id, or 'output'."
+                },
+                "sourceHandle": {
+                  "type": "string",
+                  "description": "Branch outlet when `from` is a branch step: `case-<conditionId>` for a case, or `default` for the fallthrough. Omit for ordinary edges."
+                }
+              },
+              "required": ["from", "to"],
+              "additionalProperties": false
+            },
+            "description": "Edges to add. Already-present edges are skipped."
+          },
+          "disconnect": {
+            "type": "array",
+            "items": {
+              "$ref": "#/properties/connect/items"
+            },
+            "description": "Edges to remove."
+          },
+          "replaceAll": {
+            "type": "boolean",
+            "description": "Replace the whole edge set with `connect` instead of adding to it. Use when rewiring a graph wholesale; it discards every existing edge."
+          }
+        },
+        "required": ["hookId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:2def5d989a575af4058a3368641da6484259b423205672d5d5fc65900f8908af"
+    },
+    "cast_set_transform": {
+      "title": "Save a hook's transform",
+      "description": "Replace a hook's saved JSONata transform. Writes into a transformer STEP on the canvas by default — creating one and wiring it into output when the hook has none — so the shape change is visible to whoever opens the hook next; pass targetStepId to pick a specific step, or target 'hook' for the hook-level slot the canvas cannot draw. Every expression must compile; if you pass validateAgainst it must also evaluate cleanly, and its result is stamped on the step as sampleResponse; and the hook must lint free of errors. Any gate failing means nothing is written. The backend appends a new version, so the previous one remains revertible.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Hook whose transform is being replaced."
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["whole", "per-field"],
+            "description": "whole: one expression produces the entire output. per-field: one expression per top-level output key."
+          },
+          "expression": {
+            "type": "string",
+            "description": "Required when mode is 'whole'. The single expression producing the output."
+          },
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Output key this field produces."
+                },
+                "expression": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "JSONata for this field, evaluated against the run context."
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": ["id", "expression"],
+              "additionalProperties": false
+            },
+            "description": "Required when mode is 'per-field'. One entry per output key."
+          },
+          "target": {
+            "type": "string",
+            "enum": ["node", "hook"],
+            "description": "Where to write. 'node' (the default) uses a transformer node on the canvas, creating one wired into output if the hook has none — this is what a human authoring the same change would produce. 'hook' writes the hook-level transform, which the canvas cannot draw; use it only when something specifically requires that slot."
+          },
+          "targetStepId": {
+            "type": "string",
+            "description": "Which transformer step to write into, e.g. 'n2'. Only meaningful with target 'node'. Omit and the tool uses the transformer feeding output, or creates one."
+          },
+          "validateAgainst": {
+            "description": "A run context to evaluate against before saving — copy it from a cast_run_hook result. Strongly recommended: without it only the compile gate runs, and an expression that compiles can still return undefined for every field against real data. Also supplies the sampleResponse stamped on the transformer node."
+          }
+        },
+        "required": ["hookId", "mode"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:b2ffd65868f5cd0e5d710a7a47947fddca19973534336a4e1bc46fafac5fc81d"
+    },
+    "cast_publish_hook": {
+      "title": "Publish a hook",
+      "description": "Make a hook live: snapshot it so pages bound to it render this version. Every other write tool saves as a draft, so nothing an agent builds reaches a page until this runs. Refused when the hook does not lint. Pass refresh: true to re-snapshot an already-published hook after an API, provider or called hook it uses changed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hookId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "refresh": {
+            "type": "boolean",
+            "description": "Re-snapshot a hook that is already published. Needed after an API, provider or called hook it uses changed — the live snapshot bundles those."
+          }
+        },
+        "required": ["hookId"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["draft", "published"]
+          },
+          "version": {
+            "type": "number"
+          },
+          "workflowId": {
+            "type": "string",
+            "description": "The public flow id; what /cast/api/flow/<id> takes."
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "False when it was already published and nothing was re-snapshotted."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["id", "name", "status", "changed", "warnings"],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:672ecc13548a7bf6c55e1aaa6f9906d84400b3968ff4e59e4448f5303c37c860"
+    }
+  },
+  "resources": {
+    "cast://examples/hooks": {
+      "name": "example-hooks",
+      "title": "Example hooks",
+      "description": "A listing, a detail and a dependent-call hook, as the tool calls that build them.",
+      "mimeType": "text/markdown",
+      "text": "# Three example hooks\n\nIds are lower_snake_case. Each example is the tool calls that build it; step ids come from the canvas\n(`n1`, `n2`, …) in the order steps are added. `cast_set_transform` creates the transformer step itself\nand splices it between the step that feeds `output` and `output`.\n\n## 1. A listing: one connector, one transform\n\n```\ncast_create_hook      { id: \"club_fixtures\", name: \"Club fixtures\", inputs: [{ key: \"page_size\" }] }\ncast_add_step         { hookId: \"club_fixtures\", kind: \"api_call\", apiId: \"<schedule api>\",\n                        inputOverrides: [{ name: \"client_id\", value: \"<tenant value>\" }],\n                        connectFrom: \"input\", connectTo: \"output\" }\ncast_set_transform    { hookId: \"club_fixtures\", mode: \"whole\", expression:\n  \"{ \\\"data\\\": { \\\"1\\\": $filter(steps.n1.response.data.matches.{ \\\"id\\\": match_id, \\\"title\\\": title, \\\"start_date\\\": date },\n       function($v, $i) { $i < $number(input.page_size) }) },\n     \\\"meta\\\": { \\\"pagination\\\": { \\\"per_page\\\": $number(input.page_size), \\\"current_page\\\": 1 } } }\" }\n```\n\n## 2. A detail: one item, as a list of one\n\n```\ncast_create_hook      { id: \"match_detail\", name: \"Match detail\", inputs: [{ key: \"match_id\", required: true }] }\ncast_add_step         { hookId: \"match_detail\", kind: \"api_call\", apiId: \"<match api>\",\n                        connectFrom: \"input\", connectTo: \"output\" }\ncast_set_transform    { hookId: \"match_detail\", mode: \"whole\", expression:\n  \"{ \\\"data\\\": { \\\"1\\\": [ { \\\"id\\\": steps.n1.response.id, \\\"title\\\": steps.n1.response.title } ] } }\" }\n```\n\n## 3. A dependent call: the second connector needs an id the first returns\n\n```\ncast_add_step         { hookId: \"…\", kind: \"api_call\", apiId: \"<series api>\", connectFrom: \"input\" }\ncast_add_step         { hookId: \"…\", kind: \"api_call\", apiId: \"<standings api>\",\n                        inputOverrides: [{ name: \"series_id\", value: \"{{steps.n1.response.data.id}}\" }],\n                        connectFrom: \"n1\", connectTo: \"output\" }\n```\n\nTwo steps with no edge between them run in parallel; an override naming `{{steps.nX...}}` plus an edge from\nnX makes the call depend on it. After building, `cast_lint_hook`, then `cast_validate` against the output\ncontract, then `cast_publish_hook`.\n",
+      "hash": "sha256:8e2bc3e2c845ca18338dd2c6b1824aee17fb9c09af8fe1e74ea3d8c2555b014b"
+    },
+    "cast://guide/jsonata": {
+      "name": "jsonata-guide",
+      "title": "JSONata cheat sheet",
+      "description": "The run context a transform sees, the JSONata moves most hooks need, and the describe, run, eval, set, validate loop.",
+      "mimeType": "text/markdown",
+      "text": "# JSONata in a cast transform\n\nA transform is evaluated against the whole run context, not one API body:\n\n```json\n{ \"input\": { \"page_size\": \"5\" }, \"steps\": { \"n1\": { \"response\": { \"...\": \"the API body\" } } } }\n```\n\n- `input.x` reads a caller input. Inputs arrive as strings, as a page sends them: `$number(input.page_size)`.\n- `steps.n1.response` is step n1's answer. A branch step reads as `steps.n1.branchTaken` instead.\n- `cast_describe_hook` lists every path that resolves (`referencePaths`). A path not on that list is a dead ref.\n\n## Moves that cover most hooks\n\n```\nsteps.n1.response.data.matches.{ \"id\": match_id, \"venue\": venue }       map a list\n$map(list, function($v) { { \"id\": $v.id, \"name\": $v.name } })            when an item needs $v\n( $a := steps.n1.response.data; { \"title\": $a.title } )                  bind names first\n$string(x)    $number(x)                                                 convert\n$filter($items, function($v, $i) { $i < $number(input.page_size) })      first N items\n```\n\nA path to nothing is `undefined`, not an error, so a wrong path looks like an empty field. When a field is\nmissing, check the path against the real response before rewriting the expression.\n\n## The loop\n\n1. `cast_describe_hook` for the inputs, steps and reference paths.\n2. `cast_run_hook` with `applyTransform: false, includeSteps: true`: the structured answer carries each\n   step's whole body. Build the context `{ input, steps: { <stepId>: { response: <body> } } }` from it.\n   To see one connector without a hook, `cast_fetch_sample`.\n3. `cast_eval_jsonata` until the result is right. It is free and local.\n4. `cast_set_transform` with `validateAgainst` set to that context.\n5. `cast_validate` against the fields the design needs, then `cast_lint_hook`, then `cast_publish_hook`.\n",
+      "hash": "sha256:2124a76af7e4ddd78ef2a9160586ba9f5c51b65d6141cdb96763ed841e60125a"
+    }
+  }
+}

@@ -6,6 +6,9 @@ export const AGENT_TOOLS: ToolTable = {
   schemas: "packages/sdk/scripts/schemas.ts",
   "memory review": "packages/memory/scripts/review.ts",
   "memory promote": "packages/memory/scripts/promote.ts",
+  "mcp list": "packages/mcp/scripts/list.ts",
+  "mcp sync": "packages/mcp/scripts/sync.ts",
+  "mcp login": "packages/mcp/scripts/login.ts",
 };
 
 /** `pnpm eval <tool>`: measuring and checking tools that are not suites. */

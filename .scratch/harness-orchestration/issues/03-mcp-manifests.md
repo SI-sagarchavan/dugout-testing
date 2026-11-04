@@ -1,6 +1,6 @@
 # 03 · MCP servers as configured tool sources
 
-Status: ready-for-agent
+Status: done (2026-11-04), ADR 0026. Built with capabilities on top: agents ask for a capability, the registry grants tools with argument limits. The connection is the official MCP SDK.
 Type: design + task
 Blocked by: none
 

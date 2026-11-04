@@ -1,0 +1,211 @@
+{
+  "id": "cast",
+  "title": "Cast",
+  "description": "Cast hooks (workflows): API connectors wired into a graph, shaped by a JSONata transform into the data a page reads.",
+  "owner": "cast-team",
+  "environment": "dev",
+  "transport": {
+    "type": "streamable-http",
+    "url": {
+      "env": "CAST_MCP_URL"
+    }
+  },
+  "auth": {
+    "type": "oauth-per-tenant",
+    "grants": {
+      "env": "CAST_MCP_TOKENS",
+      "default": ".runs/cast-mcp.json"
+    },
+    "scope": "cast:mcp"
+  },
+  "headers": {
+    "client": "{grant.site}"
+  },
+  "adapter": "cast",
+  "tools": {
+    "cast_list_hooks": {
+      "effect": "read",
+      "retries": 1
+    },
+    "cast_describe_hook": {
+      "effect": "read",
+      "retries": 1
+    },
+    "cast_list_apis": {
+      "effect": "read",
+      "retries": 1
+    },
+    "cast_describe_api": {
+      "effect": "read",
+      "retries": 1
+    },
+    "cast_get_template_binding": {
+      "effect": "read",
+      "retries": 1
+    },
+    "cast_list_versions": {
+      "effect": "read",
+      "retries": 1
+    },
+    "cast_lint_hook": {
+      "effect": "read",
+      "retries": 1
+    },
+    "cast_eval_jsonata": {
+      "effect": "read",
+      "retries": 1
+    },
+    "cast_run_hook": {
+      "effect": "read",
+      "reason": "It calls the hook's partner APIs for real. The readOnlyHook guard runs it only for a hook whose connectors all GET and that calls no other hook (cast_describe_hook's readOnly), so a run changes no partner data; it spends partner quota and the server's run budget, so it is not retried.",
+      "guard": "readOnlyHook",
+      "timeoutMs": 90000
+    },
+    "cast_fetch_sample": {
+      "effect": "read",
+      "timeoutMs": 90000
+    },
+    "cast_validate": {
+      "effect": "read",
+      "timeoutMs": 90000
+    },
+    "cast_create_hook": {
+      "effect": "write"
+    },
+    "cast_update_hook": {
+      "effect": "write"
+    },
+    "cast_add_step": {
+      "effect": "write"
+    },
+    "cast_update_step": {
+      "effect": "write"
+    },
+    "cast_remove_step": {
+      "effect": "write"
+    },
+    "cast_wire_steps": {
+      "effect": "write"
+    },
+    "cast_set_transform": {
+      "effect": "write"
+    },
+    "cast_publish_hook": {
+      "effect": "write",
+      "timeoutMs": 60000
+    }
+  },
+  "capabilities": {
+    "hooks.read": {
+      "description": "Read every hook and connector: what feeds a template, what a hook gives.",
+      "tools": {
+        "cast_list_hooks": {},
+        "cast_describe_hook": {},
+        "cast_list_apis": {},
+        "cast_describe_api": {},
+        "cast_get_template_binding": {}
+      }
+    },
+    "hooks.choose": {
+      "description": "Choose among dugout's own hooks (ids that start dugout_), and run one to see its data. The hooks people made are not listed. Connectors may be read and sampled, to say which could give what no hook does.",
+      "tools": {
+        "cast_list_hooks": {
+          "set": {
+            "idPrefix": "dugout_"
+          }
+        },
+        "cast_describe_hook": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_run_hook": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_validate": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_list_apis": {},
+        "cast_describe_api": {},
+        "cast_fetch_sample": {}
+      }
+    },
+    "hooks.author": {
+      "description": "Build and publish hooks in dugout's namespace (dugout_). Any hook may be read, to copy what it passes a connector; only dugout_ hooks are written or run.",
+      "tools": {
+        "cast_list_apis": {},
+        "cast_describe_api": {},
+        "cast_fetch_sample": {},
+        "cast_describe_hook": {},
+        "cast_list_hooks": {
+          "set": {
+            "idPrefix": "dugout_"
+          }
+        },
+        "cast_eval_jsonata": {},
+        "cast_create_hook": {
+          "arguments": {
+            "id": "^dugout_[a-z0-9_]+$",
+            "name": "^dugout: "
+          }
+        },
+        "cast_update_hook": {
+          "arguments": {
+            "hookId": "^dugout_",
+            "name": "^dugout: "
+          }
+        },
+        "cast_add_step": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_update_step": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_remove_step": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_wire_steps": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_set_transform": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_lint_hook": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_run_hook": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_validate": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        },
+        "cast_publish_hook": {
+          "arguments": {
+            "hookId": "^dugout_"
+          }
+        }
+      },
+      "resources": ["cast://examples/hooks", "cast://guide/jsonata"]
+    }
+  }
+}

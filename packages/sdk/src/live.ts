@@ -1,5 +1,6 @@
 import { createBedrockClient, loadEnv, loadModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
+import { defaultMcpHost } from "@dugout/mcp";
 import { createMemoryStore, createModelLessonWriter, loadEmbeddings } from "@dugout/memory";
 import { loadTracing } from "@dugout/tracing";
 
@@ -16,5 +17,7 @@ export function liveDeps() {
   const lessons = createModelLessonWriter(client, LESSON_MODEL);
   // undefined unless LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set
   const tracing = loadTracing();
-  return { models, client, pool, store, lessons, tracing };
+  // the registry's MCP servers, one connection per server and tenant for the process
+  const mcp = defaultMcpHost();
+  return { models, client, pool, store, lessons, tracing, mcp };
 }

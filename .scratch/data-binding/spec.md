@@ -63,6 +63,45 @@ plus units, and the binding (the agent) chooses which.
 Not yet: an instant reached does not refetch the data (that is polling, phase 5); a look chosen by
 the clock (red under an hour) needs data-driven looks.
 
+## Done (2026-11-04): the data from Cast, found by a subagent
+
+`bind` with no `--data` finds the data itself. It calls `agent.castResearcher` (ADR 0025), a child
+run with its own context. The researcher lists the tenant's published hooks, describes the likely
+ones, runs the best once against its live APIs (`cast.sampleHook`) and answers with the hook, the
+input it ran with, what it covers (field by field) and what is missing. `bind.source` then makes
+that hook's output the run's data, under a name the plan reads it by (`fixtures`), from the same
+live call. `bind.publish` records the source (`{ kind: "cast-hook", hookId, input, as }`) on the
+stored sample.
+
+Run `f52efa40` (dev Cast, tenant demo-cricket, the strip from run `3ddc13b8`): the researcher (run
+`fcbd38c3`, 4 steps, $0.036) chose `fanxp-seed-hook-cricket-schedule`, which now carries scores
+(`participants[].innings[].score`); bind bound 16 props in 9 steps, $0.136 in all. Left, and said
+so in remaining:
+
+- **Grouping.** The design puts two matches under one date; the hook answers one match per item.
+  The plan draws one match per card. Needs `groupBy` on `Repeater` (DSL change 3 below).
+- **States the sample does not show.** The first 6 items are all results, so the upcoming card was
+  bound but never drawn. Sampling again with `is_recent=false` would show it.
+- **Crests.** The hook gives logos as paths on the tenant's site (`/static-assets/images/teams/…`),
+  which do not load on the preview's host. The renderer needs the tenant's asset host.
+- **The public flow id.** The MCP gives no `hook_uuid`, which `/cast/api/flow/<id>` takes, so the
+  preview draws the stored sample, not a live fetch. Asked of Cast.
+
+## Done (2026-11-04): a hook built when none fits
+
+The researcher now chooses only among dugout's hooks (ids `dugout_…`, names `dugout: …`); the
+hooks people made are not listed to it. When none fits it answers with the connectors that could
+give the need, and `bind` calls `agent.castBuilder` (a person approves that one call). The builder
+reads the connector, copies its fixed values from a hook that already calls it (read only), then
+creates the hook, adds the call, runs it raw, tries a transform locally until the output has the
+need's fields, saves it checked against that run, samples and publishes it.
+
+Run `89e73718` (dev Cast, no `dugout_` hooks before): researcher $0.017, builder made and
+published `dugout_hundred_fixture_cards` from `fanxp-seed-api-cricket-schedule` in 14 steps,
+$0.08; bind bound 15 props; $0.31 in all. Found there: `bind` called the builder twice, and two
+hooks were built (`dugout_hundred_fixtures` is the unused one). A writing child now runs once per
+parent run. Then the researcher alone (run `0acc1148`, $0.02) found the built hook.
+
 ## The rule
 
 **Our code knows nothing about any API.** No `fixtures`, `match`, `score` or `countdown` in

@@ -1,0 +1,316 @@
+{
+  "text": "RUN  pf72fq5uukrm  hook=fanxp-seed-hook-cricket-schedule  status=ok  58ms  (live-run budget: 23 of 25 left)\n\nSTEPS  (1)\n\n  n2  transformer  ok\n      HTTP 200 in 0ms\n\nOUTPUT  (transform applied)\n  {\n    \"data\": {\n      \"1\": [\n        {\n          \"match_id\": \"269416\",\n          \"championship_id\": \"\",\n          \"championship_name\": \"\",\n          \"comp_type_id\": \"88\",\n          \"end_date\": \"7/22/2026\",\n          \"event_coverage_level\": \"Live Scorecard, Ball-by-Ball and Commentary\",\n          \"event_coverage_level_id\": \"8\",\n          \"event_day\": \"22\",\n          \"event_duration_left\": \"\",\n          \"event_format\": \"100 ball\",\n          \"event_group\": \"\",\n          \"event_interval\": \"\",\n          \"event_is_daynight\": \"false\",\n          \"event_is_linkable\": \"\",\n          \"event_name\": \"Match 2\",\n          \"event_priority\": \"\",\n          \"event_session\": \"\",\n          \"event_stage\": \"League\",\n          \"event_state\": \"R\",\n          \"event_status\": \"Result\",\n          \"event_status_id\": \"114\",\n          \"event_sub_status\": \"Southern Brave Women beat Welsh Fire Women by 8 runs\",\n          \"event_this_over\": \"2\",\n          \"game_id\": \"\",\n          \"has_standings\": \"true\",\n          \"league_code\": \"English Domestic\",\n          \"league_id\": \"7\",\n          \"parent_series_id\": \"205\",\n          \"parent_series_name\": \"The Hundred Women\",\n          \"participants\": [\n            {\n              \"first_up\": \"true\",\n              \"highlight\": \"8 runs\",\n              \"id\": \"2034\",\n              \"innings\": [\n                {\n                  \"score\": \"126/7\",\n                  \"overs\": \"20.0\"\n                }\n              ],\n              \"logo\": \"/static-assets/images/teams/2034.png?v=1.02&w=50&h=50\",\n              \"name\": \"Southern Brave Women\",\n              \"name_eng\": \"Southern Brave Women\",\n              \"now\": false,\n              \"short_name\": \"SOB-W\",\n              \"short_name_eng\": \"SOB-W\",\n              \"players_involved\": [\n                \"Sophie Molineux\"\n              ],\n              \"value\": \"126/7 (20.0)\"\n            },\n            {\n              \"first_up\": \"false\",\n              \"highlight\": \"\",\n              \"id\": \"2036\",\n              \"innings\": [\n                {\n                  \"score\": \"118/8\",\n                  \"overs\": \"20.0\"\n                }\n              ],\n              \"logo\": \"/static-assets/images/teams/2036.png?v=1.02&w=50&h=50\",\n              \"name\": \"Welsh Fire Women\",\n              \"name_eng\": \"Welsh Fire Women\",\n              \"now\": false,\n              \"short_name\": \"WEF-W\",\n              \"short_name_eng\": \"WEF-W\",\n              \"players_involved\": [],\n              \"value\": \"118/8 (20.0)\"\n            }\n          ],\n          \"result_code\": \"\",\n          \"result_sub_code\": \"\",\n          \"series_end_date\": \"8/16/2026\",\n          \"series_id\": \"15399\",\n          \"series_name\": \"The Hundred Women, 2026\",\n          \"series_start_date\": \"7/21/2026\",\n          \"sport\": \"\",\n          \"start_date\": \"2026-07-22T13:45:00+00:00\",\n          \"tour_id\": \"11941\",\n          \"tour_name\": \"The Hundred Women, 2026\",\n          \"venue_gmt_offset\": \"+01:00\",\n          \"venue_id\": \"159\",\n          \"venue_name\": \"Utilita Bowl, Southampton\",\n          \"winning_margin\": \"8 runs\",\n          \"short_event_status\": \"Match Ended\",\n          \"event_thisover\": \"2\",\n          \"event_livecoverage\": \"true\",\n          \"matchcenter_url\": \"/matches/sob-w-vs-wef-w-sbwwfw07222026269416\",\n          \"highlight_url\": \"\",\n          \"display_status\": \"Result\"\n        },\n        {\n          \"match_id\": \"269371\",\n          \"championship_id\": \"\",\n          \"championship_name\": \"\",\n          \"comp_type_id\": \"78\",\n          \"end_date\": \"7/23/2026\",\n          \"event_coverage_level\": \"Live Scorecard, Ball-by-Ball and Commentary\",\n          \"event_coverage_level_id\": \"8\",\n          \"event_day\": \"22\",\n          \"event_duration_left\": \"\",\n          \"event_format\": \"100 ball\",\n          \"event_group\": \"\",\n          \"event_interval\": \"\",\n          \"event_is_daynight\": \"false\",\n          \"event_is_linkable\": \"\",\n          \"event_name\": \"Match 2\",\n          \"event_priority\": \"\",\n          \"event_session\": \"\",\n          \"event_stage\": \"League\",\n          \"event_state\": \"R\",\n          \"event_status\": \"Result\",\n          \"event_status_id\": \"114\",\n          \"event_sub_status\": \"Welsh Fire beat Southern Brave by 6 wickets\",\n          \"event_this_over\": \"2\",\n          \"game_id\": \"\",\n          \"has_standings\": \"true\",\n          \"league_code\": \"English Domestic\",\n          \"league_id\": \"7\",\n          \"parent_series_id\": \"206\",\n          \"parent_series_name\": \"The Hundred\",\n          \"participants\": [\n            {\n              \"first_up\": \"true\",\n              \"highlight\": \"\",\n              \"id\": \"2042\",\n              \"innings\": [\n                {\n                  \"score\": \"135/7\",\n                  \"overs\": \"20.0\"\n                }\n              ],\n              \"logo\": \"/static-assets/images/teams/2042.png?v=1.02&w=50&h=50\",\n              \"name\": \"Southern Brave\",\n              \"name_eng\": \"Southern Brave\",\n              \"now\": false,\n              \"short_name\": \"SOB\",\n              \"short_name_eng\": \"SOB\",\n              \"players_involved\": [],\n              \"value\": \"135/7 (20.0)\"\n            },\n            {\n              \"first_up\": \"false\",\n              \"highlight\": \"6 wickets\",\n              \"id\": \"2044\",\n              \"innings\": [\n                {\n                  \"score\": \"138/4\",\n                  \"overs\": \"19.3\"\n                }\n              ],\n              \"logo\": \"/static-assets/images/teams/2044.png?v=1.02&w=50&h=50\",\n              \"name\": \"Welsh Fire\",\n              \"name_eng\": \"Welsh Fire\",\n              \"now\": false,\n              \"short_name\": \"WEF\",\n              \"short_name_eng\": \"WEF\",\n              \"players_involved\": [\n                \"Phil Salt\"\n              ],\n              \"value\": \"138/4 (19.3)\"\n            }\n          ],\n          \"result_code\": \"\",\n          \"result_sub_code\": \"\",\n          \"series_end_date\": \"8/17/2026\",\n          \"series_id\": \"15397\",\n          \"series_name\": \"The Hundred, 2026\",\n          \"series_start_date\": \"7/21/2026\",\n          \"sport\": \"\",\n          \"start_date\": \"2026-07-22T17:30:00+00:00\",\n          \"tour_id\": \"11939\",\n          \"tour_name\": \"The Hundred, 2026\",\n          \"venue_gmt_offset\": \"+01:00\",\n          \"venue_id\": \"159\",\n          \"venue_name\": \"Utilita Bowl, Southampton\",\n          \"winning_margin\": \"6 wickets\",\n          \"short_event_status\": \"Match Ended\",\n          \"event_thisover\": \"2\",\n          \"event_livecoverage\": \"true\",\n          \"matchcenter_url\": \"/matches/sob-vs-wef-stbwsh07222026269371\",\n          \"highlight_url\": \"\",\n          \"display_status\": \"Result\"\n        },\n        {\n          \"match_id\": \"269419\",\n          \"championship_id\": \"\",\n          \"championship_name\": \"\",\n          \"comp_type_id\": \"88\",\n          \"end_date\": \"7/25/2026\",\n          \"event_coverage_level\": \"Live Scorecard, Ball-by-Ball and Commentary\",\n          \"event_coverage_level_id\": \"8\",\n          \"event_day\": \"25\",\n          \"event_duration_left\": \"\",\n          \"event_format\": \"100 ball\",\n          \"event_group\": \"\",\n          \"event_interval\": \"\",\n          \"event_is_daynight\": \"false\",\n          \"event_is_linkable\": \"\",\n          \"event_name\": \"Match 5\",\n          \"event_priority\": \"\",\n          \"event_session\": \"\",\n          \"event_stage\": \"League\",\n          \"event_state\": \"R\",\n          \"event_status\": \"Result\",\n          \"event_status_id\": \"114\",\n          \"event_sub_status\": \"Southern Brave Women beat Sunrisers Leeds Women by 5 wickets\",\n          \"event_this_over\": \"2\",\n          \"game_id\": \"\",\n          \"has_standings\": \"true\",\n          \"league_code\": \"English Domestic\",\n          \"league_id\": \"7\",\n          \"parent_series_id\": \"205\",\n          \"parent_series_name\": \"The Hundred Women\",\n          \"participants\": [\n            {\n              \"first_up\": \"true\",\n              \"highlight\": \"\",\n              \"id\": \"2031\",\n              \"innings\": [\n                {\n                  \"score\": \"116/10\",\n                  \"overs\": \"20.0\"\n                }\n              ],\n              \"logo\": \"/static-assets/images/teams/2031.png?v=1.02&w=50&h=50\",\n              \"name\": \"Sunrisers Leeds Women\",\n              \"name_eng\": \"Sunrisers Leeds Women\",\n              \"now\": false,\n              \"short_name\": \"SL-W\",\n              \"short_name_eng\": \"SL-W\",\n              \"players_involved\": [],\n              \"value\": \"116/10 (20.0)\"\n            },\n            {\n              \"first_up\": \"false\",\n              \"highlight\": \"5 wickets\",\n              \"id\": \"2034\",\n              \"innings\": [\n                {\n                  \"score\": \"117/5\",\n                  \"overs\": \"19.1\"\n                }\n              ],\n              \"logo\": \"/static-assets/images/teams/2034.png?v=1.02&w=50&h=50\",\n              \"name\": \"Southern Brave Women\",\n              \"name_eng\": \"Southern Brave Women\",\n              \"now\": false,\n              \"short_name\": \"SOB-W\",\n              \"short_name_eng\": \"SOB-W\",\n              \"players_involved\": [\n                \"Jemimah Rodrigues\"\n              ],\n              \"value\": \"117/5 (19.1)\"\n            }\n          ],\n          \"result_code\": \"\",\n          \"result_sub_code\": \"\",\n          \"series_end_date\": \"7/25/2026\",\n          \"series_id\": \"15399\",\n          \"series_name\": \"The Hundred Women, 2026\",\n          \"series_start_date\": \"7/21/2026\",\n          \"sport\": \"\",\n          \"start_date\": \"2026-07-25T10:00:00+00:00\",\n          \"tour_id\": \"11941\",\n          \"tour_name\": \"The Hundred Women, 2026\",\n          \"venue_gmt_offset\": \"+01:00\",\n          \"venue_id\": \"65\",\n          \"venue_name\": \"Headingley, Leeds\",\n          \"winning_margin\": \"5 wickets\",\n          \"short_event_status\": \"Match Ended\",\n          \"event_thisover\": \"2\",\n          \"event_livecoverage\": \"true\",\n          \"matchcenter_url\": \"/matches/sl-w-vs-sob-w-nsusbw07252026269419\",\n          \"highlight_url\": \"\",\n          \"display_status\": \"Result\"\n        }\n      ]\n    },\n    \"meta\": {\n      \"pagination\": {\n        \"total\": 17,\n        \"count\": 3,\n        \"per_page\": 3,\n        \"current_page\": 1,\n        \"offset\": 0,\n        \"limit\": 3,\n        \"total_pages\": 6,\n        \"max_pages\": 6\n      }\n    }\n  }\n",
+  "structured": {
+    "runId": "pf72fq5uukrm",
+    "hookId": "fanxp-seed-hook-cricket-schedule",
+    "status": "ok",
+    "durationMs": 58,
+    "steps": [
+      {
+        "stepId": "n2",
+        "kind": "transformer",
+        "status": "ok",
+        "response": {
+          "status": 200,
+          "durationMs": 0
+        }
+      }
+    ],
+    "outputComputed": true,
+    "output": {
+      "data": {
+        "1": [
+          {
+            "match_id": "269416",
+            "championship_id": "",
+            "championship_name": "",
+            "comp_type_id": "88",
+            "end_date": "7/22/2026",
+            "event_coverage_level": "Live Scorecard, Ball-by-Ball and Commentary",
+            "event_coverage_level_id": "8",
+            "event_day": "22",
+            "event_duration_left": "",
+            "event_format": "100 ball",
+            "event_group": "",
+            "event_interval": "",
+            "event_is_daynight": "false",
+            "event_is_linkable": "",
+            "event_name": "Match 2",
+            "event_priority": "",
+            "event_session": "",
+            "event_stage": "League",
+            "event_state": "R",
+            "event_status": "Result",
+            "event_status_id": "114",
+            "event_sub_status": "Southern Brave Women beat Welsh Fire Women by 8 runs",
+            "event_this_over": "2",
+            "game_id": "",
+            "has_standings": "true",
+            "league_code": "English Domestic",
+            "league_id": "7",
+            "parent_series_id": "205",
+            "parent_series_name": "The Hundred Women",
+            "participants": [
+              {
+                "first_up": "true",
+                "highlight": "8 runs",
+                "id": "2034",
+                "innings": [
+                  {
+                    "score": "126/7",
+                    "overs": "20.0"
+                  }
+                ],
+                "logo": "/static-assets/images/teams/2034.png?v=1.02&w=50&h=50",
+                "name": "Southern Brave Women",
+                "name_eng": "Southern Brave Women",
+                "now": false,
+                "short_name": "SOB-W",
+                "short_name_eng": "SOB-W",
+                "players_involved": ["Sophie Molineux"],
+                "value": "126/7 (20.0)"
+              },
+              {
+                "first_up": "false",
+                "highlight": "",
+                "id": "2036",
+                "innings": [
+                  {
+                    "score": "118/8",
+                    "overs": "20.0"
+                  }
+                ],
+                "logo": "/static-assets/images/teams/2036.png?v=1.02&w=50&h=50",
+                "name": "Welsh Fire Women",
+                "name_eng": "Welsh Fire Women",
+                "now": false,
+                "short_name": "WEF-W",
+                "short_name_eng": "WEF-W",
+                "players_involved": [],
+                "value": "118/8 (20.0)"
+              }
+            ],
+            "result_code": "",
+            "result_sub_code": "",
+            "series_end_date": "8/16/2026",
+            "series_id": "15399",
+            "series_name": "The Hundred Women, 2026",
+            "series_start_date": "7/21/2026",
+            "sport": "",
+            "start_date": "2026-07-22T13:45:00+00:00",
+            "tour_id": "11941",
+            "tour_name": "The Hundred Women, 2026",
+            "venue_gmt_offset": "+01:00",
+            "venue_id": "159",
+            "venue_name": "Utilita Bowl, Southampton",
+            "winning_margin": "8 runs",
+            "short_event_status": "Match Ended",
+            "event_thisover": "2",
+            "event_livecoverage": "true",
+            "matchcenter_url": "/matches/sob-w-vs-wef-w-sbwwfw07222026269416",
+            "highlight_url": "",
+            "display_status": "Result"
+          },
+          {
+            "match_id": "269371",
+            "championship_id": "",
+            "championship_name": "",
+            "comp_type_id": "78",
+            "end_date": "7/23/2026",
+            "event_coverage_level": "Live Scorecard, Ball-by-Ball and Commentary",
+            "event_coverage_level_id": "8",
+            "event_day": "22",
+            "event_duration_left": "",
+            "event_format": "100 ball",
+            "event_group": "",
+            "event_interval": "",
+            "event_is_daynight": "false",
+            "event_is_linkable": "",
+            "event_name": "Match 2",
+            "event_priority": "",
+            "event_session": "",
+            "event_stage": "League",
+            "event_state": "R",
+            "event_status": "Result",
+            "event_status_id": "114",
+            "event_sub_status": "Welsh Fire beat Southern Brave by 6 wickets",
+            "event_this_over": "2",
+            "game_id": "",
+            "has_standings": "true",
+            "league_code": "English Domestic",
+            "league_id": "7",
+            "parent_series_id": "206",
+            "parent_series_name": "The Hundred",
+            "participants": [
+              {
+                "first_up": "true",
+                "highlight": "",
+                "id": "2042",
+                "innings": [
+                  {
+                    "score": "135/7",
+                    "overs": "20.0"
+                  }
+                ],
+                "logo": "/static-assets/images/teams/2042.png?v=1.02&w=50&h=50",
+                "name": "Southern Brave",
+                "name_eng": "Southern Brave",
+                "now": false,
+                "short_name": "SOB",
+                "short_name_eng": "SOB",
+                "players_involved": [],
+                "value": "135/7 (20.0)"
+              },
+              {
+                "first_up": "false",
+                "highlight": "6 wickets",
+                "id": "2044",
+                "innings": [
+                  {
+                    "score": "138/4",
+                    "overs": "19.3"
+                  }
+                ],
+                "logo": "/static-assets/images/teams/2044.png?v=1.02&w=50&h=50",
+                "name": "Welsh Fire",
+                "name_eng": "Welsh Fire",
+                "now": false,
+                "short_name": "WEF",
+                "short_name_eng": "WEF",
+                "players_involved": ["Phil Salt"],
+                "value": "138/4 (19.3)"
+              }
+            ],
+            "result_code": "",
+            "result_sub_code": "",
+            "series_end_date": "8/17/2026",
+            "series_id": "15397",
+            "series_name": "The Hundred, 2026",
+            "series_start_date": "7/21/2026",
+            "sport": "",
+            "start_date": "2026-07-22T17:30:00+00:00",
+            "tour_id": "11939",
+            "tour_name": "The Hundred, 2026",
+            "venue_gmt_offset": "+01:00",
+            "venue_id": "159",
+            "venue_name": "Utilita Bowl, Southampton",
+            "winning_margin": "6 wickets",
+            "short_event_status": "Match Ended",
+            "event_thisover": "2",
+            "event_livecoverage": "true",
+            "matchcenter_url": "/matches/sob-vs-wef-stbwsh07222026269371",
+            "highlight_url": "",
+            "display_status": "Result"
+          },
+          {
+            "match_id": "269419",
+            "championship_id": "",
+            "championship_name": "",
+            "comp_type_id": "88",
+            "end_date": "7/25/2026",
+            "event_coverage_level": "Live Scorecard, Ball-by-Ball and Commentary",
+            "event_coverage_level_id": "8",
+            "event_day": "25",
+            "event_duration_left": "",
+            "event_format": "100 ball",
+            "event_group": "",
+            "event_interval": "",
+            "event_is_daynight": "false",
+            "event_is_linkable": "",
+            "event_name": "Match 5",
+            "event_priority": "",
+            "event_session": "",
+            "event_stage": "League",
+            "event_state": "R",
+            "event_status": "Result",
+            "event_status_id": "114",
+            "event_sub_status": "Southern Brave Women beat Sunrisers Leeds Women by 5 wickets",
+            "event_this_over": "2",
+            "game_id": "",
+            "has_standings": "true",
+            "league_code": "English Domestic",
+            "league_id": "7",
+            "parent_series_id": "205",
+            "parent_series_name": "The Hundred Women",
+            "participants": [
+              {
+                "first_up": "true",
+                "highlight": "",
+                "id": "2031",
+                "innings": [
+                  {
+                    "score": "116/10",
+                    "overs": "20.0"
+                  }
+                ],
+                "logo": "/static-assets/images/teams/2031.png?v=1.02&w=50&h=50",
+                "name": "Sunrisers Leeds Women",
+                "name_eng": "Sunrisers Leeds Women",
+                "now": false,
+                "short_name": "SL-W",
+                "short_name_eng": "SL-W",
+                "players_involved": [],
+                "value": "116/10 (20.0)"
+              },
+              {
+                "first_up": "false",
+                "highlight": "5 wickets",
+                "id": "2034",
+                "innings": [
+                  {
+                    "score": "117/5",
+                    "overs": "19.1"
+                  }
+                ],
+                "logo": "/static-assets/images/teams/2034.png?v=1.02&w=50&h=50",
+                "name": "Southern Brave Women",
+                "name_eng": "Southern Brave Women",
+                "now": false,
+                "short_name": "SOB-W",
+                "short_name_eng": "SOB-W",
+                "players_involved": ["Jemimah Rodrigues"],
+                "value": "117/5 (19.1)"
+              }
+            ],
+            "result_code": "",
+            "result_sub_code": "",
+            "series_end_date": "7/25/2026",
+            "series_id": "15399",
+            "series_name": "The Hundred Women, 2026",
+            "series_start_date": "7/21/2026",
+            "sport": "",
+            "start_date": "2026-07-25T10:00:00+00:00",
+            "tour_id": "11941",
+            "tour_name": "The Hundred Women, 2026",
+            "venue_gmt_offset": "+01:00",
+            "venue_id": "65",
+            "venue_name": "Headingley, Leeds",
+            "winning_margin": "5 wickets",
+            "short_event_status": "Match Ended",
+            "event_thisover": "2",
+            "event_livecoverage": "true",
+            "matchcenter_url": "/matches/sl-w-vs-sob-w-nsusbw07252026269419",
+            "highlight_url": "",
+            "display_status": "Result"
+          }
+        ]
+      },
+      "meta": {
+        "pagination": {
+          "total": 17,
+          "count": 3,
+          "per_page": 3,
+          "current_page": 1,
+          "offset": 0,
+          "limit": 3,
+          "total_pages": 6,
+          "max_pages": 6
+        }
+      }
+    },
+    "budget": {
+      "remaining": 23,
+      "used": 2
+    }
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "hookId": {
+      "description": "The hook that gives the most of the need; null when none gives any of it",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "name": {
+      "description": "The hook's name",
+      "type": "string"
+    },
+    "input": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "The inputs it was sampled with, as a page sends them"
+    },
+    "covers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What the design shows that the hook gives, each with its path from the root of the output, [] for each item of a list: team crest → matches[].teams[0].logo"
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What the design shows that the hook does not give"
+    },
+    "why": {
+      "type": "string",
+      "description": "One or two lines: why this hook over the others looked at"
+    },
+    "apis": {
+      "description": "With no hook: the connector ids that could give it, best first",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "hookId",
+    "input",
+    "covers",
+    "missing",
+    "why"
+  ],
+  "additionalProperties": false
+}

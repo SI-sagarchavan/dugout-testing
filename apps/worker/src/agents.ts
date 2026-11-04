@@ -1,6 +1,6 @@
 import type { ApprovalDecision, EventSink, RunEvent, RunStore } from "@dugout/contracts";
 import type { Approver, RunResult } from "@dugout/core";
-import type { AgentDeps, AnyAgent } from "@dugout/sdk";
+import type { AgentDeps, AnyAgent, ChildRuns } from "@dugout/sdk";
 import type { z } from "zod";
 
 /** How a run is carried on from its saved state. */
@@ -27,6 +27,8 @@ export interface AgentEntry {
     /** Runs on this model instead of the spec's (a fork on another model). */
     model?: string;
     resume?: ResumeOptions;
+    /** Keeps the records of the child runs the run starts (ADR 0025). */
+    children?: ChildRuns;
   }): Promise<RunResult>;
 }
 

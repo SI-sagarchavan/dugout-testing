@@ -8,13 +8,12 @@
       "description": "The preview link card-match published: /preview/<project>/<tree>?theme=…&surfaces=…"
     },
     "data": {
+      "description": "The sample data: a sample_data artifact id, or the name of a dataset the API serves. Leave out to find the data in the tenant's Cast hooks and bind against their live output",
       "type": "string",
-      "pattern": "^[A-Za-z0-9_-]{1,64}$",
-      "description": "The sample data: a sample_data artifact id, or the name of a dataset the API serves"
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
     }
   },
   "required": [
-    "preview",
-    "data"
+    "preview"
   ]
 }

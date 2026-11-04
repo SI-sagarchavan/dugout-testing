@@ -189,7 +189,7 @@ function toRequest(req: ModelRequest, model: ModelEntry): ConverseStreamCommandI
     ...(req.tools.length > 0
       ? {
           toolConfig: {
-            tools: req.tools.map((t) => toolSpec(t, model.strictTools)),
+            tools: toolSpecs(req.tools, model.strictTools),
             ...(req.toolChoice
               ? { toolChoice: { tool: { name: encodeName(req.toolChoice.tool) } } }
               : {}),
@@ -237,16 +237,98 @@ function addCachePoints(
   if (last) last.content = [...(last.content ?? []), CACHE_POINT];
 }
 
-function toolSpec(t: ToolDefinition, strictTools: boolean): Tool {
-  const strict = strictTools ? strictSchema(t.parameters) : undefined;
+/**
+ * Optional parameters Bedrock takes across all the strict tools of one request: past it the
+ * request is refused ("too many optional parameters … which would make grammar compilation
+ * inefficient", limit 24).
+ */
+export const STRICT_OPTIONAL_LIMIT = 24;
+
+/** Optional parameters in a schema, nested ones counted: what the strict-mode limit counts. */
+export function optionalParameters(schema: unknown): number {
+  if (Array.isArray(schema)) return schema.reduce((n: number, s) => n + optionalParameters(s), 0);
+  if (!schema || typeof schema !== "object") return 0;
+  const record = schema as Record<string, unknown>;
+  let count = 0;
+  if (record.properties && typeof record.properties === "object") {
+    const required = new Set(Array.isArray(record.required) ? (record.required as string[]) : []);
+    for (const [key, value] of Object.entries(record.properties as Record<string, unknown>)) {
+      if (!required.has(key)) count++;
+      count += optionalParameters(value);
+    }
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (key !== "properties") count += optionalParameters(value);
+  }
+  return count;
+}
+
+/**
+ * The request's tools, each strict while the strict ones together stay within Bedrock's limit on
+ * optional parameters; the rest go without strict, their calls still checked by zod on arrival.
+ * In the order given, so an agent's own tools, listed first, keep strict before those it is lent.
+ */
+function toolSpecs(tools: ToolDefinition[], strictTools: boolean): Tool[] {
+  let budget = STRICT_OPTIONAL_LIMIT;
+  return tools.map((t) => {
+    const parameters = typedSchema(t.parameters);
+    let strict = strictTools ? strictSchema(parameters) : undefined;
+    if (strict) {
+      const cost = optionalParameters(strict);
+      if (cost > budget) strict = undefined;
+      else budget -= cost;
+    }
+    return toolSpec(t, parameters, strict);
+  });
+}
+
+function toolSpec(
+  t: ToolDefinition,
+  parameters: Record<string, unknown>,
+  strict: Record<string, unknown> | undefined,
+): Tool {
   return {
     toolSpec: {
       name: encodeName(t.name),
       description: t.description,
-      inputSchema: { json: (strict ?? t.parameters) as Document },
+      inputSchema: { json: (strict ?? parameters) as Document },
       ...(strict ? { strict: true } : {}),
     },
   };
+}
+
+/** Every JSON type: what a schema that says nothing about its value's type means. */
+const ANY_TYPE = ["string", "number", "integer", "boolean", "object", "array", "null"];
+/** Keywords that say what a value may be without `type`. */
+const SHAPED = ["type", "anyOf", "oneOf", "allOf", "$ref", "enum", "const", "not"];
+
+/**
+ * The schema with a `type` on every sub-schema that accepts any value. JSON Schema reads `{}` (or
+ * a description alone) as "anything", and an MCP server's tool says so for a free-form value, but
+ * Bedrock refuses a tool whose schema has one ("Schema type is missing"). The same meaning, said
+ * with every type listed.
+ */
+export function typedSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const sub = (node: unknown): unknown => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return node;
+    const record = { ...(node as Record<string, unknown>) };
+    for (const key of ["items", "additionalProperties", "not"]) {
+      if (record[key] && typeof record[key] === "object") record[key] = sub(record[key]);
+    }
+    for (const key of ["properties", "$defs", "patternProperties"]) {
+      if (record[key] && typeof record[key] === "object") {
+        record[key] = Object.fromEntries(
+          Object.entries(record[key] as Record<string, unknown>).map(([k, v]) => [k, sub(v)]),
+        );
+      }
+    }
+    for (const key of ["anyOf", "oneOf", "allOf"]) {
+      if (Array.isArray(record[key])) record[key] = (record[key] as unknown[]).map(sub);
+    }
+    if (!SHAPED.some((k) => k in record)) record.type = ANY_TYPE;
+    return record;
+  };
+  return sub(schema) as Record<string, unknown>;
 }
 
 // Strict mode can't express these; zod still checks them when the call arrives.
@@ -285,6 +367,8 @@ export function strictSchema(schema: Record<string, unknown>): Record<string, un
           : walk(value);
     }
     if (out.type === "object") out.additionalProperties = false;
+    // a value of any type may be an open object: strict mode has no way to say that
+    if (Array.isArray(out.type) && out.type.includes("object")) throw OPEN;
     return out;
   };
   try {

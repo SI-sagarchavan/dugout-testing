@@ -2,11 +2,14 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineTool, type ToolContext } from "@dugout/contracts";
 import { REPO_ROOT } from "@dugout/core";
+import { defaultMcpHost, hookOutput, type McpHost } from "@dugout/mcp";
 import { z } from "zod";
 import { asBag, type Dsl, type IrNode, indexIr, loadDsl, type Tree } from "./dsl.ts";
 import { type DryRun, dryRun, groups, lostLooks, outline, shapeOf } from "./facts.ts";
 
 export const BIND_DIR = join(REPO_ROOT, ".runs", "bind");
+/** The registry's server a `cast-hook` data source is read from (config/mcp/cast.json). */
+const CAST = "cast";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -20,8 +23,9 @@ export const RunInput = z.object({
   data: z
     .string()
     .regex(/^[A-Za-z0-9_-]{1,64}$/)
+    .optional()
     .describe(
-      "The sample data: a sample_data artifact id, or the name of a dataset the API serves",
+      "The sample data: a sample_data artifact id, or the name of a dataset the API serves. Leave out to find the data in the tenant's Cast hooks and bind against their live output",
     ),
 });
 export type RunInput = z.infer<typeof RunInput>;
@@ -167,10 +171,23 @@ const Published = z.object({
   problems: z.array(z.string()),
 });
 
+/** A Cast hook's live output the run chose as its data, fetched once and kept. */
+const Source = z.object({
+  hookId: z.string(),
+  /** The hook's public flow id: what a page fetches at `/cast/api/flow/<workflowId>`. */
+  workflowId: z.string().optional(),
+  /** As a page sends them: query parameters, every value a string. */
+  input: z.record(z.string(), z.string()),
+  /** The name the plan reads the data by: `fixtures.items`. */
+  as: z.string(),
+  sample: z.unknown(),
+});
+
 const State = z.object({
   tried: Tried.optional(),
   refusals: z.number().default(0),
   published: Published.optional(),
+  source: Source.optional(),
 });
 type State = z.infer<typeof State>;
 
@@ -252,12 +269,21 @@ export function createPlane(project: string, env: NodeJS.ProcessEnv = process.en
 // The tools
 // ---------------------------------------------------------------------------
 
-interface Loaded {
+interface Frame {
   tree: Tree;
   byId: Map<string, IrNode>;
-  bag: Record<string, unknown>;
   dsl: Dsl;
+  /** The dataset the host named, when it named one. */
+  dataset?: unknown;
 }
+
+interface Loaded extends Frame {
+  /** The data the plan binds: the host's dataset, or the Cast source the run chose. */
+  bag: Record<string, unknown> | undefined;
+}
+
+const NO_DATA =
+  "This run has no data yet. Call agent.castResearcher with what the frame shows, then bind.source with the hook and input it returned.";
 
 /** Problems a person would see on the page: each is a reason not to publish. */
 export function problemsOf(
@@ -308,29 +334,41 @@ export function problemsOf(
 const MAX_REFUSALS = 2;
 
 export function createBindTools(
-  opts: { dir?: string; plane?: (project: string) => Plane; web?: string } = {},
+  opts: {
+    dir?: string;
+    plane?: (project: string) => Plane;
+    web?: string;
+    /** The MCP servers, for the live output of the Cast hook the run chooses as its data. */
+    mcp?: McpHost;
+  } = {},
 ) {
   const dir = opts.dir ?? BIND_DIR;
   const planeOf = opts.plane ?? createPlane;
-  const cache = new Map<string, Promise<Loaded>>();
+  const mcp = opts.mcp ?? defaultMcpHost();
+  const cache = new Map<string, Promise<Frame>>();
   const inputOf = (ctx: Pick<ToolContext, "input">) => RunInput.parse(ctx.input);
 
-  const loaded = (ctx: Pick<ToolContext, "input" | "runId">) => {
+  const frameOf = (ctx: Pick<ToolContext, "input" | "runId">) => {
     let held = cache.get(ctx.runId);
     if (!held) {
       held = (async () => {
         const input = inputOf(ctx);
         const { project, tree: treeId } = previewOf(input.preview);
         const plane = planeOf(project);
-        const [tree, meta, raw, dsl] = await Promise.all([
+        const [tree, meta, dataset, dsl] = await Promise.all([
           plane.json(treeId) as Promise<Tree>,
           plane.meta(treeId),
-          plane.dataset(input.data),
+          input.data ? plane.dataset(input.data) : undefined,
           loadDsl(),
         ]);
         const exportId = typeof meta.exportId === "string" ? meta.exportId : undefined;
         const root = exportId ? await plane.exportIr(exportId) : undefined;
-        return { tree, byId: root ? indexIr(root) : new Map(), bag: asBag(raw, dsl), dsl };
+        return {
+          tree,
+          byId: root ? indexIr(root) : new Map(),
+          dsl,
+          ...(input.data ? { dataset } : {}),
+        };
       })();
       held.catch(() => cache.delete(ctx.runId));
       cache.set(ctx.runId, held);
@@ -338,10 +376,27 @@ export function createBindTools(
     return held;
   };
 
+  /** A Cast hook's output under the name the plan reads it by, unwrapped as a page unwraps it. */
+  const sourceBag = (source: z.infer<typeof Source>, dsl: Dsl) =>
+    asBag({ [source.as]: { castFlow: source.sample } }, dsl);
+
+  const loaded = async (ctx: Pick<ToolContext, "input" | "runId">): Promise<Loaded> => {
+    const frame = await frameOf(ctx);
+    if (inputOf(ctx).data) return { ...frame, bag: asBag(frame.dataset, frame.dsl) };
+    const source = readState(dir, ctx.runId).source;
+    return { ...frame, bag: source ? sourceBag(source, frame.dsl) : undefined };
+  };
+  /** The data, for the tools that cannot work without it. */
+  const withData = async (ctx: Pick<ToolContext, "input" | "runId">) => {
+    const run = await loaded(ctx);
+    if (!run.bag) throw new Error(NO_DATA);
+    return { ...run, bag: run.bag };
+  };
+
   const load = defineTool({
     name: "bind.load",
     description:
-      "Read the frame and the sample data. Returns the frame's outline (each line starts with the Figma id a plan names it by), what repeats in it, and every path in the data. Call it first, once.",
+      "Read the frame and the sample data. Returns the frame's outline (each line starts with the Figma id a plan names it by), what repeats in it, and every path in the data, or that the run has no data yet. Call it first, once.",
     input: z.object({}).strict(),
     effect: "read",
     timeoutMs: 60_000,
@@ -356,8 +411,52 @@ export function createBindTools(
       return {
         frame: outline(tree, byId).join("\n"),
         repeats: found.length ? found.join("\n") : "nothing repeats",
-        data: shapeOf(bag).join("\n"),
+        data: bag ? shapeOf(bag).join("\n") : NO_DATA,
       };
+    },
+  });
+
+  const source = defineTool({
+    name: "bind.source",
+    description:
+      "Make a Cast hook's live output this run's data: the hookId and input agent.castResearcher returned, and a short name the plan reads the data by (fixtures, news). Runs the hook once and returns every path in its output, as bind.load does for data it was given. Only for a run given no data.",
+    input: z
+      .object({
+        hookId: z.string().min(1),
+        input: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe("The input the researcher returned"),
+        as: z
+          .string()
+          .regex(/^[a-z][a-zA-Z0-9]*$/)
+          .describe(
+            "The name the plan reads the data by: fixtures. A plain list is fixtures.items; any other shape keeps its own keys (fixtures.days)",
+          ),
+      })
+      .strict(),
+    effect: "read",
+    timeoutMs: 60_000,
+    alwaysInline: true,
+    block: (_input, ctx) =>
+      inputOf(ctx).data ? "This run was given its data: bind.load has it." : undefined,
+    async run({ hookId, input, as }, ctx) {
+      // the data is a Cast hook's output: the registry's cast server, under the run's tenant
+      const { hook, output } = await hookOutput(
+        (tool, args) => mcp.call(CAST, ctx.tenantId, tool, args, ctx.signal),
+        hookId,
+        input ?? {},
+      );
+      const chosen = {
+        hookId,
+        ...(hook.workflowId ? { workflowId: hook.workflowId } : {}),
+        input: input ?? {},
+        as,
+        sample: output,
+      };
+      writeState(dir, ctx.runId, { ...readState(dir, ctx.runId), source: chosen });
+      const { dsl } = await frameOf(ctx);
+      return { data: shapeOf(sourceBag(chosen, dsl)).join("\n") };
     },
   });
 
@@ -369,7 +468,7 @@ export function createBindTools(
     effect: "read",
     timeoutMs: 30_000,
     async run({ src }, ctx) {
-      const { tree, byId } = await loaded(ctx);
+      const { tree, byId } = await frameOf(ctx);
       const ir = byId.get(src);
       const nodes = tree.nodes.filter((n) => n.src === src);
       if (!ir && nodes.length === 0) throw new Error(`no node has src ${src}`);
@@ -434,7 +533,7 @@ export function createBindTools(
           ? { collapse: parsed.data.collapse.map((c) => ({ ...c, shape: c.shape ?? "varies" })) }
           : {}),
       };
-      const { tree, bag, dsl } = await loaded(ctx);
+      const { tree, bag, dsl } = await withData(ctx);
       const applied = dsl.applyBindingPlan(tree, plan);
       const structure = dsl.check(applied.tree);
       const run = dryRun(applied.tree, bag, dsl, tree);
@@ -491,15 +590,27 @@ export function createBindTools(
       const state = readState(dir, ctx.runId);
       if (state.published) return state.published;
       if (!state.tried) throw new Error("nothing was tried");
-      const { bag } = await loaded(ctx);
+      const { bag } = await withData(ctx);
       const input = inputOf(ctx);
       const { url, project } = previewOf(input.preview);
       const plane = planeOf(project);
+      const chosen = state.source;
       const meta = {
         source: "dugout:bind",
         runId: ctx.runId,
         preview: input.preview,
-        data: input.data,
+        // where the data came from: what a page fetches live once trees declare their data
+        data: input.data
+          ? { kind: "dataset", name: input.data }
+          : chosen
+            ? {
+                kind: "cast-hook",
+                hookId: chosen.hookId,
+                ...(chosen.workflowId ? { workflowId: chosen.workflowId } : {}),
+                input: chosen.input,
+                as: chosen.as,
+              }
+            : null,
       };
       const dataArtifactId = await plane.upload("sample_data", bag, meta);
       const planArtifactId = await plane.upload("binding_plan", state.tried.plan, meta);
@@ -524,5 +635,5 @@ export function createBindTools(
     },
   });
 
-  return [load, node, tryPlan, publish];
+  return [load, source, node, tryPlan, publish];
 }

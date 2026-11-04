@@ -1,21 +1,73 @@
-import { join, resolve } from "node:path";
-import { McpClient } from "./client.ts";
-import { fileTokenStore } from "./tokens.ts";
-
-export { CAST_TOOLS, castTools } from "./cast.ts";
-export { McpClient, type McpClientOptions, McpError } from "./client.ts";
+/**
+ * MCP servers as configured tool sources (ADR 0026). Agents ask for capabilities; the registry
+ * (`config/mcp/<server>.json`) says which servers have them and how each tool is treated; the lock
+ * (`<server>.lock.json`) pins what the model reads; the hub connects through the official MCP SDK,
+ * adding each tenant's credentials.
+ */
+export type { ServerAdapter, ServerCall } from "./adapter.ts";
+export {
+  describeHook,
+  type HookData,
+  hookOutput,
+  NotSampled,
+  unsafeToRun,
+} from "./adapters/cast.ts";
+export { type AuthOptions, authFetch, McpAuthError } from "./auth.ts";
+export {
+  ADAPTERS,
+  type CapabilityRequest,
+  createMcpHost,
+  defaultMcpHost,
+  type HostOptions,
+  type McpHost,
+  type Resolution,
+  type SyncReport,
+  syncServer,
+} from "./host.ts";
+export {
+  createMcpHub,
+  type HubOptions,
+  type McpHub,
+  McpUnavailable,
+  resultOf,
+  type ServerInfo,
+  type ToolResult,
+} from "./hub.ts";
+export {
+  drift,
+  Lock,
+  LockedResource,
+  LockedTool,
+  lockPath,
+  type RemoteResource,
+  type RemoteTool,
+  readLock,
+  resourceHash,
+  sha256,
+  toolHash,
+  writeLock,
+} from "./lock.ts";
+export {
+  type Capability,
+  checkEntry,
+  type Grant as ToolGrant,
+  loadRegistry,
+  pathOf,
+  REGISTRY_DIR,
+  type Registry,
+  readValue,
+  resourceToolName,
+  ServerEntry,
+  type ToolPolicy,
+  toolName,
+} from "./registry.ts";
+export { inlineRefs, zodOf } from "./schema.ts";
 export { fileTokenStore, type Grant, type TokenStore } from "./tokens.ts";
-
-const REPO_ROOT = resolve(import.meta.dirname, "..", "..", "..");
-
-/** Where grants are kept: `CAST_MCP_TOKENS`, else `.runs/cast-mcp.json` at the repo root, whatever the cwd. */
-export function castTokenPath(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CAST_MCP_TOKENS?.trim() || join(REPO_ROOT, ".runs", "cast-mcp.json");
-}
-
-/** The Cast client from the environment: `CAST_MCP_URL`, and grants in `CAST_MCP_TOKENS`. */
-export function castClientFromEnv(env: NodeJS.ProcessEnv = process.env): McpClient {
-  const url = env.CAST_MCP_URL?.trim();
-  if (!url) throw new Error("CAST_MCP_URL is not set");
-  return new McpClient({ url, tokens: fileTokenStore(castTokenPath(env)) });
-}
+export {
+  McpConfigError,
+  outsideGrants,
+  pinnedArguments,
+  type ServerToolsOptions,
+  serverTools,
+  withoutPinned,
+} from "./tools.ts";

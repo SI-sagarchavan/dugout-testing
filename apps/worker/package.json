@@ -13,6 +13,8 @@
   "dependencies": {
     "@dugout/agent-bind": "workspace:^",
     "@dugout/agent-card-match": "workspace:^",
+    "@dugout/agent-cast-builder": "workspace:^",
+    "@dugout/agent-cast-researcher": "workspace:^",
     "@dugout/agent-sitemap": "workspace:^",
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",

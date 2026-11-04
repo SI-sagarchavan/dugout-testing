@@ -4,15 +4,17 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
-    "cast:login": "tsx scripts/cast-login.ts"
+    "cast:login": "tsx scripts/login.ts cast"
   },
   "dependencies": {
     "@dugout/contracts": "workspace:^",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "zod": "^4.6.7"
   }
 }

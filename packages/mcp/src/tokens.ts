@@ -3,8 +3,10 @@ import { dirname } from "node:path";
 
 /** One tenant's grant to an MCP server. The tenant id is the key; the model never supplies it. */
 export interface Grant {
-  /** The site the grant was approved for; sent as the `client` header. */
+  /** The site the grant was approved for; Cast's entry sends it as the `client` header. */
   site: string;
+  /** Where the grant is refreshed; `<server url>/oauth/token` for grants saved before this. */
+  tokenEndpoint?: string;
   clientId: string;
   refreshToken: string;
   accessToken?: string;

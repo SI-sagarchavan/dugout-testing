@@ -12,10 +12,12 @@ import { z } from "zod";
 import {
   createBedrockClient,
   describeImage,
+  optionalParameters,
   parseModelConfig,
   runLocal,
   strictSchema,
   TransientModelError,
+  typedSchema,
 } from "../src/index.ts";
 
 const price = { input: 1, cacheRead: 0.1, output: 2 };
@@ -420,6 +422,35 @@ describe("bedrock client", () => {
     expect(JSON.stringify(inputs[2])).not.toContain("cachePoint");
   });
 
+  it("keeps tools strict only while their optional parameters stay within Bedrock's limit", async () => {
+    const { client, inputs } = fakeRuntime([ended("end_turn")]);
+    // ten optional parameters each: two fit in the 24 Bedrock takes, the third would not
+    const tool = (name: string) => ({
+      name,
+      description: name,
+      parameters: {
+        type: "object",
+        properties: Object.fromEntries(
+          Array.from({ length: 10 }, (_, i) => [`p${i}`, { type: "string" }]),
+        ),
+      },
+    });
+    await client.complete(
+      request({ model: "opus", tools: [tool("a.one"), tool("b.two"), tool("c.three")] }),
+    );
+    type Sent = { toolConfig: { tools: Array<{ toolSpec: Record<string, unknown> }> } };
+    const strict = (inputs[0] as Sent).toolConfig.tools.map((t) => t.toolSpec.strict === true);
+    expect(strict).toEqual([true, true, false]);
+    expect(optionalParameters(tool("x.y").parameters)).toBe(10);
+    expect(
+      optionalParameters({
+        type: "object",
+        properties: { a: { type: "object", properties: { b: { type: "string" } } } },
+        required: ["a"],
+      }),
+    ).toBe(1);
+  });
+
   it("sends strict tools to a model that takes them, with every object closed", async () => {
     const { client, inputs } = fakeRuntime([ended("end_turn")]);
     const tools = [
@@ -707,3 +738,41 @@ describe("a run on Claude", () => {
 
 const isCachePoint = (block: unknown) =>
   typeof block === "object" && block !== null && "cachePoint" in block;
+
+describe("tool schemas Bedrock takes", () => {
+  it("gives a type to a sub-schema that accepts anything, and leaves a shaped one alone", () => {
+    // cast_eval_jsonata's `input`, and cast_run_hook's free-form `input` record, as Cast declares them
+    const declared = {
+      type: "object",
+      properties: {
+        expression: { type: "string" },
+        input: { description: "The value to evaluate against." },
+        record: { type: "object", additionalProperties: {} },
+        either: { anyOf: [{ type: "string" }, {}] },
+        level: { enum: ["a", "b"] },
+      },
+      required: ["expression"],
+    };
+    const any = ["string", "number", "integer", "boolean", "object", "array", "null"];
+    expect(typedSchema(declared)).toEqual({
+      type: "object",
+      properties: {
+        expression: { type: "string" },
+        input: { description: "The value to evaluate against.", type: any },
+        record: { type: "object", additionalProperties: { type: any } },
+        either: { anyOf: [{ type: "string" }, { type: any }] },
+        level: { enum: ["a", "b"] },
+      },
+      required: ["expression"],
+    });
+    // a free-form value is an open object strict mode cannot take: that tool goes without strict
+    expect(strictSchema(typedSchema(declared))).toBeUndefined();
+    expect(
+      strictSchema(typedSchema({ type: "object", properties: { a: { type: "string" } } })),
+    ).toEqual({
+      type: "object",
+      properties: { a: { type: "string" } },
+      additionalProperties: false,
+    });
+  });
+});

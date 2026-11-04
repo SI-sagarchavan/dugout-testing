@@ -4,13 +4,16 @@
 
 import { agent as bind } from "@dugout/agent-bind";
 import { agent as cardMatch } from "@dugout/agent-card-match";
+import { agent as castBuilder } from "@dugout/agent-cast-builder";
+import { agent as castResearcher } from "@dugout/agent-cast-researcher";
 import { agent as sitemap } from "@dugout/agent-sitemap";
 import { liveDeps } from "@dugout/sdk";
 import { Valkey } from "iovalkey";
 import { createValkeyEventLog, createWorker, hostAgents, LOCAL_VALKEY_URL } from "../src/index.ts";
 
-// every agent a worker can run, by id
-const all = [sitemap, cardMatch, bind];
+// every agent a worker can run, by id. cast-researcher and cast-builder also run inside bind, as
+// its children: a worker that serves bind runs them there whether or not it serves them on their own
+const all = [sitemap, cardMatch, bind, castResearcher, castBuilder];
 const only = process.env.AGENTS?.split(",").map((id) => id.trim());
 const unknown = only?.filter((id) => !all.some((a) => a.spec.id === id)) ?? [];
 if (unknown.length) {
@@ -40,6 +43,7 @@ console.log(
 const shutdown = async () => {
   await worker.stop(Number(process.env.WORKER_GRACE_MS || 20_000));
   await deps.tracing?.shutdown();
+  await deps.mcp.close();
   valkey.disconnect();
   await deps.pool.end();
   process.exit(0);
