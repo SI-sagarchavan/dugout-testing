@@ -31,6 +31,10 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # the agents and the typecheck load the @fanos packages' built dist
+      - run: pnpm build
+      # the renderer's carousel and clock tests run in Chromium
+      - run: pnpm --filter @fanos/renderer exec playwright install --with-deps chromium
       - run: pnpm check
       # The whole eval path against the scripted model: no API key, no cost.
       - run: pnpm eval sitemap --scripted
