@@ -408,7 +408,10 @@ export function renderHelp(topic?: CommandName): string {
 }
 
 const TOOLS: Array<[string, string]> = [
-  ["watch", "A Send from the Figma plugin starts a card-match run"],
+  [
+    "watch",
+    "A Send from the Figma plugin starts one send-to-page run: frame matched, data bound, one preview",
+  ],
   ["memory <review|promote>", "Approve proposed facts, or propose shared memory"],
   [
     "mcp <list|sync|login>",

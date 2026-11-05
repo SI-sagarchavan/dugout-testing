@@ -10,7 +10,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const PURE_DIRS = ["src/health", "src/rules", "src/match", "src/api"];
+const PURE_DIRS = ["src/health", "src/rules", "src/match", "src/api", "src/auth"];
 
 /** `src/ir/schema.ts` is pure too — the extractor was built that way on purpose. */
 const PURE_FILES = [
@@ -18,6 +18,8 @@ const PURE_FILES = [
   "src/ir/signature.ts",
   "src/ir/index.ts",
   "src/assets.ts",
+  "src/sends.ts",
+  "src/ui/frames.ts",
   "src/ui/state.ts",
   "src/ui/rows.ts",
 ];

@@ -13,6 +13,7 @@
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "@dugout/agent-card-match": "workspace:^",
+    "@dugout/agent-send-to-page": "workspace:^",
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",
     "@dugout/db": "workspace:^",

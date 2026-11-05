@@ -16,7 +16,15 @@
       "env": "CAST_MCP_TOKENS",
       "default": ".runs/cast-mcp.json"
     },
-    "scope": "cast:mcp"
+    "scope": "cast:mcp",
+    "surface": {
+      "url": {
+        "env": "SURFACE_API_URL"
+      },
+      "key": {
+        "env": "SURFACE_SERVICE_KEY"
+      }
+    }
   },
   "headers": {
     "client": "{grant.site}"

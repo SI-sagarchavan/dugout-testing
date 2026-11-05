@@ -586,6 +586,21 @@ describe("runAgent", () => {
     expect(result).toMatchObject({ status: "failed", reason: "invalid_output" });
   });
 
+  it("says what the model said instead, when it keeps ending its turn without a final", async () => {
+    const asked = "I cannot build this without the showcase id. Please give me it.";
+    const { result } = await run([
+      { content: asked },
+      { content: asked },
+      { content: asked },
+      { content: asked },
+    ]);
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "invalid_output",
+      message: `ended without calling final: ${asked}`,
+    });
+  });
+
   it("retries a reply cut off at max_tokens, then completes on the next good turn", async () => {
     const { result, model } = await run(
       [

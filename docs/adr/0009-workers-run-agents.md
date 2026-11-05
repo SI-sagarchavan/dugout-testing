@@ -1,6 +1,6 @@
 # 0009 — A worker runs agents; the CLI hands it runs, as the backend will
 
-Date: 2026-10-30 · Status: accepted (until Temporal, H7)
+Date: 2026-10-30 · Status: accepted (until Temporal, H7). [ADR 0028](0028-temporal-runs-agent-runs.md) (proposed) lists what Temporal replaces: the claiming, leases, attempts, decisions and checkpoints below. The host contract (start a run, decide an approval, follow events) stays in spirit, but the backend then uses Temporal's client instead of writing to `runs`.
 
 ## Context
 

@@ -9,19 +9,31 @@
  */
 import type { AssetPlacement, TargetMatch, TargetOption } from "./assets.js";
 import type { AssetBinding, AssetFit } from "./ir/schema.js";
-import type { PreviewSummary } from "./api/types.js";
 import type { ActivityActor, ActivityEntry } from "./health/activity.js";
 import type { LintReport } from "./health/types.js";
 import type { ReconciliationReport } from "./health/reconcile-report.js";
+import type { TenantsView } from "./auth/tenants.js";
+import type { RunRecord } from "./sends.js";
 import type { ThemeChoice } from "./themes.js";
 
-export type { ActivityActor, ActivityEntry };
+export type { ActivityActor, ActivityEntry, TenantsView };
 
 export type PanelState = "expanded" | "collapsed";
-export type Tab = "health" | "assets" | "preview" | "export";
+
+/**
+ * Who the plugin is signed in as. Every API needs an account, the local board
+ * included: the local board runs the same sign-in as production, so a designer
+ * tests the real flow before it ships.
+ */
+export type AuthView =
+  | { phase: "signed-out"; message?: string }
+  | { phase: "waiting"; userCode: string; loginUrl: string; expiresAt: number }
+  | { phase: "signed-in"; user: { id: string; name: string } };
+
+export type Tab = "check" | "send" | "runs";
 
 export const PANEL_SIZES: Record<PanelState, { width: number; height: number }> = {
-  expanded: { width: 448, height: 720 },
+  expanded: { width: 400, height: 640 },
   collapsed: { width: 280, height: 44 },
 };
 
@@ -29,6 +41,8 @@ export const CLIENT_STORAGE_KEY = "fanos-studio.panel-state";
 export const CLIENT_STORAGE_THEME_KEY = "fanos-studio.theme-id";
 /** Origin Surface Studio is listening on. Must be on the api allowlist. */
 export const CLIENT_STORAGE_API_ORIGIN_KEY = "fanos-studio.api-origin";
+/** Origin sign-in runs against: the FanXP backend. */
+export const CLIENT_STORAGE_AUTH_BASE_URL_KEY = "fanos-studio.auth-base-url";
 
 // ---------------------------------------------------------------------------
 // UI -> sandbox
@@ -124,21 +138,47 @@ export type UiMessage =
   /** Override how the bitmap fills its box. */
   | { type: "set-asset-fit"; key: string; fit: AssetFit }
   /**
-   * Compile the checked frame and render it, via Surface Studio.
+   * Send frames to Studio, one Send per frame.
    *
-   * On demand, never on every edit: it walks the frame, exports the marked
-   * assets and round-trips a whole page. What it buys is the answer the panel
-   * could not previously give at all — what this frame actually looks like once
-   * compiled — without an export, a run and a gate in between.
+   * Each frame is walked and posted on its own, in order, so each becomes its own
+   * agent run and one slow frame cannot hold the others up. The sandbox owns the
+   * run record and posts it back as `runs` after every step.
    */
-  | { type: "preview-compile" }
-  /** Walk the frame and keep the result for a local ZIP. The escape hatch. */
-  | { type: "export-ir" }
+  | { type: "send-frames"; frameIds: string[] }
   /**
-   * Walk the frame and POST it to Surface Studio. Same files as the ZIP.
-   * The local result is still posted so Save ZIP works if the board is down.
+   * Send frames of an existing run again, in that run: a failure the designer
+   * retried. The run flips from "needs you" to sent instead of leaving a stale
+   * one behind and starting another.
    */
-  | { type: "publish-export" }
+  | { type: "retry-frames"; runId: string; frameIds: string[] }
+  /** Stop after the frame in flight. Frames still queued are marked cancelled. */
+  | { type: "cancel-send" }
+  /** Stop, then send the same frames again as a new run. */
+  | { type: "restart-send"; runId: string }
+  /** Leave the Send tab's progress screen. The run stays in Runs. */
+  | { type: "dismiss-send" }
+  /**
+   * Walk the frames and hand back the same files the send would carry, as one
+   * ZIP. The way out when Studio is down.
+   */
+  | { type: "download-zip"; frameIds: string[] }
+  /** Is Studio answering? Asked when the Send tab opens, and on Retry. */
+  | { type: "open-studio" }
+  /**
+   * Start signing in. The verifier is the PKCE secret, made here in the iframe
+   * (it has `crypto.getRandomValues`) and used by the sandbox, which does the
+   * network. It never leaves the plugin: only its hash goes to the server.
+   */
+  | { type: "auth-start"; verifier: string }
+  /** Stop waiting for the browser. */
+  | { type: "auth-cancel" }
+  /** Open the sign-in page again, for someone who closed the tab. */
+  | { type: "auth-open" }
+  | { type: "auth-sign-out" }
+  /** Ask the backend again which clients this account may send for. */
+  | { type: "tenants-load" }
+  /** Which client this file's sends are for. Remembered on the file. */
+  | { type: "tenant-select"; code: string }
   | { type: "close" };
 
 // ---------------------------------------------------------------------------
@@ -197,6 +237,8 @@ export type PluginMessage =
       hasImage: boolean;
       parentId: string | null;
       parentName: string | null;
+      /** Every selected container, in canvas order. What the Send tab offers to send. */
+      frames: SelectedFrame[];
     }
   | {
       type: "assets";
@@ -222,41 +264,37 @@ export type PluginMessage =
       height: number;
       candidates: TargetMatch[];
     }
-  | { type: "export-progress"; message: string }
+  /**
+   * Every run, newest first, and which one the Send tab is showing. Posted after
+   * every step of a send so the panel never has to ask.
+   */
+  | { type: "runs"; runs: RunRecord[]; activeId: string | null }
+  | { type: "auth"; auth: AuthView }
+  /**
+   * A PNG of the frame being checked, or null. Follows the check, not the
+   * selection, so it never disagrees with the numbers beside it.
+   */
+  | { type: "preview"; preview: SelectionPreview | null }
+  | { type: "tenants"; tenants: TenantsView }
+  /** A ZIP of the walked frames. The UI saves it; nothing else asked for it. */
   | {
-      type: "export-done";
-      jsonName: string;
-      json: string;
-      screenshots: Array<{ name: string; nodeId: string; bytes: Uint8Array }>;
-      assets: Array<{
-        name: string;
-        nodeId: string;
-        targetNodeId: string;
-        role: "background";
-        bytes: Uint8Array;
-        /** `rendered` means the original bitmap was unreachable — see export.ts. */
-        source: "original" | "rendered";
-      }>;
-      summary: Record<string, unknown>;
-      /**
-       * How the walk left the building. `local` is the ZIP-only escape hatch.
-       * A failed publish still carries the files so Save ZIP is the way out.
-       */
-      publish: ExportPublish;
-    }
-  | { type: "preview-progress"; message: string }
-  | {
-      type: "preview-done";
-      /** A complete HTML document, or null when the compile failed. */
-      html: string | null;
-      width: number;
-      summary: PreviewSummary | null;
-      /** Why there are no pixels. Null on success. */
-      error: string | null;
+      type: "zip-ready";
+      name: string;
+      files: Array<{ name: string; data: Uint8Array | string }>;
     }
   | { type: "error"; message: string };
 
-export type ExportPublish =
-  | { kind: "local" }
-  | { kind: "sent"; origin: string }
-  | { kind: "failed"; origin: string; message: string };
+export interface SelectedFrame {
+  id: string;
+  name: string;
+}
+
+/** A screenshot of the frame being checked. Tall selections (a whole page) stay tall: the panel scrolls it. */
+export interface SelectionPreview {
+  nodeId: string;
+  name: string;
+  /** Size of the node on canvas, in Figma units. */
+  width: number;
+  height: number;
+  png: Uint8Array;
+}

@@ -588,4 +588,148 @@ describe("subagents (ADR 0025)", () => {
       .find((m) => m.role === "tool" && String(m.content).includes("Try 3 of 3"));
     expect(String(third?.content)).toContain("a person has to look");
   });
+
+  describe("a pipeline: agents run in a fixed order, in code", () => {
+    const stage = (id: string, prefix: string, write: boolean) =>
+      defineAgent({
+        spec: {
+          id,
+          version: 1,
+          owner: "test",
+          description: `Stage ${id}.`,
+          instructions: prefix,
+          tools: write ? ["facts.save"] : [],
+          skills: [],
+          onDemandSkills: [],
+          model: "nova-lite",
+          memory: { read: [], write: [] },
+          budget: { usdPerRun: 0.5, maxSteps: 4, maxDepth: 0 },
+          approvals: [],
+        },
+        input: z.object({ question: z.string() }),
+        output: z.object({ answer: z.string() }),
+        dir,
+        tools: () =>
+          write
+            ? [
+                defineTool({
+                  name: "facts.save",
+                  description: "Saves a fact.",
+                  input: z.object({}),
+                  effect: "write",
+                  timeoutMs: 1_000,
+                  run: async () => ({ saved: true }),
+                }),
+              ]
+            : [],
+      });
+    const ONE = "You are stage one.";
+    const TWO = "You are stage two.";
+    const FAILS2 = Array.from({ length: 4 }, () => ({
+      toolCalls: [{ name: "final", arguments: { wrong: true } }],
+    }));
+
+    /** Built in the test, once `dir` exists. */
+    const build = () => {
+      const one = stage("stage-one", ONE, true);
+      const two = stage("stage-two", TWO, true);
+      return defineAgent({
+        spec: {
+          id: "piped",
+          version: 1,
+          owner: "test",
+          instructions: PARENT,
+          tools: [],
+          skills: [],
+          onDemandSkills: [],
+          model: "nova-lite",
+          memory: { read: [], write: [] },
+          budget: { usdPerRun: 1, maxSteps: 6, maxDepth: 1 },
+          approvals: [],
+        },
+        input: z.object({ topic: z.string() }),
+        output: z.object({ summary: z.string() }),
+        agents: [one, two],
+        pipeline: {
+          name: "page.build",
+          description: "Runs stage one, then stage two on its answer.",
+          async run(call, input) {
+            const { topic } = input as { topic: string };
+            const a = (await call(one, { question: topic })) as { answer: string };
+            const b = (await call(two, { question: `after ${a.answer}` })) as { answer: string };
+            return { first: a.answer, second: b.answer };
+          },
+        },
+        dir,
+        tools: () => [],
+      });
+    };
+    const ok = (answer: string) => ({ toolCalls: [{ name: "final", arguments: { answer } }] });
+    const callBuild = { toolCalls: [{ name: "page.build", arguments: {} }] };
+
+    it("runs the stages in code, in order, as one tool a person approves once", async () => {
+      const client = routed({
+        [PARENT]: [callBuild, { toolCalls: [{ name: "final", arguments: { summary: "done" } }] }],
+        [ONE]: [{ toolCalls: [{ name: "facts.save", arguments: {} }] }, ok("saved")],
+        [TWO]: [ok("checked")],
+      });
+      const asked: string[] = [];
+      const result = await build().create(deps(client))({
+        tenantId: "club-a",
+        input: { topic: "t" },
+        approver: async (req) => {
+          asked.push(req.tool);
+          return { approved: true, by: "editor" };
+        },
+        runId: "parent-pipe",
+        store: createMemoryRunStore(),
+      });
+      expect(result).toMatchObject({ status: "completed", output: { summary: "done" } });
+      // one approval for the whole sequence, and the first stage's own write rode under it
+      expect(asked).toEqual(["page.build"]);
+      // stage two was given what stage one answered
+      const second = client.requests.find((r) => String(r.messages[0]?.content).startsWith(TWO));
+      expect(JSON.stringify(second?.messages[1]?.content)).toContain("after saved");
+      // the model is offered the one tool, never a stage on its own
+      const offered = client.requests[0]?.tools.map((t) => t.name);
+      expect(offered).toContain("page.build");
+      expect(offered).not.toContain("agent.stageOne");
+      expect(offered).not.toContain("agent.stageTwo");
+    });
+
+    it("keeps a stage that completed when a later one fails, and tries only the failed one again", async () => {
+      const client = routed({
+        [PARENT]: [
+          callBuild,
+          callBuild,
+          { toolCalls: [{ name: "final", arguments: { summary: "done" } }] },
+        ],
+        [ONE]: [{ toolCalls: [{ name: "facts.save", arguments: {} }] }, ok("saved")],
+        [TWO]: [...FAILS2, ok("checked")],
+      });
+      const asked: Array<{ tool: string; input: unknown }> = [];
+      const result = await build().create(deps(client))({
+        tenantId: "club-a",
+        input: { topic: "t" },
+        approver: async (req) => {
+          asked.push({ tool: req.tool, input: req.input });
+          return { approved: true, by: "editor" };
+        },
+        runId: "parent-pipe-retry",
+        store: createMemoryRunStore(),
+      });
+      expect(result).toMatchObject({ status: "completed", output: { summary: "done" } });
+      expect(asked).toHaveLength(2);
+      expect(asked[0]?.input).toEqual({});
+      // the repeat says which stage failed and what it failed on
+      expect(asked[1]?.input).toMatchObject({
+        retry: { stage: "stage-two", attempt: 2, of: 3, lastFailure: expect.any(String) },
+      });
+      // stage one ran once: the second call found it done
+      const oneTurns = client.requests.filter((r) =>
+        String(r.messages[0]?.content).startsWith(ONE),
+      );
+      expect(oneTurns).toHaveLength(2);
+    });
+  });
 });

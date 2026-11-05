@@ -3,33 +3,64 @@
  *
  * Collapsed, at the bottom. The queue already says which batches can bind;
  * this is the inventory: tokens the theme has that Figma has never heard of,
- * variables that drifted, orphans with no token.
+ * variables that drifted, orphans with no token. It is also where the theme is
+ * chosen, because switching it re-runs this very comparison.
  */
-import type { ReconciliationReport } from "../health/reconcile-report.js";
 import type { JSX } from "react";
+import { useState } from "react";
+import type { ReconciliationReport } from "../health/reconcile-report.js";
+import { ChevronIcon } from "./icons.js";
+import { send } from "./main.js";
+import type { StudioState } from "./state.js";
 
 const MAX_LISTED = 12;
 
-export function Reconciliation({
-  reconciliation,
-}: {
-  reconciliation: ReconciliationReport | null;
-}): JSX.Element | null {
+export function Reconciliation({ state }: { state: StudioState }): JSX.Element | null {
+  const [open, setOpen] = useState(false);
+  const reconciliation: ReconciliationReport | null = state.reconciliation;
   if (!reconciliation) return null;
   const { total, bindable, missing, mismatched, orphans, localCollections, libraryCollections, fromLibrary } =
     reconciliation;
 
+  const disabled = state.busy || state.themes.length === 0;
+
   return (
-    <details className="section">
-      <summary className="row">
-        <span className="grow">
-          This file vs {reconciliation.themeName}{" "}
-          <span className="muted">
-            {bindable} / {total} tokens exist here
+    <div style={{ borderTop: "1px solid var(--line)" }}>
+      <button
+        className="fs-disclose"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="t-body truncate">This file vs {reconciliation.themeName}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--ink-muted)" }}>
+          <span className="t-mono" style={{ whiteSpace: "nowrap" }} title="tokens that exist as variables in this file">
+            {bindable} / {total} tokens
+          </span>
+          <span style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : undefined }}>
+            <ChevronIcon />
           </span>
         </span>
-        <span className="muted">›</span>
-      </summary>
+      </button>
+
+      {open ? (
+        <div style={{ paddingBottom: 12 }}>
+      <label className="row" style={{ marginBottom: 4 }}>
+        <span className="grow t-body">Token set</span>
+        <select
+          value={state.themeId}
+          disabled={disabled}
+          onChange={(event) => send({ type: "select-theme", themeId: event.target.value })}
+          aria-label="Token set"
+          title="Re-runs reconciliation and re-proposes every batch"
+          style={{ maxWidth: 220 }}
+        >
+          {state.themes.map((theme) => (
+            <option key={theme.id} value={theme.id}>
+              {theme.name}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <SourceLine
         localCollections={localCollections}
@@ -107,7 +138,9 @@ export function Reconciliation({
           </span>
         ))}
       </div>
-    </details>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

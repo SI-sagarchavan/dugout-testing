@@ -1,5 +1,10 @@
 # The FanOS pipeline
 
+> The apps below (`@fanos/api`, `@fanos/surface-studio`, `@fanos/web`) are stand-ins that retire as Surface
+> Studio moves into the FanXP admin app and the backend takes over the Send ([ADR 0027](adr/0027-two-databases.md)).
+> The packages stay: agents use them as libraries. The current end-to-end flow is
+> [architecture/send-to-page.md](architecture/send-to-page.md).
+
 The `@fanos/*` packages and apps in this repo: the Figma-to-SDUI generation pipeline.
 
 Before any generation work happens, we need a labeled corpus of what we have

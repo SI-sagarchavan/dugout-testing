@@ -62,6 +62,7 @@ export {
   toolName,
 } from "./registry.ts";
 export { inlineRefs, zodOf } from "./schema.ts";
+export { SurfaceGrantError, surfaceTokenStore } from "./surface-tokens.ts";
 export { fileTokenStore, type Grant, type TokenStore } from "./tokens.ts";
 export {
   McpConfigError,

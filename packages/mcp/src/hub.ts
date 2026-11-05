@@ -5,6 +5,7 @@ import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { authFetch } from "./auth.ts";
 import { drift, type Lock, type RemoteResource, type RemoteTool } from "./lock.ts";
 import { pathOf, type Registry, readValue, type ServerEntry } from "./registry.ts";
+import { surfaceTokenStore } from "./surface-tokens.ts";
 import { fileTokenStore, type TokenStore } from "./tokens.ts";
 
 /** A tool call's answer, as the model or a tool reads it. */
@@ -67,6 +68,19 @@ const CLIENT = { name: "dugout", version: "1.0.0" };
 
 /** One token store per file in a process: its writes are queued, and rotations must not race. */
 const stores = new Map<string, TokenStore>();
+const surfaceStores = new Map<string, TokenStore>();
+/** One per backend and server in a process, for the same reason: a rotation is swapped, never raced. */
+const surfaceStoreFor = (opts: Parameters<typeof surfaceTokenStore>[0]) => {
+  // A caller that brings its own `fetch` (a test) gets a store of its own, not a shared one.
+  if (opts.fetch) return surfaceTokenStore(opts);
+  const key = `${opts.url}\0${opts.server}\0${opts.resource ?? ""}`;
+  let store = surfaceStores.get(key);
+  if (!store) {
+    store = surfaceTokenStore(opts);
+    surfaceStores.set(key, store);
+  }
+  return store;
+};
 const storeFor = (path: string) => {
   let store = stores.get(path);
   if (!store) {
@@ -126,6 +140,20 @@ export function createMcpHub(opts: HubOptions): McpHub {
         const auth = server.auth;
         const grants = () => {
           if (opts.grants) return opts.grants(server);
+          // A person's connection in Surface Studio, when this worker is set up to read them
+          if (auth.type === "oauth-per-tenant" && auth.surface) {
+            const surfaceUrl = readValue(auth.surface.url, env);
+            const key = readValue(auth.surface.key, env);
+            if (surfaceUrl && key) {
+              return surfaceStoreFor({
+                url: surfaceUrl,
+                key,
+                server: server.id,
+                resource: url.replace(/\/$/, ""),
+                ...(opts.fetch ? { fetch: opts.fetch } : {}),
+              });
+            }
+          }
           const path = auth.type === "oauth-per-tenant" ? pathOf(auth.grants, env) : undefined;
           if (!path) throw new McpUnavailable(`${server.id}: no grants file`);
           return storeFor(path);

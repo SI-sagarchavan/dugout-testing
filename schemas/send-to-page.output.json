@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "previewUrl": {
+      "type": "string",
+      "description": "The preview with its data bound: the one thing handed over"
+    },
+    "treeArtifactId": {
+      "type": "string"
+    },
+    "planArtifactId": {
+      "type": "string"
+    },
+    "dataArtifactId": {
+      "type": "string"
+    },
+    "measured": {
+      "type": "boolean",
+      "description": "False when too little of the frame has a screenshot to compare"
+    },
+    "coverage": {
+      "type": "number",
+      "description": "Share of the frame a compared screenshot covers, 0 to 100"
+    },
+    "before": {
+      "description": "Match before the frame was fixed, 0 to 100",
+      "type": "number"
+    },
+    "match": {
+      "description": "Match of the published frame, 0 to 100",
+      "type": "number"
+    },
+    "bound": {
+      "type": "number",
+      "description": "Props bound to data"
+    },
+    "collapsed": {
+      "type": "number",
+      "description": "Lists the binding made"
+    },
+    "remaining": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Everything still off, each starting with the part it is about: frame or data"
+    },
+    "compilerFindings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What the compiler should have done"
+    }
+  },
+  "required": [
+    "previewUrl",
+    "treeArtifactId",
+    "planArtifactId",
+    "dataArtifactId",
+    "measured",
+    "coverage",
+    "bound",
+    "collapsed",
+    "remaining",
+    "compilerFindings"
+  ],
+  "additionalProperties": false
+}

@@ -269,3 +269,28 @@ function shortRef(ref: string): string {
   const dot = ref.lastIndexOf(".");
   return dot === -1 ? ref : ref.slice(dot + 1);
 }
+
+/**
+ * Batches that are waiting on a decision the plugin will not make for the
+ * designer: a near match with no token picked yet.
+ *
+ * A skipped batch is the designer's answer ("not now"), so it no longer counts.
+ * The footer's "Review N picks" and the Send tab's "N batches need a pick" are
+ * the same number because both read this.
+ */
+export function needsPick(state: StudioState): Batch[] {
+  const skipped = new Set(state.skipped);
+  return (state.report?.batches ?? []).filter((batch) => {
+    if (skipped.has(batch.id) || state.picks[batch.id]) return false;
+    const proposal = batch.proposal;
+    return proposal !== null && isFixProposal(proposal) && proposal.kind === "near";
+  });
+}
+
+/**
+ * An image fill. It is never a token: it ships as a background asset, so the row
+ * sends the designer to the Images view instead of offering a bind.
+ */
+export function isImageBatch(batch: Batch): boolean {
+  return /^image/i.test(batch.currentValue);
+}

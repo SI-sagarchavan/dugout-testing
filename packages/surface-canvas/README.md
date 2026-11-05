@@ -1,47 +1,44 @@
 # @fanos/surface-canvas
 
-**FanOS Surface Canvas** — the Figma plugin. Four tabs:
+**FanOS Surface Canvas** — the Figma plugin. Three tabs, in the order a frame travels:
 
-| Tab         | What it does                                                                              |
-| ----------- | ----------------------------------------------------------------------------------------- |
-| **Health**  | Measures token binding coverage, ranks the loose values into batches, and fixes them in bulk. |
-| **Assets**  | Drop an image exported from Figma; it is matched to the region it came from, named, and bound to the element it paints. |
-| **Preview** | Compiles the frame and renders it, through the real pipeline. |
-| **Export** | Walks a frame into Frame IR + section PNGs and **sends** them to Surface Studio, uploaded assets included. The ZIP is the local escape hatch. |
+| Tab       | What it does |
+| --------- | ------------ |
+| **Check** | Readiness: how much of the frame is bound to tokens, the fix queue that ranks the loose values and fixes them in bulk, and **Images** (drop an exported image; it is matched to the region it came from, named, and bound to the element it paints). |
+| **Send**  | A pre-flight (account, client, token set, loose values, background images, whether Studio answers), then **Send**: each selected frame is walked and sent on its own, one Send per frame. Progress is per frame, with Retry, Cancel and a ZIP fallback for when Studio is down. |
+| **Runs**  | Every send this plugin has made, newest first, with what to do about it: Re-send, Download ZIP, Open in Studio. The tab carries a count of runs that need the designer. |
 
-### The Preview tab
+Sending needs an account. **Connect** (top right, or on Send) signs in through the FanXP admin app in the browser;
+one sign-in covers every client the user may send for, and the Send tab picks the client, remembered on the file.
+Before a frame is uploaded the backend checks the user's access to that client and that the frame looks like a FanOS
+design. See `.scratch/surface-studio-fanxp/plugin-auth.md`.
 
-Compiles the frame and shows the result, before any export exists. **Compile &
-preview** walks the frame, reads the uploaded assets, and POSTs IR + theme +
-bytes to Surface Studio, which runs the real
-`@fanos/compile` and the real `@fanos/renderer` and hands back a page. ~110ms
-for a 950-layer frame. Beside the picture: node counts, unresolved glyphs,
-vectors that became plain boxes, and any asset ref with no bytes behind it.
+Look and feel is the **FanOS Surface** design system (`ui.html` holds its tokens;
+Figma's light theme gets a derived palette, since the system defines dark only).
+Inter is Figma's own face, so the panel fetches nothing.
 
-It has its own tab rather than sitting under Assets: "what does this compile
-to" is a question about the whole frame, not about the images in it.
+### What Runs can and cannot say
 
-It runs on the **board**, not in the plugin, and that is a constraint rather
-than a preference:
+Runs reports whether the files **reached Studio**: *running* while frames are
+still going out, *needs you* when some did not make it, *sent* when all did. What
+Studio does afterwards (matching, binding, waiting for approval) is not visible
+from the plugin until a plugin-facing runs API exists, and a status the plugin
+invented would be worse than none. History lives in `figma.clientStorage`
+(`fanos-studio.runs`, newest 20); `RunsSource` in `src/sends.ts` is the seam a
+live source plugs into. A send still going when the plugin closed is settled as
+a failure on the next open, so Re-send can pick it up.
 
-```
-@fanos/compile  →  @fanos/surface-canvas/ir     (already true)
-@fanos/surface-canvas  →  @fanos/compile        (would close a cycle)
-```
+A frame's files travel in one request, so there is no honest percentage for a
+frame in flight: it shows how many files it carries and a moving bar, and the
+overall bar counts frames.
 
-`pnpm -r build` resolves packages topologically and a cycle has no valid order.
-Surface Studio already sits downstream of both and already owns the renderer,
-so it is the one place the real compiler and the real renderer can meet — which
-also means the preview is produced by exactly the code a run uses and cannot
-flatter the result. A preview that can lie is worse than no preview.
-
-Nothing is persisted: no project, no artifacts, no run. Only the board has to
-be up (`pnpm dev`).
+There is no compile preview here. The plugin used to POST the IR to Studio to
+render a page on demand; the result is now seen in Studio, on the run.
 
 ### Drop an image in; it finds where it belongs
 
 The designer exports a region from Figma the ordinary way and drops the file
-into the Assets tab. That act already carries almost everything needed to place
+into the Images view. That act already carries almost everything needed to place
 it — Figma names the export after the layer, and its pixel size is that layer's
 box times the export scale — so the panel infers the target rather than asking.
 
@@ -111,7 +108,7 @@ unchanged — `@fanos/surface-canvas/ir` exports exactly what
 `@fanos/figma-ir-extractor/ir` did, and `@fanos/conform` and `@fanos/compile`
 import it the same way.
 
-## The point of the Health tab
+## The point of the Check tab
 
 Token binding coverage is the ceiling on everything downstream. A generator
 cannot emit token-referencing SDUI for regions with no tokens behind them, and on
@@ -155,7 +152,8 @@ sandbox-only types. Those tests run in plain node.
 src/
   main.ts          sandbox entry: session, dispatch, debounce, incremental re-lint
   traverse.ts      Figma nodes -> Frame IR                          (figma-aware)
-  export.ts        the Export tab: IR + screenshots + asset bytes   (figma-aware)
+  export.ts        the walk a send carries: IR + screenshots + asset bytes (figma-aware)
+  sends.ts         runs: per-frame send status, history, ordering   PURE
   assets.ts        marks: name, bind, fit, placement                PURE
   reconcile.ts     token <-> Figma variable/style map               (figma-aware)
   fix.ts           apply proposals, undo checkpointing              (figma-aware)
@@ -198,7 +196,7 @@ zero radius is a decision that survives generation while a loose zero is
 indistinguishable from nobody having thought about it. Zero spacing is not a
 hardcoded value; it is the absence of one. This is the single place the
 denominator differs from `countBindings()` in `export.ts`, which skips zero
-radius — so the Export tab's "unbound %" and the Health tab's coverage will not
+radius — so the export's "unbound %" and the Check tab's coverage will not
 be identical on the same page, by design.
 
 ## The rules

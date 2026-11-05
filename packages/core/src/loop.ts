@@ -634,7 +634,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
             return complete(turn.message.content);
           } else {
             if (++state.invalidOutputs > MAX_INVALID_OUTPUTS) {
-              return fail("invalid_output", `ended without calling ${FINAL_TOOL}`);
+              // what it said instead is the reason: a question for a person, usually
+              const said = turn.message.content.trim().replace(/\s+/g, " ");
+              return fail(
+                "invalid_output",
+                `ended without calling ${FINAL_TOOL}${said ? `: ${said.length > 600 ? `${said.slice(0, 599)}…` : said}` : ""}`,
+              );
             }
             messages.push({ role: "user", content: nudge });
           }

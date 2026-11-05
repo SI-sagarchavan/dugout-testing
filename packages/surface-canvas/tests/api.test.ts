@@ -5,14 +5,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   API_TIMEOUT_MS,
-  buildExportBody,
-  bytesToBase64,
   createApiClient,
   DEFAULT_API_ORIGIN,
   EVENTS_PATH,
-  EXPORT_TIMEOUT_MS,
-  EXPORTS_PATH,
-  HEALTH_PATH,
   normalizeOrigin,
   resolveOrigin,
   type ApiFetchResponse,
@@ -59,17 +54,6 @@ describe("resolveOrigin", () => {
 });
 
 describe("createApiClient", () => {
-  it("GETs /v1/health", async () => {
-    const fetch = vi.fn(async () => jsonResponse(200, { ok: true }));
-    const client = createApiClient({ origin: DEFAULT_API_ORIGIN, fetch });
-    const result = await client.ping();
-    expect(result).toEqual({ ok: true, status: 200, data: { ok: true } });
-    expect(fetch).toHaveBeenCalledWith(`${DEFAULT_API_ORIGIN}${HEALTH_PATH}`, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
-  });
-
   it("POSTs the event envelope to /v1/events", async () => {
     const fetch = vi.fn(async () => jsonResponse(202, { id: "e1" }));
     const client = createApiClient({ origin: DEFAULT_API_ORIGIN, fetch });
@@ -97,7 +81,7 @@ describe("createApiClient", () => {
       throw new Error("Failed to fetch");
     });
     const client = createApiClient({ origin: DEFAULT_API_ORIGIN, fetch });
-    await expect(client.ping()).resolves.toEqual({
+    await expect(client.postEvent(event)).resolves.toEqual({
       ok: false,
       status: null,
       message: "Failed to fetch",
@@ -107,105 +91,30 @@ describe("createApiClient", () => {
   it("times out rather than wait on a hung dashboard", async () => {
     const fetch = vi.fn(() => new Promise<ApiFetchResponse>(() => {}));
     const client = createApiClient({ origin: DEFAULT_API_ORIGIN, fetch, timeoutMs: 20 });
-    const result = await client.ping();
+    const result = await client.postEvent(event);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toMatch(/timed out/);
   });
 
   it("uses the default timeout when none is passed", () => {
     expect(API_TIMEOUT_MS).toBe(4000);
-    expect(EXPORT_TIMEOUT_MS).toBe(60_000);
-  });
-
-  it("POSTs the export body to /v1/exports", async () => {
-    const fetch = vi.fn(async (_url: string, init: { body?: string }) => {
-      expect(JSON.parse(init.body ?? "{}").jsonName).toBe("Home-1-2.ir.json");
-      return jsonResponse(202, { id: "exp1" });
-    });
-    const client = createApiClient({ origin: DEFAULT_API_ORIGIN, fetch });
-    const body = buildExportBody({
-      page: event.page,
-      at: 1,
-      jsonName: "Home-1-2.ir.json",
-      json: '{"ok":true}',
-      summary: { nodeCount: 2 },
-      screenshots: [{ name: "hero-1-3.png", nodeId: "1:3", bytes: new Uint8Array([1, 2, 3]) }],
-    });
-    const result = await client.postExport(body);
-    expect(result.ok).toBe(true);
-    expect(fetch.mock.calls[0]?.[0]).toBe(`${DEFAULT_API_ORIGIN}${EXPORTS_PATH}`);
   });
 });
 
-describe("buildExportBody", () => {
-  it("parses the IR and base64-encodes each PNG", () => {
-    const body = buildExportBody({
-      page: event.page,
-      at: 9,
-      jsonName: "Home-1-2.ir.json",
-      json: '{"root":{"id":"1:2"}}',
-      summary: { nodeCount: 1 },
-      screenshots: [{ name: "hero.png", nodeId: "1:3", bytes: new Uint8Array([0x89, 0x50]) }],
-    });
-    expect(body.ir).toEqual({ root: { id: "1:2" } });
-    expect(body.screenshots[0]).toEqual({
-      name: "hero.png",
-      nodeId: "1:3",
-      bytesBase64: bytesToBase64(new Uint8Array([0x89, 0x50])),
-    });
-    expect(body.assets).toEqual([]);
-  });
-
-  it("encodes marked background assets next to the plates", () => {
-    const body = buildExportBody({
-      page: event.page,
-      at: 9,
-      jsonName: "Home-1-2.ir.json",
-      json: "{}",
-      summary: {},
-      screenshots: [],
-      assets: [
-        {
-          name: "tickets_plate",
-          nodeId: "1:10",
-          targetNodeId: "1:2",
-          role: "background",
-          bytes: new Uint8Array([0x89, 0x50]),
-          source: "original",
-        },
-      ],
-    });
-    expect(body.assets).toEqual([
-      {
-        name: "tickets_plate",
-        nodeId: "1:10",
-        targetNodeId: "1:2",
-        role: "background",
-        source: "original",
-        bytesBase64: bytesToBase64(new Uint8Array([0x89, 0x50])),
-      },
-    ]);
-  });
-
-  it("keeps ir null when the JSON is broken rather than throwing", () => {
-    const body = buildExportBody({
-      page: event.page,
-      at: 1,
-      jsonName: "bad.ir.json",
-      json: "{",
-      summary: {},
-      screenshots: [],
-    });
-    expect(body.ir).toBeNull();
-  });
-});
-
-describe("bytesToBase64", () => {
-  it("matches the RFC 4648 vectors", () => {
-    const enc = (text: string) => bytesToBase64(new TextEncoder().encode(text));
-    expect(enc("")).toBe("");
-    expect(enc("f")).toBe("Zg==");
-    expect(enc("fo")).toBe("Zm8=");
-    expect(enc("foo")).toBe("Zm9v");
+describe("describeError", () => {
+  // Figma's fetch can reject with a plain object, and String({}) is the useless
+  // "[object Object]" a designer once saw where the reason should have been.
+  it("never turns a thrown value into [object Object]", async () => {
+    const { describeError } = await import("../src/api/describe-error.js");
+    expect(describeError(new Error("boom"))).toBe("boom");
+    expect(describeError("plain")).toBe("plain");
+    expect(describeError({ message: "blocked domain" })).toBe("blocked domain");
+    expect(describeError({ error: "net::ERR_FAILED" })).toBe("net::ERR_FAILED");
+    expect(describeError({ code: 7 })).toBe('{"code":7}');
+    expect(describeError({})).toBe("no reason was given");
+    expect(describeError(undefined)).toBe("no reason was given");
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular;
+    expect(describeError(circular)).toBe("no reason was given");
   });
 });

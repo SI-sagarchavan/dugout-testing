@@ -1,26 +1,22 @@
 /**
- * Assets tab — drop an image in, and it finds where it belongs.
+ * Images: the background assets this frame ships, and where to add one.
  *
  * An asset creates `asset.texture.<name>`: a token the compiler emits, the run
- * stores a URL against, and the renderer fetches. Getting one into the pipeline
- * used to mean MARKING Figma layers here — ticking the four layers of a header,
- * ordering them, and having the plugin flatten them itself.
+ * stores a URL against, and the renderer fetches. The designer exports a region
+ * from Figma the way they always do and drops the file in; the only remaining
+ * question, which region it was, is answered by matching the filename and pixel
+ * size against the frame. When that is certain nothing is asked at all.
  *
- * That was the wrong shape twice over. It asked the designer to re-describe,
- * inside a panel, a composition Figma already understood. And it re-implemented
- * an exporter Figma already ships — one that honours export settings, scale,
- * effects and clipping, which ours did not.
- *
- * Exporting a region is something designers already do without being asked. So
- * they do that, drag the file in, and the only remaining question — which
- * region was it? — is answered by matching the filename and pixel size against
- * the frame. When that is certain, nothing is asked at all.
+ * A row is the asset at a glance — name, where it came from, a button that
+ * selects what it paints on the canvas. Opening it shows the rest: fit, target,
+ * and how the bitmap lands inside the element.
  */
 import type { DragEvent, JSX } from "react";
 import { useState } from "react";
 import type { TargetMatch, TargetOption } from "../assets.js";
 import { assetRef, type AssetBinding, type AssetFit } from "../ir/schema.js";
 import type { AssetPlacement } from "../ir/placement.js";
+import { ImageIcon, TargetIcon } from "./icons.js";
 import { send } from "./main.js";
 import type { PanelAction, StudioState } from "./state.js";
 
@@ -31,36 +27,50 @@ const FITS: ReadonlyArray<{ value: AssetFit; label: string; hint: string }> = [
   { value: "none", label: "None", hint: "natural size, no scaling" },
 ];
 
-export function AssetsTab({
+export function ImagesView({
   state,
   dispatch,
 }: {
   state: StudioState;
   dispatch: (action: PanelAction) => void;
 }): JSX.Element {
+  const frame = state.report?.rootName ?? state.selectionName ?? "";
+
   return (
-    <div className="scroll">
-      <DropZone busy={state.busy} />
+    <section style={{ display: "flex", flexDirection: "column", gap: 8 }} aria-label="Background assets">
+      <div className="fs-line1" style={{ justifyContent: "space-between", flexWrap: "nowrap" }}>
+        <p className="t-mono" style={{ color: "var(--ink-muted)" }}>
+          Background assets in the selected frame
+        </p>
+        {frame ? <span className="fs-pill truncate">{frame}</span> : null}
+      </div>
 
       {state.unmapped ? <UnmappedPrompt unmapped={state.unmapped} dispatch={dispatch} /> : null}
 
       {state.assets.length > 0 ? (
-        <div className="section" style={{ paddingTop: 6 }}>
-          <div className="muted" style={{ marginBottom: 6 }}>
-            {state.assets.length} {state.assets.length === 1 ? "asset" : "assets"} in this frame
-          </div>
+        <ul style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {state.assets.map((binding) => (
-            <AssetRow
-              key={binding.imageHash}
-              binding={binding}
-              placement={state.placements[binding.imageHash]}
-              targets={state.targets[binding.imageHash] ?? []}
-              busy={state.busy}
-            />
+            <li key={binding.imageHash}>
+              <AssetRow
+                binding={binding}
+                placement={state.placements[binding.imageHash]}
+                targets={state.targets[binding.imageHash] ?? []}
+                busy={state.busy}
+              />
+            </li>
           ))}
+        </ul>
+      ) : (
+        <div className="fs-card fs-empty">
+          <div className="t-label">No background images yet.</div>
+          <div className="t-body" style={{ color: "var(--ink-muted)" }}>
+            Content photos stay placeholders. Drop an exported texture or plate below to ship it.
+          </div>
         </div>
-      ) : null}
-    </div>
+      )}
+
+      <DropZone busy={state.busy} />
+    </section>
   );
 }
 
@@ -99,43 +109,41 @@ function DropZone({ busy }: { busy: boolean }): JSX.Element {
   }
 
   return (
-    <div className="section">
-      <label
-        className={`dropzone${over ? " over" : ""}`}
-        onDragOver={(e: DragEvent) => {
-          e.preventDefault();
-          setOver(true);
+    <label
+      className={`dropzone${over ? " over" : ""}`}
+      onDragOver={(e: DragEvent) => {
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e: DragEvent) => {
+        e.preventDefault();
+        setOver(false);
+        void accept([...e.dataTransfer.files]);
+      }}
+    >
+      {/* A file input as well as a drop target: dragging out of Figma's own export
+          dialog is fiddly, and some people would rather browse. */}
+      <input
+        type="file"
+        accept="image/*"
+        multiple
+        disabled={busy}
+        onChange={(e) => {
+          void accept([...(e.target.files ?? [])]);
+          e.target.value = "";
         }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e: DragEvent) => {
-          e.preventDefault();
-          setOver(false);
-          void accept([...e.dataTransfer.files]);
-        }}
-      >
-        {/* A file input as well as a drop target: dragging out of Figma's own
-            export dialog is fiddly, and some people would rather browse. */}
-        <input
-          type="file"
-          accept="image/*"
-          multiple
-          disabled={busy}
-          onChange={(e) => {
-            void accept([...(e.target.files ?? [])]);
-            e.target.value = "";
-          }}
-        />
-        <div className="dropzone-title">
-          {reading > 0
-            ? `Reading ${reading} ${reading === 1 ? "image" : "images"}…`
-            : "Drop exported images here"}
-        </div>
-        <div className="muted" style={{ marginTop: 2 }}>
-          Export a region from Figma as usual, then drop the file in. Each one is
-          matched to the part of the design it came from.
-        </div>
-      </label>
-    </div>
+      />
+      <div className="t-label">
+        {reading > 0
+          ? `Reading ${reading} ${reading === 1 ? "image" : "images"}…`
+          : "Drop exported images here"}
+      </div>
+      <div className="t-caption" style={{ color: "var(--ink-muted)", marginTop: 2 }}>
+        Export a region from Figma as usual, then drop the file in. Each one is matched to the
+        part of the design it came from.
+      </div>
+    </label>
   );
 }
 
@@ -155,16 +163,18 @@ function UnmappedPrompt({
   dispatch: (action: PanelAction) => void;
 }): JSX.Element {
   return (
-    <div className="section unmapped">
-      <div className="row" style={{ marginBottom: 4 }}>
-        <span className="grow truncate" style={{ fontWeight: 600 }}>
-          Where does “{unmapped.fileName}” go?
-        </span>
-        <button className="ghost muted" onClick={() => dispatch({ type: "dismiss-unmapped" })}>
+    <div className="fs-card" role="group" aria-label={`Where does ${unmapped.fileName} go?`}>
+      <div className="fs-line1" style={{ justifyContent: "space-between", flexWrap: "nowrap" }}>
+        <span className="t-label truncate">Where does “{unmapped.fileName}” go?</span>
+        <button
+          className="fs-btn is-text"
+          onClick={() => dispatch({ type: "dismiss-unmapped" })}
+          style={{ color: "var(--ink-muted)" }}
+        >
           Skip
         </button>
       </div>
-      <div className="muted" style={{ marginBottom: 8 }}>
+      <div className="t-caption" style={{ color: "var(--ink-muted)" }}>
         {unmapped.width}×{unmapped.height} px ·{" "}
         {unmapped.candidates.length === 0
           ? "nothing in this frame is that shape or name"
@@ -187,7 +197,8 @@ function Candidate({
 }): JSX.Element {
   return (
     <button
-      className="outline candidate"
+      className="fs-btn"
+      style={{ flexDirection: "column", alignItems: "flex-start", gap: 0, padding: "6px 10px", minHeight: 40 }}
       onClick={() =>
         // `place-asset`, not `upload-asset`: the bytes went into the document
         // when the file was dropped, and re-uploading would duplicate them.
@@ -202,10 +213,10 @@ function Candidate({
       }
       onMouseEnter={() => send({ type: "select-nodes", nodeIds: [candidate.id] })}
     >
-      <span className="truncate" style={{ fontWeight: 600 }}>
+      <span className="t-label truncate" style={{ maxWidth: "100%" }}>
         {candidate.name}
       </span>
-      <span className="muted truncate">
+      <span className="t-caption truncate" style={{ color: "var(--ink-muted)", maxWidth: "100%" }}>
         {candidate.width}×{candidate.height} · {candidate.reasons.join(", ")}
       </span>
     </button>
@@ -224,60 +235,83 @@ function AssetRow({
   busy: boolean;
 }): JSX.Element {
   const [editing, setEditing] = useState(false);
+  const [open, setOpen] = useState(false);
   const key = binding.imageHash;
 
   return (
-    <div className="asset-row">
-      <div className="grow" style={{ minWidth: 0 }}>
-        {editing ? (
-          <NameField
-            name={binding.name}
-            onCommit={(name) => {
-              setEditing(false);
-              if (name !== binding.name) send({ type: "rename-asset", key, name });
-            }}
-            onCancel={() => setEditing(false)}
-          />
-        ) : (
-          <button
-            className="ghost"
-            style={{ textAlign: "left", padding: 0, width: "100%" }}
-            onClick={() => setEditing(true)}
-            title={`${assetRef(binding.name)} — click to rename`}
-          >
-            <span className="truncate" style={{ fontWeight: 600 }}>
-              {binding.name}
+    <div className={open ? "fs-row is-open" : "fs-row"}>
+      <div className="fs-row-head">
+        <button
+          className="fs-row-hit"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          title={`${assetRef(binding.name)} — ${open ? "hide" : "show"} details`}
+        >
+          <span className="fs-well" aria-hidden="true">
+            <ImageIcon />
+          </span>
+          <span className="fs-rowbody">
+            <span className="fs-line1" style={{ flexWrap: "nowrap" }}>
+              <span className="t-label truncate">{binding.name}</span>
+              {/* An auto-mapping is a guess. Saying so is what lets a designer who
+                  later finds the wrong region painted know where to look. */}
+              {binding.mapping === "auto" ? <span className="fs-pill">auto</span> : null}
             </span>
-            {/* An auto-mapping is a guess. Saying so is what lets a designer who
-                later finds the wrong region painted know where to look. */}
-            {binding.mapping === "auto" ? (
-              <span className="pill" style={{ marginLeft: 6 }}>
-                auto
-              </span>
-            ) : null}
-          </button>
-        )}
-
-        <div className="muted truncate" style={{ marginTop: 2 }}>
-          {binding.fileName} · {binding.width}×{binding.height} → {binding.targetName}
-        </div>
-
-        <Placement placement={placement} />
-
-        <div className="row" style={{ marginTop: 6, gap: 4, flexWrap: "wrap" }}>
-          <FitPicker binding={binding} busy={busy} />
-        </div>
-
-        <TargetPicker binding={binding} targets={targets} busy={busy} />
+            <span className="t-caption truncate" style={{ color: "var(--ink-muted)" }}>
+              Background · {binding.fileName} · {binding.width}×{binding.height} → {binding.targetName}
+            </span>
+          </span>
+        </button>
+        <button
+          className="fs-iconbtn"
+          aria-label={`Select ${binding.name} on canvas`}
+          title="Select what it paints on the canvas"
+          onClick={() => send({ type: "select-nodes", nodeIds: [binding.targetId] })}
+        >
+          <TargetIcon />
+        </button>
       </div>
 
-      <button
-        className="ghost"
-        onClick={() => send({ type: "remove-asset", key })}
-        title="Stop shipping this image"
-      >
-        ×
-      </button>
+      {open ? (
+        <div className="fs-body">
+          {editing ? (
+            <NameField
+              name={binding.name}
+              onCommit={(name) => {
+                setEditing(false);
+                if (name !== binding.name) send({ type: "rename-asset", key, name });
+              }}
+              onCancel={() => setEditing(false)}
+            />
+          ) : (
+            <button
+              className="fs-btn is-text"
+              style={{ alignSelf: "flex-start", padding: 0 }}
+              onClick={() => setEditing(true)}
+              title={`${assetRef(binding.name)} — click to rename`}
+            >
+              Rename {assetRef(binding.name)}
+            </button>
+          )}
+
+          <Placement placement={placement} />
+
+          <div className="fs-line1" style={{ gap: 4 }}>
+            <FitPicker binding={binding} busy={busy} />
+          </div>
+
+          <TargetPicker binding={binding} targets={targets} busy={busy} />
+
+          <button
+            className="fs-btn is-text"
+            style={{ alignSelf: "flex-start", padding: 0, color: "var(--ink-muted)" }}
+            onClick={() => send({ type: "remove-asset", key })}
+            title="Stop shipping this image"
+          >
+            Stop shipping this image
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -296,14 +330,14 @@ function Placement({ placement }: { placement: AssetPlacement | undefined }): JS
 
   if (covers) {
     return (
-      <div className="muted truncate" style={{ marginTop: 2 }}>
+      <div className="t-caption truncate" style={{ color: "var(--ink-muted)" }}>
         paints the whole element
       </div>
     );
   }
 
   return (
-    <div className="truncate" style={{ marginTop: 2, color: "var(--fos-warn)" }}>
+    <div className="t-caption" style={{ color: "var(--attention)" }}>
       {box} at {Math.round(offset.x)},{Math.round(offset.y)} in a {Math.round(target.w)}×
       {Math.round(target.h)} target — placed, not full-bleed
     </div>
@@ -326,12 +360,12 @@ function TargetPicker({
   if (!open) {
     return (
       <button
-        className="ghost"
-        style={{ marginTop: 6, padding: 0, textAlign: "left" }}
+        className="fs-btn is-text"
+        style={{ alignSelf: "flex-start", padding: 0 }}
         onClick={() => setOpen(true)}
         title="Choose which element this image paints"
       >
-        <span className="muted">change what it paints</span>
+        Change what it paints
       </button>
     );
   }
@@ -343,9 +377,9 @@ function TargetPicker({
         return (
           <button
             key={target.id}
-            className={current ? "primary" : "ghost"}
+            className={current ? "fs-btn is-compact is-primary" : "fs-btn is-compact"}
             disabled={busy}
-            style={{ width: "100%", textAlign: "left", marginBottom: 2 }}
+            style={{ width: "100%", justifyContent: "flex-start", marginBottom: 4 }}
             onClick={() => {
               setOpen(false);
               if (!current) {
@@ -359,14 +393,14 @@ function TargetPicker({
               {"↳ ".repeat(Math.min(target.depth - 1, 3))}
               {target.name}
             </span>
-            <span className="muted">
+            <span style={{ color: "var(--ink-muted)" }}>
               {" "}
               {target.width}×{target.height}
             </span>
           </button>
         );
       })}
-      <button className="ghost muted" style={{ padding: 0 }} onClick={() => setOpen(false)}>
+      <button className="fs-btn is-text" style={{ color: "var(--ink-muted)" }} onClick={() => setOpen(false)}>
         Cancel
       </button>
     </div>
@@ -380,9 +414,8 @@ function FitPicker({ binding, busy }: { binding: AssetBinding; busy: boolean }):
       {FITS.map((fit) => (
         <button
           key={fit.value}
-          className={current === fit.value ? "primary" : "ghost"}
+          className={current === fit.value ? "fs-btn is-compact is-primary" : "fs-btn is-compact"}
           disabled={busy}
-          style={{ padding: "2px 8px" }}
           onClick={() => send({ type: "set-asset-fit", key: binding.imageHash, fit: fit.value })}
           title={fit.hint}
         >

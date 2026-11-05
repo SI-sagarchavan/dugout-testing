@@ -1,5 +1,12 @@
 # 21. Databases in Docker, apps on the host, one Postgres
 
+> **Partly superseded by [ADR 0027](0027-two-databases.md) (2026-11-05).** The `fanos` database and the
+> control plane are going away: the system ends with two databases, the FanXP DB and `harness`. What
+> still holds here: databases in Docker and apps on the host for local work, `harness` as its own database
+> on its own instance in dev and prod, no joins across databases, and the final DSL belonging to FanXP.
+> What no longer holds: `fanos` as a permanent database, Electric on it, and the control plane as the
+> store for Sends.
+
 After ADR 0020 one checkout holds everything. The question was how to run it: the databases need Docker, and the apps (API, worker, Studio, web, dugout's worker and watcher) could be containers or plain `node` processes. And the two halves had brought a Postgres each.
 
 ## Decision

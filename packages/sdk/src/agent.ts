@@ -31,7 +31,14 @@ import {
   SKILL_TOOL,
 } from "@dugout/memory";
 import type { z } from "zod";
-import { agentTool, agentToolName, type ChildRuns } from "./subagents.ts";
+import {
+  agentTool,
+  agentToolName,
+  type ChildRuns,
+  childCaller,
+  type Pipeline,
+  pipelineTool,
+} from "./subagents.ts";
 
 /** What the host (CLI, API, evals, tests) supplies: the model, memory, and where runs are written. */
 export interface AgentDeps {
@@ -143,6 +150,12 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
    * write: a person approves the call, and the child's writes go through under it.
    */
   agents?: AnyAgent[];
+  /**
+   * Runs the agents it may call in a fixed order, in code, as one tool (`pipeline.name`), instead
+   * of leaving each to the model as `agent.<id>`: for when the steps are known. The tool is one
+   * write a person approves once; the children's writes go through under that yes.
+   */
+  pipeline?: Pipeline;
   cli?: AgentCli;
 }
 
@@ -184,8 +197,12 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
   if (children.length > 0 && declared.budget.maxDepth < 1) {
     throw new Error(`${declared.id}: calls agents, so budget.maxDepth must be 1 or more`);
   }
-  // each agent it may call is a tool of its own, allowed like any other tool in the spec
-  const agentTools = childIds.map(agentToolName);
+  if (config.pipeline && children.length === 0) {
+    throw new Error(`${declared.id}: has a pipeline, so agents must list the agents it runs`);
+  }
+  // each agent it may call is a tool of its own, allowed like any other tool in the spec; a
+  // pipeline is one tool for all of them
+  const agentTools = config.pipeline ? [config.pipeline.name] : childIds.map(agentToolName);
   const spec: AgentSpec = children.length
     ? { ...declared, agents: childIds, tools: [...declared.tools, ...agentTools] }
     : declared;
@@ -295,6 +312,16 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
         };
       };
 
+      /** The tools that run the agents it may call, with this run's own memory of how they went. */
+      const childToolsFor = (opts: RunOptions<z.input<Input>>): Tool[] => {
+        const callers = childRuns.map(({ child, runChild, writes }) =>
+          childCaller(spec, child, runChild, opts, { writes }),
+        );
+        return config.pipeline
+          ? [pipelineTool(config.pipeline, callers)]
+          : callers.map((caller) => agentTool(caller));
+      };
+
       const runAgent = (opts: RunOptions<z.input<Input>>) =>
         runLocal({
           agent: definitionFor(opts.model, opts.usdPerRun),
@@ -302,12 +329,7 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
           tenantId: opts.tenantId,
           ...(opts.depth ? { depth: opts.depth } : {}),
           ...(opts.parent ? { parent: opts.parent } : {}),
-          tools: [
-            ...tools,
-            ...childRuns.map(({ child, runChild, writes }) =>
-              agentTool(spec, child, runChild, opts, { writes }),
-            ),
-          ],
+          tools: [...tools, ...childToolsFor(opts)],
           client: deps.client,
           models: deps.models,
           approver: opts.approver,

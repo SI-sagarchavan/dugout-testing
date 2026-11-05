@@ -69,10 +69,19 @@ const Auth = z.discriminatedUnion("type", [
   /** One token for every tenant, from the environment. */
   z.object({ type: z.literal("bearer"), token: Value }).strict(),
   /**
-   * A grant per tenant, from a person's OAuth login (`pnpm agent mcp login`), kept in a file. The
-   * run's tenant picks it; the model never does.
+   * A grant per tenant, from a person's OAuth login. The run's tenant picks it; the model never
+   * does. By default the grants are in a file (`pnpm agent mcp login`). With `surface` set, and
+   * both of its values present, they are the ones a person connected in Surface Studio's Setup
+   * page, kept by the backend, and the tenant id is the FanXP client code.
    */
-  z.object({ type: z.literal("oauth-per-tenant"), grants: Value, scope: z.string() }).strict(),
+  z
+    .object({
+      type: z.literal("oauth-per-tenant"),
+      grants: Value,
+      scope: z.string(),
+      surface: z.object({ url: Value, key: Value }).strict().optional(),
+    })
+    .strict(),
 ]);
 export type Auth = z.infer<typeof Auth>;
 

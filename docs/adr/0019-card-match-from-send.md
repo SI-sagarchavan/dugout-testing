@@ -1,5 +1,9 @@
 # 19. Matching a Figma frame starts from the plugin's Send
 
+> **Input source changes under [ADR 0027](0027-two-databases.md).** The decision to start from the Send stays.
+> Where the Send is read from changes: not `plane.getExport` on the control plane, but the backend's Send
+> ledger and S3, through a Surface MCP tool (`surface.getSend`). Until that lands, this ADR describes how it works.
+
 The `card` agent reads a DSL file and a screenshot, and most of what decides fidelity never reaches it: the IR, the surfaces, the export's theme. `card-match` starts from what the plugin's Send already stored, by export id.
 
 - **Trigger.** `pnpm agent watch` is a host (ADR 0009) that looks at the control plane for new exports and queues a run per frame, so the plugin and the pipeline do not change. The plugin can't show the run's link, because the control plane doesn't know about it. A Send made while the watcher is down still runs when it next starts, once the tenant has a prior `card-match` run.

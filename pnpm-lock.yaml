@@ -78,9 +78,6 @@ importers:
       '@dugout/evals':
         specifier: workspace:^
         version: link:../../packages/evals
-      '@dugout/mcp':
-        specifier: workspace:^
-        version: link:../../packages/mcp
       '@dugout/memory':
         specifier: workspace:^
         version: link:../../packages/memory
@@ -143,6 +140,24 @@ importers:
       '@dugout/db':
         specifier: workspace:^
         version: link:../../packages/db
+
+  agents/send-to-page:
+    dependencies:
+      '@dugout/agent-bind':
+        specifier: workspace:^
+        version: link:../bind
+      '@dugout/agent-card-match':
+        specifier: workspace:^
+        version: link:../card-match
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@dugout/sdk':
+        specifier: workspace:^
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   agents/sitemap:
     dependencies:
@@ -231,6 +246,9 @@ importers:
       '@dugout/agent-card-match':
         specifier: workspace:^
         version: link:../../agents/card-match
+      '@dugout/agent-send-to-page':
+        specifier: workspace:^
+        version: link:../../agents/send-to-page
       '@dugout/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -369,6 +387,9 @@ importers:
       '@dugout/agent-cast-researcher':
         specifier: workspace:^
         version: link:../../agents/cast-researcher
+      '@dugout/agent-send-to-page':
+        specifier: workspace:^
+        version: link:../../agents/send-to-page
       '@dugout/agent-sitemap':
         specifier: workspace:^
         version: link:../../agents/sitemap

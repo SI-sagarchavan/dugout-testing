@@ -167,3 +167,54 @@ describe("shower", () => {
     expect(out.join("")).toContain("final refused: not that");
   });
 });
+
+describe("finishedLines for the whole pass", () => {
+  const usage = { costUsd: 0.07, steps: 9 };
+
+  it("hands over the one preview with its data, and what is still off in the frame and the data", () => {
+    const text = finishedLines(
+      {
+        type: "run.completed",
+        data: {
+          status: "completed",
+          usage,
+          output: {
+            previewUrl: "http://localhost:3000/preview/default/x?data=d&plan=p",
+            before: 81.8,
+            match: 98,
+            coverage: 93,
+            bound: 16,
+            remaining: ["frame: title is 2px off", "data: the countdown has no data field"],
+            compilerFindings: [],
+          },
+        },
+      },
+      "run-1",
+    ).join("\n");
+    expect(text).toContain(
+      "FINISHED: matched 81.8% → 98% over 93% of the frame; 16 node(s) bound to data",
+    );
+    expect(text).toContain(
+      "preview with data: http://localhost:3000/preview/default/x?data=d&plan=p",
+    );
+    expect(text).toContain("still off: data: the countdown has no data field");
+    // one handover: the frame's own link is not printed as a second result
+    expect(text.split("\n").filter((line) => /^\s+preview/.test(line))).toHaveLength(1);
+  });
+
+  it("says a failed pass failed, and why", () => {
+    const text = finishedLines(
+      {
+        type: "run.failed",
+        data: {
+          usage,
+          message:
+            "bind failed 3 times: a person has to look. The last failure: I need the showcase id",
+        },
+      },
+      "run-2",
+    ).join("\n");
+    expect(text).toContain("FINISHED: failed");
+    expect(text).toContain("I need the showcase id");
+  });
+});

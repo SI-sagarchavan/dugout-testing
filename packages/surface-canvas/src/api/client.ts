@@ -10,36 +10,19 @@
  *
  * PURE.
  */
+import { describeError } from "./describe-error.js";
 import type {
   ApiFetch,
   ApiResult,
-  PreviewRequest,
-  PreviewResponse,
   StudioEvent,
-  StudioExport,
 } from "./types.js";
 
 export const API_TIMEOUT_MS = 4000;
-/** IR + PNGs are a real upload. A 4s hang-up would drop a finished walk. */
-export const EXPORT_TIMEOUT_MS = 60_000;
 export const EVENTS_PATH = "/v1/events";
-export const HEALTH_PATH = "/v1/health";
-export const EXPORTS_PATH = "/v1/exports";
-export const PREVIEW_PATH = "/v1/preview";
-/**
- * A preview is a compile AND a render of a whole page. Slower than an event,
- * far quicker than an export — and a designer is watching it, so it must give
- * up while they are still waiting rather than after they have moved on.
- */
-export const PREVIEW_TIMEOUT_MS = 20_000;
 
 export interface ApiClient {
   readonly origin: string;
-  ping(): Promise<ApiResult>;
   postEvent(event: StudioEvent): Promise<ApiResult>;
-  postExport(body: StudioExport): Promise<ApiResult>;
-  /** Compile + render a frame without persisting anything. */
-  previewCompile(body: PreviewRequest): Promise<ApiResult<PreviewResponse>>;
 }
 
 export function createApiClient(options: {
@@ -83,13 +66,7 @@ export function createApiClient(options: {
 
   return {
     origin,
-    ping: () => request("GET", HEALTH_PATH),
     postEvent: (event) => request("POST", EVENTS_PATH, event),
-    postExport: (body) => request("POST", EXPORTS_PATH, body, EXPORT_TIMEOUT_MS),
-    previewCompile: (body) =>
-      request("POST", PREVIEW_PATH, body, PREVIEW_TIMEOUT_MS) as Promise<
-        ApiResult<PreviewResponse>
-      >,
   };
 }
 
@@ -158,6 +135,5 @@ function messageIn(value: unknown): string {
 }
 
 function errorMessage(err: unknown): string {
-  if (err instanceof Error && err.message) return err.message;
-  return String(err);
+  return describeError(err);
 }

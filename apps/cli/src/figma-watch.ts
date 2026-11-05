@@ -1,6 +1,9 @@
 import type { ExportRecord } from "@dugout/agent-card-match";
 
-export const FIGMA_AGENT = "card-match";
+/** What a Send starts: the whole pass, one run (card-match, then bind, as its children). */
+export const FIGMA_AGENT = "send-to-page";
+/** Agents whose runs say a Send was already handled: card-match ran alone before the pass existed. */
+export const PRIOR_AGENTS: string[] = [FIGMA_AGENT, "card-match"];
 
 export interface FigmaWatchOptions {
   listExports(limit: number): Promise<ExportRecord[]>;
@@ -98,19 +101,23 @@ export function finishedLines(
       unmeasuredBecause?: string;
       before?: number;
       match?: number;
+      /** Set when the run was the whole pass (send-to-page): the frame is bound to data too. */
+      bound?: number;
       remaining?: string[];
       compilerFindings?: string[];
     };
+    const data = out.bound !== undefined ? `; ${out.bound} node(s) bound to data` : "";
+    const link = out.bound !== undefined ? "preview with data" : "preview";
     if (out.previewUrl && out.measured === false) {
       lines.push(
-        `FINISHED: published UNMEASURED, nothing was compared${cost}`,
+        `FINISHED: published UNMEASURED, nothing was compared${data}${cost}`,
         `  why: ${out.unmeasuredBecause ?? "no screenshot fits the frame"}`,
-        `  preview: ${out.previewUrl}`,
+        `  ${link}: ${out.previewUrl}`,
       );
     } else if (out.previewUrl) {
       lines.push(
-        `FINISHED: matched ${out.before}% → ${out.match}% over ${out.coverage ?? "?"}% of the frame${out.estimated ? " (placement estimated)" : ""}${cost}`,
-        `  preview: ${out.previewUrl}`,
+        `FINISHED: matched ${out.before}% → ${out.match}% over ${out.coverage ?? "?"}% of the frame${out.estimated ? " (placement estimated)" : ""}${data}${cost}`,
+        `  ${link}: ${out.previewUrl}`,
       );
     } else {
       lines.push(`FINISHED: nothing published${cost}`);

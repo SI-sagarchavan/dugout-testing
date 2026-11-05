@@ -32,8 +32,9 @@ export const spec: AgentSpec = {
   onDemandSkills: [],
   model: "sonnet",
   memory: { read: ["procedural"], write: [] },
-  // one level down: the researcher, which finds the data in Cast, and the builder, which makes it
-  budget: { usdPerRun: 1, maxSteps: 25, maxDepth: 1 },
+  // below it: the researcher, which finds the data in Cast, and the builder, which makes it. Two levels
+  // below a host-started run, since send-to-page runs bind as its child
+  budget: { usdPerRun: 1, maxSteps: 25, maxDepth: 2 },
   approvals: ["effect:write"],
 };
 

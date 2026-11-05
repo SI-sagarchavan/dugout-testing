@@ -10,6 +10,7 @@ import { StrictMode, useEffect, useReducer, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { PluginMessage, UiMessage } from "../protocol.js";
 import { App } from "./App.js";
+import { encodeUtf8, saveZip, toBytes } from "./download.js";
 import { initialState, reduce } from "./state.js";
 
 /**
@@ -39,6 +40,16 @@ function Root(): JSX.Element {
     const onMessage = (event: MessageEvent) => {
       const message = (event.data as { pluginMessage?: PluginMessage } | undefined)?.pluginMessage;
       if (!message) return;
+      // Saving a file is a side effect, so it happens here and not in the reducer.
+      if (message.type === "zip-ready") {
+        saveZip(
+          message.name,
+          message.files.map((file) => ({
+            name: file.name,
+            data: typeof file.data === "string" ? encodeUtf8(file.data) : toBytes(file.data),
+          })),
+        );
+      }
       dispatch(message);
     };
     window.addEventListener("message", onMessage);

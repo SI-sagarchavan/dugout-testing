@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { initialState, reduce } from "../src/ui/state.js";
 import type { AppliedPayload, PluginMessage } from "../src/protocol.js";
 import { PANEL_SIZES } from "../src/protocol.js";
+import { newRun } from "../src/sends.js";
 import { lint } from "../src/rules/index.js";
 import { reconciliationReport } from "../src/health/reconcile-report.js";
 import { context, document, looseFill, node, themeSnapshot, withDepths } from "./health-fixtures.js";
@@ -155,8 +156,10 @@ describe("reduce", () => {
       hasImage: false,
       parentId: "1:1",
       parentName: "Home",
+      frames: [{ id: "1:99", name: "Hero" }],
     });
     expect(selected).toMatchObject({ selectionCount: 1, selectionName: "Hero", selectionId: "1:99" });
+    expect(selected.selectionFrames).toEqual([{ id: "1:99", name: "Hero" }]);
   });
 
   it("carries no selection id for something that isn't a container", () => {
@@ -171,8 +174,10 @@ describe("reduce", () => {
       hasImage: false,
       parentId: "1:99",
       parentName: "Hero",
+      frames: [],
     });
     expect(selected.selectionId).toBeNull();
+    expect(selected.selectionFrames).toEqual([]);
   });
 
   it("ignores an unknown message instead of wiping state", () => {
@@ -193,25 +198,55 @@ describe("reduce", () => {
     expect(reduce(busy, { type: "error", message: "nope" }).busy).toBe(false);
   });
 
-  it("keeps the export payload until the next run", () => {
-    const done = reduce(initialState, {
-      type: "export-done",
-      jsonName: "a.ir.json",
-      json: "{}",
-      screenshots: [],
-      assets: [],
-      summary: { nodeCount: 2 },
-      publish: { kind: "sent", origin: "http://localhost:3000" },
+  it("keeps the runs the sandbox posts, and which one the Send tab shows", () => {
+    const run = newRun({
+      id: "run-1",
+      at: 1,
+      fileName: "Southern Brave",
+      origin: "http://localhost:3000",
+      frames: [{ frameId: "1:2", name: "Home" }],
     });
-    expect(done.exportResult?.jsonName).toBe("a.ir.json");
-    expect(done.exportProgress).toBe("");
-    expect(done.exportPublish).toEqual({ kind: "sent", origin: "http://localhost:3000" });
+    const next = reduce(initialState, { type: "runs", runs: [run], activeId: "run-1" });
+    expect(next.runs).toEqual([run]);
+    expect(next.activeRunId).toBe("run-1");
+
+    // Leaving the progress screen clears only the active id; the run stays.
+    const left = reduce(next, { type: "runs", runs: [run], activeId: null });
+    expect(left.activeRunId).toBeNull();
+    expect(left.runs).toHaveLength(1);
+  });
+
+  it("starts signed out, and keeps what the sandbox says about the account", () => {
+    expect(initialState.auth).toEqual({ phase: "signed-out" });
+
+    const waiting = reduce(initialState, {
+      type: "auth",
+      auth: { phase: "waiting", userCode: "ABCD-1234", loginUrl: "https://x/y", expiresAt: 9 },
+    });
+    expect(waiting.auth).toMatchObject({ phase: "waiting", userCode: "ABCD-1234" });
+
+    const signedIn = reduce(waiting, {
+      type: "auth",
+      auth: { phase: "signed-in", user: { id: "u1", name: "Sagar" } },
+    });
+    expect(signedIn.auth).toMatchObject({ phase: "signed-in", user: { name: "Sagar" } });
+
+    const withClients = reduce(signedIn, {
+      type: "tenants",
+      tenants: { status: "ready", tenants: [{ code: "sb", name: "Southern Brave" }], selected: "sb" },
+    });
+    expect(withClients.tenants).toMatchObject({ status: "ready", selected: "sb" });
+  });
+
+  it("leaves state alone for a ZIP: saving it is the iframe's job, not the reducer's", () => {
+    const next = reduce(initialState, { type: "zip-ready", name: "a.zip", files: [] });
+    expect(next).toBe(initialState);
   });
 });
 
 describe("panel sizes", () => {
   it("matches the two states the spec calls for", () => {
-    expect(PANEL_SIZES.expanded).toEqual({ width: 448, height: 720 });
+    expect(PANEL_SIZES.expanded).toEqual({ width: 400, height: 640 });
     expect(PANEL_SIZES.collapsed).toEqual({ width: 280, height: 44 });
   });
 });
@@ -291,74 +326,5 @@ describe("an unmapped upload", () => {
       targets: {},
     });
     expect(s.unmapped?.imageHash).toBe("hash-a");
-  });
-});
-
-/**
- * The compile preview.
- *
- * The panel could always describe a frame and never show it, so every mistake
- * was found after an export, a run and a gate — several services from the
- * person who could fix it. The state is here so the loading, failed and stale
- * paths are testable without a board.
- */
-describe("the compile preview", () => {
-  const summary = {
-    nodes: 394,
-    byType: { Stack: 201, Text: 116 },
-    irNodes: 952,
-    absorbed: 558,
-    notes: { "unknown-icon": 46 },
-    examples: [{ kind: "unknown-icon", message: "icon \"teams\" from layer name" }],
-    requiredAssets: ["asset.texture.top_header"],
-    unresolvedAssets: [],
-    requiredSurfaces: ["top_header"],
-  };
-
-  it("shows progress while the board is working", () => {
-    const s = reduce(initialState, { type: "preview-progress", message: "Compiling…" });
-    expect(s.previewProgress).toBe("Compiling…");
-  });
-
-  it("keeps the html, its width and the summary together", () => {
-    const s = reduce(initialState, {
-      type: "preview-done",
-      html: "<!DOCTYPE html><body>x</body>",
-      width: 1366,
-      summary,
-      error: null,
-    });
-    expect(s.previewHtml).toContain("DOCTYPE");
-    expect(s.previewWidth).toBe(1366);
-    expect(s.previewSummary?.nodes).toBe(394);
-    expect(s.previewProgress).toBe("");
-    expect(s.previewError).toBeNull();
-  });
-
-  /**
-   * A failure has to REPLACE the picture, not sit under it. A stale preview
-   * beside a fresh error reads as "this still works", which is the opposite of
-   * what happened.
-   */
-  it("clears the picture when a later run fails", () => {
-    let s = reduce(initialState, {
-      type: "preview-done",
-      html: "<!DOCTYPE html><body>x</body>",
-      width: 1366,
-      summary,
-      error: null,
-    });
-    s = reduce(s, {
-      type: "preview-done",
-      html: null,
-      width: 0,
-      summary: null,
-      error: "Surface Studio is not running",
-    });
-
-    expect(s.previewHtml).toBeNull();
-    expect(s.previewSummary).toBeNull();
-    expect(s.previewError).toBe("Surface Studio is not running");
-    expect(s.previewProgress).toBe("");
   });
 });

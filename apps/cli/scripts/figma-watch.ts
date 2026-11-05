@@ -1,7 +1,9 @@
 // pnpm agent watch --tenant demo-cricket [--project default] [--latest] [--model sonnet] [--effort high] [--ask]
 //
-// Press Send in the Figma plugin and a card-match run starts. It publishes without asking; --ask
-// brings the approval prompt back. This host looks at the control plane
+// Press Send in the Figma plugin and one send-to-page run starts: the frame is matched to its
+// screenshot and published (card-match), then its data is found in Cast, or a hook is built there,
+// and bound (bind), and one preview is handed over. It publishes without asking; --ask brings the
+// approval prompt back (one for the whole pass). This host looks at the control plane
 // for new exports, queues a run for each, follows it here and asks at its approval. The plugin and
 // the pipeline are unchanged. Needs `pnpm worker`. --latest also runs on the newest export sent
 // before now. Ctrl-C stops watching; a run in progress goes on in its worker.
@@ -9,13 +11,14 @@
 import { userInfo } from "node:os";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
-import { agent, controlPlaneUrl, createControlPlane, RunInput } from "@dugout/agent-card-match";
+import { controlPlaneUrl, createControlPlane, RunInput } from "@dugout/agent-card-match";
+import { agent } from "@dugout/agent-send-to-page";
 import { loadEnv, loadModelConfig, REPO_ROOT, runModel } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import { createRunQueue, createValkeyEventLog, LOCAL_VALKEY_URL } from "@dugout/worker";
 import { Valkey } from "iovalkey";
 import { recordCompilerFindings } from "../src/compiler-findings.ts";
-import { createFigmaWatch, FIGMA_AGENT, finishedLines } from "../src/figma-watch.ts";
+import { createFigmaWatch, FIGMA_AGENT, finishedLines, PRIOR_AGENTS } from "../src/figma-watch.ts";
 import type { Terminal } from "../src/session.ts";
 import { followRun } from "../src/session.ts";
 
@@ -77,7 +80,7 @@ const watch = createFigmaWatch({
   since,
   listExports: (limit) => plane.listExports(limit),
   priorRuns: async () =>
-    (await queue.matching(tenantId, "", 200)).filter((run) => run.agent_id === FIGMA_AGENT),
+    (await queue.matching(tenantId, "", 200)).filter((run) => PRIOR_AGENTS.includes(run.agent_id)),
   start: (input) => {
     RunInput.parse(input);
     return queue.start(tenantId, FIGMA_AGENT, input, { ...(model ? { model } : {}) });

@@ -14,33 +14,21 @@
  */
 import type { AssetPlacement, TargetMatch, TargetOption } from "../assets.js";
 import type { AssetBinding } from "../ir/schema.js";
-import type { PreviewSummary } from "../api/types.js";
 import type { LintReport } from "../health/types.js";
 import type { ReconciliationReport } from "../health/reconcile-report.js";
 import type {
   ActivityActor,
   ActivityEntry,
   AppliedPayload,
-  ExportPublish,
+  AuthView,
+  TenantsView,
   PanelState,
   PluginMessage,
+  SelectedFrame,
+  SelectionPreview,
 } from "../protocol.js";
+import type { RunRecord } from "../sends.js";
 import type { ThemeChoice } from "../themes.js";
-
-export interface ExportPayload {
-  jsonName: string;
-  json: string;
-  screenshots: Array<{ name: string; nodeId: string; bytes: Uint8Array }>;
-  assets: Array<{
-    name: string;
-    nodeId: string;
-    targetNodeId: string;
-    role: "background";
-    bytes: Uint8Array;
-    source: "original" | "rendered";
-  }>;
-  summary: Record<string, unknown>;
-}
 
 /**
  * A batch that was bound, remembered at the position it held in the queue.
@@ -77,7 +65,8 @@ export type PanelAction =
   | { type: "skip-batch"; batchId: string }
   | { type: "unskip-batch"; batchId: string }
   /** Dismiss the "which element is this?" prompt without placing the image. */
-  | { type: "dismiss-unmapped" };
+  | { type: "dismiss-unmapped" }
+
 
 export type PanelInput = PluginMessage | PanelAction;
 
@@ -139,10 +128,18 @@ export interface StudioState {
    * belongs — removed the offer entirely.
    */
   targets: Record<string, TargetOption[]>;
-  exportProgress: string;
-  exportResult: ExportPayload | null;
-  /** How the last walk was delivered. Null until the first export-done. */
-  exportPublish: ExportPublish | null;
+  /** Every container the designer has selected: what the Send tab offers to send. */
+  selectionFrames: SelectedFrame[];
+  /** Screenshot of the selection; null when nothing exportable is selected. */
+  preview: SelectionPreview | null;
+  /** Every send this plugin has made, newest first. */
+  runs: RunRecord[];
+  /** The run the Send tab is showing. Null when it shows the pre-flight. */
+  activeRunId: string | null;
+  /** Who the plugin is signed in as. Starts signed out. */
+  auth: AuthView;
+  /** The clients this account may send for, and which one this file is for. */
+  tenants: TenantsView;
   user: ActivityActor | null;
   activity: ActivityEntry[];
 
@@ -170,21 +167,6 @@ export interface StudioState {
     height: number;
     candidates: TargetMatch[];
   } | null;
-
-  /**
-   * The last compile preview: real pixels from the real compiler.
-   *
-   * Held rather than re-fetched on every render because it costs a walk, an
-   * asset export and a round trip. It is deliberately allowed to go stale — a
-   * preview labelled with when it was taken is more useful than one that
-   * silently re-runs while you are reading it.
-   */
-  previewHtml: string | null;
-  /** The width the page was laid out at, so the iframe can scale it honestly. */
-  previewWidth: number;
-  previewSummary: PreviewSummary | null;
-  previewError: string | null;
-  previewProgress: string;
 }
 
 export const initialState: StudioState = {
@@ -215,9 +197,12 @@ export const initialState: StudioState = {
   assets: [],
   placements: {},
   targets: {},
-  exportProgress: "",
-  exportResult: null,
-  exportPublish: null,
+  selectionFrames: [],
+  preview: null,
+  runs: [],
+  activeRunId: null,
+  auth: { phase: "signed-out" },
+  tenants: { status: "idle" },
   user: null,
   activity: [],
   openBatchId: null,
@@ -225,11 +210,6 @@ export const initialState: StudioState = {
   skipped: [],
   resolved: [],
   unmapped: null,
-  previewHtml: null,
-  previewWidth: 0,
-  previewSummary: null,
-  previewError: null,
-  previewProgress: "",
 };
 
 export function reduce(state: StudioState, message: PanelInput): StudioState {
@@ -271,18 +251,19 @@ export function reduce(state: StudioState, message: PanelInput): StudioState {
     case "dismiss-unmapped":
       return { ...state, unmapped: null };
 
-    case "preview-progress":
-      return { ...state, previewProgress: message.message };
+    case "auth":
+      return { ...state, auth: message.auth };
 
-    case "preview-done":
-      return {
-        ...state,
-        previewProgress: "",
-        previewHtml: message.html,
-        previewWidth: message.width,
-        previewSummary: message.summary,
-        previewError: message.error,
-      };
+    case "tenants":
+      return { ...state, tenants: message.tenants };
+
+    case "runs":
+      return { ...state, runs: message.runs, activeRunId: message.activeId };
+
+    case "zip-ready":
+      // Saved by the iframe's message listener: writing a file is a side effect
+      // and this function is pure.
+      return state;
 
     case "boot":
       return {
@@ -370,7 +351,11 @@ export function reduce(state: StudioState, message: PanelInput): StudioState {
         selectionHasImage: message.hasImage,
         selectionParentId: message.parentId,
         selectionParentName: message.parentName,
+        selectionFrames: message.frames,
       };
+
+    case "preview":
+      return { ...state, preview: message.preview };
 
     case "assets":
       return {
@@ -384,23 +369,6 @@ export function reduce(state: StudioState, message: PanelInput): StudioState {
           state.unmapped && message.bindings.some((b) => b.imageHash === state.unmapped!.imageHash)
             ? null
             : state.unmapped,
-      };
-
-    case "export-progress":
-      return { ...state, exportProgress: message.message };
-
-    case "export-done":
-      return {
-        ...state,
-        exportProgress: "",
-        exportResult: {
-          jsonName: message.jsonName,
-          json: message.json,
-          screenshots: message.screenshots,
-          assets: message.assets,
-          summary: message.summary,
-        },
-        exportPublish: message.publish,
       };
 
     case "error":

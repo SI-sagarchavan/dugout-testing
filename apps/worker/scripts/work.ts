@@ -6,14 +6,16 @@ import { agent as bind } from "@dugout/agent-bind";
 import { agent as cardMatch } from "@dugout/agent-card-match";
 import { agent as castBuilder } from "@dugout/agent-cast-builder";
 import { agent as castResearcher } from "@dugout/agent-cast-researcher";
+import { agent as sendToPage } from "@dugout/agent-send-to-page";
 import { agent as sitemap } from "@dugout/agent-sitemap";
 import { liveDeps } from "@dugout/sdk";
 import { Valkey } from "iovalkey";
 import { createValkeyEventLog, createWorker, hostAgents, LOCAL_VALKEY_URL } from "../src/index.ts";
 
-// every agent a worker can run, by id. cast-researcher and cast-builder also run inside bind, as
-// its children: a worker that serves bind runs them there whether or not it serves them on their own
-const all = [sitemap, cardMatch, bind, castResearcher, castBuilder];
+// every agent a worker can run, by id. cast-researcher and cast-builder also run inside bind, and
+// card-match and bind inside send-to-page, as children: a worker that serves the parent runs them
+// there whether or not it serves them on their own
+const all = [sitemap, cardMatch, bind, castResearcher, castBuilder, sendToPage];
 const only = process.env.AGENTS?.split(",").map((id) => id.trim());
 const unknown = only?.filter((id) => !all.some((a) => a.spec.id === id)) ?? [];
 if (unknown.length) {

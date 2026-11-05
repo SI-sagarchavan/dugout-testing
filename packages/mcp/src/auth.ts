@@ -66,7 +66,7 @@ export function authFetch(tenantId: string, opts: AuthOptions): Fetch {
     const grant = await grants.read(tenantId);
     if (!grant) {
       throw new McpAuthError(
-        `no grant for tenant ${tenantId} on ${opts.url}; log in once with \`pnpm agent mcp login\``,
+        `no grant for tenant ${tenantId} on ${opts.url}; connect it in Surface Studio's Setup page, or log in once with \`pnpm agent mcp login\``,
       );
     }
     const fresh = grant.accessToken && (grant.expiresAt ?? 0) - skewMs > Date.now();

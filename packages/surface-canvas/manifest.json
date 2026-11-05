@@ -9,8 +9,8 @@
   "enablePrivatePluginApi": true,
   "permissions": ["teamlibrary", "currentuser"],
   "networkAccess": {
-    "allowedDomains": ["http://localhost:3000"],
-    "reasoning": "Posts frame IR and section PNGs to Surface Studio. Themes stay compiled into the plugin and are never fetched.",
-    "devAllowedDomains": ["http://localhost:3000"]
+    "allowedDomains": ["http://localhost:3000", "http://localhost:4000", "https://*.s3.us-east-1.amazonaws.com"],
+    "reasoning": "Signs the designer in against the FanXP backend, asks it for upload URLs, and uploads the frame IR and its PNGs straight to the client's S3 bucket. Themes stay compiled into the plugin and are never fetched.",
+    "devAllowedDomains": ["http://localhost:3000", "http://localhost:4000", "https://*.s3.us-east-1.amazonaws.com"]
   }
 }

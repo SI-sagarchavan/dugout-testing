@@ -8,6 +8,7 @@
  *
  * The rule engine downstream of this is pure — see src/health/.
  */
+import { describeError } from "./api/describe-error.js";
 import {
   IR_VERSION,
   type AspectBucket,
@@ -913,7 +914,6 @@ export function round(value: number, places: number): number {
 }
 
 export function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return describeError(err);
 }
 

@@ -65,25 +65,51 @@ import {
   type AssetFit,
 } from "./assets.js";
 import { runExport } from "./export.js";
-import { createMissingVariables, resetDriftedVariables } from "./variables.js";
-import { defaultTheme, rawThemeFileFor, themeById, themeChoices } from "./themes.js";
+import { createAuthClient } from "./auth/client.js";
+import { chooseTenant, tenantBlocker, type TenantsView } from "./auth/tenants.js";
 import {
-  buildExportBody,
-  bytesToBase64,
+  CLIENT_STORAGE_AUTH_KEY,
+  isExpiring,
+  parseCredentials,
+  type Credentials,
+} from "./auth/credentials.js";
+import { runLogin, type WaitingInfo } from "./auth/login.js";
+import { createMissingVariables, resetDriftedVariables } from "./variables.js";
+import { defaultTheme, themeById, themeChoices } from "./themes.js";
+import {
   createApiClient,
+  createSendsClient,
+  isAllowedLoginUrl,
+  prepareSend,
+  resolveAuthBaseUrl,
   resolveOrigin,
+  runSend,
+  UnsupportedAssetError,
   type ApiClient,
   type ApiFetch,
   type ApiFetchInit,
   type StudioPage,
 } from "./api/index.js";
 import {
+  CLIENT_STORAGE_RUNS_KEY,
+  cancelWaiting,
+  newRun,
+  parseRuns,
+  pushRun,
+  replaceRun,
+  setFrame,
+  settleInterrupted,
+  type FrameSend,
+  type RunRecord,
+} from "./sends.js";
+import {
   CLIENT_STORAGE_API_ORIGIN_KEY,
+  CLIENT_STORAGE_AUTH_BASE_URL_KEY,
   CLIENT_STORAGE_KEY,
   CLIENT_STORAGE_THEME_KEY,
   PANEL_SIZES,
   type AppliedPayload,
-  type ExportPublish,
+  type AuthView,
   type PanelState,
   type PluginMessage,
   type UiMessage,
@@ -124,6 +150,24 @@ interface State {
   lastActivityId: string | null;
   /** Outbound Surface Studio client. Never blocks a lint. */
   api: ApiClient | null;
+  /** The FanXP backend: where accounts live. Not the Studio `api` sends go to. */
+  authBaseUrl: string;
+  /** Who the plugin is signed in as, on `authOrigin`. */
+  auth: Credentials | null;
+  /** The sign-in in progress, if any. */
+  login: { running: boolean; cancel: boolean; waiting: WaitingInfo | null };
+  /** Why the plugin is signed out, when it was not the designer's doing. */
+  authMessage: string | null;
+  /** The clients this account may send for, and which one this file is for. */
+  tenants: TenantsView;
+  /** Every send this plugin has made, newest first. Persisted in clientStorage. */
+  runs: RunRecord[];
+  /** The run the Send tab is showing: in flight, or finished and not yet dismissed. */
+  activeRunId: string | null;
+  /** A send loop is running. One at a time. */
+  sending: boolean;
+  /** Set by Cancel; the loop reads it between frames. */
+  cancelRequested: boolean;
   /**
    * The last failure, kept so `ui-ready` can replay it.
    *
@@ -154,6 +198,15 @@ const state: State = {
   quietUntil: 0,
   lastActivityId: null,
   api: null,
+  authBaseUrl: "",
+  auth: null,
+  login: { running: false, cancel: false, waiting: null },
+  authMessage: null,
+  tenants: { status: "idle" },
+  runs: [],
+  activeRunId: null,
+  sending: false,
+  cancelRequested: false,
   error: null,
 };
 
@@ -195,12 +248,26 @@ async function boot(): Promise<void> {
 
   const origin = resolveOrigin(await readStoredApiOrigin());
   state.api = createApiClient({ origin, fetch: sandboxFetch });
+  state.authBaseUrl = resolveAuthBaseUrl(await readStoredAuthBaseUrl());
+  state.auth = parseCredentials(await readStoredAuth(), state.authBaseUrl);
   console.log(`[fanos-studio] api origin ${origin}`);
 
+  // A send that was still going when the plugin closed never finished. Settle it
+  // as a failure so Runs can offer Re-send instead of showing it uploading forever.
+  state.runs = parseRuns(await readStoredRuns()).map(settleInterrupted);
+  void saveRuns();
+
   state.booted = true;
+  if (state.auth) void loadTenants();
   // Sent unconditionally AND replayed on every `ui-ready`. Whichever side wins
   // the race, the panel ends up with the payload.
   postBoot();
+  // The window opens before storage is read, so the panel's `ui-ready` can arrive
+  // while auth and runs are still empty. Post them now that they are loaded;
+  // otherwise a restart shows "signed out" with valid credentials in hand.
+  postAuth();
+  postRuns();
+  postTenants();
 
   figma.on("selectionchange", postSelection);
   // `figma.on("documentchange")` is unavailable under `documentAccess:
@@ -249,6 +316,13 @@ async function handle(message: UiMessage): Promise<void> {
       // tick. Doing it again here is what makes the collapsed state stick.
       applyPanelSize(state.panelState);
       postSelection();
+      // Only once boot has read storage: before that these are empty, and
+      // posting them would tell the panel it is signed out.
+      if (state.booted) {
+        postRuns();
+        postAuth();
+        postTenants();
+      }
       if (state.report) postReport(state.report, "full");
       // Replayed like everything else above. A failure that happened before the
       // iframe existed is the one a reader most needs, and it is the one that
@@ -338,14 +412,45 @@ async function handle(message: UiMessage): Promise<void> {
     case "set-asset-fit":
       setAssetFit(message.key, message.fit);
       return;
-    case "preview-compile":
-      await previewCompile();
+    case "send-frames":
+      await sendFrames(message.frameIds);
       return;
-    case "export-ir":
-      await exportIr("local");
+    case "retry-frames":
+      await retryFrames(message.runId, message.frameIds);
       return;
-    case "publish-export":
-      await exportIr("publish");
+    case "cancel-send":
+      cancelSend();
+      return;
+    case "restart-send":
+      await restartSend(message.runId);
+      return;
+    case "dismiss-send":
+      state.activeRunId = null;
+      postRuns();
+      return;
+    case "download-zip":
+      await downloadZip(message.frameIds);
+      return;
+    case "open-studio":
+      if (state.api) figma.openExternal(state.api.origin);
+      return;
+    case "auth-start":
+      await startLogin(message.verifier);
+      return;
+    case "auth-cancel":
+      state.login.cancel = true;
+      return;
+    case "auth-open":
+      reopenLogin();
+      return;
+    case "auth-sign-out":
+      await signOut();
+      return;
+    case "tenants-load":
+      await loadTenants();
+      return;
+    case "tenant-select":
+      selectTenant(message.code);
       return;
     case "close":
       figma.closePlugin();
@@ -456,6 +561,9 @@ function postReport(report: LintReport, scope: "full" | "incremental"): void {
   // A report is a fact; `busy` is a fact about the sandbox. They travel together
   // so the panel can never end up holding one without the other.
   post({ type: "status", message: state.busy ? "Linting…" : "", busy: state.busy });
+  // The screenshot follows the check: a full report means the checked frame was
+  // (re)read, which is when it can have moved or changed.
+  if (scope === "full") schedulePreview();
 }
 
 /**
@@ -1212,127 +1320,619 @@ async function readStoredApiOrigin(): Promise<string | undefined> {
  * Figma's fetch, narrowed to the client's contract. The URL is a string and
  * headers are a plain object — that is what the sandbox accepts.
  */
-const sandboxFetch: ApiFetch = (url: string, init: ApiFetchInit) => fetch(url, init);
+const sandboxFetch: ApiFetch = (url: string, init: ApiFetchInit) => {
+  const { body, ...rest } = init;
+  // Bytes go as a Uint8Array that owns exactly those bytes: the sandbox's fetch validates the
+  // body as a string or a Uint8Array and rejects an ArrayBuffer, and a view onto a larger
+  // buffer would be copied whole, so a view is copied to its own.
+  return fetch(url, { ...rest, ...(body === undefined ? {} : { body: exactBytes(body) }) });
+};
+
+function exactBytes(body: string | Uint8Array): string | Uint8Array<ArrayBuffer> {
+  if (typeof body === "string") return body;
+  return body.byteOffset === 0 && body.byteLength === body.buffer.byteLength
+    ? (body as Uint8Array<ArrayBuffer>)
+    : body.slice();
+}
+
+// ---------------------------------------------------------------------------
+// Sends
+// ---------------------------------------------------------------------------
+
+function postRuns(): void {
+  post({ type: "runs", runs: state.runs, activeId: state.activeRunId });
+}
+
+async function saveRuns(): Promise<void> {
+  try {
+    await figma.clientStorage.setAsync(CLIENT_STORAGE_RUNS_KEY, state.runs);
+  } catch {
+    // History is a convenience. A full or unavailable store must not fail a send.
+  }
+}
+
+async function readStoredRuns(): Promise<unknown> {
+  try {
+    return await figma.clientStorage.getAsync(CLIENT_STORAGE_RUNS_KEY);
+  } catch {
+    return undefined;
+  }
+}
+
+function getRun(runId: string): RunRecord | undefined {
+  return state.runs.find((run) => run.id === runId);
+}
+
+/** Write one run back, tell the panel, and keep the history on disk. */
+function commitRun(run: RunRecord): void {
+  state.runs = replaceRun(state.runs, run);
+  postRuns();
+  void saveRuns();
+}
+
+function patchFrame(runId: string, frameId: string, patch: Partial<Omit<FrameSend, "frameId">>): void {
+  const run = getRun(runId);
+  if (run) commitRun(setFrame(run, frameId, patch));
+}
 
 /**
- * Compile the checked frame and render it, without persisting anything.
+ * Send each frame as its own Send, in order.
  *
- * Runs the walk again rather than reusing `state.ir`: the marked assets have to
- * be exported as bytes anyway, and a preview built from a stale walk would
- * answer a question about a frame the designer has since edited — which is the
- * one failure a preview cannot have.
- *
- * The compiler runs on the BOARD, not here. `@fanos/compile` imports
- * `@fanos/surface-canvas/ir`, so a plugin that imported it would close a
- * dependency cycle and the workspace would have no valid build order. Surface
- * Studio sits downstream of both and already owns the renderer, so it is the
- * one place the real compiler and the real renderer can meet — which also means
- * this preview is produced by exactly the code a real run uses, and cannot
- * flatter the result.
+ * One frame is walked, posted, and settled before the next starts: the walk is
+ * single-threaded in the sandbox anyway, and a failure then belongs to exactly
+ * one frame rather than to "the send". Nothing here throws into the session —
+ * a frame that cannot go out is recorded as failed with the reason.
  */
-async function previewCompile(): Promise<void> {
-  const root = await resolveRoot(false);
-  if (!root) {
-    fail("Nothing to preview. Select the frame you want compiled.");
-    return;
-  }
-  const api = state.api;
-  if (!api) {
-    postPreviewFailure("Surface Studio is not configured.");
+async function sendFrames(frameIds: string[]): Promise<void> {
+  if (state.sending) return;
+  const ids = [...new Set(frameIds)];
+  if (ids.length === 0) {
+    fail("Select the frames you want to send.");
     return;
   }
 
-  await busy(async () => {
-    post({ type: "preview-progress", message: "Walking the frame…" });
-    const result = await runExport(root, state.caches, (message) =>
-      post({ type: "preview-progress", message }),
-    );
+  const frames: Array<{ frameId: string; name: string }> = [];
+  for (const id of ids) {
+    const node = await sceneNode(id);
+    frames.push({ frameId: id, name: node?.name ?? "Missing frame" });
+  }
 
-    post({ type: "preview-progress", message: "Compiling…" });
-    const response = await api.previewCompile({
-      ir: JSON.parse(result.json) as unknown,
-      theme: rawThemeFileFor(state.themeId),
-      assets: result.assets.map((asset) => ({
-        name: asset.name,
-        bytesBase64: bytesToBase64(asset.bytes),
-      })),
+  const at = Date.now();
+  const run = newRun({
+    id: `run-${at.toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    at,
+    fileName: figma.root.name,
+    origin: state.authBaseUrl,
+    frames,
+  });
+  state.runs = pushRun(state.runs, run);
+  state.activeRunId = run.id;
+  postRuns();
+  void saveRuns();
+
+  await processRun(run.id, ids);
+}
+
+async function retryFrames(runId: string, frameIds: readonly string[]): Promise<void> {
+  const run = getRun(runId);
+  if (state.sending || !run) return;
+  const known = new Set(run.frames.map((frame) => frame.frameId));
+  const ids = frameIds.filter((id) => known.has(id));
+  if (ids.length === 0) return;
+  // Queue them all first, so the panel shows what is coming and Cancel has
+  // something to cancel.
+  for (const id of ids) patchFrame(runId, id, { status: "waiting", files: 0 });
+  state.activeRunId = runId;
+  postRuns();
+  await processRun(runId, ids);
+}
+
+async function processRun(runId: string, frameIds: readonly string[]): Promise<void> {
+  state.sending = true;
+  state.cancelRequested = false;
+  try {
+    for (const frameId of frameIds) {
+      if (state.cancelRequested) break;
+      await sendOneFrame(runId, frameId);
+    }
+  } finally {
+    // Whatever Cancel did not get to mark is still queued; settle it now so a
+    // run can never be left "waiting" with nothing running.
+    const run = getRun(runId);
+    if (run && state.cancelRequested) commitRun(cancelWaiting(run));
+    state.sending = false;
+    state.cancelRequested = false;
+  }
+}
+
+async function sendOneFrame(runId: string, frameId: string): Promise<void> {
+  // Before the walk, not after: a designer who is signed out should hear it now,
+  // not once a 950-layer frame has been read for nothing.
+  const session = await ensureSession();
+  if (!session.ok) {
+    patchFrame(runId, frameId, { status: "failed", error: session.message });
+    return;
+  }
+
+  // Also before the walk: no client chosen is something the designer fixes in a click.
+  const clientBlocker = tenantBlocker(state.tenants);
+  if (clientBlocker) {
+    patchFrame(runId, frameId, { status: "failed", error: clientBlocker });
+    return;
+  }
+
+  patchFrame(runId, frameId, { status: "walking" });
+
+  const node = await sceneNode(frameId);
+  if (!node) {
+    patchFrame(runId, frameId, {
+      status: "failed",
+      error: "The frame is no longer in this file.",
     });
+    return;
+  }
 
-    if (!response.ok) {
-      postPreviewFailure(
-        response.status === null
-          ? `${response.message} — is Surface Studio running? (pnpm dev)`
-          : response.message,
-      );
+  try {
+    const walkStart = Date.now();
+    const result = await runExport(node, state.caches, () => {});
+    console.log(`[fanos-studio] read "${node.name}" in ${Date.now() - walkStart} ms`);
+
+    // The backend's say, before anything leaves: a frame from an unrelated design
+    // is stopped here and never reaches S3.
+    const refused = await checkWithBackend(frameId, node.name, result.summary);
+    if (refused) {
+      patchFrame(runId, frameId, { status: "failed", error: refused });
       return;
     }
 
-    post({
-      type: "preview-done",
-      html: response.data.html,
-      width: response.data.width,
-      summary: response.data.summary,
-      error: null,
-    });
-  });
-}
-
-function postPreviewFailure(message: string): void {
-  post({ type: "preview-done", html: null, width: 0, summary: null, error: message });
-}
-
-async function exportIr(mode: "local" | "publish"): Promise<void> {
-  const root = await resolveRoot(false);
-  if (!root) {
-    fail("Nothing to export. Select the frame you want the IR for.");
-    return;
-  }
-  await busy(async () => {
-    const result = await runExport(root, state.caches, (message) =>
-      post({ type: "export-progress", message }),
+    // Hash what will be uploaded. The backend signs each file's size and SHA-256 into its
+    // upload URL, so these must come from the very bytes that are sent.
+    const hashStart = Date.now();
+    const prepared = await prepareSend(
+      {
+        jsonName: result.jsonName,
+        json: result.json,
+        screenshots: result.screenshots,
+        assets: result.assets,
+      },
+      yieldToEventLoop,
     );
-    const summary = result.summary as unknown as Record<string, unknown>;
-    const publish =
-      mode === "publish" ? await publishExport(root, result, summary) : { kind: "local" as const };
-    post({
-      type: "export-done",
-      jsonName: result.jsonName,
-      json: result.json,
-      screenshots: result.screenshots,
-      assets: result.assets,
-      summary,
-      publish,
+    const files = prepared.files.length;
+    const megabytes = prepared.files.reduce((sum, file) => sum + file.size, 0) / 1_000_000;
+    console.log(
+      `[fanos-studio] hashed ${files} files (${megabytes.toFixed(1)} MB) in ${Date.now() - hashStart} ms`,
+    );
+    if (prepared.skipped.length > 0) {
+      console.log(`[fanos-studio] not sent (content photos or empty): ${prepared.skipped.join(", ")}`);
+    }
+    patchFrame(runId, frameId, { status: "uploading", files });
+
+    const credentials = state.auth;
+    const tenants = state.tenants;
+    if (!credentials || tenants.status !== "ready" || !tenants.selected) {
+      patchFrame(runId, frameId, { status: "failed", files, error: "Connect your account to send." });
+      return;
+    }
+
+    const page = currentPageRef(node);
+    const uploadStart = Date.now();
+    const sent = await runSend({
+      client: createSendsClient({ baseUrl: state.authBaseUrl, fetch: sandboxFetch }),
+      accessToken: credentials.accessToken,
+      tenant: tenants.selected,
+      source: {
+        ...page,
+        frames: [{ frameId, name: node.name }],
+        summary: result.summary as unknown as Record<string, unknown>,
+      },
+      files: prepared.files,
     });
-  });
+
+    if (sent.ok) {
+      console.log(
+        `[fanos-studio] send ${sent.value.sendId}: ${sent.value.uploaded} uploaded, ${sent.value.present} already there, in ${Date.now() - uploadStart} ms`,
+      );
+      patchFrame(runId, frameId, { status: "sent", files });
+      return;
+    }
+    if (sent.unauthorized) {
+      await dropCredentials("Your session ended. Connect your account again.");
+      patchFrame(runId, frameId, {
+        status: "failed",
+        files,
+        error: "Your session ended. Connect your account, then retry.",
+      });
+      return;
+    }
+    // The list was stale: access to the client was removed since it loaded.
+    if (sent.forbidden) void loadTenants();
+    patchFrame(runId, frameId, { status: "failed", files, error: sent.message });
+  } catch (err) {
+    patchFrame(runId, frameId, {
+      status: "failed",
+      error: err instanceof UnsupportedAssetError ? err.message : errorMessage(err),
+    });
+  }
 }
 
 /**
- * Same files the ZIP would hold. A down board must not eat the walk — the
- * result is still posted, and Save ZIP is the way out.
+ * Stop after the frame in flight. A fetch cannot be aborted from the sandbox, so
+ * the frame that is already uploading finishes; everything queued behind it is
+ * marked cancelled straight away, so the panel answers the click at once.
  */
-async function publishExport(
-  root: SceneNode,
-  result: Awaited<ReturnType<typeof runExport>>,
-  summary: Record<string, unknown>,
-): Promise<ExportPublish> {
-  const origin = state.api?.origin ?? "unknown";
-  if (!state.api) {
-    return { kind: "failed", origin, message: "API client never started." };
+function cancelSend(): void {
+  if (!state.sending) return;
+  state.cancelRequested = true;
+  const run = state.activeRunId ? getRun(state.activeRunId) : undefined;
+  if (run) commitRun(cancelWaiting(run));
+}
+
+async function restartSend(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (!run) return;
+  const frameIds = run.frames.map((frame) => frame.frameId);
+  if (state.sending) {
+    cancelSend();
+    while (state.sending) await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  post({ type: "export-progress", message: "Sending to Surface Studio…" });
-  const sent = await state.api.postExport(
-    buildExportBody({
-      page: currentPageRef(root),
-      at: Date.now(),
-      jsonName: result.jsonName,
-      json: result.json,
-      summary,
-      screenshots: result.screenshots,
-      assets: result.assets,
-    }),
+  await sendFrames(frameIds);
+}
+
+// ---------------------------------------------------------------------------
+// Sign-in
+// ---------------------------------------------------------------------------
+
+function authView(): AuthView {
+  if (state.login.waiting) return { phase: "waiting", ...state.login.waiting };
+  if (state.auth) return { phase: "signed-in", user: state.auth.user };
+  return state.authMessage
+    ? { phase: "signed-out", message: state.authMessage }
+    : { phase: "signed-out" };
+}
+
+function postAuth(): void {
+  post({ type: "auth", auth: authView() });
+}
+
+async function readStoredAuthBaseUrl(): Promise<unknown> {
+  try {
+    return await figma.clientStorage.getAsync(CLIENT_STORAGE_AUTH_BASE_URL_KEY);
+  } catch {
+    return undefined;
+  }
+}
+
+async function readStoredAuth(): Promise<unknown> {
+  try {
+    return await figma.clientStorage.getAsync(CLIENT_STORAGE_AUTH_KEY);
+  } catch {
+    return undefined;
+  }
+}
+
+async function saveAuth(): Promise<void> {
+  try {
+    if (state.auth) await figma.clientStorage.setAsync(CLIENT_STORAGE_AUTH_KEY, state.auth);
+    else await figma.clientStorage.deleteAsync(CLIENT_STORAGE_AUTH_KEY);
+  } catch {
+    // A store that cannot be written means signing in again next time, not a failure now.
+  }
+}
+
+async function dropCredentials(message: string | null): Promise<void> {
+  state.auth = null;
+  state.authMessage = message;
+  state.tenants = { status: "idle" };
+  await saveAuth();
+  postAuth();
+  postTenants();
+}
+
+async function startLogin(verifier: string): Promise<void> {
+  const origin = state.authBaseUrl;
+  if (!origin || state.login.running) return;
+  // The verifier is the one secret in this flow, and it comes from the iframe. A
+  // value that is not a verifier would only weaken the exchange, so refuse it.
+  if (!/^[A-Za-z0-9_-]{43,128}$/.test(verifier)) {
+    state.authMessage = "Couldn’t start sign-in. Close the plugin and try again.";
+    postAuth();
+    return;
+  }
+
+  state.login = { running: true, cancel: false, waiting: null };
+  state.authMessage = null;
+  postAuth();
+
+  const outcome = await runLogin(verifier, {
+    client: createAuthClient({ origin, fetch: sandboxFetch }),
+    open: (url) => figma.openExternal(url),
+    allowUrl: (url) => isAllowedLoginUrl(url, origin),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => Date.now(),
+    onWaiting: (waiting) => {
+      state.login.waiting = waiting;
+      postAuth();
+    },
+    cancelled: () => state.login.cancel,
+  });
+
+  state.login = { running: false, cancel: false, waiting: null };
+  switch (outcome.kind) {
+    case "signed-in":
+      state.auth = {
+        origin,
+        accessToken: outcome.tokens.accessToken,
+        refreshToken: outcome.tokens.refreshToken,
+        expiresAt: Date.now() + outcome.tokens.expiresIn * 1000,
+        user: outcome.tokens.user,
+      };
+      state.authMessage = null;
+      await saveAuth();
+      void loadTenants();
+      break;
+    case "denied":
+      state.authMessage = "Sign-in was declined in the browser.";
+      break;
+    case "expired":
+      state.authMessage = "The sign-in link expired. Connect again.";
+      break;
+    case "cancelled":
+      state.authMessage = null;
+      break;
+    case "failed":
+      state.authMessage = outcome.message;
+      break;
+  }
+  postAuth();
+}
+
+function reopenLogin(): void {
+  const waiting = state.login.waiting;
+  if (waiting && isAllowedLoginUrl(waiting.loginUrl, state.authBaseUrl)) {
+    figma.openExternal(waiting.loginUrl);
+  }
+}
+
+/**
+ * Forget the account here, and tell the server to forget it too. The network call
+ * is best effort and never waited on: signing out has to work offline.
+ */
+async function signOut(): Promise<void> {
+  const refreshToken = state.auth?.refreshToken;
+  await dropCredentials(null);
+  if (refreshToken) {
+    void createAuthClient({ origin: state.authBaseUrl, fetch: sandboxFetch }).revoke(refreshToken);
+  }
+}
+
+/**
+ * Whether a send may start, refreshing the token first if it is about to expire.
+ *
+ * A send needs an account. A refresh the server refuses means the
+ * token is dead, so sign out and say why; a refresh that merely failed to reach
+ * the server does not, because the token may still be good and a wifi blip should
+ * not log anyone out.
+ */
+async function ensureSession(): Promise<{ ok: true } | { ok: false; message: string }> {
+  const api = state.api;
+  if (!api) return { ok: false, message: "Studio isn’t configured." };
+
+  const credentials = state.auth;
+  if (!credentials) return { ok: false, message: "Connect your account to send." };
+  if (!isExpiring(credentials, Date.now())) return { ok: true };
+
+  // One refresh at a time. The server rotates the refresh token on every use and
+  // treats a second use of the old one as theft, revoking the whole sign-in — so
+  // two callers refreshing together (boot, the tenants list, a send) would log
+  // the designer out.
+  refreshInFlight ??= refreshSession().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+let refreshInFlight: Promise<{ ok: true } | { ok: false; message: string }> | null = null;
+
+async function refreshSession(): Promise<{ ok: true } | { ok: false; message: string }> {
+  // Another Figma window running this plugin shares our storage. If it already
+  // rotated the token, ours is dead and its newer one is the one to use.
+  const adopted = await adoptStoredCredentials();
+  const credentials = state.auth;
+  if (!credentials) return { ok: false, message: "Connect your account to send." };
+  if (adopted && !isExpiring(credentials, Date.now())) return { ok: true };
+
+  const client = createAuthClient({ origin: state.authBaseUrl, fetch: sandboxFetch });
+  const refreshed = await client.refresh(credentials.refreshToken);
+  if (refreshed.ok) {
+    state.auth = {
+      ...credentials,
+      accessToken: refreshed.tokens.accessToken,
+      // Refresh tokens rotate: the old one is dead the moment a new one is issued.
+      refreshToken: refreshed.tokens.refreshToken,
+      expiresAt: Date.now() + refreshed.tokens.expiresIn * 1000,
+      user: refreshed.tokens.user,
+    };
+    await saveAuth();
+    return { ok: true };
+  }
+  if (refreshed.rejected) {
+    // We may have lost a race with another window that rotated it a moment ago.
+    if ((await adoptStoredCredentials()) && state.auth && !isExpiring(state.auth, Date.now())) {
+      return { ok: true };
+    }
+    await dropCredentials("Your session ended. Connect your account again.");
+    return { ok: false, message: "Your session ended. Connect your account, then retry." };
+  }
+  return Date.now() < credentials.expiresAt
+    ? { ok: true }
+    : { ok: false, message: `Couldn’t renew your session: ${refreshed.message}` };
+}
+
+/** Take the stored credentials when they are newer than the ones in memory. */
+async function adoptStoredCredentials(): Promise<boolean> {
+  const stored = parseCredentials(await readStoredAuth(), state.authBaseUrl);
+  if (!stored || !state.auth || stored.refreshToken === state.auth.refreshToken) return false;
+  if (stored.expiresAt < state.auth.expiresAt) return false;
+  state.auth = stored;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Clients
+// ---------------------------------------------------------------------------
+
+/** Where a file remembers which client it is for. Travels with the file. */
+const FILE_CLIENT_KEY = "fanos-studio.client";
+
+function readFileClient(): string | null {
+  try {
+    return figma.root.getPluginData(FILE_CLIENT_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeFileClient(code: string): void {
+  try {
+    figma.root.setPluginData(FILE_CLIENT_KEY, code);
+  } catch {
+    // A file that cannot be written (view-only) just asks again next time.
+  }
+}
+
+function postTenants(): void {
+  post({ type: "tenants", tenants: state.tenants });
+}
+
+/** Ask the backend which clients this account may send for, right now. */
+async function loadTenants(): Promise<void> {
+  if (!state.auth) {
+    state.tenants = { status: "idle" };
+    postTenants();
+    return;
+  }
+  state.tenants = { status: "loading" };
+  postTenants();
+
+  const session = await ensureSession();
+  const credentials = state.auth;
+  if (!session.ok || !credentials) {
+    state.tenants = session.ok ? { status: "idle" } : { status: "error", message: session.message };
+    postTenants();
+    return;
+  }
+
+  const result = await createAuthClient({ origin: state.authBaseUrl, fetch: sandboxFetch }).tenants(
+    credentials.accessToken,
   );
-  if (sent.ok) return { kind: "sent", origin };
-  return { kind: "failed", origin, message: sent.message };
+  if (!result.ok) {
+    if (result.unauthorized) {
+      await dropCredentials("Your session ended. Connect your account again.");
+      return;
+    }
+    state.tenants = { status: "error", message: result.message };
+    postTenants();
+    return;
+  }
+  state.tenants = {
+    status: "ready",
+    tenants: result.tenants,
+    selected: chooseTenant(result.tenants, readFileClient()),
+  };
+  postTenants();
+}
+
+function selectTenant(code: string): void {
+  const view = state.tenants;
+  if (view.status !== "ready" || !view.tenants.some((tenant) => tenant.code === code)) return;
+  state.tenants = { ...view, selected: code };
+  writeFileClient(code);
+  postTenants();
+}
+
+/**
+ * Ask the backend whether this frame may go to the chosen client. The backend
+ * decides: access to the client, and whether the frame looks like a FanOS design.
+ * Returns the reason when it may not, null when it may.
+ */
+async function checkWithBackend(
+  frameId: string,
+  name: string,
+  summary: { boundCount: number; looseCount: number },
+): Promise<string | null> {
+  const view = state.tenants;
+  const credentials = state.auth;
+  if (view.status !== "ready" || !view.selected || !credentials) {
+    return tenantBlocker(view) ?? "Connect your account to send.";
+  }
+  const check = await createAuthClient({ origin: state.authBaseUrl, fetch: sandboxFetch }).checkSend(
+    credentials.accessToken,
+    view.selected,
+    [
+      {
+        frameId,
+        name,
+        slots: { total: summary.boundCount + summary.looseCount, bound: summary.boundCount },
+      },
+    ],
+  );
+  if (check.ok) return null;
+  if (check.unauthorized) {
+    await dropCredentials("Your session ended. Connect your account again.");
+    return "Your session ended. Connect your account, then retry.";
+  }
+  // The list was stale: access was removed since it loaded.
+  if (check.forbidden) void loadTenants();
+  return check.message;
+}
+
+/**
+ * The same files a send carries, on disk. Walks each frame again rather than
+ * reusing a result: this is the escape hatch for a broken Studio, and it has to
+ * work without any send having happened.
+ */
+async function downloadZip(frameIds: string[]): Promise<void> {
+  const ids = [...new Set(frameIds)];
+  if (ids.length === 0) {
+    fail("Select the frames you want in the ZIP.");
+    return;
+  }
+  await busy(async () => {
+    const files: Array<{ name: string; data: Uint8Array | string }> = [];
+    const several = ids.length > 1;
+    let single = "";
+
+    for (const id of ids) {
+      const node = await sceneNode(id);
+      if (!node) continue;
+      status(`Reading ${node.name}…`);
+      const result = await runExport(node, state.caches, () => {});
+      const folder = several ? `${safeFileName(node.name)}/` : "";
+      single = result.jsonName.replace(/\.ir\.json$/, "");
+      files.push({ name: `${folder}${result.jsonName}`, data: result.json });
+      for (const shot of result.screenshots) files.push({ name: `${folder}${shot.name}`, data: shot.bytes });
+      for (const asset of result.assets) {
+        files.push({
+          name: `${folder}assets/${asset.name}-${asset.nodeId.replace(/:/g, "-")}.png`,
+          data: asset.bytes,
+        });
+      }
+    }
+
+    if (files.length === 0) {
+      fail("None of those frames could be read.");
+      return;
+    }
+    post({
+      type: "zip-ready",
+      name: `${several ? `${safeFileName(figma.root.name)}-frames` : single}.zip`,
+      files,
+    });
+  });
+}
+
+function safeFileName(name: string): string {
+  return name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "frame";
 }
 
 function currentPageRef(root: SceneNode): StudioPage {
@@ -1343,6 +1943,60 @@ function currentPageRef(root: SceneNode): StudioPage {
     rootNodeId: root.id,
     rootName: root.name,
   };
+}
+
+/** Widest the screenshot is drawn: the panel body at 2x. */
+const PREVIEW_WIDTH_PX = 760;
+/** Figma refuses very large exports; a whole page stays well under this. */
+const PREVIEW_MAX_HEIGHT_PX = 12000;
+const PREVIEW_DEBOUNCE_MS = 250;
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+let previewSeq = 0;
+
+/**
+ * Screenshot the frame being CHECKED for the panel — not the selection. The
+ * numbers beside it describe the checked frame, and a picture of something else
+ * would say the opposite. It moves when the check does (the "Check … instead"
+ * button, a rescan, a page change).
+ *
+ * Debounced, and a stale export is dropped: a whole page is not an instant export.
+ */
+function schedulePreview(): void {
+  if (previewTimer) clearTimeout(previewTimer);
+  const seq = ++previewSeq;
+  previewTimer = setTimeout(() => {
+    void exportPreview(seq);
+  }, PREVIEW_DEBOUNCE_MS);
+}
+
+async function exportPreview(seq: number): Promise<void> {
+  const node = state.root;
+  if (!node || node.removed || !("exportAsync" in node) || node.width <= 0 || node.height <= 0) {
+    if (seq === previewSeq) post({ type: "preview", preview: null });
+    return;
+  }
+  const scale = Math.min(1, PREVIEW_WIDTH_PX / node.width, PREVIEW_MAX_HEIGHT_PX / node.height);
+  try {
+    const png = await node.exportAsync({
+      format: "PNG",
+      constraint: { type: "SCALE", value: scale },
+    });
+    if (seq !== previewSeq) return;
+    post({
+      type: "preview",
+      preview: {
+        nodeId: node.id,
+        name: node.name,
+        width: Math.round(node.width),
+        height: Math.round(node.height),
+        png,
+      },
+    });
+  } catch (error) {
+    // A preview is a convenience. Never turn a failed export into a panel error.
+    console.log(`[fanos-studio] preview failed: ${error instanceof Error ? error.message : String(error)}`);
+    if (seq === previewSeq) post({ type: "preview", preview: null });
+  }
 }
 
 function postSelection(): void {
@@ -1362,6 +2016,9 @@ function postSelection(): void {
     hasImage: only ? "fills" in only : false,
     parentId: parent && "id" in parent ? parent.id : null,
     parentName: parent && "name" in parent ? parent.name : null,
+    frames: selection
+      .filter((node) => "children" in node)
+      .map((node) => ({ id: node.id, name: node.name })),
   });
 }
 
