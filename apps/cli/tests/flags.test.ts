@@ -118,7 +118,7 @@ describe("command line", () => {
   });
 
   it("finds the agents in agents/ by folder", async () => {
-    expect(await agentIds()).toEqual(expect.arrayContaining(["card-match", "sitemap"]));
+    expect(await agentIds()).toEqual(expect.arrayContaining(["frame-match", "sitemap"]));
     const sitemap = await loadAgent("sitemap");
     expect(sitemap.spec.id).toBe("sitemap");
     expect(usage(sitemap)).toBe(

@@ -2,20 +2,20 @@
 // or left by a worker that died), runs them, and writes their events to Valkey and Postgres. It has
 // no port. AGENTS=sitemap,... limits it to some agents, so an agent can have workers of its own.
 
-import { agent as bind } from "@dugout/agent-bind";
-import { agent as cardMatch } from "@dugout/agent-card-match";
-import { agent as castBuilder } from "@dugout/agent-cast-builder";
-import { agent as castResearcher } from "@dugout/agent-cast-researcher";
-import { agent as sendToPage } from "@dugout/agent-send-to-page";
+import { agent as bind } from "@dugout/agent-data-bind";
+import { agent as frameMatch } from "@dugout/agent-frame-match";
+import { agent as hookFinder } from "@dugout/agent-hook-finder";
+import { agent as hookMaker } from "@dugout/agent-hook-maker";
+import { agent as sectionBuilder } from "@dugout/agent-section-builder";
 import { agent as sitemap } from "@dugout/agent-sitemap";
 import { liveDeps } from "@dugout/sdk";
 import { Valkey } from "iovalkey";
 import { createValkeyEventLog, createWorker, hostAgents, LOCAL_VALKEY_URL } from "../src/index.ts";
 
-// every agent a worker can run, by id. cast-researcher and cast-builder also run inside bind, and
-// card-match and bind inside send-to-page, as children: a worker that serves the parent runs them
+// every agent a worker can run, by id. hook-finder and hook-maker also run inside bind, and
+// frame-match and bind inside section-builder, as children: a worker that serves the parent runs them
 // there whether or not it serves them on their own
-const all = [sitemap, cardMatch, bind, castResearcher, castBuilder, sendToPage];
+const all = [sitemap, frameMatch, bind, hookFinder, hookMaker, sectionBuilder];
 const only = process.env.AGENTS?.split(",").map((id) => id.trim());
 const unknown = only?.filter((id) => !all.some((a) => a.spec.id === id)) ?? [];
 if (unknown.length) {

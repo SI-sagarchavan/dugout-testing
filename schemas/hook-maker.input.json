@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "need": {
+      "type": "string",
+      "minLength": 20,
+      "description": "What the design shows, in words: the list, how many items, and what each item shows: names, pictures, numbers, dates, states"
+    },
+    "hints": {
+      "description": "The design's placeholder copy that names the data",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "apis": {
+      "description": "API connector ids that may give it, as hook-finder named them",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "need"
+  ]
+}

@@ -3,7 +3,7 @@
 Status: needs-triage
 Key: footer and card title text: the ir's text/title colour did not match the design's blue (#5f53ff) on the title text nodes (e.g. i348:20263;14558:16385 resolves to text/main/high, which renders dark, not blue). compiler should pick the design's title colour token.
 
-Reported by the card-match agent: what the compiler should have done. Fix it in the pipeline.
+Reported by the frame-match agent: what the compiler should have done. Fix it in the pipeline.
 
 ## Comments
 

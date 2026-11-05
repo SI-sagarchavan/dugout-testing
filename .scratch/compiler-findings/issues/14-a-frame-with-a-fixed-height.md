@@ -3,7 +3,7 @@
 Status: needs-triage
 Key: a frame with a fixed height but padding larger than that height allows (i348:20277;13744:72929, h 32 with py 25) was compiled with the raw padding, so the box grew. with a fixed height the vertical padding should be clamped so the content fits the ir height.
 
-Reported by the card-match agent: what the compiler should have done. Fix it in the pipeline.
+Reported by the frame-match agent: what the compiler should have done. Fix it in the pipeline.
 
 ## Comments
 

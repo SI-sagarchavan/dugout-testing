@@ -3,7 +3,7 @@
 Status: needs-triage
 Key: header text boxes (342:18268, 342:18346) render taller or wider than their ir boxes, which shifts the layout down by 7 to 16px.
 
-Reported by the card-match agent: what the compiler should have done. Fix it in the trial repo.
+Reported by the frame-match agent: what the compiler should have done. Fix it in the trial repo.
 
 ## Comments
 

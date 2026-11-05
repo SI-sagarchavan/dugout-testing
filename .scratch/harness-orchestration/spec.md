@@ -12,15 +12,15 @@ Each piece below says what it is in plain words, then how it fits the harness, t
 
 ## Requirements, settled
 
-| #   | Question                                     | Decision                                                                                                                                                                                                                             | State   |
-| --- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
-| R1  | Do we need web search?                       | **Deferred.** card-match and sitemap work on owned data (a Figma Send, our page catalogue, Cast). Open-web results are stale or unlicensed for sports facts. A narrow `site.fetch` for a club's own site may come later (ticket 04). | decided |
-| R2  | When does the fallback model run?            | Only when a model is **unavailable** after its retries. Never because an answer was poor. Pairs below.                                                                                                                               | decided |
-| R3  | Automatic model choice by task difficulty?   | **Not now.** Models stay fixed per agent or task (exists). Per-turn switching is rejected. Escalation (cheap first, stronger on a measured failure) waits for evals to show a gap (ticket 09).                                       | decided |
-| R4  | Who writes the plan, and what if it changes? | The **model** writes it and replaces the whole list on every change. The harness stores, shows and enforces small rules. Plan-first approval is a later option.                                                                      | decided |
-| R5  | Subagents or a swarm?                        | **Supervisor-style subagents** (and code-led programs). A peer-to-peer swarm is out of scope.                                                                                                                                        | decided |
-| R6  | Intent classifier?                           | **Not building it.** If a free-text host ever exists it would be a host-layer router, not part of the loop (ticket 10). Nothing is reserved in code.                                                                                 | decided |
-| R7  | First real subagent                          | **`bind` → `cast-researcher`** (2026-11-04; was skipped on 2026-11-02). Ticket 07 is built (ADR 0025); 08, children that write, is still deferred.                                                                                   | decided |
+| #   | Question                                     | Decision                                                                                                                                                                                                                              | State   |
+| --- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| R1  | Do we need web search?                       | **Deferred.** frame-match and sitemap work on owned data (a Figma Send, our page catalogue, Cast). Open-web results are stale or unlicensed for sports facts. A narrow `site.fetch` for a club's own site may come later (ticket 04). | decided |
+| R2  | When does the fallback model run?            | Only when a model is **unavailable** after its retries. Never because an answer was poor. Pairs below.                                                                                                                                | decided |
+| R3  | Automatic model choice by task difficulty?   | **Not now.** Models stay fixed per agent or task (exists). Per-turn switching is rejected. Escalation (cheap first, stronger on a measured failure) waits for evals to show a gap (ticket 09).                                        | decided |
+| R4  | Who writes the plan, and what if it changes? | The **model** writes it and replaces the whole list on every change. The harness stores, shows and enforces small rules. Plan-first approval is a later option.                                                                       | decided |
+| R5  | Subagents or a swarm?                        | **Supervisor-style subagents** (and code-led programs). A peer-to-peer swarm is out of scope.                                                                                                                                         | decided |
+| R6  | Intent classifier?                           | **Not building it.** If a free-text host ever exists it would be a host-layer router, not part of the loop (ticket 10). Nothing is reserved in code.                                                                                  | decided |
+| R7  | First real subagent                          | **`bind` → `hook-finder`** (2026-11-04; was skipped on 2026-11-02). Ticket 07 is built (ADR 0025); 08, children that write, is still deferred.                                                                                        | decided |
 
 Fallback pairs (R2), decided: `sonnet` → `sonnet-india`, `sonnet-deep` → `sonnet-india`, `opus` → `opus-india`. `haiku`, the Nova models and `terra` have none: they are cheap or another family, and the worker already resumes a failed run later. Ticket 05 starts by checking live that the `in.*` profile really has capacity when the `global.*` one is throttled.
 
@@ -59,7 +59,7 @@ These come from accepted ADRs. A design that breaks one of them is wrong, howeve
 
 ### B. Context view: old tool results cleared, the transcript kept
 
-**In plain words.** A run keeps every message until it hits the model's context limit and fails (`model_context_window_exceeded`). No run is near that yet (the longest, card-match, peaked around 25 steps), but runs that check their own work grow fast. The first step needs no model: once a request gets big, old tool results are replaced by a one-line stub. Their full text is still in the output store and still readable with `run.readOutput`.
+**In plain words.** A run keeps every message until it hits the model's context limit and fails (`model_context_window_exceeded`). No run is near that yet (the longest, frame-match, peaked around 25 steps), but runs that check their own work grow fast. The first step needs no model: once a request gets big, old tool results are replaced by a one-line stub. Their full text is still in the output store and still readable with `run.readOutput`.
 
 **Design.**
 
@@ -89,7 +89,7 @@ These come from accepted ADRs. A design that breaks one of them is wrong, howeve
   A server tool that isn't listed is unreachable. A tool without an `effect` is refused at load, so nothing is "read" by default.
 - **Schemas from the server, pinned.** At build time a command (`pnpm agent mcp sync <server>`) calls `tools/list` and writes `config/mcp/<server>.lock.json`: each allowed tool's input schema and description, with a hash. At run time the harness loads the lock, not the live list. If the server's list no longer matches the lock, those tools are refused with a clear error until someone runs sync and reviews the diff in a PR. That defends against a server changing a description to steer the model ("tool poisoning") and against a schema changing under a running agent.
 - **Typed tools from the lock.** `z.fromJSONSchema` (zod 4.6.7 has it; checked) turns each schema into the zod input our `Tool` contract already takes, so the pipeline treats it like any other tool: policy, schema check, approval for writes, timeout, retries, redaction, output store. No new dependency.
-- **One client.** `McpClient` (`packages/mcp/src/client.ts`) already does streamable HTTP and per-tenant OAuth. It gains `tools/list` and the other auth kinds. `castTools` becomes `config/mcp/cast.json` plus its lock, keeping the same tool names, so card-match doesn't change.
+- **One client.** `McpClient` (`packages/mcp/src/client.ts`) already does streamable HTTP and per-tenant OAuth. It gains `tools/list` and the other auth kinds. `castTools` becomes `config/mcp/cast.json` plus its lock, keeping the same tool names, so frame-match doesn't change.
 - **Agents still list tools by name** in `spec.tools`. `cast.listHooks` is allowed only where a spec names it, as today.
 - **Results are untrusted.** Same as any tool output: redacted, stored by reference when long, data never instructions (rule 6). An optional per-server `maxResultChars` caps them.
 
@@ -102,7 +102,7 @@ These come from accepted ADRs. A design that breaks one of them is wrong, howeve
 
 ### D. Web search: deferred
 
-**Why not now.** Both agents work on data we own: card-match on a Figma Send and our pipeline, sitemap on a brief and our page catalogue. For sports content the open web is often the wrong source: scores, fixtures and injuries should come from the tenant's feeds, and a web page can be stale, wrong or unlicensed. Nothing in the evals or the run history asks for it.
+**Why not now.** Both agents work on data we own: frame-match on a Figma Send and our pipeline, sitemap on a brief and our page catalogue. For sports content the open web is often the wrong source: scores, fixtures and injuries should come from the tenant's feeds, and a web page can be stale, wrong or unlicensed. Nothing in the evals or the run history asks for it.
 
 **What may come later.** A narrow, read-only `site.fetch` limited to a tenant's own domain, so sitemap could propose pages from what a club's site really has. It would be added through C (an MCP manifest, or a small typed tool), with the same rules: query through the policy and redactor, results untrusted and capped, off unless a spec lists it. It needs a decision on whether a tenant's requests may leave India.
 
@@ -149,7 +149,7 @@ A wrong answer, a refusal or a bad input never triggers it.
 | **Escalation**              | Start cheap. If the answer fails a check, redo that task on a stronger model.                  | ⏸ ticket 09, waits for evidence                                                                                                                                 |
 | **A router per request**    | A classifier or Bedrock's prompt routing guesses difficulty and picks a model each turn.       | ❌ rejected. Claude's signed reasoning is lost on a switch, and each model has its own prompt cache, so a switch pays full price for the whole transcript again |
 
-**Why escalation waits.** Our own measurements say the model rarely moves the result for card-match: in 13 of 15 runs the model added at most 0.28 points on top of what the code already reached. Escalation only pays where a stronger model wins on a measurable check. Ticket 09 starts by running the sitemap and card-match evals on `haiku`, `sonnet` and `opus` to find out, and builds nothing unless there is a gap.
+**Why escalation waits.** Our own measurements say the model rarely moves the result for frame-match: in 13 of 15 runs the model added at most 0.28 points on top of what the code already reached. Escalation only pays where a stronger model wins on a measurable check. Ticket 09 starts by running the sitemap and frame-match evals on `haiku`, `sonnet` and `opus` to find out, and builds nothing unless there is a gap.
 
 ### F. A planning tool
 
@@ -184,7 +184,7 @@ Ticket 06, blocked by 01.
 
 **Design.**
 
-- **A subagent is a tool.** A spec lists the agents it may call (`agents: ["cast-researcher"]`), and each appears as a typed tool, `agent.castResearcher`, whose input is that agent's input schema. The model never names an arbitrary agent.
+- **A subagent is a tool.** A spec lists the agents it may call (`agents: ["hook-finder"]`), and each appears as a typed tool, `agent.hookFinder`, whose input is that agent's input schema. The model never names an arbitrary agent.
 - **The child is a real run:**
   - its own transcript and checkpoint, written as `runs` rows linked by `parent_run_id` (the column already exists, for forks);
   - the same tenant (rule 4);
@@ -221,7 +221,7 @@ See "How a model is chosen". If evals show a gap, the smallest design is a model
 
 **In plain words.** It reads a free-text request and decides which agent should handle it, with what typed input, or whether to ask a question or refuse. It is **not** part of the loop and not something the model inside a run does (a model already picks its own tools from their descriptions). It sits in the host (wnm-fanxp-backend, Cast admin, the CLI), in front of `queue.start`.
 
-**Why it isn't built now.** Every host today already knows the agent: a Figma Send starts card-match, the brief box starts sitemap, the CLI names the agent. There is no free-text entry yet, and two agents don't need routing.
+**Why it isn't built now.** Every host today already knows the agent: a Figma Send starts frame-match, the brief box starts sitemap, the CLI names the agent. There is no free-text entry yet, and two agents don't need routing.
 
 **The interface, reserved so nothing has to change later:**
 

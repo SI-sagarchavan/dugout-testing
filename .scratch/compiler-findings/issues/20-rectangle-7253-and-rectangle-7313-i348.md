@@ -3,7 +3,7 @@
 Status: needs-triage
 Key: rectangle 7253 and rectangle 7313 (i348:20270;14558:14955, i348:20265;14569:31786): vector artwork with corner radius was emitted as a plain box, losing rounded corners and the real shape.
 
-Reported by the card-match agent: what the compiler should have done. Fix it in the pipeline.
+Reported by the frame-match agent: what the compiler should have done. Fix it in the pipeline.
 
 ## Comments
 

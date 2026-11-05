@@ -11,11 +11,11 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@dugout/agent-bind": "workspace:^",
-    "@dugout/agent-card-match": "workspace:^",
-    "@dugout/agent-cast-builder": "workspace:^",
-    "@dugout/agent-cast-researcher": "workspace:^",
-    "@dugout/agent-send-to-page": "workspace:^",
+    "@dugout/agent-data-bind": "workspace:^",
+    "@dugout/agent-frame-match": "workspace:^",
+    "@dugout/agent-hook-maker": "workspace:^",
+    "@dugout/agent-hook-finder": "workspace:^",
+    "@dugout/agent-section-builder": "workspace:^",
     "@dugout/agent-sitemap": "workspace:^",
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",

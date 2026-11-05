@@ -3,7 +3,7 @@
 Status: needs-triage
 Key: improve vertical placement of frame 1984079001 (i293:10343;10566:41146).
 
-Reported by the card-match agent: what the compiler should have done. Fix it in the trial repo.
+Reported by the frame-match agent: what the compiler should have done. Fix it in the trial repo.
 
 ## Comments
 

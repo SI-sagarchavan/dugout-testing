@@ -3,7 +3,7 @@
 Status: needs-triage
 Key: large vector artwork with gradient fills and no path data (rectangle 7253 i348:20270;14558:14955, rectangle 7313 i348:20265;14569:31786 and i348:20272;14569:31786, rectangle 34646508) is shipped only as crops. it should be marked as background assets.
 
-Reported by the card-match agent: what the compiler should have done. Fix it in the pipeline.
+Reported by the frame-match agent: what the compiler should have done. Fix it in the pipeline.
 
 ## Comments
 

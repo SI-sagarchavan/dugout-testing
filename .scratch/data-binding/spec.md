@@ -22,7 +22,7 @@ carousel opens on slide 1, not on the live day (`initialSlide` cannot be bound).
 
 ## Done (2026-11-04): the bind agent
 
-`agents/bind` (`pnpm agent bind --tenant <t> --preview <preview link> --data <dataset>`): reads a
+`agents/data-bind` (`pnpm agent data-bind --tenant <t> --preview <preview link> --data <dataset>`): reads a
 published frame and a sample, writes a binding plan, publishes it and returns the bound preview.
 Tools: `bind.load` (outline, what repeats, the data's paths), `bind.node`, `bind.try` (applies and
 draws the plan against every item, lists problems), `bind.publish` (write, behind approval).
@@ -65,7 +65,7 @@ the clock (red under an hour) needs data-driven looks.
 
 ## Done (2026-11-04): the data from Cast, found by a subagent
 
-`bind` with no `--data` finds the data itself. It calls `agent.castResearcher` (ADR 0025), a child
+`bind` with no `--data` finds the data itself. It calls `agent.hookFinder` (ADR 0025), a child
 run with its own context. The researcher lists the tenant's published hooks, describes the likely
 ones, runs the best once against its live APIs (`cast.sampleHook`) and answers with the hook, the
 input it ran with, what it covers (field by field) and what is missing. `bind.source` then makes
@@ -91,7 +91,7 @@ so in remaining:
 
 The researcher now chooses only among dugout's hooks (ids `dugout_…`, names `dugout: …`); the
 hooks people made are not listed to it. When none fits it answers with the connectors that could
-give the need, and `bind` calls `agent.castBuilder` (a person approves that one call). The builder
+give the need, and `bind` calls `agent.hookMaker` (a person approves that one call). The builder
 reads the connector, copies its fixed values from a hook that already calls it (read only), then
 creates the hook, adds the call, runs it raw, tries a transform locally until the output has the
 need's fields, saves it checked against that run, samples and publishes it.
@@ -198,7 +198,7 @@ For each hole and each variant, from the design's words and the response's value
 
 Its output is a `BindingPlan` (the format exists in `bind.ts`), extended with `when` per variant
 and grouping. Code runs checks 6–8 on it; a failure goes back to the model as a tool result, as a
-refused override does in `card-match`.
+refused override does in `frame-match`.
 
 ## States the sample does not show
 
@@ -231,23 +231,23 @@ One sample has `event_state` `R` only. Generic code can vary what it saw. It can
 
 ## Agent architecture
 
-**A new agent, `bind`, run by a program after `card-match`. No subagent yet.**
+**A new agent, `bind`, run by a program after `frame-match`. No subagent yet.**
 
-- **Separate from `card-match`.** Different job, tools, skill and eval. The dynamic SDUI plan splits
+- **Separate from `frame-match`.** Different job, tools, skill and eval. The dynamic SDUI plan splits
   agents by job (intent, binding, repair).
-- **Chained by code.** One Send is one program (ADR 0017): `card-match` → `bind` → publish. The
+- **Chained by code.** One Send is one program (ADR 0017): `frame-match` → `bind` → publish. The
   order is fixed, so code runs it. Each is its own run, linked by `parent_run_id`, evaluated alone.
 - **The subagent comes with the Cast layer.** Finding which hook feeds a card, across a tenant's
   hooks and APIs, is an open-ended search that would flood `bind`'s context. That is a read-only
-  `cast-researcher` subagent (harness-orchestration ticket 07). Until then the flow id is given.
+  `hook-finder` subagent (harness-orchestration ticket 07). Until then the flow id is given.
 
 ```
-Send ─► card-match ─► bind ─────────────────────────────────────► publish (approval)
+Send ─► frame-match ─► bind ─────────────────────────────────────► publish (approval)
                       code: repeats, variants, holes, shape
                       model: plan (paths, when, grouping)
                       code: checks 6–8, scenarios ── refused ──► model
                       ▲
-                      later: cast-researcher subagent finds the flow
+                      later: hook-finder subagent finds the flow
 ```
 
 ## Order of work
@@ -262,8 +262,8 @@ Send ─► card-match ─► bind ───────────────
 4. **Frame facts.** Variant detection and merge, holes with their placeholder hints.
 5. **The `bind` agent.** Tools (`data.shape`, `data.try` for a plan, `data.scenarios`), skill,
    eval against step 3 _and_ against the news grid, then the program that runs it after
-   `card-match`.
-6. **Then Cast:** writes behind approval, `cast-researcher` subagent, hook output schemas.
+   `frame-match`.
+6. **Then Cast:** writes behind approval, `hook-finder` subagent, hook output schemas.
 
 ## Open questions
 

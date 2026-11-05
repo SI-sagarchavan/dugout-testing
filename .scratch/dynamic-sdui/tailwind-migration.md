@@ -28,7 +28,7 @@ stayed in the tree.
 
 ## Verified
 
-`pnpm eval measure` was identical to `agents/card-match/evals/baseline.json` on all 18 frames.
+`pnpm eval measure` was identical to `agents/frame-match/evals/baseline.json` on all 18 frames.
 Renderer 248, tokens 180 and Studio 17 tests passed, and `apps/web` built with `next build`.
 
 ## Learned

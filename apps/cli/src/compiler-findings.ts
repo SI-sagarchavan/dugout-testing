@@ -68,7 +68,7 @@ export function recordCompilerFindings(
         "Status: needs-triage",
         `Key: ${key}`,
         "",
-        "Reported by the card-match agent: what the compiler should have done. Fix it in the pipeline.",
+        "Reported by the frame-match agent: what the compiler should have done. Fix it in the pipeline.",
         "",
         "## Comments",
         "",

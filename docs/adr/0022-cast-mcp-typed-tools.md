@@ -24,9 +24,9 @@ tool pipeline apply as they do to any tool.
 - **dugout's namespace** (amended 2026-11-04). The hooks dugout's agents choose from and build have
   ids that start `dugout_` (`DUGOUT_HOOKS`; a hook id is lower_snake_case, so not `dugout:`) and
   names that start `dugout: `. `castTools(client, { namespace })` lists only those, and refuses to
-  describe or sample any other: `cast-researcher` never picks a hook people made. card-match reads
+  describe or sample any other: `hook-finder` never picks a hook people made. frame-match reads
   every hook, as before.
-- **Building** (`cast-builder`, amended 2026-11-04) writes through `build.*` tools over the server's
+- **Building** (`hook-maker`, amended 2026-11-04) writes through `build.*` tools over the server's
   create, add_step, set_transform and publish. They write one hook: the one the run created, whose
   id starts `dugout_`. Other hooks are only read, to copy the values they pass a connector. A
   transform is tried locally (`cast_eval_jsonata`) and saved checked against a live run of the new
@@ -48,7 +48,7 @@ tenant and each rotation is saved before the new token is used.
 
 - One worker process per token file. Two processes refreshing the same grant can revoke it. In a
   process, `castClientFromEnv` returns one client per server and token file, so agents that use
-  Cast (card-match, cast-researcher, bind) share its one-refresh-at-a-time rule.
+  Cast (frame-match, hook-finder, bind) share its one-refresh-at-a-time rule.
 - The public flow id (`hook_uuid`, what `/cast/api/flow/<id>` takes) is not in any MCP answer. A
   tree that fetches its data at render time needs it; asked of the Cast team.
 - Registered clients expire after 90 days and refresh tokens after 30; log in again then.

@@ -5,12 +5,12 @@ Agreed with the user on 2026-11-05. This is the path we build on. It replaces to
 `pnpm agent watch` polls every 2 s). The wider plan is in `spec.md`; this file is the Send path in it.
 
 **Status, 2026-11-05.** The current description of the whole flow, its components and who owns which
-data is `docs/architecture/send-to-page.md`. Decisions made since this note was written:
+data is `docs/architecture/section-builder.md`. Decisions made since this note was written:
 
 - Two databases, and the control plane (`apps/api`, `fanos`) goes away: `docs/adr/0027-two-databases.md`.
   Where this note says the control plane stores or reads something, read it as the Send ledger
-  (FanXP DB), S3 and Surface MCP. Section 4 step 3 (card-match reading "the files from S3") is how it
-  will work once `surface.getSend` exists; today card-match still reads the control plane.
+  (FanXP DB), S3 and Surface MCP. Section 4 step 3 (frame-match reading "the files from S3") is how it
+  will work once `surface.getSend` exists; today frame-match still reads the control plane.
 - Temporal runs agent runs before production: `docs/adr/0028-temporal-runs-agent-runs.md`.
 - Live updates use one SSE connection per open panel from the backend, not Electric (Confluence ADR018).
 - Built: plugin sign-in, the three Send calls (`POST /surface/sends`, PUT, `/complete`) in the backend and
@@ -34,7 +34,7 @@ data is `docs/architecture/send-to-page.md`. Decisions made since this note was 
    each file it does not already hold.
 2. The plugin PUTs each file straight to S3 as raw bytes (no base64).
 3. `POST /surface/sends/:id/complete`. The backend checks each object (HeadObject size and checksum),
-   marks the Send `received`, and inserts the `send-to-page` row into `runs` in the same request.
+   marks the Send `received`, and inserts the `section-builder` row into `runs` in the same request.
    It returns the `runId`. Nothing polls.
 
 Details:
@@ -72,19 +72,19 @@ its own `ICON_REGISTRY`.
 - Valid icon names come from the glyph names in the tenant's Fontello metadata.
 - The compiler's `ctx.icons` alias links a Figma layer name to a glyph name, once per tenant.
 - The renderer loads the tenant's icon CSS and draws the glyph by class.
-- Start by still sending the small icon pictures, and let card-match ignore any icon that matched a
+- Start by still sending the small icon pictures, and let frame-match ignore any icon that matched a
   glyph. Revisit once the plugin gets the glyph list from the authenticated start call.
 - A font that still has default names like `icon-1` cannot be matched by name.
 
 ### 4. After the upload
 
-1. **Run starts.** The `complete` call queues `send-to-page` with the tenant taken from the token.
+1. **Run starts.** The `complete` call queues `section-builder` with the tenant taken from the token.
 2. **Worker claims it** (agents worker on ECS). Events go to the run's Valkey stream, and the
    backend's SSE route streams them to Studio.
-3. **card-match** reads the files from S3, compiles the IR against the tenant theme, renders, diffs
+3. **frame-match** reads the files from S3, compiles the IR against the tenant theme, renders, diffs
    and fixes. Questions it cannot answer from the frame (carousel or not) pause the run under
    "Needs you". Output: DSL tree and surface set.
-4. **bind** asks cast-researcher for a `dugout_` hook, or has cast-builder build one (a person
+4. **bind** asks hook-finder for a `dugout_` hook, or has hook-maker build one (a person
    approves each try). It writes the bound tree: refs and Repeaters applied, a `data` block naming the
    hook. Plan and sample data stay as evidence.
 5. **Review.** Studio's canvas renders the tree with the tenant's theme, fonts and icons and live hook

@@ -4,7 +4,7 @@ Status: needs-info
 Type: task
 Blocked by: 03
 
-Deferred on 2026-11-02. Open-web `web.search` is **not** planned: card-match and sitemap work on data
+Deferred on 2026-11-02. Open-web `web.search` is **not** planned: frame-match and sitemap work on data
 we own, and for sports content the open web is often stale, wrong or unlicensed. Spec: section D.
 
 ## What may come

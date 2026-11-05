@@ -3,7 +3,7 @@
 Status: needs-triage
 Key: preserve the gradient stroke on player card i293:10343;18179:22541.
 
-Reported by the card-match agent: what the compiler should have done. Fix it in the trial repo.
+Reported by the frame-match agent: what the compiler should have done. Fix it in the trial repo.
 
 ## Comments
 

@@ -3,7 +3,7 @@
 Status: needs-triage
 Key: apply the root gradient style on match card (293:10343).
 
-Reported by the card-match agent: what the compiler should have done. Fix it in the trial repo.
+Reported by the frame-match agent: what the compiler should have done. Fix it in the trial repo.
 
 ## Comments
 

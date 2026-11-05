@@ -4,7 +4,7 @@ Status: gap analysis, 2026-11-02. Nothing here is built yet. This file lists wha
 
 ## Where we are
 
-Today's path is: Figma frame → IR → `@fanos/compile` → DSL tree → renderer → pixel diff → `card-match` fixes the last 1–2% with overrides. All of it serves one goal: a static render that matches the screenshot.
+Today's path is: Figma frame → IR → `@fanos/compile` → DSL tree → renderer → pixel diff → `frame-match` fixes the last 1–2% with overrides. All of it serves one goal: a static render that matches the screenshot.
 
 What the code has now, layer by layer:
 
@@ -16,7 +16,7 @@ What the code has now, layer by layer:
 | **Renderer** (`renderer/src/components/Render.tsx`)    | Server Components only, with no `"use client"`. Draws those 8 plus Repeater; `reveal` adds a class                                                                                                                                                                                      | every other type draws a diagnostic placeholder. `.fos-reveal-*` has no CSS, so `reveal` does nothing. Nothing on the client: no carousel, tab state, countdown tick, polling or scroll behaviour                                                                                                                 |
 | **Data** (`dsl/src/cast.ts`, `contract.ts`, `bind.ts`) | `fromCastFlow` normalises a Cast response, the B1–B7 rules check a tree against a sample payload, and `applyBindingPlan` applies a binding plan                                                                                                                                         | binding is done by hand (`fixtures/bindings/*.cast.plan.json`). No agent binds. The renderer is given data and never fetches it                                                                                                                                                                                   |
 | **Cast tools** (`packages/mcp`, ADR 0022)              | reads: listHooks, describeHook, listApis, describeApi, getTemplateBinding; one write, `createHook`                                                                                                                                                                                      | the server can also add_step, wire_steps, set_transform, eval_jsonata, run_hook, lint, publish and set_template_binding. Without those an agent cannot _build_ a workflow, only find one                                                                                                                          |
-| **Agent** (`agents/card-match`)                        | visual repair through overrides, measured and undone when they make things worse                                                                                                                                                                                                        | it has no idea what a section _is_ (carousel, grid, list), what it _does_ (data, refresh, sticky) or how it _moves_                                                                                                                                                                                               |
+| **Agent** (`agents/frame-match`)                       | visual repair through overrides, measured and undone when they make things worse                                                                                                                                                                                                        | it has no idea what a section _is_ (carousel, grid, list), what it _does_ (data, refresh, sticky) or how it _moves_                                                                                                                                                                                               |
 
 In short, the vocabulary is ahead of both the compiler and the renderer. Most of the "dynamic" words exist in the schema, but nothing produces them and nothing draws them.
 
@@ -24,7 +24,7 @@ In short, the vocabulary is ahead of both the compiler and the renderer. Most of
 
 A section is fully described by five things. Today we only produce the first.
 
-1. **Look**: primitives, tokens and geometry. _Done, through compile and card-match._
+1. **Look**: primitives, tokens and geometry. _Done, through compile and frame-match._
 2. **Layout kind**: list, row, grid, carousel, tabs, hero, overlay, and the configuration for that kind.
 3. **Data**: which Cast hook feeds it, with which inputs, bound to which nodes.
 4. **Behaviour**: refresh and polling, sticky and fixed, interactions and state, pagination.
@@ -242,7 +242,7 @@ One Figma send is still one run (decided). Sections are tasks inside it (harness
 | 4 lower intent → DSL                                 | code                                      | pure lowering per kind                         |
 | 5 data: find or build the hook, then bind            | agent (`binding` skill)                   | `cast.*` reads; draft writes behind approval   |
 | 6 behaviour + motion from intent                     | code (lowering), agent only for gaps      | —                                              |
-| 7 visual repair                                      | agent (today's `card-match`)              | `frame.*`                                      |
+| 7 visual repair                                      | agent (today's `frame-match`)             | `frame.*`                                      |
 | 8 behaviour checks                                   | code                                      | Playwright scenarios generated from the intent |
 | 9 review: Figma, render, live preview with real data | person                                    | the existing approval flow                     |
 | 10 publish tree + hook + template binding            | code, after approval                      | `cast.publishHook`, `cast.setTemplateBinding`  |

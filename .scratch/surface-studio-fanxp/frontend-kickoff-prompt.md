@@ -91,7 +91,7 @@ Two theming layers, kept apart:
    - centre: a placeholder panel where the canvas will go ("Preview comes in the next slice");
    - right: an inspector with tabs Run, Data, Issues, Advanced, showing a run's step timeline grouped
      as Match, Bind, Data, Publish, with child runs nested and collapsible.
-   Selection lives in the URL (`/surface-studio/queue/:sendId`) so a reload keeps it.
+     Selection lives in the URL (`/surface-studio/queue/:sendId`) so a reload keeps it.
 6. **Data layer with a mock adapter**: the backend `surface` module does not exist yet. Define Zod
    schemas and typed TanStack Query hooks for `Send`, `Run`, `RunStep` and `Approval`, matching the
    planned routes in the spec (`GET /surface/runs`, `GET /surface/runs/:id`, decisions, cancel). Back

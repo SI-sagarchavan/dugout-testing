@@ -1,7 +1,7 @@
 // pnpm agent watch --tenant demo-cricket [--project default] [--latest] [--model sonnet] [--effort high] [--ask]
 //
-// Press Send in the Figma plugin and one send-to-page run starts: the frame is matched to its
-// screenshot and published (card-match), then its data is found in Cast, or a hook is built there,
+// Press Send in the Figma plugin and one section-builder run starts: the frame is matched to its
+// screenshot and published (frame-match), then its data is found in Cast, or a hook is built there,
 // and bound (bind), and one preview is handed over. It publishes without asking; --ask brings the
 // approval prompt back (one for the whole pass). This host looks at the control plane
 // for new exports, queues a run for each, follows it here and asks at its approval. The plugin and
@@ -11,8 +11,8 @@
 import { userInfo } from "node:os";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
-import { controlPlaneUrl, createControlPlane, RunInput } from "@dugout/agent-card-match";
-import { agent } from "@dugout/agent-send-to-page";
+import { controlPlaneUrl, createControlPlane, RunInput } from "@dugout/agent-frame-match";
+import { agent } from "@dugout/agent-section-builder";
 import { loadEnv, loadModelConfig, REPO_ROOT, runModel } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import { createRunQueue, createValkeyEventLog, LOCAL_VALKEY_URL } from "@dugout/worker";

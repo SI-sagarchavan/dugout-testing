@@ -37,14 +37,14 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
 
-  agents/bind:
+  agents/data-bind:
     dependencies:
-      '@dugout/agent-cast-builder':
+      '@dugout/agent-hook-finder':
         specifier: workspace:^
-        version: link:../cast-builder
-      '@dugout/agent-cast-researcher':
+        version: link:../hook-finder
+      '@dugout/agent-hook-maker':
         specifier: workspace:^
-        version: link:../cast-researcher
+        version: link:../hook-maker
       '@dugout/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -67,7 +67,7 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
-  agents/card-match:
+  agents/frame-match:
     dependencies:
       '@dugout/contracts':
         specifier: workspace:^
@@ -88,35 +88,7 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
-  agents/cast-builder:
-    dependencies:
-      '@dugout/agent-cast-researcher':
-        specifier: workspace:^
-        version: link:../cast-researcher
-      '@dugout/contracts':
-        specifier: workspace:^
-        version: link:../../packages/contracts
-      '@dugout/core':
-        specifier: workspace:^
-        version: link:../../packages/core
-      '@dugout/mcp':
-        specifier: workspace:^
-        version: link:../../packages/mcp
-      '@dugout/memory':
-        specifier: workspace:^
-        version: link:../../packages/memory
-      '@dugout/sdk':
-        specifier: workspace:^
-        version: link:../../packages/sdk
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@dugout/db':
-        specifier: workspace:^
-        version: link:../../packages/db
-
-  agents/cast-researcher:
+  agents/hook-finder:
     dependencies:
       '@dugout/contracts':
         specifier: workspace:^
@@ -141,14 +113,42 @@ importers:
         specifier: workspace:^
         version: link:../../packages/db
 
-  agents/send-to-page:
+  agents/hook-maker:
     dependencies:
-      '@dugout/agent-bind':
+      '@dugout/agent-hook-finder':
         specifier: workspace:^
-        version: link:../bind
-      '@dugout/agent-card-match':
+        version: link:../hook-finder
+      '@dugout/contracts':
         specifier: workspace:^
-        version: link:../card-match
+        version: link:../../packages/contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@dugout/mcp':
+        specifier: workspace:^
+        version: link:../../packages/mcp
+      '@dugout/memory':
+        specifier: workspace:^
+        version: link:../../packages/memory
+      '@dugout/sdk':
+        specifier: workspace:^
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../../packages/db
+
+  agents/section-builder:
+    dependencies:
+      '@dugout/agent-data-bind':
+        specifier: workspace:^
+        version: link:../data-bind
+      '@dugout/agent-frame-match':
+        specifier: workspace:^
+        version: link:../frame-match
       '@dugout/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -243,12 +243,12 @@ importers:
       '@clack/prompts':
         specifier: ^1.8.1
         version: 1.8.1
-      '@dugout/agent-card-match':
+      '@dugout/agent-frame-match':
         specifier: workspace:^
-        version: link:../../agents/card-match
-      '@dugout/agent-send-to-page':
+        version: link:../../agents/frame-match
+      '@dugout/agent-section-builder':
         specifier: workspace:^
-        version: link:../../agents/send-to-page
+        version: link:../../agents/section-builder
       '@dugout/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -375,21 +375,21 @@ importers:
 
   apps/worker:
     dependencies:
-      '@dugout/agent-bind':
+      '@dugout/agent-data-bind':
         specifier: workspace:^
-        version: link:../../agents/bind
-      '@dugout/agent-card-match':
+        version: link:../../agents/data-bind
+      '@dugout/agent-frame-match':
         specifier: workspace:^
-        version: link:../../agents/card-match
-      '@dugout/agent-cast-builder':
+        version: link:../../agents/frame-match
+      '@dugout/agent-hook-finder':
         specifier: workspace:^
-        version: link:../../agents/cast-builder
-      '@dugout/agent-cast-researcher':
+        version: link:../../agents/hook-finder
+      '@dugout/agent-hook-maker':
         specifier: workspace:^
-        version: link:../../agents/cast-researcher
-      '@dugout/agent-send-to-page':
+        version: link:../../agents/hook-maker
+      '@dugout/agent-section-builder':
         specifier: workspace:^
-        version: link:../../agents/send-to-page
+        version: link:../../agents/section-builder
       '@dugout/agent-sitemap':
         specifier: workspace:^
         version: link:../../agents/sitemap

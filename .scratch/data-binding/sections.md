@@ -8,7 +8,7 @@ A page is one frame with several sections that share a background and have separ
 
 ## Where identification lives
 
-Not a new agent and not inside bind: which sections a frame has is a fact about the design. It belongs with the layer that already says what each container is (card-match, ADR 0024), and bind reads it.
+Not a new agent and not inside bind: which sections a frame has is a fact about the design. It belongs with the layer that already says what each container is (frame-match, ADR 0024), and bind reads it.
 
 1. A code function lists candidate sections from the structure: repeat groups, component names, headings, layer names (`fixtures`, `LATEST NEWS`; most frames are auto-named `Frame 1984…`, so names alone are not enough), where subtrees split. A designer convention (`section/<name>` layer) overrides it.
 2. When ambiguous, a model proposes sections (name, Figma ids, what data) and code validates: ids exist, sections do not overlap, every repeat group and placeholder text is in exactly one section or marked static.

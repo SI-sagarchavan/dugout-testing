@@ -25,7 +25,7 @@ export interface ChildRuns {
   }): Promise<{ lastSeq: number }>;
 }
 
-/** `cast-researcher` is called as `agent.castResearcher`. */
+/** `hook-finder` is called as `agent.hookFinder`. */
 export function agentToolName(agentId: string): string {
   const camel = agentId.replace(/[-_]+([a-zA-Z0-9])/g, (_, c: string) => c.toUpperCase());
   return `agent.${camel.charAt(0).toLowerCase()}${camel.slice(1)}`;
@@ -52,7 +52,7 @@ const refuseWrites: Approver = async (req) => ({
 /**
  * A child that writes was approved as a whole: the parent's call to it was the write a person
  * said yes to. Its own writes go through under that approval, and say so. What it may write is
- * bounded by its own tools (cast-builder writes only the one hook it creates).
+ * bounded by its own tools (hook-maker writes only the one hook it creates).
  */
 const approvedWithCall =
   (parent: { runId: string; callId: string }): Approver =>

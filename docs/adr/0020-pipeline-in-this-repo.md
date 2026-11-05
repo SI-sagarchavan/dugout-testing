@@ -1,6 +1,6 @@
 # 20. The Figma-to-SDUI pipeline lives in this repo
 
-The `card` and `card-match` agents ran the pipeline's compiler, DSL validator and renderer from a sibling `trial` checkout, found by `../trial` or `FANOS_TRIAL_ROOT`, and talked to its control plane and Studio. Two repos meant two installs, two lockfiles, and a change to the IR or the compiler that had to land in one repo and be built in the other before the agent saw it.
+The `card` and `frame-match` agents ran the pipeline's compiler, DSL validator and renderer from a sibling `trial` checkout, found by `../trial` or `FANOS_TRIAL_ROOT`, and talked to its control plane and Studio. Two repos meant two installs, two lockfiles, and a change to the IR or the compiler that had to land in one repo and be built in the other before the agent saw it.
 
 ## Decision
 

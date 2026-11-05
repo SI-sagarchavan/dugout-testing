@@ -3,13 +3,13 @@
 Status: done (2026-11-04), ADR 0025
 
 Reopened 2026-11-04 for `bind`: finding which Cast hook feeds a frame is the open-ended search this
-was for. Built as specified below; the one real use is `bind` → `cast-researcher`.
+was for. Built as specified below; the one real use is `bind` → `hook-finder`.
 Type: design + task
 Blocked by: none
 
 ## What
 
-A spec lists the agents it may call (`agents: ["cast-researcher"]`). Each appears as a typed tool,
+A spec lists the agents it may call (`agents: ["hook-finder"]`). Each appears as a typed tool,
 `agent.<camelId>`, whose input is that agent's input schema. Calling it starts a child run:
 
 - the same tenant;
@@ -32,7 +32,7 @@ the parent's tool step. The parent's `tool.completed` carries the child's run id
   - the child can't see the parent's transcript, and runs under the parent's tenant.
 - `assertSupportedSpec` no longer refuses `maxDepth > 0`.
 - An ADR "Subagents are tools that start a child run".
-- One real use, if you confirm it (spec R7): card-match hands Cast binding questions to a read-only `cast-researcher`, which returns the field behind a number or a repeated row in a few lines instead of the hook definition's thousands of tokens.
+- One real use, if you confirm it (spec R7): frame-match hands Cast binding questions to a read-only `hook-finder`, which returns the field behind a number or a repeated row in a few lines instead of the hook definition's thousands of tokens.
 
 ## Pointers
 

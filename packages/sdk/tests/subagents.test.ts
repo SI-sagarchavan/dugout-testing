@@ -159,7 +159,7 @@ const askThenSum = (): Record<string, ScriptStep[]> => ({
 
 describe("subagents (ADR 0025)", () => {
   it("names the tool after the agent, and a child's run id after the call", () => {
-    expect(agentToolName("cast-researcher")).toBe("agent.castResearcher");
+    expect(agentToolName("hook-finder")).toBe("agent.hookFinder");
     expect(childRunId("run-1", "call_1_0")).toBe(childRunId("run-1", "call_1_0"));
     expect(childRunId("run-1", "call_1_0")).not.toBe(childRunId("run-1", "call_2_0"));
     expect(childRunId("run-1", "call_1_0")).toMatch(

@@ -1,9 +1,9 @@
-import type { ExportRecord } from "@dugout/agent-card-match";
+import type { ExportRecord } from "@dugout/agent-frame-match";
 
-/** What a Send starts: the whole pass, one run (card-match, then bind, as its children). */
-export const FIGMA_AGENT = "send-to-page";
-/** Agents whose runs say a Send was already handled: card-match ran alone before the pass existed. */
-export const PRIOR_AGENTS: string[] = [FIGMA_AGENT, "card-match"];
+/** What a Send starts: the whole pass, one run (frame-match, then bind, as its children). */
+export const FIGMA_AGENT = "section-builder";
+/** Agents whose runs say a Send was already handled: frame-match ran alone before the pass existed. */
+export const PRIOR_AGENTS: string[] = [FIGMA_AGENT, "frame-match"];
 
 export interface FigmaWatchOptions {
   listExports(limit: number): Promise<ExportRecord[]>;
@@ -101,7 +101,7 @@ export function finishedLines(
       unmeasuredBecause?: string;
       before?: number;
       match?: number;
-      /** Set when the run was the whole pass (send-to-page): the frame is bound to data too. */
+      /** Set when the run was the whole pass (section-builder): the frame is bound to data too. */
       bound?: number;
       remaining?: string[];
       compilerFindings?: string[];

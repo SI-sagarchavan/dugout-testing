@@ -17,7 +17,7 @@ The pipeline serves one DSL per device: the host's page URL asks for desktop, ta
   - **Tabs** are a row of single-label items where exactly one is drawn differently. `certain` when the layers are named as tabs.
   - **A row of cards that exactly fills its container is `unsure`**: a fixed row, or a carousel that only moves when there are more. The frame cannot tell.
   - Each intent lists its evidence in plain words, and in `ask` the questions the frame cannot answer, with the default the proposal already uses.
-- **What the frame shows is applied without asking; what it cannot show is asked.** In `card-match`, `frame.load` applies `certain` carousels. A layout with questions goes through `frame.layout`, a write tool and so an approval. The reviewer reads a question card (what the frame showed, what it cannot show, what is proposed) and approves, or requests a change in plain words, which the model turns into the choice. `frame.publish` is refused until each question has been asked once. The model never decides a layout.
+- **What the frame shows is applied without asking; what it cannot show is asked.** In `frame-match`, `frame.load` applies `certain` carousels. A layout with questions goes through `frame.layout`, a write tool and so an approval. The reviewer reads a question card (what the frame showed, what it cannot show, what is proposed) and approves, or requests a change in plain words, which the model turns into the choice. `frame.publish` is refused until each question has been asked once. The model never decides a layout.
 - **A decided layout is an override** (`Overrides.layouts`, a `LayoutChoice` keyed by the container's Figma id), so a rebuild or a resumed run applies it again.
 - **Lowering is code and keeps the first paint.** `@fanos/compile` `lowerLayout(tree, doc, choices)` rewrites the compiled Stack:
   - The Stack becomes a `Carousel` with the same slides.
@@ -34,7 +34,7 @@ The pipeline serves one DSL per device: the host's page URL asks for desktop, ta
 
 ## Consequences
 
-- `pnpm eval layout` scores detection on the 18 eval frames against `agents/card-match/evals/layouts.ts`. The rules were tuned on those frames, so this is a regression check, not held-out accuracy. An unlabelled carousel is a failure.
+- `pnpm eval layout` scores detection on the 18 eval frames against `agents/frame-match/evals/layouts.ts`. The rules were tuned on those frames, so this is a regression check, not held-out accuracy. An unlabelled carousel is a failure.
 - None of the eval frames has designed pagination dots, so the dots rule is checked only on hand-built IR until a real design has them.
 - A run with `--yes`, or `pnpm agent watch` without `--ask`, approves every proposal as it stands. Unsure rows stay rows and carousels get no autoplay or loop.
 - Lowering a carousel did not move a pixel on any of the four eval frames that have one (player-strip, team-page, fixtures-strip, fixtures-inner): the match and conform errors are identical with and without it.

@@ -34,7 +34,7 @@ A server tool the entry does not list is unreachable.
 
 ## Consequences
 
-- An agent is a prompt, its capabilities and its success check. `cast-researcher` (`hooks.choose`) and `cast-builder` (`hooks.author`) have no tools of their own; card-match has `hooks.read` as optional. The hand-written `cast.*` tools, `cast.sampleHook` and the `build.*` tools are gone.
+- An agent is a prompt, its capabilities and its success check. `hook-finder` (`hooks.choose`) and `hook-maker` (`hooks.author`) have no tools of their own; frame-match has `hooks.read` as optional. The hand-written `cast.*` tools, `cast.sampleHook` and the `build.*` tools are gone.
 - A new server is an entry, a sync and a review. Pointing an agent at it is a capability, without new code, unless the server needs an adapter.
 - "dugout's own hooks" is a rule in the registry (an argument pattern, an id-prefix option), not in code. It is enforced before approval, so a refused call reaches neither a person nor the server. Cast's scoped credentials (ask 6) would move it to the server.
 - The builder may write any `dugout_` hook, not only the one its run created (ADR 0025's tools enforced that). Its writes are still approved as one call, and it runs once per parent run.

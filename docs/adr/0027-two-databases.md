@@ -6,11 +6,11 @@ Date: 2026-11-05 · Status: accepted (direction), needs an audit of `apps/api`'s
 
 Three databases exist today.
 
-| Database | Server | Owner | Holds |
-| --- | --- | --- | --- |
-| `fanxp_dev` (`fanxp_master`) | shared Aurora | the FanXP backend (`wnm-fanxp-backend`) | users, clients, plugin sign-ins, the Send ledger, templates |
-| `harness` | our Postgres | the agents worker | runs, run events, approvals, memory |
-| `fanos` | our Postgres | the control plane (`apps/api`) | what the old Send stored (exports, artifacts), surface versions, pipeline runs, fidelity |
+| Database                     | Server        | Owner                                   | Holds                                                                                    |
+| ---------------------------- | ------------- | --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `fanxp_dev` (`fanxp_master`) | shared Aurora | the FanXP backend (`wnm-fanxp-backend`) | users, clients, plugin sign-ins, the Send ledger, templates                              |
+| `harness`                    | our Postgres  | the agents worker                       | runs, run events, approvals, memory                                                      |
+| `fanos`                      | our Postgres  | the control plane (`apps/api`)          | what the old Send stored (exports, artifacts), surface versions, pipeline runs, fidelity |
 
 `fanos` exists because the Figma pipeline came from the `trial` repo with its own API, and the plugin posted the whole Send to it. ADR 0021 kept it separate from `harness` and said the final DSL belongs to FanXP's database.
 
@@ -32,13 +32,13 @@ Three things changed. The Send no longer goes to the control plane: files go to 
 
 **The worker reaches the backend only through MCP servers.** Cast MCP exists (ADR 0026). A Surface MCP server comes next, on the same registry, lock and approval rules:
 
-| Tool | Effect | Replaces |
-| --- | --- | --- |
-| `surface.getSend` | read | `plane.getExport`. Returns the manifest and a signed download URL per file. |
-| `surface.getTokens` | read | the open question about tenant tokens |
-| `surface.getTemplate`, `surface.getPage` | read | reading what exists before changing it |
-| `surface.saveDraft` | write, approval | saving the DSL tree, preview and reports for a Send |
-| `surface.publishTemplate` | write, approval | publishing: copies used images to `static-assets/template/` and creates or versions the template |
+| Tool                                     | Effect          | Replaces                                                                                         |
+| ---------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------ |
+| `surface.getSend`                        | read            | `plane.getExport`. Returns the manifest and a signed download URL per file.                      |
+| `surface.getTokens`                      | read            | the open question about tenant tokens                                                            |
+| `surface.getTemplate`, `surface.getPage` | read            | reading what exists before changing it                                                           |
+| `surface.saveDraft`                      | write, approval | saving the DSL tree, preview and reports for a Send                                              |
+| `surface.publishTemplate`                | write, approval | publishing: copies used images to `static-assets/template/` and creates or versions the template |
 
 Files stay out of MCP. Tools return signed S3 URLs and keys, and the worker fetches the bytes.
 
@@ -48,19 +48,19 @@ Files stay out of MCP. Tools return signed S3 URLs and keys, and the worker fetc
 
 ## Where the control plane's modules go
 
-| `apps/api` module | Lines | Goes to |
-| --- | --- | --- |
-| `exports`, `artifacts` | 1,520 | the Send ledger (built) plus an index of results in the FanXP DB, bytes in S3 |
-| `surfaces` | 777 | the backend's template and version tables |
-| `fidelity` | 288 | a table in the FanXP DB. The scoring code stays in `@fanos/conform` and `@fanos/renderer`, which agents run in-process. |
-| `projects`, `audit`, `sync` | about 620 | clients replace projects, audit moves over, Electric sync is dropped |
-| `runs` | 1,918 | unknown until audited (a BullMQ job queue for the older pipeline) |
+| `apps/api` module           | Lines     | Goes to                                                                                                                 |
+| --------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `exports`, `artifacts`      | 1,520     | the Send ledger (built) plus an index of results in the FanXP DB, bytes in S3                                           |
+| `surfaces`                  | 777       | the backend's template and version tables                                                                               |
+| `fidelity`                  | 288       | a table in the FanXP DB. The scoring code stays in `@fanos/conform` and `@fanos/renderer`, which agents run in-process. |
+| `projects`, `audit`, `sync` | about 620 | clients replace projects, audit moves over, Electric sync is dropped                                                    |
+| `runs`                      | 1,918     | unknown until audited (a BullMQ job queue for the older pipeline)                                                       |
 
 The `@fanos/*` packages (`compile`, `conform`, `renderer`, `dsl`, `tokens`) stay. Agents use them as libraries, in the worker's process, so scoring and rendering do not depend on the control plane.
 
 ## Consequences
 
-- `card-match` and `bind` read their input from `surface.getSend` and S3, and write results through `surface.saveDraft`, instead of calling `plane.getExport`. Until that lands, the control plane keeps running.
+- `frame-match` and `bind` read their input from `surface.getSend` and S3, and write results through `surface.saveDraft`, instead of calling `plane.getExport`. Until that lands, the control plane keeps running.
 - `apps/api`, the old `apps/surface-studio` (`:3001`) and `apps/web` (`:3000`, the preview site) are stand-ins. They retire as the admin app's Studio and the renderer's `surface_v2` branch ship. `pnpm infra up pipeline`, `pnpm db migrate fanos` and `pnpm db import` retire with them.
 - The Studio inspector's data (IR, DSL, Gaps, Data and logic) must come from backend endpoints backed by S3 and the result index.
 - The backend needs a route to start runs, decide approvals, cancel, list, and stream events (spec P1).
@@ -78,6 +78,6 @@ The `@fanos/*` packages (`compile`, `conform`, `renderer`, `dsl`, `tokens`) stay
 
 1. Apply the Send migration on `fanxp_dev` and run a live Send.
 2. The backend queues the run at `complete`.
-3. Surface MCP read tools (`getSend`, `getTokens`). Move `card-match` and `bind` onto them.
+3. Surface MCP read tools (`getSend`, `getTokens`). Move `frame-match` and `bind` onto them.
 4. `saveDraft`, the result index, and the Studio review screens.
 5. Audit and remove `apps/api` and `fanos`.

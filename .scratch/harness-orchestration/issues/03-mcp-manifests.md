@@ -25,7 +25,7 @@ the whole pipeline applies unchanged. Cast moves onto this with the same tool na
   - a changed description or schema on the server refuses that tool, naming the sync command;
   - the tenant's credentials are picked by the run's tenant, never from input.
 - The sync command flags a `read` tool whose name or description says create, update, delete, publish, send or run.
-- card-match's Cast tools come from `config/mcp/cast.json`; its tests and `pnpm eval card-match --scripted` pass.
+- frame-match's Cast tools come from `config/mcp/cast.json`; its tests and `pnpm eval frame-match --scripted` pass.
 - An ADR "MCP servers as configured tool sources", superseding the "no generic passthrough" line of ADR 0022 and keeping the rest.
 - Harness issue 10 resolved with a pointer here.
 

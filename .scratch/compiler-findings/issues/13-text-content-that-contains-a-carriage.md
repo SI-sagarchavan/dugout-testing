@@ -3,7 +3,7 @@
 Status: needs-triage
 Key: text content that contains a carriage return was carried over as a line break, even though figma draws it on one line (lines: 1, width_and_height). in i348:20276;13131:56594 ('terms and conditions\r | privacy and policy') this split the link onto two lines and made the footer (348:20276) 21px too tall. normalise '\r' when figma reports a single line.
 
-Reported by the card-match agent: what the compiler should have done. Fix it in the pipeline.
+Reported by the frame-match agent: what the compiler should have done. Fix it in the pipeline.
 
 ## Comments
 

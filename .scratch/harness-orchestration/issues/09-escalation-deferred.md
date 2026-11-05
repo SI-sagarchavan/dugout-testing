@@ -16,8 +16,8 @@ change is a `model` field on `TaskRequest`.
 
 ## First: find out whether it would pay
 
-Run `pnpm eval sitemap` and `pnpm eval card-match` on `haiku`, `sonnet` and `opus` (`--model`), and
-record pass rate and cost in the spec. Our card-match data says the model adds at most 0.28 points
+Run `pnpm eval sitemap` and `pnpm eval frame-match` on `haiku`, `sonnet` and `opus` (`--model`), and
+record pass rate and cost in the spec. Our frame-match data says the model adds at most 0.28 points
 in 13 of 15 runs, so there may be nothing to escalate for.
 
 ## Trigger to build
