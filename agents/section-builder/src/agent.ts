@@ -17,9 +17,9 @@ export const spec: AgentSpec = {
   version: 1,
   owner: "fanos-content",
   description:
-    "Turns a designer's Send into one page preview with its data bound: the frame matched to its screenshot and published (frame-match), then the data found, or built, in Cast and bound to it (bind). One run, one result, one preview.",
+    "Turns a designer's Handoff into one page preview with its data bound: the frame matched to its screenshot and published (frame-match), then the data found, or built, in Cast and bound to it (bind). One run, one result, one preview.",
   instructions: [
-    "A designer pressed Send in the Figma plugin. The whole job is one tool: page.build. It runs in a fixed order, so you do not choose the steps: the frame is matched to its screenshot and published, then the data it shows is found in Cast, or built there, and bound to it. It takes no arguments.",
+    "A designer pressed Handoff in the Figma plugin. The whole job is one tool: page.build. It runs in a fixed order, so you do not choose the steps: the frame is matched to its screenshot and published, then the data it shows is found in Cast, or built there, and bound to it. It takes no arguments.",
     "",
     `1. Call ${BUILD} once. A person approves it once; that covers everything it does.`,
     "2. Call final. Every field is copied from what page.build returned: do not write a link or a number of your own.",
@@ -52,11 +52,44 @@ export const Output = z.object({
     .array(z.string())
     .describe("Everything still off, each starting with the part it is about: frame or data"),
   compilerFindings: z.array(z.string()).describe("What the compiler should have done"),
+  notes: z
+    .array(
+      z.object({
+        id: z.string(),
+        status: z.enum(["addressed", "not-addressed"]),
+        detail: z.string(),
+      }),
+    )
+    .default([])
+    .describe("Each note the designer left: addressed by one of the stages, or why not"),
 });
 export type Output = z.infer<typeof Output>;
 
+type StageNote = { id: string; status: "addressed" | "not-addressed" | "not-mine"; detail: string };
+
+/**
+ * One answer for each note: addressed if either stage did it, else the reason the stage that owned
+ * it gave. A note both stages left to the other (`not-mine`) is reported as not addressed, so the
+ * reviewer sees it rather than a silence.
+ */
+export function mergeNotes(frame: StageNote[] = [], data: StageNote[] = []): Output["notes"] {
+  const ids = [...new Set([...frame, ...data].map((n) => n.id))];
+  return ids.map((id) => {
+    const reports = [...frame, ...data].filter((n) => n.id === id);
+    const done = reports.find((n) => n.status === "addressed");
+    if (done) return { id, status: "addressed" as const, detail: done.detail };
+    const refused = reports.find((n) => n.status === "not-addressed");
+    return {
+      id,
+      status: "not-addressed" as const,
+      detail: refused?.detail ?? "neither stage took this note",
+    };
+  });
+}
+
 /** One answer from the two stages, as the pass hands it over. */
 export function assemble(frame: FrameOutput, data: DataOutput): Output {
+  const notes = mergeNotes(frame.notes, data.notes);
   return {
     previewUrl: data.previewUrl,
     treeArtifactId: frame.treeArtifactId,
@@ -69,6 +102,9 @@ export function assemble(frame: FrameOutput, data: DataOutput): Output {
     bound: data.bound,
     collapsed: data.collapsed,
     remaining: [
+      ...notes
+        .filter((n) => n.status === "not-addressed")
+        .map((n) => `note ${n.id}: not addressed: ${n.detail}`),
       ...(frame.unmeasuredBecause
         ? [`frame: nothing was compared: ${frame.unmeasuredBecause}`]
         : []),
@@ -76,6 +112,7 @@ export function assemble(frame: FrameOutput, data: DataOutput): Output {
       ...data.remaining.map((item) => `data: ${item}`),
     ],
     compilerFindings: frame.compilerFindings,
+    notes,
   };
 }
 
@@ -112,7 +149,7 @@ export function verifyFinal(output: unknown, run: { messages: Message[] }): stri
 export const pipeline: Pipeline = {
   name: BUILD,
   description:
-    "Runs the whole pass for this Send, in order: matches the frame to its screenshot and publishes it, then finds (or builds) the data in Cast and binds it. Takes no arguments. Answers with the one preview and everything still off.",
+    "Runs the whole pass for this Handoff, in order: matches the frame to its screenshot and publishes it, then finds (or builds) the data in Cast and binds it. Takes no arguments. Answers with the one preview and everything still off.",
   async run(call, input) {
     const { exportId, project } = RunInput.parse(input);
     const frame = (await call(frameMatch, { exportId, project })) as FrameOutput;
@@ -145,7 +182,7 @@ export const agent = defineAgent({
               `Failure: ${input.retry.lastFailure}`,
             ]
           : []),
-        "One pass for this Send: the frame is matched to its screenshot and published, then the data it shows is found in Cast (a new dugout_… hook is built there if none fits) and bound to it. No existing hook of Cast's is changed.",
+        "One pass for this Handoff: the frame is matched to its screenshot and published, then the data it shows is found in Cast (a new dugout_… hook is built there if none fits) and bound to it. No existing hook of Cast's is changed.",
       ].join("\n");
     },
   },

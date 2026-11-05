@@ -36,7 +36,7 @@ export const RescanIcon = ({ size }: IconProps): JSX.Element => (
   </Icon>
 );
 
-export const SendIcon = ({ size }: IconProps): JSX.Element => (
+export const HandoffIcon = ({ size }: IconProps): JSX.Element => (
   <Icon size={size}>
     <path d="M12 16V5M7 9.5 12 5l5 4.5" />
     <path d="M5 19h14" />

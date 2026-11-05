@@ -21,7 +21,7 @@ events come free.
 - It picks only among agents this caller may run: the schema's agent list is built per call.
 - The extracted input is untrusted and checked against the target agent's input schema.
 - Low confidence asks. An agent that writes never starts on a guess.
-- Deterministic where the trigger already names the agent (a Send, a button).
+- Deterministic where the trigger already names the agent (a Handoff, a button).
 - Each decision is a `route.decided` event.
 
 ## Trigger to build

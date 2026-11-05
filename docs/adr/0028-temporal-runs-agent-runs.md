@@ -44,7 +44,7 @@ Runtime is the one new piece and it does not solve the wait. As we understand AW
 | A run waiting for an approval | checkpointed and paused, not charged                 | no checkpoints, so most likely it keeps its machine (our inference; the docs do not say)                                     |
 | What we operate               | nothing                                              | the web app, Postgres, Redis, the supervisor and runners on Docker Compose or Kubernetes (no ECS mentioned), no auto-scaling |
 
-On Cloud, Bedrock credentials, MCP grants, tenant data and Send files would leave our AWS account. Self-hosted keeps them in but loses checkpoints, which are what make long approval waits cheap. A failed attempt restarts from the beginning, reusing only finished subtasks, so dugout's own save points would still be needed. Revisit if running agent code outside our AWS account becomes acceptable.
+On Cloud, Bedrock credentials, MCP grants, tenant data and Handoff files would leave our AWS account. Self-hosted keeps them in but loses checkpoints, which are what make long approval waits cheap. A failed attempt restarts from the beginning, reusing only finished subtasks, so dugout's own save points would still be needed. Revisit if running agent code outside our AWS account becomes acceptable.
 
 **AWS Step Functions or Lambda durable functions (not evaluated in depth).** The fallback if Temporal's hosting or cost is not acceptable. Runs need a headless browser and long model calls, which suit ECS better than Lambda.
 

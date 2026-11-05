@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ControlPlane } from "./control-plane.ts";
 import { LayoutChoice } from "./layout.ts";
+import { type DesignerNote, notesOf } from "./notes.ts";
 import type {
   Box,
   CompileNote,
@@ -67,12 +68,14 @@ export interface Bundle {
   parents: Map<string, string | null>;
   /** Where a search placed a screenshot with padding, by its layer's Figma id, once measured. */
   found?: Map<string, { dx: number; dy: number }>;
+  /** What the designer wrote on layers in the plugin; every one must be answered. */
+  notes: DesignerNote[];
   themeRaw: unknown;
   themeArtifactId: string;
   plates: Array<{ nodeId: string; name: string; png: Buffer }>;
 }
 
-/** What a designer's Send stored, by export id. Immutable, so a resumed run reads the same. */
+/** What a designer's Handoff stored, by export id. Immutable, so a resumed run reads the same. */
 export async function loadBundle(
   tools: Toolchain,
   plane: ControlPlane,
@@ -103,6 +106,7 @@ export async function loadBundle(
     byId,
     order,
     parents,
+    notes: notesOf(doc, new Map([...byId].map(([id, n]) => [id, n.name])), parents),
     themeRaw: await plane.json(themeArtifactId),
     themeArtifactId,
     plates: await Promise.all(

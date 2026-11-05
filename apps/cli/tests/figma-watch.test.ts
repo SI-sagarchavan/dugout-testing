@@ -30,7 +30,7 @@ function setup(opts: { exports: ReturnType<typeof sent>[]; prior?: unknown[]; si
 }
 
 describe("createFigmaWatch", () => {
-  it("queues one run for each new Send, oldest first", async () => {
+  it("queues one run for each new Handoff, oldest first", async () => {
     const { watch, started } = setup({ exports: [sent("b", 5), sent("a", 3)] });
     expect((await watch.look()).map((run) => run.runId)).toEqual(["run-a", "run-b"]);
     expect(started).toEqual(["a", "b"]);
@@ -49,7 +49,7 @@ describe("createFigmaWatch", () => {
     expect(started).toEqual([]);
   });
 
-  it("runs only the newest Send of one frame", async () => {
+  it("runs only the newest Handoff of one frame", async () => {
     const { watch, started } = setup({ exports: [sent("v2", 6, "frame"), sent("v1", 5, "frame")] });
     await watch.look();
     expect(started).toEqual(["v2"]);

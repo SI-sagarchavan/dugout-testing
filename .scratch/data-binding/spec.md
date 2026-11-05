@@ -235,14 +235,14 @@ One sample has `event_state` `R` only. Generic code can vary what it saw. It can
 
 - **Separate from `frame-match`.** Different job, tools, skill and eval. The dynamic SDUI plan splits
   agents by job (intent, binding, repair).
-- **Chained by code.** One Send is one program (ADR 0017): `frame-match` → `bind` → publish. The
+- **Chained by code.** One Handoff is one program (ADR 0017): `frame-match` → `bind` → publish. The
   order is fixed, so code runs it. Each is its own run, linked by `parent_run_id`, evaluated alone.
 - **The subagent comes with the Cast layer.** Finding which hook feeds a card, across a tenant's
   hooks and APIs, is an open-ended search that would flood `bind`'s context. That is a read-only
   `hook-finder` subagent (harness-orchestration ticket 07). Until then the flow id is given.
 
 ```
-Send ─► frame-match ─► bind ─────────────────────────────────────► publish (approval)
+Handoff ─► frame-match ─► bind ─────────────────────────────────────► publish (approval)
                       code: repeats, variants, holes, shape
                       model: plan (paths, when, grouping)
                       code: checks 6–8, scenarios ── refused ──► model

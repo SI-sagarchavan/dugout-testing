@@ -1,5 +1,5 @@
 /**
- * The Sends the eval runs on. Each is a stored export in the local control plane, so the eval
+ * The Handoffs the eval runs on. Each is a stored export in the local control plane, so the eval
  * needs the pipeline stack up. `kind` says what the frame is there to catch.
  */
 /**

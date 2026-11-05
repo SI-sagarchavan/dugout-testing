@@ -5,7 +5,7 @@
 > still holds here: databases in Docker and apps on the host for local work, `harness` as its own database
 > on its own instance in dev and prod, no joins across databases, and the final DSL belonging to FanXP.
 > What no longer holds: `fanos` as a permanent database, Electric on it, and the control plane as the
-> store for Sends.
+> store for Handoffs.
 
 After ADR 0020 one checkout holds everything. The question was how to run it: the databases need Docker, and the apps (API, worker, Studio, web, dugout's worker and watcher) could be containers or plain `node` processes. And the two halves had brought a Postgres each.
 
@@ -13,7 +13,7 @@ After ADR 0020 one checkout holds everything. The question was how to run it: th
 
 Docker runs the databases only. The apps run on the host with the usual commands, so a code change is a restart, not an image build, and a debugger or `console.log` is where you expect it.
 
-**One Postgres server, two databases.** Dugout's server (pgvector, Postgres 17, :55432) holds `harness` (agent memory, runs, approvals; roles `harness` and `dugout_app`, with row-level security) and `fanos` (the pipeline's control plane: Sends, exports, artifacts, pipeline runs; role `fanos`, which can log in and replicate but is not a superuser, so the pipeline cannot reach `harness`). Nothing queries across them; dugout's agents reach the control plane through its HTTP API. A third database, `fanos_test`, is for the API's integration tests, which delete every row they find: they refuse a database whose name does not end in `_test`. The server runs with `wal_level=logical` because Electric reads the WAL.
+**One Postgres server, two databases.** Dugout's server (pgvector, Postgres 17, :55432) holds `harness` (agent memory, runs, approvals; roles `harness` and `dugout_app`, with row-level security) and `fanos` (the pipeline's control plane: Handoffs, exports, artifacts, pipeline runs; role `fanos`, which can log in and replicate but is not a superuser, so the pipeline cannot reach `harness`). Nothing queries across them; dugout's agents reach the control plane through its HTTP API. A third database, `fanos_test`, is for the API's integration tests, which delete every row they find: they refuse a database whose name does not end in `_test`. The server runs with `wal_level=logical` because Electric reads the WAL.
 
 **One Valkey.** It runs with `noeviction`. Dugout's event stream is in database 0; the API's job queue (BullMQ) is in database 1 (`REDIS_URL=redis://localhost:56379/1`).
 

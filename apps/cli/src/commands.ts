@@ -410,7 +410,7 @@ export function renderHelp(topic?: CommandName): string {
 const TOOLS: Array<[string, string]> = [
   [
     "watch",
-    "A Send from the Figma plugin starts one section-builder run: frame matched, data bound, one preview",
+    "A Handoff from the Figma plugin starts one section-builder run: frame matched, data bound, one preview",
   ],
   ["memory <review|promote>", "Approve proposed facts, or propose shared memory"],
   [

@@ -1,4 +1,4 @@
-/** The FanOS control plane, where a designer's Send is stored. Everything here is read by id. */
+/** The FanOS control plane, where a designer's Handoff is stored. Everything here is read by id. */
 export interface ExportRecord {
   id: string;
   fileKey?: string | null;

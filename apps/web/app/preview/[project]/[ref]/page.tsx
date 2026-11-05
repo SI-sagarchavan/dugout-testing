@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { preparePage, Render } from "@fanos/renderer";
-import { PreviewError, readSend } from "../../../../lib/control-plane";
+import { PreviewError, readHandoff } from "../../../../lib/control-plane";
 
 /**
- * A Send, rendered as a page: `/preview/<project>/<run or dsl_tree id>`.
+ * A Handoff, rendered as a page: `/preview/<project>/<run or dsl_tree id>`.
  *
  * The same tree, theme and surfaces as Studio's static preview, through the same recipe
  * (`preparePage`), so the first paint is the same page the fidelity harness measured. What this
@@ -48,7 +48,7 @@ export default async function PreviewPage({ params, searchParams }: { params: Pa
   const background = bg && /^[0-9a-f]{3,8}$/i.test(bg) ? `#${bg}` : "#ffffff";
 
   try {
-    const send = await readSend(decodeURIComponent(project), decodeURIComponent(ref), query);
+    const send = await readHandoff(decodeURIComponent(project), decodeURIComponent(ref), query);
     const page = preparePage({
       tree: send.tree,
       theme: send.theme,

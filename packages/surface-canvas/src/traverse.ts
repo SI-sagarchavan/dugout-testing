@@ -80,6 +80,7 @@ export async function traverseToDocument(
       breakpointHint: walk.root.geometry.bbox.w,
       root: walk.root,
       assets: [],
+      annotations: [],
     },
     walk,
   };

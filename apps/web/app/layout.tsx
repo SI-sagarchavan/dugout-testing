@@ -43,7 +43,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
         <style dangerouslySetInnerHTML={{ __html: FONT_CSS_FOR_NEXT }} />
       </head>
-      {/* Each page paints its own background: a preview takes the Send's. */}
+      {/* Each page paints its own background: a preview takes the Handoff's. */}
       <body style={{ margin: 0 }}>{children}</body>
     </html>
   );

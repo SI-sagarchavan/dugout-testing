@@ -1,8 +1,8 @@
 import type { ExportRecord } from "@dugout/agent-frame-match";
 
-/** What a Send starts: the whole pass, one run (frame-match, then bind, as its children). */
+/** What a Handoff starts: the whole pass, one run (frame-match, then bind, as its children). */
 export const FIGMA_AGENT = "section-builder";
-/** Agents whose runs say a Send was already handled: frame-match ran alone before the pass existed. */
+/** Agents whose runs say a Handoff was already handled: frame-match ran alone before the pass existed. */
 export const PRIOR_AGENTS: string[] = [FIGMA_AGENT, "frame-match"];
 
 export interface FigmaWatchOptions {
@@ -18,7 +18,7 @@ export interface FigmaWatchOptions {
 }
 
 /**
- * What turns the plugin's Send into a run. Send stores an export in the control plane, and this
+ * What turns the plugin's Handoff into a run. Handoff stores an export in the control plane, and this
  * looks there. A designer who sends one frame twice before a look gets a run on the newer one.
  */
 export function createFigmaWatch(opts: FigmaWatchOptions) {
@@ -26,7 +26,7 @@ export function createFigmaWatch(opts: FigmaWatchOptions) {
   const handled = new Set<string>();
   let since = opts.since.getTime();
 
-  // A prior run says how far the last watcher got, so a Send made while this one was down still runs.
+  // A prior run says how far the last watcher got, so a Handoff made while this one was down still runs.
   const prime = async () => {
     let reached: number | undefined;
     for (const run of await opts.priorRuns()) {
@@ -136,7 +136,7 @@ export function finishedLines(
   lines.push(
     `  run ${runId}`,
     "════════════════════════════════════════",
-    "watching for the next Send...",
+    "watching for the next Handoff...",
   );
   return lines;
 }

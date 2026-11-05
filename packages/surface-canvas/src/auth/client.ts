@@ -69,7 +69,7 @@ export type TenantsResult =
   /** `unauthorized`: the access token is dead. Refresh once, then sign in again. */
   | { ok: false; unauthorized: boolean; message: string };
 
-export type SendCheckResult =
+export type HandoffCheckResult =
   | { ok: true }
   | {
       ok: false;
@@ -91,7 +91,7 @@ export interface AuthClient {
   /** The clients this user may send for right now. */
   tenants(accessToken: string): Promise<TenantsResult>;
   /** May these frames go to this client. The answer is the backend's, whatever the plugin believes. */
-  checkSend(accessToken: string, client: string, frames: FrameSummary[]): Promise<SendCheckResult>;
+  checkHandoff(accessToken: string, client: string, frames: FrameSummary[]): Promise<HandoffCheckResult>;
 }
 
 export const AUTH_PATHS = {
@@ -100,7 +100,7 @@ export const AUTH_PATHS = {
   refresh: "/surface/auth/refresh",
   revoke: "/surface/auth/revoke",
   tenants: "/surface/tenants",
-  checkSend: "/surface/sends/check",
+  checkHandoff: "/surface/handoffs/check",
 } as const;
 
 export function createAuthClient(options: { origin: string; fetch: ApiFetch }): AuthClient {
@@ -222,8 +222,8 @@ export function createAuthClient(options: { origin: string; fetch: ApiFetch }): 
       };
     },
 
-    async checkSend(accessToken, client, frames) {
-      const result = await call("POST", AUTH_PATHS.checkSend, { client, frames }, accessToken);
+    async checkHandoff(accessToken, client, frames) {
+      const result = await call("POST", AUTH_PATHS.checkHandoff, { client, frames }, accessToken);
       if (result.status === null) {
         return {
           ok: false,

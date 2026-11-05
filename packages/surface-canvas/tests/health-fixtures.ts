@@ -255,6 +255,7 @@ export function document(root: FrameIRNode, overrides: Partial<FrameIRDocument> 
     breakpointHint: root.geometry.bbox.w,
     root,
     assets: [],
+    annotations: [],
     ...overrides,
   };
 }

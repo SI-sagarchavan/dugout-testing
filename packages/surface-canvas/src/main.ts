@@ -31,7 +31,7 @@ import { reconciliationReport } from "./health/reconcile-report.js";
 import { invalidateSlots } from "./health/slots.js";
 import type { Batch, BatchItem, LintOptions, LintReport, ThemeSnapshot } from "./health/types.js";
 import { DEFAULT_LINT_OPTIONS, isFixProposal, isRoundProposal } from "./health/types.js";
-import type { FrameIRDocument, FrameIRNode } from "./ir/schema";
+import type { Annotation, FrameIRDocument, FrameIRNode } from "./ir/schema";
 import { lint } from "./rules/index.js";
 import {
   applyAll,
@@ -47,6 +47,14 @@ import {
 } from "./fix.js";
 import * as heatmap from "./heatmap.js";
 import { loadBindingIndex, reconcile, type BindingIndex } from "./reconcile.js";
+import {
+  ANNOTATION_PLUGIN_KEY,
+  parseAnnotations,
+  removeAnnotation,
+  serializeAnnotations,
+  splitAnnotations,
+  upsertAnnotation,
+} from "./annotations.js";
 import {
   ASSET_PLUGIN_KEY,
   isConfident,
@@ -78,12 +86,12 @@ import { createMissingVariables, resetDriftedVariables } from "./variables.js";
 import { defaultTheme, themeById, themeChoices } from "./themes.js";
 import {
   createApiClient,
-  createSendsClient,
+  createHandoffsClient,
   isAllowedLoginUrl,
-  prepareSend,
+  prepareHandoff,
   resolveAuthBaseUrl,
   resolveOrigin,
-  runSend,
+  runHandoff,
   UnsupportedAssetError,
   type ApiClient,
   type ApiFetch,
@@ -91,17 +99,17 @@ import {
   type StudioPage,
 } from "./api/index.js";
 import {
-  CLIENT_STORAGE_RUNS_KEY,
+  CLIENT_STORAGE_BATCHES_KEY,
   cancelWaiting,
-  newRun,
-  parseRuns,
-  pushRun,
-  replaceRun,
+  newBatch,
+  parseBatches,
+  pushBatch,
+  replaceBatch,
   setFrame,
   settleInterrupted,
-  type FrameSend,
-  type RunRecord,
-} from "./sends.js";
+  type FrameHandoff,
+  type HandoffBatch,
+} from "./handoffs.js";
 import {
   CLIENT_STORAGE_API_ORIGIN_KEY,
   CLIENT_STORAGE_AUTH_BASE_URL_KEY,
@@ -161,9 +169,9 @@ interface State {
   /** The clients this account may send for, and which one this file is for. */
   tenants: TenantsView;
   /** Every send this plugin has made, newest first. Persisted in clientStorage. */
-  runs: RunRecord[];
-  /** The run the Send tab is showing: in flight, or finished and not yet dismissed. */
-  activeRunId: string | null;
+  batches: HandoffBatch[];
+  /** The run the Handoff tab is showing: in flight, or finished and not yet dismissed. */
+  activeBatchId: string | null;
   /** A send loop is running. One at a time. */
   sending: boolean;
   /** Set by Cancel; the loop reads it between frames. */
@@ -203,8 +211,8 @@ const state: State = {
   login: { running: false, cancel: false, waiting: null },
   authMessage: null,
   tenants: { status: "idle" },
-  runs: [],
-  activeRunId: null,
+  batches: [],
+  activeBatchId: null,
   sending: false,
   cancelRequested: false,
   error: null,
@@ -254,7 +262,7 @@ async function boot(): Promise<void> {
 
   // A send that was still going when the plugin closed never finished. Settle it
   // as a failure so Runs can offer Re-send instead of showing it uploading forever.
-  state.runs = parseRuns(await readStoredRuns()).map(settleInterrupted);
+  state.batches = parseBatches(await readStoredBatches()).map(settleInterrupted);
   void saveRuns();
 
   state.booted = true;
@@ -400,6 +408,12 @@ async function handle(message: UiMessage): Promise<void> {
     case "place-asset":
       await placeAsset(message);
       return;
+    case "save-note":
+      await saveNote(message);
+      return;
+    case "remove-note":
+      writeNotes(removeAnnotation(readNotes(), message.id));
+      return;
     case "retarget-asset":
       await retargetAsset(message.key, message.targetId);
       return;
@@ -412,20 +426,20 @@ async function handle(message: UiMessage): Promise<void> {
     case "set-asset-fit":
       setAssetFit(message.key, message.fit);
       return;
-    case "send-frames":
-      await sendFrames(message.frameIds);
+    case "handoff-frames":
+      await handoffFrames(message.frameIds);
       return;
     case "retry-frames":
-      await retryFrames(message.runId, message.frameIds);
+      await retryFrames(message.batchId, message.frameIds);
       return;
     case "cancel-send":
-      cancelSend();
+      cancelHandoff();
       return;
-    case "restart-send":
-      await restartSend(message.runId);
+    case "restart-handoff":
+      await restartHandoff(message.batchId);
       return;
     case "dismiss-send":
-      state.activeRunId = null;
+      state.activeBatchId = null;
       postRuns();
       return;
     case "download-zip":
@@ -531,6 +545,7 @@ function runLint(scope: "full" | "incremental"): void {
   state.report = report;
   postReport(report, scope);
   postAssets();
+  postNotes();
 }
 
 function postBoot(): void {
@@ -546,6 +561,7 @@ function postBoot(): void {
     },
   });
   postAssets();
+  postNotes();
 }
 
 function postReport(report: LintReport, scope: "full" | "incremental"): void {
@@ -1336,54 +1352,54 @@ function exactBytes(body: string | Uint8Array): string | Uint8Array<ArrayBuffer>
 }
 
 // ---------------------------------------------------------------------------
-// Sends
+// Handoffs
 // ---------------------------------------------------------------------------
 
 function postRuns(): void {
-  post({ type: "runs", runs: state.runs, activeId: state.activeRunId });
+  post({ type: "batches", batches: state.batches, activeId: state.activeBatchId });
 }
 
 async function saveRuns(): Promise<void> {
   try {
-    await figma.clientStorage.setAsync(CLIENT_STORAGE_RUNS_KEY, state.runs);
+    await figma.clientStorage.setAsync(CLIENT_STORAGE_BATCHES_KEY, state.batches);
   } catch {
     // History is a convenience. A full or unavailable store must not fail a send.
   }
 }
 
-async function readStoredRuns(): Promise<unknown> {
+async function readStoredBatches(): Promise<unknown> {
   try {
-    return await figma.clientStorage.getAsync(CLIENT_STORAGE_RUNS_KEY);
+    return await figma.clientStorage.getAsync(CLIENT_STORAGE_BATCHES_KEY);
   } catch {
     return undefined;
   }
 }
 
-function getRun(runId: string): RunRecord | undefined {
-  return state.runs.find((run) => run.id === runId);
+function getBatch(batchId: string): HandoffBatch | undefined {
+  return state.batches.find((run) => run.id === batchId);
 }
 
 /** Write one run back, tell the panel, and keep the history on disk. */
-function commitRun(run: RunRecord): void {
-  state.runs = replaceRun(state.runs, run);
+function commitBatch(run: HandoffBatch): void {
+  state.batches = replaceBatch(state.batches, run);
   postRuns();
   void saveRuns();
 }
 
-function patchFrame(runId: string, frameId: string, patch: Partial<Omit<FrameSend, "frameId">>): void {
-  const run = getRun(runId);
-  if (run) commitRun(setFrame(run, frameId, patch));
+function patchFrame(batchId: string, frameId: string, patch: Partial<Omit<FrameHandoff, "frameId">>): void {
+  const run = getBatch(batchId);
+  if (run) commitBatch(setFrame(run, frameId, patch));
 }
 
 /**
- * Send each frame as its own Send, in order.
+ * Hand off each frame as its own Handoff, in order.
  *
  * One frame is walked, posted, and settled before the next starts: the walk is
  * single-threaded in the sandbox anyway, and a failure then belongs to exactly
  * one frame rather than to "the send". Nothing here throws into the session —
  * a frame that cannot go out is recorded as failed with the reason.
  */
-async function sendFrames(frameIds: string[]): Promise<void> {
+async function handoffFrames(frameIds: string[]): Promise<void> {
   if (state.sending) return;
   const ids = [...new Set(frameIds)];
   if (ids.length === 0) {
@@ -1398,74 +1414,74 @@ async function sendFrames(frameIds: string[]): Promise<void> {
   }
 
   const at = Date.now();
-  const run = newRun({
+  const run = newBatch({
     id: `run-${at.toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     at,
     fileName: figma.root.name,
     origin: state.authBaseUrl,
     frames,
   });
-  state.runs = pushRun(state.runs, run);
-  state.activeRunId = run.id;
+  state.batches = pushBatch(state.batches, run);
+  state.activeBatchId = run.id;
   postRuns();
   void saveRuns();
 
   await processRun(run.id, ids);
 }
 
-async function retryFrames(runId: string, frameIds: readonly string[]): Promise<void> {
-  const run = getRun(runId);
+async function retryFrames(batchId: string, frameIds: readonly string[]): Promise<void> {
+  const run = getBatch(batchId);
   if (state.sending || !run) return;
   const known = new Set(run.frames.map((frame) => frame.frameId));
   const ids = frameIds.filter((id) => known.has(id));
   if (ids.length === 0) return;
   // Queue them all first, so the panel shows what is coming and Cancel has
   // something to cancel.
-  for (const id of ids) patchFrame(runId, id, { status: "waiting", files: 0 });
-  state.activeRunId = runId;
+  for (const id of ids) patchFrame(batchId, id, { status: "waiting", files: 0 });
+  state.activeBatchId = batchId;
   postRuns();
-  await processRun(runId, ids);
+  await processRun(batchId, ids);
 }
 
-async function processRun(runId: string, frameIds: readonly string[]): Promise<void> {
+async function processRun(batchId: string, frameIds: readonly string[]): Promise<void> {
   state.sending = true;
   state.cancelRequested = false;
   try {
     for (const frameId of frameIds) {
       if (state.cancelRequested) break;
-      await sendOneFrame(runId, frameId);
+      await handoffOneFrame(batchId, frameId);
     }
   } finally {
     // Whatever Cancel did not get to mark is still queued; settle it now so a
     // run can never be left "waiting" with nothing running.
-    const run = getRun(runId);
-    if (run && state.cancelRequested) commitRun(cancelWaiting(run));
+    const run = getBatch(batchId);
+    if (run && state.cancelRequested) commitBatch(cancelWaiting(run));
     state.sending = false;
     state.cancelRequested = false;
   }
 }
 
-async function sendOneFrame(runId: string, frameId: string): Promise<void> {
+async function handoffOneFrame(batchId: string, frameId: string): Promise<void> {
   // Before the walk, not after: a designer who is signed out should hear it now,
   // not once a 950-layer frame has been read for nothing.
   const session = await ensureSession();
   if (!session.ok) {
-    patchFrame(runId, frameId, { status: "failed", error: session.message });
+    patchFrame(batchId, frameId, { status: "failed", error: session.message });
     return;
   }
 
   // Also before the walk: no client chosen is something the designer fixes in a click.
   const clientBlocker = tenantBlocker(state.tenants);
   if (clientBlocker) {
-    patchFrame(runId, frameId, { status: "failed", error: clientBlocker });
+    patchFrame(batchId, frameId, { status: "failed", error: clientBlocker });
     return;
   }
 
-  patchFrame(runId, frameId, { status: "walking" });
+  patchFrame(batchId, frameId, { status: "walking" });
 
   const node = await sceneNode(frameId);
   if (!node) {
-    patchFrame(runId, frameId, {
+    patchFrame(batchId, frameId, {
       status: "failed",
       error: "The frame is no longer in this file.",
     });
@@ -1481,14 +1497,14 @@ async function sendOneFrame(runId: string, frameId: string): Promise<void> {
     // is stopped here and never reaches S3.
     const refused = await checkWithBackend(frameId, node.name, result.summary);
     if (refused) {
-      patchFrame(runId, frameId, { status: "failed", error: refused });
+      patchFrame(batchId, frameId, { status: "failed", error: refused });
       return;
     }
 
     // Hash what will be uploaded. The backend signs each file's size and SHA-256 into its
     // upload URL, so these must come from the very bytes that are sent.
     const hashStart = Date.now();
-    const prepared = await prepareSend(
+    const prepared = await prepareHandoff(
       {
         jsonName: result.jsonName,
         json: result.json,
@@ -1505,19 +1521,19 @@ async function sendOneFrame(runId: string, frameId: string): Promise<void> {
     if (prepared.skipped.length > 0) {
       console.log(`[fanos-studio] not sent (content photos or empty): ${prepared.skipped.join(", ")}`);
     }
-    patchFrame(runId, frameId, { status: "uploading", files });
+    patchFrame(batchId, frameId, { status: "uploading", files });
 
     const credentials = state.auth;
     const tenants = state.tenants;
     if (!credentials || tenants.status !== "ready" || !tenants.selected) {
-      patchFrame(runId, frameId, { status: "failed", files, error: "Connect your account to send." });
+      patchFrame(batchId, frameId, { status: "failed", files, error: "Connect your account to send." });
       return;
     }
 
     const page = currentPageRef(node);
     const uploadStart = Date.now();
-    const sent = await runSend({
-      client: createSendsClient({ baseUrl: state.authBaseUrl, fetch: sandboxFetch }),
+    const sent = await runHandoff({
+      client: createHandoffsClient({ baseUrl: state.authBaseUrl, fetch: sandboxFetch }),
       accessToken: credentials.accessToken,
       tenant: tenants.selected,
       source: {
@@ -1530,14 +1546,14 @@ async function sendOneFrame(runId: string, frameId: string): Promise<void> {
 
     if (sent.ok) {
       console.log(
-        `[fanos-studio] send ${sent.value.sendId}: ${sent.value.uploaded} uploaded, ${sent.value.present} already there, in ${Date.now() - uploadStart} ms`,
+        `[fanos-studio] send ${sent.value.handoffId}: ${sent.value.uploaded} uploaded, ${sent.value.present} already there, in ${Date.now() - uploadStart} ms`,
       );
-      patchFrame(runId, frameId, { status: "sent", files });
+      patchFrame(batchId, frameId, { status: "sent", files });
       return;
     }
     if (sent.unauthorized) {
       await dropCredentials("Your session ended. Connect your account again.");
-      patchFrame(runId, frameId, {
+      patchFrame(batchId, frameId, {
         status: "failed",
         files,
         error: "Your session ended. Connect your account, then retry.",
@@ -1546,9 +1562,9 @@ async function sendOneFrame(runId: string, frameId: string): Promise<void> {
     }
     // The list was stale: access to the client was removed since it loaded.
     if (sent.forbidden) void loadTenants();
-    patchFrame(runId, frameId, { status: "failed", files, error: sent.message });
+    patchFrame(batchId, frameId, { status: "failed", files, error: sent.message });
   } catch (err) {
-    patchFrame(runId, frameId, {
+    patchFrame(batchId, frameId, {
       status: "failed",
       error: err instanceof UnsupportedAssetError ? err.message : errorMessage(err),
     });
@@ -1560,22 +1576,22 @@ async function sendOneFrame(runId: string, frameId: string): Promise<void> {
  * the frame that is already uploading finishes; everything queued behind it is
  * marked cancelled straight away, so the panel answers the click at once.
  */
-function cancelSend(): void {
+function cancelHandoff(): void {
   if (!state.sending) return;
   state.cancelRequested = true;
-  const run = state.activeRunId ? getRun(state.activeRunId) : undefined;
-  if (run) commitRun(cancelWaiting(run));
+  const run = state.activeBatchId ? getBatch(state.activeBatchId) : undefined;
+  if (run) commitBatch(cancelWaiting(run));
 }
 
-async function restartSend(runId: string): Promise<void> {
-  const run = getRun(runId);
+async function restartHandoff(batchId: string): Promise<void> {
+  const run = getBatch(batchId);
   if (!run) return;
   const frameIds = run.frames.map((frame) => frame.frameId);
   if (state.sending) {
-    cancelSend();
+    cancelHandoff();
     while (state.sending) await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  await sendFrames(frameIds);
+  await handoffFrames(frameIds);
 }
 
 // ---------------------------------------------------------------------------
@@ -1865,7 +1881,7 @@ async function checkWithBackend(
   if (view.status !== "ready" || !view.selected || !credentials) {
     return tenantBlocker(view) ?? "Connect your account to send.";
   }
-  const check = await createAuthClient({ origin: state.authBaseUrl, fetch: sandboxFetch }).checkSend(
+  const check = await createAuthClient({ origin: state.authBaseUrl, fetch: sandboxFetch }).checkHandoff(
     credentials.accessToken,
     view.selected,
     [
@@ -2047,6 +2063,53 @@ function postAssets(): void {
     placements: state.ir ? placementsFromIr(state.ir.root, bindings) : {},
     targets: state.ir ? targetOptionsFromIr(state.ir.root, bindings) : {},
   });
+}
+
+function readNotes(): Annotation[] {
+  return state.root ? parseAnnotations(state.root.getPluginData(ANNOTATION_PLUGIN_KEY)) : [];
+}
+
+function writeNotes(notes: Annotation[]): void {
+  if (!state.root) return;
+  state.root.setPluginData(ANNOTATION_PLUGIN_KEY, serializeAnnotations(notes));
+  postNotes();
+}
+
+function postNotes(): void {
+  const all = readNotes();
+  if (!state.ir) {
+    post({ type: "notes", notes: all, orphaned: 0 });
+    return;
+  }
+  const { live, orphaned } = splitAnnotations(state.ir, all);
+  post({ type: "notes", notes: live, orphaned: orphaned.length });
+}
+
+async function saveNote(message: Extract<UiMessage, { type: "save-note" }>): Promise<void> {
+  if (!state.root) {
+    fail("Check a frame first, then write a note on one of its layers.");
+    return;
+  }
+  const target = await sceneNode(message.targetId);
+  if (!target) {
+    fail("That layer is no longer in the file.");
+    return;
+  }
+  const text = message.text.trim();
+  if (!text) {
+    fail("A note needs some text.");
+    return;
+  }
+  const id = message.id ?? `note-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  writeNotes(
+    upsertAnnotation(readNotes(), {
+      id,
+      targetId: target.id,
+      targetName: target.name,
+      kind: message.kind,
+      text,
+    }),
+  );
 }
 
 async function sceneNode(id: string): Promise<SceneNode | null> {

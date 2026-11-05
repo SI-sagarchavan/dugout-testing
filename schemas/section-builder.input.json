@@ -5,7 +5,7 @@
     "exportId": {
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-      "description": "The export a designer's Send stored"
+      "description": "The export a designer's Handoff stored"
     },
     "project": {
       "default": "default",

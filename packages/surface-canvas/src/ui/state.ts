@@ -13,7 +13,7 @@
  * the whole interaction is testable without a DOM, same as the messages.
  */
 import type { AssetPlacement, TargetMatch, TargetOption } from "../assets.js";
-import type { AssetBinding } from "../ir/schema.js";
+import type { Annotation, AssetBinding } from "../ir/schema.js";
 import type { LintReport } from "../health/types.js";
 import type { ReconciliationReport } from "../health/reconcile-report.js";
 import type {
@@ -27,7 +27,7 @@ import type {
   SelectedFrame,
   SelectionPreview,
 } from "../protocol.js";
-import type { RunRecord } from "../sends.js";
+import type { HandoffBatch } from "../handoffs.js";
 import type { ThemeChoice } from "../themes.js";
 
 /**
@@ -111,6 +111,9 @@ export interface StudioState {
   selectionParentId: string | null;
   selectionParentName: string | null;
   assets: AssetBinding[];
+  /** The designer's notes on the checked frame, and how many lost their layer. */
+  notes: Annotation[];
+  orphanedNotes: number;
   /**
    * Where each mark lands inside the node it paints, keyed by `sourceId`.
    *
@@ -128,14 +131,14 @@ export interface StudioState {
    * belongs — removed the offer entirely.
    */
   targets: Record<string, TargetOption[]>;
-  /** Every container the designer has selected: what the Send tab offers to send. */
+  /** Every container the designer has selected: what the Handoff tab offers to send. */
   selectionFrames: SelectedFrame[];
   /** Screenshot of the selection; null when nothing exportable is selected. */
   preview: SelectionPreview | null;
   /** Every send this plugin has made, newest first. */
-  runs: RunRecord[];
-  /** The run the Send tab is showing. Null when it shows the pre-flight. */
-  activeRunId: string | null;
+  batches: HandoffBatch[];
+  /** The batch the Handoff tab is showing. Null when it shows the pre-flight. */
+  activeBatchId: string | null;
   /** Who the plugin is signed in as. Starts signed out. */
   auth: AuthView;
   /** The clients this account may send for, and which one this file is for. */
@@ -195,12 +198,14 @@ export const initialState: StudioState = {
   selectionParentId: null,
   selectionParentName: null,
   assets: [],
+  notes: [],
+  orphanedNotes: 0,
   placements: {},
   targets: {},
   selectionFrames: [],
   preview: null,
-  runs: [],
-  activeRunId: null,
+  batches: [],
+  activeBatchId: null,
   auth: { phase: "signed-out" },
   tenants: { status: "idle" },
   user: null,
@@ -257,8 +262,8 @@ export function reduce(state: StudioState, message: PanelInput): StudioState {
     case "tenants":
       return { ...state, tenants: message.tenants };
 
-    case "runs":
-      return { ...state, runs: message.runs, activeRunId: message.activeId };
+    case "batches":
+      return { ...state, batches: message.batches, activeBatchId: message.activeId };
 
     case "zip-ready":
       // Saved by the iframe's message listener: writing a file is a side effect
@@ -356,6 +361,9 @@ export function reduce(state: StudioState, message: PanelInput): StudioState {
 
     case "preview":
       return { ...state, preview: message.preview };
+
+    case "notes":
+      return { ...state, notes: message.notes, orphanedNotes: message.orphaned };
 
     case "assets":
       return {

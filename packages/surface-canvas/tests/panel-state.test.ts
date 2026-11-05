@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { initialState, reduce } from "../src/ui/state.js";
 import type { AppliedPayload, PluginMessage } from "../src/protocol.js";
 import { PANEL_SIZES } from "../src/protocol.js";
-import { newRun } from "../src/sends.js";
+import { newBatch } from "../src/handoffs.js";
 import { lint } from "../src/rules/index.js";
 import { reconciliationReport } from "../src/health/reconcile-report.js";
 import { context, document, looseFill, node, themeSnapshot, withDepths } from "./health-fixtures.js";
@@ -107,7 +107,7 @@ describe("reduce", () => {
 
   it("stops being busy once a report lands, even with no status behind it", () => {
     // The regression this guards: `busy` starts true and gates every button, and
-    // it used to be reachable only through a transient `status` message. A run
+    // it used to be reachable only through a transient `status` message. A batch
     // that finished before the iframe attached its listener left the panel on
     // "Starting…" with a disabled Export tab and a complete report on screen.
     expect(initialState.busy).toBe(true);
@@ -198,22 +198,22 @@ describe("reduce", () => {
     expect(reduce(busy, { type: "error", message: "nope" }).busy).toBe(false);
   });
 
-  it("keeps the runs the sandbox posts, and which one the Send tab shows", () => {
-    const run = newRun({
-      id: "run-1",
+  it("keeps the batches the sandbox posts, and which one the Handoff tab shows", () => {
+    const batch = newBatch({
+      id: "batch-1",
       at: 1,
       fileName: "Southern Brave",
       origin: "http://localhost:3000",
       frames: [{ frameId: "1:2", name: "Home" }],
     });
-    const next = reduce(initialState, { type: "runs", runs: [run], activeId: "run-1" });
-    expect(next.runs).toEqual([run]);
-    expect(next.activeRunId).toBe("run-1");
+    const next = reduce(initialState, { type: "batches", batches: [batch], activeId: "batch-1" });
+    expect(next.batches).toEqual([batch]);
+    expect(next.activeBatchId).toBe("batch-1");
 
-    // Leaving the progress screen clears only the active id; the run stays.
-    const left = reduce(next, { type: "runs", runs: [run], activeId: null });
-    expect(left.activeRunId).toBeNull();
-    expect(left.runs).toHaveLength(1);
+    // Leaving the progress screen clears only the active id; the batch stays.
+    const left = reduce(next, { type: "batches", batches: [batch], activeId: null });
+    expect(left.activeBatchId).toBeNull();
+    expect(left.batches).toHaveLength(1);
   });
 
   it("starts signed out, and keeps what the sandbox says about the account", () => {

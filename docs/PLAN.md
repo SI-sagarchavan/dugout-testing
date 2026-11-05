@@ -46,4 +46,4 @@ Decided for now (ADR 0003): any OpenAI-compatible `/embeddings` endpoint at 1024
 
 ## Agents
 
-`sitemap` and `frame-match`. `card`, `matchday`, `match-preview` and the `round` program were removed on 2026-11-02: frame-match does card's job from a real Send, and the others had no use left. They are in git history before that date. The harness's host tests run against `drafter`, a small test agent in `@dugout/sdk/testing`.
+`sitemap` and `frame-match`. `card`, `matchday`, `match-preview` and the `round` program were removed on 2026-11-02: frame-match does card's job from a real Handoff, and the others had no use left. They are in git history before that date. The harness's host tests run against `drafter`, a small test agent in `@dugout/sdk/testing`.

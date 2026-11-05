@@ -6,6 +6,7 @@ import { defaultMcpHost, hookOutput, type McpHost } from "@dugout/mcp";
 import { z } from "zod";
 import { asBag, type Dsl, type IrNode, indexIr, loadDsl, type Tree } from "./dsl.ts";
 import { type DryRun, dryRun, groups, lostLooks, outline, shapeOf } from "./facts.ts";
+import { type DesignerNote, NOTES_RULE, notesOf } from "./notes.ts";
 
 export const BIND_DIR = join(REPO_ROOT, ".runs", "data-bind");
 /** The registry's server a `cast-hook` data source is read from (config/mcp/cast.json). */
@@ -214,7 +215,7 @@ function writeState(dir: string, runId: string, state: State) {
 export interface Plane {
   json(id: string): Promise<unknown>;
   meta(id: string): Promise<Record<string, unknown>>;
-  exportIr(exportId: string): Promise<IrNode>;
+  exportIr(exportId: string): Promise<{ root: IrNode; annotations: unknown[] }>;
   dataset(name: string): Promise<unknown>;
   upload(kind: string, json: unknown, meta: Record<string, unknown>): Promise<string>;
 }
@@ -243,8 +244,8 @@ export function createPlane(project: string, env: NodeJS.ProcessEnv = process.en
       };
       const doc = (await get(
         `${base}/artifacts/${encodeURIComponent(record.irArtifactId)}/content`,
-      )) as { root: IrNode };
-      return doc.root;
+      )) as { root: IrNode; annotations?: unknown[] };
+      return { root: doc.root, annotations: doc.annotations ?? [] };
     },
     dataset: (name) =>
       UUID.test(name)
@@ -275,6 +276,8 @@ interface Frame {
   dsl: Dsl;
   /** The dataset the host named, when it named one. */
   dataset?: unknown;
+  /** What the designer wrote on layers in the plugin; every one must be answered. */
+  notes: DesignerNote[];
 }
 
 interface Loaded extends Frame {
@@ -362,10 +365,12 @@ export function createBindTools(
           loadDsl(),
         ]);
         const exportId = typeof meta.exportId === "string" ? meta.exportId : undefined;
-        const root = exportId ? await plane.exportIr(exportId) : undefined;
+        const ir = exportId ? await plane.exportIr(exportId) : undefined;
+        const byId = ir ? indexIr(ir.root) : new Map<string, IrNode>();
         return {
           tree,
-          byId: root ? indexIr(root) : new Map(),
+          byId,
+          notes: ir ? notesOf(ir, byId) : [],
           dsl,
           ...(input.data ? { dataset } : {}),
         };
@@ -408,7 +413,9 @@ export function createBindTools(
           ? `${g.parent} holds ${g.members.length} of one shape: ${g.members.join(", ")}`
           : `${g.parent} holds ${g.members.length}${g.component ? ` «${g.component}»` : ""} in ${g.shapes.length} shapes: ${g.shapes.map((s) => `[${s.join(", ")}]`).join(" ")}`,
       );
+      const { notes } = await frameOf(ctx);
       return {
+        ...(notes.length > 0 ? { designerNotes: notes, designerNotesRule: NOTES_RULE } : {}),
         frame: outline(tree, byId).join("\n"),
         repeats: found.length ? found.join("\n") : "nothing repeats",
         data: bag ? shapeOf(bag).join("\n") : NO_DATA,

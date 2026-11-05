@@ -114,7 +114,7 @@ describe("the auth client", () => {
       },
     ]);
     expect(
-      await createAuthClient({ origin: ORIGIN, fetch: refused.fetch }).checkSend("at", "pbks", [
+      await createAuthClient({ origin: ORIGIN, fetch: refused.fetch }).checkHandoff("at", "pbks", [
         { frameId: "1", name: "Shop", slots: { total: 100, bound: 1 } },
       ]),
     ).toMatchObject({ ok: false, refused: true, message: "This does not look like a FanOS design." });
@@ -218,7 +218,7 @@ function loginHarness(options: {
     async tenants() {
       return { ok: true, tenants: [] };
     },
-    async checkSend() {
+    async checkHandoff() {
       return { ok: true };
     },
   };
@@ -398,11 +398,11 @@ describe("the clients a sign-in may send for", () => {
 
   it("asks the backend before a send, naming the client and the frames", async () => {
     const { fetch, calls } = fakeFetch([{ status: 200, json: { status: "success", data: { ok: true } } }]);
-    expect(await createAuthClient({ origin: ORIGIN, fetch }).checkSend(ACCESS, "pbks", frames)).toEqual({
+    expect(await createAuthClient({ origin: ORIGIN, fetch }).checkHandoff(ACCESS, "pbks", frames)).toEqual({
       ok: true,
     });
     expect(calls[0]).toMatchObject({
-      url: `${ORIGIN}/surface/sends/check`,
+      url: `${ORIGIN}/surface/handoffs/check`,
       method: "POST",
       authorization: `Bearer ${ACCESS}`,
       body: { client: "pbks", frames },
@@ -416,14 +416,14 @@ describe("the clients a sign-in may send for", () => {
         json: { status: "error", message: "This does not look like a FanOS design. \"Shop\" binds 2% of its values." },
       },
     ]);
-    const result = await createAuthClient({ origin: ORIGIN, fetch }).checkSend(ACCESS, "pbks", frames);
+    const result = await createAuthClient({ origin: ORIGIN, fetch }).checkHandoff(ACCESS, "pbks", frames);
     expect(result).toMatchObject({ ok: false, refused: true, forbidden: false, unauthorized: false });
     expect(result.ok ? "" : result.message).toContain("does not look like a FanOS design");
   });
 
   it("marks a client the user can no longer send for as forbidden", async () => {
     const { fetch } = fakeFetch([{ status: 403, json: { message: "Surface client not allowed" } }]);
-    expect(await createAuthClient({ origin: ORIGIN, fetch }).checkSend(ACCESS, "kkr", frames)).toMatchObject({
+    expect(await createAuthClient({ origin: ORIGIN, fetch }).checkHandoff(ACCESS, "kkr", frames)).toMatchObject({
       ok: false,
       refused: true,
       forbidden: true,
@@ -432,13 +432,13 @@ describe("the clients a sign-in may send for", () => {
 
   it("does not treat a dead token or a dropped network as a refusal of the design", async () => {
     const dead = fakeFetch([{ status: 401 }]);
-    expect(await createAuthClient({ origin: ORIGIN, fetch: dead.fetch }).checkSend(ACCESS, "pbks", frames)).toMatchObject({
+    expect(await createAuthClient({ origin: ORIGIN, fetch: dead.fetch }).checkHandoff(ACCESS, "pbks", frames)).toMatchObject({
       ok: false,
       refused: false,
       unauthorized: true,
     });
     const offline = fakeFetch([{ throws: new Error("offline") }]);
-    expect(await createAuthClient({ origin: ORIGIN, fetch: offline.fetch }).checkSend(ACCESS, "pbks", frames)).toMatchObject({
+    expect(await createAuthClient({ origin: ORIGIN, fetch: offline.fetch }).checkHandoff(ACCESS, "pbks", frames)).toMatchObject({
       ok: false,
       refused: false,
       unauthorized: false,

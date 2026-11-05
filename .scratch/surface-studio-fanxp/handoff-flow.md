@@ -1,40 +1,40 @@
-# Send flow: from the Figma plugin to a live page
+# Handoff flow: from the Figma plugin to a live page
 
 Agreed with the user on 2026-11-05. This is the path we build on. It replaces today's flow
 (plugin posts the whole export, base64 inside JSON, to `localhost:3000/v1/exports`, then
-`pnpm agent watch` polls every 2 s). The wider plan is in `spec.md`; this file is the Send path in it.
+`pnpm agent watch` polls every 2 s). The wider plan is in `spec.md`; this file is the Handoff path in it.
 
 **Status, 2026-11-05.** The current description of the whole flow, its components and who owns which
-data is `docs/architecture/section-builder.md`. Decisions made since this note was written:
+data is `docs/architecture/handoff-flow.md`. Decisions made since this note was written:
 
 - Two databases, and the control plane (`apps/api`, `fanos`) goes away: `docs/adr/0027-two-databases.md`.
-  Where this note says the control plane stores or reads something, read it as the Send ledger
+  Where this note says the control plane stores or reads something, read it as the Handoff ledger
   (FanXP DB), S3 and Surface MCP. Section 4 step 3 (frame-match reading "the files from S3") is how it
   will work once `surface.getSend` exists; today frame-match still reads the control plane.
 - Temporal runs agent runs before production: `docs/adr/0028-temporal-runs-agent-runs.md`.
 - Live updates use one SSE connection per open panel from the backend, not Electric (Confluence ADR018).
-- Built: plugin sign-in, the three Send calls (`POST /surface/sends`, PUT, `/complete`) in the backend and
+- Built: plugin sign-in, the three Handoff calls (`POST /surface/handoffs`, PUT, `/complete`) in the backend and
   the plugin. Not built: `complete` queueing the run, Surface MCP, saving and publishing results.
 
 ## Why today's flow does not scale
 
-- One request carries the IR and every PNG as base64. The news grid Send (`b4829859`) is about 4.2 MB.
+- One request carries the IR and every PNG as base64. The news grid Handoff (`b4829859`) is about 4.2 MB.
   A synchronous Lambda accepts 6 MB and API Gateway 10 MB. The control plane's limit is 32 MB.
 - The request has no user, tenant or theme. The plugin has no FanXP JWT or `client` header.
 - The control plane stores blobs on local disk (`BlobStore` has only `fs-blob-store.ts`).
-- A CLI polls for new Sends. Nothing in production would run it.
+- A CLI polls for new Handoffs. Nothing in production would run it.
 
 ## The flow
 
-### 1. Send (plugin to S3)
+### 1. Handoff (plugin to S3)
 
-1. `POST /surface/sends` with a small JSON body: page ref, summary, and a manifest of files
+1. `POST /surface/handoffs` with a small JSON body: page ref, summary, and a manifest of files
    `{name, nodeId, kind, contentType, size, sha256}`. The endpoint authenticates the caller,
-   creates the Send with status `uploading`, and returns a `sendId` and one presigned PUT URL for
+   creates the Handoff with status `uploading`, and returns a `handoffId` and one presigned PUT URL for
    each file it does not already hold.
 2. The plugin PUTs each file straight to S3 as raw bytes (no base64).
-3. `POST /surface/sends/:id/complete`. The backend checks each object (HeadObject size and checksum),
-   marks the Send `received`, and inserts the `section-builder` row into `runs` in the same request.
+3. `POST /surface/handoffs/:id/complete`. The backend checks each object (HeadObject size and checksum),
+   marks the Handoff `received`, and inserts the `section-builder` row into `runs` in the same request.
    It returns the `runId`. Nothing polls.
 
 Details:
@@ -47,9 +47,9 @@ Details:
 - The backend's `src/utils/s3.ts` has `PutObjectCommand` and `getSignedDownloadUrl` but no upload
   signer. Add one beside it.
 - The control plane needs an S3 `BlobStore` adapter, or artifact rows that reference S3 keys.
-- Abandoned Sends: a lifecycle rule on the working prefix, or a sweeper for Sends stuck in `uploading`.
+- Abandoned Handoffs: a lifecycle rule on the working prefix, or a sweeper for Handoffs stuck in `uploading`.
 
-### 2. What the Send carries
+### 2. What the Handoff carries
 
 - The IR.
 - One full screenshot for the diff. The root picture (`art-root`) and the section screenshot show
@@ -90,7 +90,7 @@ its own `ICON_REGISTRY`.
 5. **Review.** Studio's canvas renders the tree with the tenant's theme, fonts and icons and live hook
    data by `workflowId`. The reviewer approves, requests a change, or rejects.
 6. **Publish.** Approval runs the write step:
-   - copy used assets from the Send's working folder to the tenant's permanent asset folder, and
+   - copy used assets from the Handoff's working folder to the tenant's permanent asset folder, and
      point the tree at CDN URLs;
    - `POST /surface/templates` creates or versions the `surface_v2` template and adds its
      `master_cast_template_bindings` row, so `workflowId` arrives like for every Cast-bound template.
@@ -106,8 +106,8 @@ Both are in the **client's own bucket** (`site_master.site_configuration.aws.buc
 root folder is the first segment of `aws.asset_upload_path` (`ibl/static-assets/` gives `ibl`).
 CloudFront serves only `static-assets/*` and `*.xml` from these buckets, and public access is blocked.
 
-- `<client>/surface-sends/<ab>/<cd>/<sha256>` holds working files. Not served. Content-addressed, so a
-  re-sent frame uploads only what changed. Every upload is tagged `kind=surface-send`; one bucket-wide
+- `<client>/surface-handoffs/<ab>/<cd>/<sha256>` holds working files. Not served. Content-addressed, so a
+  re-sent frame uploads only what changed. Every upload is tagged `kind=surface-handoff`; one bucket-wide
   lifecycle rule on that tag (like the existing `kind=rendered-page` rule) expires them.
 - **Published assets: as they work today, no new path.** A template's images go through
   `utilsService.imageUploadWrapper(fastify, client, {name, base64}, userId, 'template')`: it writes to
@@ -119,14 +119,14 @@ Without the copy in step 6, a live page would lose its images when the working f
 
 **Infra still to do (si-build-iac), per bucket the plugin sends to:** CORS rule allowing PUT from origin
 `null` (Figma's sandbox; today the list has only localhost and `dev-fanxp.sportz.io`); lifecycle rule on
-tag `kind=surface-send`; the backend task role needs `s3:PutObject`, `s3:PutObjectTagging`, `s3:GetObject`
-on `*/surface-sends/*`, and the agents worker role `s3:GetObject` there.
+tag `kind=surface-handoff`; the backend task role needs `s3:PutObject`, `s3:PutObjectTagging`, `s3:GetObject`
+on `*/surface-handoffs/*`, and the agents worker role `s3:GetObject` there.
 
 ## Open
 
 - ~~Plugin authentication.~~ Done: see `plugin-auth.md`.
-- ~~Where the Send record lives.~~ Decided: the backend's FanXP DB (`surface_sends`,
-  `surface_send_files`). The control plane goes away (`docs/adr/0027-two-databases.md`).
+- ~~Where the Handoff record lives.~~ Decided: the backend's FanXP DB (`surface_handoffs`,
+  `surface_handoff_files`). The control plane goes away (`docs/adr/0027-two-databases.md`).
 - ~~Hashing in the plugin.~~ Done in pure JS in the sandbox (`src/auth/pkce.ts`'s `sha256`), because a null-origin
   iframe is not a secure context. Its speed inside Figma's sandbox is not measured yet (19.7 MB took 0.37 s in
   Node). The plugin logs the times.

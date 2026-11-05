@@ -34,7 +34,7 @@ export interface SuiteOptions {
   runsDir: string;
 }
 
-// The live cases read stored Sends from the local control plane, so they need the pipeline stack up.
+// The live cases read stored Handoffs from the local control plane, so they need the pipeline stack up.
 // Scripted mode runs the same cases against fixed numbers, to check the plumbing alone.
 const cases = FRAMES.map((frame) => ({
   id: frame.id,

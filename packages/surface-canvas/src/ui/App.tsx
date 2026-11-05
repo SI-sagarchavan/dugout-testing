@@ -2,7 +2,7 @@
  * The panel: three tabs along the way a frame travels.
  *
  *   Check  is this frame ready? (fix the loose values, mark the images)
- *   Send   send it, one Send per frame
+ *   Handoff   send it, one Handoff per frame
  *   Runs   what went out, and what to do about it
  *
  * Everything on screen arrived over postMessage from the sandbox and every action
@@ -11,13 +11,13 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import type { Tab } from "../protocol.js";
-import { needsAttention } from "../sends.js";
+import { needsAttention } from "../handoffs.js";
 import { AccountMenu } from "./AccountMenu.js";
 import { CheckTab, type CheckView } from "./CheckTab.js";
 import { RescanIcon } from "./icons.js";
 import { send } from "./main.js";
-import { RunsTab } from "./RunsTab.js";
-import { SendTab } from "./SendTab.js";
+import { HistoryTab } from "./HistoryTab.js";
+import { HandoffTab } from "./HandoffTab.js";
 import type { PanelAction, StudioState } from "./state.js";
 
 export function App({
@@ -38,7 +38,7 @@ export function App({
     if (nextView) setView(nextView);
     setTab(next);
   };
-  const attention = needsAttention(state.runs);
+  const attention = needsAttention(state.batches);
 
   return (
     <>
@@ -47,10 +47,10 @@ export function App({
           <button className="fs-tab" role="tab" aria-selected={tab === "check"} onClick={() => go("check")}>
             Check
           </button>
-          <button className="fs-tab" role="tab" aria-selected={tab === "send"} onClick={() => go("send")}>
-            Send
+          <button className="fs-tab" role="tab" aria-selected={tab === "handoff"} onClick={() => go("handoff")}>
+            Handoff
           </button>
-          <button className="fs-tab" role="tab" aria-selected={tab === "runs"} onClick={() => go("runs")}>
+          <button className="fs-tab" role="tab" aria-selected={tab === "history"} onClick={() => go("history")}>
             Runs
             {attention > 0 ? (
               <>
@@ -87,10 +87,10 @@ export function App({
 
       {tab === "check" ? (
         <CheckTab state={state} dispatch={dispatch} go={go} view={view} setView={setView} />
-      ) : tab === "send" ? (
-        <SendTab state={state} dispatch={dispatch} go={go} />
+      ) : tab === "handoff" ? (
+        <HandoffTab state={state} dispatch={dispatch} go={go} />
       ) : (
-        <RunsTab state={state} />
+        <HistoryTab state={state} />
       )}
     </>
   );

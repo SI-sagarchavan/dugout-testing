@@ -6,7 +6,7 @@ Paste everything below the line into a new Claude Code session started in
 ---
 
 You are building the first slice of **Surface Studio**, a new admin app inside this monorepo. It is
-the review and control tool for an AI pipeline that turns Figma frames into pages: Sends arrive from
+the review and control tool for an AI pipeline that turns Figma frames into pages: Handoffs arrive from
 a Figma plugin, agent runs execute, a person reviews and approves the result, and an approved page
 becomes a FanXP template. The route is `https://dev-fanxp.sportz.io/#/<clientCode>/surface-studio`,
 for example `/#/ibl/surface-studio`, launched from the tenant home (the Core Tools section of
@@ -18,7 +18,7 @@ for example `/#/ibl/surface-studio`, launched from the tenant home (the Core Too
    only `feat`, `fix` or `bugfix`. Do not bypass hooks. Do not push.
 2. `/Users/sagarchavan/si/build/dugout/.scratch/surface-studio-fanxp/spec.md`: the full plan. You are
    building **P2** (the app). Read "Target shape", "P2" and "UI/UX directions".
-3. `/Users/sagarchavan/si/build/dugout/.scratch/surface-studio-fanxp/send-flow.md`: how a Send becomes
+3. `/Users/sagarchavan/si/build/dugout/.scratch/surface-studio-fanxp/handoff-flow.md`: how a Handoff becomes
    a run and then a template. It tells you which states and nouns the UI must show.
 4. The reference app, `apps/usage-metrics-dashboard`, and how `apps/fanxp` mounts it. Study these
    files before writing anything:
@@ -87,13 +87,13 @@ Two theming layers, kept apart:
 4. **Shell**: a layout with a left nav (Queue, Needs you, Templates, Setup) and a header, using the
    `sidebar` primitive. Scope class on the root element, `h-[calc(100vh-0px)]` sizing as in usage-metrics.
 5. **Queue page** (the main screen), a three-pane layout from the spec's UI section:
-   - left: the queue of Sends, one status each (running, needs you, ready, published, failed), with filters;
+   - left: the queue of Handoffs, one status each (running, needs you, ready, published, failed), with filters;
    - centre: a placeholder panel where the canvas will go ("Preview comes in the next slice");
    - right: an inspector with tabs Run, Data, Issues, Advanced, showing a run's step timeline grouped
      as Match, Bind, Data, Publish, with child runs nested and collapsible.
-     Selection lives in the URL (`/surface-studio/queue/:sendId`) so a reload keeps it.
+     Selection lives in the URL (`/surface-studio/queue/:handoffId`) so a reload keeps it.
 6. **Data layer with a mock adapter**: the backend `surface` module does not exist yet. Define Zod
-   schemas and typed TanStack Query hooks for `Send`, `Run`, `RunStep` and `Approval`, matching the
+   schemas and typed TanStack Query hooks for `Handoff`, `Run`, `RunStep` and `Approval`, matching the
    planned routes in the spec (`GET /surface/runs`, `GET /surface/runs/:id`, decisions, cancel). Back
    them with an in-memory mock adapter that returns realistic fixtures, switchable to the real axios
    client (`/fanxp/api/v1`, `client` header, JWT in `localStorage.token`, as in the host) by one

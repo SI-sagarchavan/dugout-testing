@@ -12,15 +12,15 @@ Each piece below says what it is in plain words, then how it fits the harness, t
 
 ## Requirements, settled
 
-| #   | Question                                     | Decision                                                                                                                                                                                                                              | State   |
-| --- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| R1  | Do we need web search?                       | **Deferred.** frame-match and sitemap work on owned data (a Figma Send, our page catalogue, Cast). Open-web results are stale or unlicensed for sports facts. A narrow `site.fetch` for a club's own site may come later (ticket 04). | decided |
-| R2  | When does the fallback model run?            | Only when a model is **unavailable** after its retries. Never because an answer was poor. Pairs below.                                                                                                                                | decided |
-| R3  | Automatic model choice by task difficulty?   | **Not now.** Models stay fixed per agent or task (exists). Per-turn switching is rejected. Escalation (cheap first, stronger on a measured failure) waits for evals to show a gap (ticket 09).                                        | decided |
-| R4  | Who writes the plan, and what if it changes? | The **model** writes it and replaces the whole list on every change. The harness stores, shows and enforces small rules. Plan-first approval is a later option.                                                                       | decided |
-| R5  | Subagents or a swarm?                        | **Supervisor-style subagents** (and code-led programs). A peer-to-peer swarm is out of scope.                                                                                                                                         | decided |
-| R6  | Intent classifier?                           | **Not building it.** If a free-text host ever exists it would be a host-layer router, not part of the loop (ticket 10). Nothing is reserved in code.                                                                                  | decided |
-| R7  | First real subagent                          | **`bind` → `hook-finder`** (2026-11-04; was skipped on 2026-11-02). Ticket 07 is built (ADR 0025); 08, children that write, is still deferred.                                                                                        | decided |
+| #   | Question                                     | Decision                                                                                                                                                                                                                                 | State   |
+| --- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| R1  | Do we need web search?                       | **Deferred.** frame-match and sitemap work on owned data (a Figma Handoff, our page catalogue, Cast). Open-web results are stale or unlicensed for sports facts. A narrow `site.fetch` for a club's own site may come later (ticket 04). | decided |
+| R2  | When does the fallback model run?            | Only when a model is **unavailable** after its retries. Never because an answer was poor. Pairs below.                                                                                                                                   | decided |
+| R3  | Automatic model choice by task difficulty?   | **Not now.** Models stay fixed per agent or task (exists). Per-turn switching is rejected. Escalation (cheap first, stronger on a measured failure) waits for evals to show a gap (ticket 09).                                           | decided |
+| R4  | Who writes the plan, and what if it changes? | The **model** writes it and replaces the whole list on every change. The harness stores, shows and enforces small rules. Plan-first approval is a later option.                                                                          | decided |
+| R5  | Subagents or a swarm?                        | **Supervisor-style subagents** (and code-led programs). A peer-to-peer swarm is out of scope.                                                                                                                                            | decided |
+| R6  | Intent classifier?                           | **Not building it.** If a free-text host ever exists it would be a host-layer router, not part of the loop (ticket 10). Nothing is reserved in code.                                                                                     | decided |
+| R7  | First real subagent                          | **`bind` → `hook-finder`** (2026-11-04; was skipped on 2026-11-02). Ticket 07 is built (ADR 0025); 08, children that write, is still deferred.                                                                                           | decided |
 
 Fallback pairs (R2), decided: `sonnet` → `sonnet-india`, `sonnet-deep` → `sonnet-india`, `opus` → `opus-india`. `haiku`, the Nova models and `terra` have none: they are cheap or another family, and the worker already resumes a failed run later. Ticket 05 starts by checking live that the `in.*` profile really has capacity when the `global.*` one is throttled.
 
@@ -102,7 +102,7 @@ These come from accepted ADRs. A design that breaks one of them is wrong, howeve
 
 ### D. Web search: deferred
 
-**Why not now.** Both agents work on data we own: frame-match on a Figma Send and our pipeline, sitemap on a brief and our page catalogue. For sports content the open web is often the wrong source: scores, fixtures and injuries should come from the tenant's feeds, and a web page can be stale, wrong or unlicensed. Nothing in the evals or the run history asks for it.
+**Why not now.** Both agents work on data we own: frame-match on a Figma Handoff and our pipeline, sitemap on a brief and our page catalogue. For sports content the open web is often the wrong source: scores, fixtures and injuries should come from the tenant's feeds, and a web page can be stale, wrong or unlicensed. Nothing in the evals or the run history asks for it.
 
 **What may come later.** A narrow, read-only `site.fetch` limited to a tenant's own domain, so sitemap could propose pages from what a club's site really has. It would be added through C (an MCP manifest, or a small typed tool), with the same rules: query through the policy and redactor, results untrusted and capped, off unless a spec lists it. It needs a decision on whether a tenant's requests may leave India.
 
@@ -158,10 +158,10 @@ A wrong answer, a refusal or a bad input never triggers it.
 **Who writes the plan.** Nobody hard-codes it and the harness doesn't know it in advance. The model reads the task and writes it, and rewrites it whenever it learns something:
 
 ```
-plan.update [ ] read Send  [ ] measure  [ ] fix headers  [ ] publish
-plan.update [✓] read Send  [▶] measure  [ ] fix headers  [ ] publish
+plan.update [ ] read Handoff  [ ] measure  [ ] fix headers  [ ] publish
+plan.update [✓] read Handoff  [▶] measure  [ ] fix headers  [ ] publish
    ... finds the footer is broken too ...
-plan.update [✓] read Send  [✓] measure  [▶] fix headers  [ ] fix footer  [ ] publish
+plan.update [✓] read Handoff  [✓] measure  [▶] fix headers  [ ] fix footer  [ ] publish
 ```
 
 **Design.**
@@ -221,7 +221,7 @@ See "How a model is chosen". If evals show a gap, the smallest design is a model
 
 **In plain words.** It reads a free-text request and decides which agent should handle it, with what typed input, or whether to ask a question or refuse. It is **not** part of the loop and not something the model inside a run does (a model already picks its own tools from their descriptions). It sits in the host (wnm-fanxp-backend, Cast admin, the CLI), in front of `queue.start`.
 
-**Why it isn't built now.** Every host today already knows the agent: a Figma Send starts frame-match, the brief box starts sitemap, the CLI names the agent. There is no free-text entry yet, and two agents don't need routing.
+**Why it isn't built now.** Every host today already knows the agent: a Figma Handoff starts frame-match, the brief box starts sitemap, the CLI names the agent. There is no free-text entry yet, and two agents don't need routing.
 
 **The interface, reserved so nothing has to change later:**
 
@@ -230,7 +230,7 @@ route(text, caller, thread?) →
     { agent, input, confidence }    // start a run
   | { thread, runId }               // continue a thread (harness 15)
   | { answer }                      // a question about a finished run
-  | { clarify: "which Send?" }      // ask first
+  | { clarify: "which Handoff?" }      // ask first
   | { refuse: reason }              // out of scope, or an injection attempt
 ```
 
@@ -239,7 +239,7 @@ route(text, caller, thread?) →
 - **The classifier proposes; the host decides.** The tenant and the caller's permissions come from the session, never from the classifier (rule 4). It picks only among agents this caller may run: the output schema's agent list is built per call, so it can't invent or reach a forbidden agent.
 - **The input it extracts is untrusted** and checked against the target agent's input schema (`defineAgent` already parses it) before anything starts.
 - **Low confidence asks.** An agent that writes never starts on a guess.
-- **Deterministic first.** If the trigger already says what it is (a Send, a button), there is no classifier.
+- **Deterministic first.** If the trigger already says what it is (a Handoff, a button), there is no classifier.
 - **Built as a small agent** (`defineAgent`, no tools, an output schema, a cheap model), so evals, tracing, cost and events come free. A labelled set of requests with the expected route is its eval, with the usual 90% gate. Each decision is a `route.decided` event.
 - **Cost:** about $0.0002 and about a second on `haiku`, against up to $0.15 for the run it guards.
 

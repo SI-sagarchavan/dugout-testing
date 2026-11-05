@@ -11,6 +11,12 @@
  */
 
 export {
+  ANNOTATION_MAX_CHARS,
+  ANNOTATION_PLUGIN_KEY,
+  annotationKindSchema,
+  annotationSchema,
+  type Annotation,
+  type AnnotationKind,
   ASSET_NAME_RE,
   ASSET_PLUGIN_KEY,
   blendModeSchema,

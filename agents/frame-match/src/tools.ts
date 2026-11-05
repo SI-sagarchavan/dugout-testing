@@ -32,6 +32,7 @@ import {
   withPlatform,
 } from "./layout.ts";
 import { type Looked, LookInputError, look, type See } from "./look.ts";
+import { NOTES_RULE } from "./notes.ts";
 import { loadToolchain, type Toolchain } from "./toolchain.ts";
 
 export const MATCH_DIR = join(REPO_ROOT, ".runs", "frame-match");
@@ -164,7 +165,7 @@ export const RunInput = z.object({
   exportId: z
     .string()
     .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
-    .describe("The export a designer's Send stored"),
+    .describe("The export a designer's Handoff stored"),
   project: z
     .string()
     .regex(/^[a-zA-Z0-9_-]+$/)
@@ -489,8 +490,13 @@ export function createMatchTools(
     run: (_input, ctx) =>
       inTurn(ctx.runId, async () => {
         const saved = readState(dir, ctx.runId);
-        if (saved) return standing(saved);
         const bundle = await bundleFor(ctx);
+        const designer =
+          bundle.notes.length > 0
+            ? { designerNotes: bundle.notes, designerNotesRule: NOTES_RULE }
+            : {};
+        if (saved) return { ...standing(saved), ...designer };
+
         const base = await engine.build(bundle, noOverrides());
         const before = await engine.measure(bundle, base);
         // nothing to compare against: the frame can still be published, as unmeasured
@@ -550,6 +556,7 @@ export function createMatchTools(
                   "The design paints these and the compile does not. No score sees a layer with no screenshot of its own. Give one a paint with frame.override: a surface under a new name, then props { surface } on the layer.",
               }
             : {}),
+          ...designer,
           ...standing(state),
         };
       }),
@@ -576,6 +583,9 @@ export function createMatchTools(
       const { children, ...own } = ir ?? ({} as NonNullable<typeof ir>);
       return {
         ir: ir ? { ...own, childCount: children?.length ?? 0 } : null,
+        ...(bundle.notes.some((n) => n.src === src)
+          ? { designerNotes: bundle.notes.filter((n) => n.src === src) }
+          : {}),
         gradient: ir ? (gradientOf(ir) ?? null) : null,
         tree: nodes.map((n) => ({
           ...n,

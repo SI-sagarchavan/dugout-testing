@@ -2,7 +2,15 @@ import { agent as bind } from "@dugout/agent-data-bind";
 import { agent as frameMatch } from "@dugout/agent-frame-match";
 import type { Message } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
-import { agent, assemble, builtIn, completeFinal, pipeline, verifyFinal } from "../src/agent.ts";
+import {
+  agent,
+  assemble,
+  builtIn,
+  completeFinal,
+  mergeNotes,
+  pipeline,
+  verifyFinal,
+} from "../src/agent.ts";
 
 const frame = {
   previewUrl: "http://localhost:3000/preview/default/frame-1?theme=t",
@@ -16,6 +24,7 @@ const frame = {
   match: 98,
   remaining: ["title is 2px off"],
   compilerFindings: ["a carousel arrow has no part"],
+  notes: [],
 };
 const data = {
   previewUrl: "http://localhost:3000/preview/default/frame-1?theme=t&data=d&plan=p",
@@ -24,6 +33,7 @@ const data = {
   bound: 16,
   collapsed: 1,
   remaining: ["the countdown has no data field"],
+  notes: [],
 };
 const EXPORT = "6f0e8c1a-0000-4000-8000-000000000001";
 
@@ -122,5 +132,42 @@ describe("section-builder", () => {
     expect(agent.spec.budget.usdPerRun).toBeGreaterThanOrEqual(
       frameMatch.spec.budget.usdPerRun + bind.spec.budget.usdPerRun,
     );
+  });
+});
+
+describe("notes in the handoff", () => {
+  it("puts a note nobody addressed among what is still off", () => {
+    const out = assemble(
+      { ...frame, notes: [{ id: "n1", status: "not-addressed", detail: "no tool for it" }] },
+      { ...data, notes: [{ id: "n1", status: "not-mine", detail: "look" }] },
+    );
+    expect(out.notes).toEqual([{ id: "n1", status: "not-addressed", detail: "no tool for it" }]);
+    expect(out.remaining[0]).toBe("note n1: not addressed: no tool for it");
+  });
+});
+
+describe("mergeNotes", () => {
+  it("is addressed when either stage did it, and says so when neither did", () => {
+    const merged = mergeNotes(
+      [
+        { id: "a", status: "addressed", detail: "carousel" },
+        { id: "b", status: "not-mine", detail: "data" },
+        { id: "c", status: "not-addressed", detail: "no tool for it" },
+      ],
+      [
+        { id: "a", status: "not-mine", detail: "layout" },
+        { id: "b", status: "addressed", detail: "score field" },
+        { id: "c", status: "not-mine", detail: "look" },
+        { id: "d", status: "not-mine", detail: "look" },
+      ],
+    );
+    expect(merged.map((n) => [n.id, n.status])).toEqual([
+      ["a", "addressed"],
+      ["b", "addressed"],
+      ["c", "not-addressed"],
+      ["d", "not-addressed"],
+    ]);
+    expect(merged[2]?.detail).toBe("no tool for it");
+    expect(merged[3]?.detail).toBe("neither stage took this note");
   });
 });

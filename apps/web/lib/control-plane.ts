@@ -1,5 +1,5 @@
 /**
- * Reads a Send from the control plane: what `/preview/<project>/<ref>` renders.
+ * Reads a Handoff from the control plane: what `/preview/<project>/<ref>` renders.
  *
  * Server only. The API key stays in this process and never reaches the browser.
  *
@@ -24,7 +24,7 @@ export class PreviewError extends Error {
   }
 }
 
-export interface Send {
+export interface Handoff {
   tree: unknown;
   theme: unknown;
   surfaces?: unknown;
@@ -39,7 +39,7 @@ function param(query: Query, name: string): string | undefined {
   return (Array.isArray(value) ? value[0] : value) || undefined;
 }
 
-export async function readSend(project: string, ref: string, query: Query): Promise<Send> {
+export async function readHandoff(project: string, ref: string, query: Query): Promise<Handoff> {
   const base = `${API_URL}/v1/projects/${encodeURIComponent(project)}`;
   const get = (path: string) =>
     fetch(`${base}${path}`, {

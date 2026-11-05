@@ -52,6 +52,8 @@ export interface IrNode {
 export interface IrDoc {
   rootNodeId: string;
   root: IrNode;
+  /** The designer's notes (IR 1.11.0+): see notes.ts. */
+  annotations?: unknown[];
 }
 
 export interface CompileNote {

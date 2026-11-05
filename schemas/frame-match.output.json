@@ -56,6 +56,39 @@
         "type": "string"
       },
       "description": "What the compiler should have done"
+    },
+    "notes": {
+      "default": [],
+      "description": "One entry for each note the designer left (frame.load lists them): met, or why not",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The id of the designer's note, as frame.load listed it"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "addressed",
+              "not-addressed",
+              "not-mine"
+            ],
+            "description": "addressed: done, and detail says how. not-addressed: not done, and detail says why. not-mine: the note is about where data comes from or what it shows, which the next stage (data-bind) decides"
+          },
+          "detail": {
+            "type": "string",
+            "description": "What was done, or why not"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "detail"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -67,7 +100,8 @@
     "unchecked",
     "placeholderIcons",
     "remaining",
-    "compilerFindings"
+    "compilerFindings",
+    "notes"
   ],
   "additionalProperties": false
 }

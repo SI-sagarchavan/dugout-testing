@@ -10,10 +10,11 @@
 import type { JSX } from "react";
 import type { Tab } from "../protocol.js";
 import { Autofix } from "./Autofix.js";
-import { framesToSend, sendLabel } from "./frames.js";
+import { framesToHandoff, handoffLabel } from "./frames.js";
 import { FixQueue } from "./FixQueue.js";
-import { HeatmapIcon, SendIcon } from "./icons.js";
+import { HeatmapIcon, HandoffIcon } from "./icons.js";
 import { ImagesView } from "./Images.js";
+import { NotesView } from "./Notes.js";
 import { send } from "./main.js";
 import { SelectionPreview } from "./SelectionPreview.js";
 import { Reconciliation } from "./Reconciliation.js";
@@ -22,7 +23,7 @@ import { needsPick } from "./rows.js";
 import type { PanelAction, StudioState } from "./state.js";
 import { StatusLine } from "./StatusLine.js";
 
-export type CheckView = "queue" | "images";
+export type CheckView = "queue" | "images" | "notes";
 
 export function CheckTab({
   state,
@@ -34,7 +35,7 @@ export function CheckTab({
   state: StudioState;
   dispatch: (action: PanelAction) => void;
   go: (tab: Tab) => void;
-  /** Lifted to the shell so the Send tab's "Fix" and "View" can land on the right one. */
+  /** Lifted to the shell so the Handoff tab's "Fix" and "View" can land on the right one. */
   view: CheckView;
   setView: (view: CheckView) => void;
 }): JSX.Element {
@@ -46,7 +47,7 @@ export function CheckTab({
     state.selectionId !== null && report !== null && state.selectionId !== report.rootNodeId;
 
   const picks = needsPick(state);
-  const frames = framesToSend(state);
+  const frames = framesToHandoff(state);
   const queueCount = report?.batches.length ?? 0;
 
   const reviewPicks = (): void => {
@@ -93,6 +94,15 @@ export function CheckTab({
             Images
             <span className="fs-pill">{state.assets.length}</span>
           </button>
+          <button
+            className="fs-segitem"
+            role="tab"
+            aria-selected={view === "notes"}
+            onClick={() => setView("notes")}
+          >
+            Notes
+            <span className="fs-pill">{state.notes.length}</span>
+          </button>
         </div>
 
         {view === "queue" ? (
@@ -124,8 +134,10 @@ export function CheckTab({
               <Reconciliation state={state} />
             </div>
           </>
-        ) : (
+        ) : view === "images" ? (
           <ImagesView state={state} dispatch={dispatch} />
+        ) : (
+          <NotesView state={state} />
         )}
       </main>
 
@@ -139,10 +151,10 @@ export function CheckTab({
           className="fs-btn is-primary"
           style={{ flex: 1 }}
           disabled={frames.length === 0}
-          onClick={() => go("send")}
+          onClick={() => go("handoff")}
         >
-          <SendIcon />
-          {sendLabel(frames)}
+          <HandoffIcon />
+          {handoffLabel(frames)}
         </button>
       </footer>
     </>

@@ -6,25 +6,25 @@ Date: 2026-11-05 · Status: accepted (direction), needs an audit of `apps/api`'s
 
 Three databases exist today.
 
-| Database                     | Server        | Owner                                   | Holds                                                                                    |
-| ---------------------------- | ------------- | --------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `fanxp_dev` (`fanxp_master`) | shared Aurora | the FanXP backend (`wnm-fanxp-backend`) | users, clients, plugin sign-ins, the Send ledger, templates                              |
-| `harness`                    | our Postgres  | the agents worker                       | runs, run events, approvals, memory                                                      |
-| `fanos`                      | our Postgres  | the control plane (`apps/api`)          | what the old Send stored (exports, artifacts), surface versions, pipeline runs, fidelity |
+| Database                     | Server        | Owner                                   | Holds                                                                                       |
+| ---------------------------- | ------------- | --------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `fanxp_dev` (`fanxp_master`) | shared Aurora | the FanXP backend (`wnm-fanxp-backend`) | users, clients, plugin sign-ins, the Handoff ledger, templates                              |
+| `harness`                    | our Postgres  | the agents worker                       | runs, run events, approvals, memory                                                         |
+| `fanos`                      | our Postgres  | the control plane (`apps/api`)          | what the old Handoff stored (exports, artifacts), surface versions, pipeline runs, fidelity |
 
-`fanos` exists because the Figma pipeline came from the `trial` repo with its own API, and the plugin posted the whole Send to it. ADR 0021 kept it separate from `harness` and said the final DSL belongs to FanXP's database.
+`fanos` exists because the Figma pipeline came from the `trial` repo with its own API, and the plugin posted the whole Handoff to it. ADR 0021 kept it separate from `harness` and said the final DSL belongs to FanXP's database.
 
-Three things changed. The Send no longer goes to the control plane: files go to S3 and the record goes to the backend (`.scratch/surface-studio-fanxp/send-flow.md`). The admin app, not the old Studio on `:3001`, is where people watch runs and review results (spec P2). And the backend serves every request from the plugin and the admin app, so people-facing data belongs next to users and permissions, which only the backend knows.
+Three things changed. The Handoff no longer goes to the control plane: files go to S3 and the record goes to the backend (`.scratch/surface-studio-fanxp/handoff-flow.md`). The admin app, not the old Studio on `:3001`, is where people watch runs and review results (spec P2). And the backend serves every request from the plugin and the admin app, so people-facing data belongs next to users and permissions, which only the backend knows.
 
 ## Decision
 
 **Two databases.**
 
-- **FanXP DB.** The backend owns it. It holds everything people see or own: users, clients, plugin sign-ins, the Send ledger, an index of saved results, surface versions, templates.
+- **FanXP DB.** The backend owns it. It holds everything people see or own: users, clients, plugin sign-ins, the Handoff ledger, an index of saved results, surface versions, templates.
 - **Harness DB.** The agents worker owns it. It holds runs (the queue), every saved run event, approvals and decisions, and agent memory.
 - **`fanos` goes away.** Its modules move as in the table below.
 
-**Bytes live in S3**, in the client's own bucket (`<client>/surface-sends/` for working files).
+**Bytes live in S3**, in the client's own bucket (`<client>/surface-handoffs/` for working files).
 
 **The plugin and the admin app talk only to the backend.** They never read a database, S3 listings or the worker.
 
@@ -37,12 +37,12 @@ Three things changed. The Send no longer goes to the control plane: files go to 
 | `surface.getSend`                        | read            | `plane.getExport`. Returns the manifest and a signed download URL per file.                      |
 | `surface.getTokens`                      | read            | the open question about tenant tokens                                                            |
 | `surface.getTemplate`, `surface.getPage` | read            | reading what exists before changing it                                                           |
-| `surface.saveDraft`                      | write, approval | saving the DSL tree, preview and reports for a Send                                              |
+| `surface.saveDraft`                      | write, approval | saving the DSL tree, preview and reports for a Handoff                                           |
 | `surface.publishTemplate`                | write, approval | publishing: copies used images to `static-assets/template/` and creates or versions the template |
 
 Files stay out of MCP. Tools return signed S3 URLs and keys, and the worker fetches the bytes.
 
-**The databases never join.** They store each other's ids: the Send row holds the run id, and the run's input holds the Send id and the client code. The client code is the tenant id (spec).
+**The databases never join.** They store each other's ids: the Handoff row holds the run id, and the run's input holds the Handoff id and the client code. The client code is the tenant id (spec).
 
 **Live updates come from the backend's SSE connection, not Electric.** See ADR018 in Confluence. The worker also writes a short notice to a per-tenant Valkey stream when a run's status changes.
 
@@ -50,7 +50,7 @@ Files stay out of MCP. Tools return signed S3 URLs and keys, and the worker fetc
 
 | `apps/api` module           | Lines     | Goes to                                                                                                                 |
 | --------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `exports`, `artifacts`      | 1,520     | the Send ledger (built) plus an index of results in the FanXP DB, bytes in S3                                           |
+| `exports`, `artifacts`      | 1,520     | the Handoff ledger (built) plus an index of results in the FanXP DB, bytes in S3                                        |
 | `surfaces`                  | 777       | the backend's template and version tables                                                                               |
 | `fidelity`                  | 288       | a table in the FanXP DB. The scoring code stays in `@fanos/conform` and `@fanos/renderer`, which agents run in-process. |
 | `projects`, `audit`, `sync` | about 620 | clients replace projects, audit moves over, Electric sync is dropped                                                    |
@@ -76,7 +76,7 @@ The `@fanos/*` packages (`compile`, `conform`, `renderer`, `dsl`, `tokens`) stay
 
 ## Order of work
 
-1. Apply the Send migration on `fanxp_dev` and run a live Send.
+1. Apply the Handoff migration on `fanxp_dev` and run a live Handoff.
 2. The backend queues the run at `complete`.
 3. Surface MCP read tools (`getSend`, `getTokens`). Move `frame-match` and `bind` onto them.
 4. `saveDraft`, the result index, and the Studio review screens.

@@ -1,15 +1,15 @@
 /**
- * What a Send puts on S3: which files, of what kind and type, and the hash the backend will
+ * What a Handoff puts on S3: which files, of what kind and type, and the hash the backend will
  * sign into each upload URL. Pure: no Figma, no network.
  */
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   manifestOf,
-  prepareSend,
+  prepareHandoff,
   sniffImageType,
   UnsupportedAssetError,
-  type SendInput,
+  type HandoffInput,
 } from "../src/api/index.js";
 import { toHex, utf8 } from "../src/api/uploads.js";
 
@@ -21,7 +21,7 @@ const SVG = Uint8Array.from(Buffer.from('<?xml version="1.0"?>\n<svg xmlns="http
 
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-const input = (over: Partial<SendInput> = {}): SendInput => ({
+const input = (over: Partial<HandoffInput> = {}): HandoffInput => ({
   jsonName: "Home-1-2.ir.json",
   json: '{"root":{"name":"Café ✓"}}',
   screenshots: [],
@@ -60,9 +60,9 @@ describe("sniffImageType", () => {
   });
 });
 
-describe("prepareSend", () => {
+describe("prepareHandoff", () => {
   it("hashes the bytes that will be uploaded, in hex", async () => {
-    const { files } = await prepareSend(input({ screenshots: [{ name: "hero-1-3.png", nodeId: "1:3", bytes: PNG }] }));
+    const { files } = await prepareHandoff(input({ screenshots: [{ name: "hero-1-3.png", nodeId: "1:3", bytes: PNG }] }));
     const ir = files.find((f) => f.kind === "ir")!;
     expect(ir.sha256).toBe(sha(Buffer.from('{"root":{"name":"Café ✓"}}')));
     expect(ir.size).toBe(Buffer.byteLength('{"root":{"name":"Café ✓"}}'));
@@ -82,7 +82,7 @@ describe("prepareSend", () => {
   });
 
   it("puts the IR first and sends section pictures and the whole-frame picture as screenshots", async () => {
-    const { files } = await prepareSend(
+    const { files } = await prepareHandoff(
       input({
         screenshots: [
           { name: "Hero-1-3.png", nodeId: "1:3", bytes: PNG },
@@ -99,7 +99,7 @@ describe("prepareSend", () => {
   });
 
   it("sends art that the IR cannot describe (vector, mask) as vector", async () => {
-    const { files } = await prepareSend(
+    const { files } = await prepareHandoff(
       input({
         screenshots: [
           { name: "art-vector-Crest-1-5.png", nodeId: "1:5", bytes: PNG },
@@ -114,7 +114,7 @@ describe("prepareSend", () => {
   });
 
   it("does not send content photos, and says which it left out", async () => {
-    const result = await prepareSend(
+    const result = await prepareHandoff(
       input({
         screenshots: [
           { name: "art-image-Player-1-7.png", nodeId: "1:7", bytes: PNG },
@@ -127,7 +127,7 @@ describe("prepareSend", () => {
   });
 
   it("leaves out an empty picture rather than send a file with no bytes", async () => {
-    const result = await prepareSend(
+    const result = await prepareHandoff(
       input({ screenshots: [{ name: "Empty-1-3.png", nodeId: "1:3", bytes: new Uint8Array() }] }),
     );
     expect(result.files).toHaveLength(1);
@@ -135,7 +135,7 @@ describe("prepareSend", () => {
   });
 
   it("describes a marked background: the node it paints, where its bytes came from, its real type", async () => {
-    const { files } = await prepareSend(
+    const { files } = await prepareHandoff(
       input({
         assets: [
           { name: "hero", nodeId: "1:20", targetNodeId: "1:9", bytes: JPEG, source: "original" },
@@ -157,7 +157,7 @@ describe("prepareSend", () => {
   });
 
   it("takes a background's type from its bytes, not from what it was called", async () => {
-    const { files } = await prepareSend(
+    const { files } = await prepareHandoff(
       input({ assets: [{ name: "logo.png", nodeId: "1:1", targetNodeId: "1:2", bytes: WEBP, source: "original" }] }),
     );
     expect(files.find((f) => f.kind === "background")).toMatchObject({ contentType: "image/webp" });
@@ -165,19 +165,19 @@ describe("prepareSend", () => {
 
   it("refuses a background that is not a type the backend takes, naming it", async () => {
     await expect(
-      prepareSend(
+      prepareHandoff(
         input({ assets: [{ name: "spin", nodeId: "1:1", targetNodeId: "1:2", bytes: GIF, source: "original" }] }),
       ),
     ).rejects.toThrow(UnsupportedAssetError);
     await expect(
-      prepareSend(
+      prepareHandoff(
         input({ assets: [{ name: "spin", nodeId: "1:1", targetNodeId: "1:2", bytes: GIF, source: "original" }] }),
       ),
     ).rejects.toThrow(/"spin" is not a PNG, JPEG, WebP or SVG/);
   });
 
   it("keeps file names unique within a send, which the backend requires", async () => {
-    const { files } = await prepareSend(
+    const { files } = await prepareHandoff(
       input({
         screenshots: [
           { name: "Hero-1-3.png", nodeId: "1:3", bytes: PNG },
@@ -192,7 +192,7 @@ describe("prepareSend", () => {
 
   it("waits between files, so hashing a big frame does not hang the panel", async () => {
     let ticks = 0;
-    await prepareSend(input({ screenshots: [{ name: "a.png", nodeId: "1:3", bytes: PNG }] }), async () => {
+    await prepareHandoff(input({ screenshots: [{ name: "a.png", nodeId: "1:3", bytes: PNG }] }), async () => {
       ticks++;
     });
     expect(ticks).toBe(2);
@@ -201,7 +201,7 @@ describe("prepareSend", () => {
 
 describe("manifestOf", () => {
   it("is the description of each file, without its bytes", async () => {
-    const { files } = await prepareSend(input());
+    const { files } = await prepareHandoff(input());
     const manifest = manifestOf(files);
     expect(manifest[0]).toEqual({
       name: "Home-1-2.ir.json",

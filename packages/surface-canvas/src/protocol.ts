@@ -8,12 +8,12 @@
  * functions, no class instances. `LintReport` was designed for that.
  */
 import type { AssetPlacement, TargetMatch, TargetOption } from "./assets.js";
-import type { AssetBinding, AssetFit } from "./ir/schema.js";
+import type { Annotation, AnnotationKind, AssetBinding, AssetFit } from "./ir/schema.js";
 import type { ActivityActor, ActivityEntry } from "./health/activity.js";
 import type { LintReport } from "./health/types.js";
 import type { ReconciliationReport } from "./health/reconcile-report.js";
 import type { TenantsView } from "./auth/tenants.js";
-import type { RunRecord } from "./sends.js";
+import type { HandoffBatch } from "./handoffs.js";
 import type { ThemeChoice } from "./themes.js";
 
 export type { ActivityActor, ActivityEntry, TenantsView };
@@ -30,7 +30,7 @@ export type AuthView =
   | { phase: "waiting"; userCode: string; loginUrl: string; expiresAt: number }
   | { phase: "signed-in"; user: { id: string; name: string } };
 
-export type Tab = "check" | "send" | "runs";
+export type Tab = "check" | "handoff" | "history";
 
 export const PANEL_SIZES: Record<PanelState, { width: number; height: number }> = {
   expanded: { width: 400, height: 640 },
@@ -126,6 +126,12 @@ export type UiMessage =
       height: number;
       targetId: string;
     }
+  /**
+   * Write a note on a layer for the agents that build the section. `id` is set
+   * when editing; absent when adding. The target's name is read in the sandbox.
+   */
+  | { type: "save-note"; id?: string; targetId: string; kind: AnnotationKind; text: string }
+  | { type: "remove-note"; id: string }
   /** Point an existing asset at a different element. */
   | { type: "retarget-asset"; key: string; targetId: string }
   | { type: "remove-asset"; key: string }
@@ -138,31 +144,31 @@ export type UiMessage =
   /** Override how the bitmap fills its box. */
   | { type: "set-asset-fit"; key: string; fit: AssetFit }
   /**
-   * Send frames to Studio, one Send per frame.
+   * Hand off frames to Studio, one Handoff per frame.
    *
    * Each frame is walked and posted on its own, in order, so each becomes its own
    * agent run and one slow frame cannot hold the others up. The sandbox owns the
-   * run record and posts it back as `runs` after every step.
+   * run record and posts it back as `batches` after every step.
    */
-  | { type: "send-frames"; frameIds: string[] }
+  | { type: "handoff-frames"; frameIds: string[] }
   /**
-   * Send frames of an existing run again, in that run: a failure the designer
+   * Hand off frames of an existing run again, in that run: a failure the designer
    * retried. The run flips from "needs you" to sent instead of leaving a stale
    * one behind and starting another.
    */
-  | { type: "retry-frames"; runId: string; frameIds: string[] }
+  | { type: "retry-frames"; batchId: string; frameIds: string[] }
   /** Stop after the frame in flight. Frames still queued are marked cancelled. */
   | { type: "cancel-send" }
   /** Stop, then send the same frames again as a new run. */
-  | { type: "restart-send"; runId: string }
-  /** Leave the Send tab's progress screen. The run stays in Runs. */
+  | { type: "restart-handoff"; batchId: string }
+  /** Leave the Handoff tab's progress screen. The run stays in Runs. */
   | { type: "dismiss-send" }
   /**
    * Walk the frames and hand back the same files the send would carry, as one
    * ZIP. The way out when Studio is down.
    */
   | { type: "download-zip"; frameIds: string[] }
-  /** Is Studio answering? Asked when the Send tab opens, and on Retry. */
+  /** Is Studio answering? Asked when the Handoff tab opens, and on Retry. */
   | { type: "open-studio" }
   /**
    * Start signing in. The verifier is the PKCE secret, made here in the iframe
@@ -177,7 +183,7 @@ export type UiMessage =
   | { type: "auth-sign-out" }
   /** Ask the backend again which clients this account may send for. */
   | { type: "tenants-load" }
-  /** Which client this file's sends are for. Remembered on the file. */
+  /** Which client this file's handoffs are for. Remembered on the file. */
   | { type: "tenant-select"; code: string }
   | { type: "close" };
 
@@ -237,7 +243,7 @@ export type PluginMessage =
       hasImage: boolean;
       parentId: string | null;
       parentName: string | null;
-      /** Every selected container, in canvas order. What the Send tab offers to send. */
+      /** Every selected container, in canvas order. What the Handoff tab offers to send. */
       frames: SelectedFrame[];
     }
   | {
@@ -248,6 +254,8 @@ export type PluginMessage =
       /** Keyed by image hash. The elements each asset could be re-pointed at. */
       targets: Record<string, TargetOption[]>;
     }
+  /** The designer's notes on this frame; `orphaned` counts those whose layer is gone. */
+  | { type: "notes"; notes: Annotation[]; orphaned: number }
   /**
    * A dropped image the matcher could not place with confidence.
    *
@@ -265,10 +273,10 @@ export type PluginMessage =
       candidates: TargetMatch[];
     }
   /**
-   * Every run, newest first, and which one the Send tab is showing. Posted after
+   * Every run, newest first, and which one the Handoff tab is showing. Posted after
    * every step of a send so the panel never has to ask.
    */
-  | { type: "runs"; runs: RunRecord[]; activeId: string | null }
+  | { type: "batches"; batches: HandoffBatch[]; activeId: string | null }
   | { type: "auth"; auth: AuthView }
   /**
    * A PNG of the frame being checked, or null. Follows the check, not the

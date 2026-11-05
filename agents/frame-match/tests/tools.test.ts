@@ -29,6 +29,7 @@ const measured = (match: number, conformErrors = 0): Measurement => ({
 const bundle = {
   exportId: "e",
   rootName: "Frame",
+  notes: [],
   themeArtifactId: "theme-1",
   themeRaw: { tokens: {} },
   doc: { rootNodeId: "1", root: { geometry: { bbox: { x: 0, y: 0, w: 100, h: 10 } } } },
@@ -101,6 +102,41 @@ const change = (props: Overrides["props"] = []): Overrides => ({
   surfaces: {},
   props,
   layouts: [],
+});
+
+describe("designer notes", () => {
+  it("frame.load lists them with the rule, and frame.node shows a layer's own", async () => {
+    const withNotes = {
+      ...bundle,
+      byId: new Map([["s", { id: "s", name: "Strip", type: "FRAME", geometry: {} }]]),
+      notes: [{ id: "n1", kind: "behaviour", text: "swipes", src: "s", path: "Home / Strip" }],
+    } as unknown as Bundle;
+    const { engine, plane } = setup(() => measured(90));
+    const dir = await mkdtemp(join(tmpdir(), "fm-notes-"));
+    const list = createMatchTools({
+      engine: { ...engine, bundle: async () => withNotes },
+      plane: () => plane,
+      dir,
+      web: "http://web",
+    }) as unknown as Array<{
+      name: string;
+      run(i: unknown, c: unknown): Promise<Record<string, unknown>>;
+    }>;
+    const run = (name: string, input: unknown) => {
+      const tool = list.find((t) => t.name === name);
+      if (!tool) throw new Error(name);
+      return tool.run(input, ctx("rn"));
+    };
+    const loaded = await run("frame.load", {});
+    expect(loaded.designerNotes).toEqual(withNotes.notes);
+    expect(String(loaded.designerNotesRule)).toMatch(/requirement/);
+    expect((await run("frame.node", { src: "s" })).designerNotes).toHaveLength(1);
+  });
+
+  it("frame.load says nothing about notes when there are none", async () => {
+    const { named } = await tools(() => measured(90));
+    expect(await named("frame.load").run({}, ctx("r0"))).not.toHaveProperty("designerNotes");
+  });
 });
 
 describe("frame.override", () => {

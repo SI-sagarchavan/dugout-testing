@@ -42,6 +42,7 @@ const measured = (match: number, conformErrors = 0): Measurement => ({
 const bundle = {
   exportId: "e",
   rootName: "Frame",
+  notes: [],
   themeArtifactId: "theme-1",
   themeRaw: { tokens: {} },
   doc: { rootNodeId: "1", root: { geometry: { bbox: { x: 0, y: 0, w: 1366, h: 412 } } } },

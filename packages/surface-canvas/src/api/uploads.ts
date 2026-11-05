@@ -1,12 +1,12 @@
 /**
- * What a Send puts on S3, and the manifest that describes it.
+ * What a Handoff puts on S3, and the manifest that describes it.
  *
  * The backend is told every file up front (name, kind, type, size, SHA-256) and signs one
  * upload URL for each. It signs those exact values into the URL, so what is described here
  * has to be what is uploaded, byte for byte: the hash is taken from the same bytes that are
  * PUT.
  *
- * Four kinds ship (see `.scratch/surface-studio-fanxp/send-flow.md`):
+ * Four kinds ship (see `.scratch/surface-studio-fanxp/handoff-flow.md`):
  *   ir          the frame, as JSON
  *   screenshot  the section pictures and the whole-frame picture, for the pixel diff
  *   vector      art the IR cannot describe: a crest, an icon, a swoosh, a mask
@@ -19,7 +19,7 @@
 import { ART_PLATE_PREFIX } from "../art-plates.js";
 import { sha256Async } from "../auth/pkce.js";
 
-export type SendFileKind = "ir" | "screenshot" | "vector" | "background";
+export type HandoffFileKind = "ir" | "screenshot" | "vector" | "background";
 
 /** One file of a send: its manifest entry, and the bytes the hash was taken from. */
 export interface PreparedFile {
@@ -29,7 +29,7 @@ export interface PreparedFile {
   targetNodeId?: string;
   /** A background: the designer's own bytes, or the node re-exported. */
   provenance?: "original" | "rendered";
-  kind: SendFileKind;
+  kind: HandoffFileKind;
   contentType: string;
   size: number;
   sha256: string;
@@ -51,7 +51,7 @@ export class UnsupportedAssetError extends Error {
   }
 }
 
-export interface SendInput {
+export interface HandoffInput {
   jsonName: string;
   json: string;
   screenshots: ReadonlyArray<{ name: string; nodeId: string; bytes: Uint8Array }>;
@@ -64,7 +64,7 @@ export interface SendInput {
   }>;
 }
 
-export interface PreparedSend {
+export interface PreparedHandoff {
   files: PreparedFile[];
   /** Names left out on purpose, so the designer is told what did not go. */
   skipped: string[];
@@ -76,10 +76,10 @@ export interface PreparedSend {
  * `tick` is awaited between files: hashing a few MB in the sandbox takes a while, and it
  * must not hold the thread so long that the panel looks hung.
  */
-export async function prepareSend(
-  input: SendInput,
+export async function prepareHandoff(
+  input: HandoffInput,
   tick: () => Promise<void> = async () => {},
-): Promise<PreparedSend> {
+): Promise<PreparedHandoff> {
   const files: PreparedFile[] = [];
   const skipped: string[] = [];
   const used = new Set<string>();
@@ -143,7 +143,7 @@ export async function prepareSend(
 }
 
 /** The whole-frame picture is a screenshot; the pictures of single layers are art. */
-function kindOfPicture(name: string): SendFileKind {
+function kindOfPicture(name: string): HandoffFileKind {
   if (!name.startsWith(ART_PLATE_PREFIX)) return "screenshot";
   return name.startsWith(`${ART_PLATE_PREFIX}root-`) ? "screenshot" : "vector";
 }

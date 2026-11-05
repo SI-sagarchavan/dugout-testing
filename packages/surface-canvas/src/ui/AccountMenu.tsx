@@ -11,7 +11,7 @@
  *   signed out  Connect
  *   waiting     the code to compare with the browser, open the page again, Cancel
  *
- * The Send tab has its own Connect card because that is where being signed out
+ * The Handoff tab has its own Connect card because that is where being signed out
  * hurts. This is the one place that is always there.
  */
 import type { JSX } from "react";
@@ -97,7 +97,7 @@ export function AccountMenu({
                   <div style={{ minWidth: 0 }}>
                     <div className="t-label truncate">{auth.user.name}</div>
                     <div className="t-caption truncate" style={{ color: "var(--ink-muted)" }}>
-                      {sendsFor(tenants)}
+                      {handoffsFor(tenants)}
                     </div>
                   </div>
                 </div>
@@ -160,12 +160,12 @@ export function AccountMenu({
   );
 }
 
-/** The line under the name: which client this file's sends go to. */
-function sendsFor(tenants: TenantsView): string {
+/** The line under the name: which client this file's handoffs go to. */
+function handoffsFor(tenants: TenantsView): string {
   if (tenants.status === "loading") return "Loading clients…";
   if (tenants.status === "error") return "Couldn’t load clients";
   if (tenants.status !== "ready") return "Signed in";
   const chosen = tenants.tenants.find((tenant) => tenant.code === tenants.selected);
-  if (chosen) return `Sends for ${chosen.name}`;
-  return tenants.tenants.length === 0 ? "No clients available" : "Choose a client in Send";
+  if (chosen) return `Handoffs for ${chosen.name}`;
+  return tenants.tenants.length === 0 ? "No clients available" : "Choose a client in Handoff";
 }

@@ -4,12 +4,12 @@
 
 | Tab       | What it does |
 | --------- | ------------ |
-| **Check** | Readiness: how much of the frame is bound to tokens, the fix queue that ranks the loose values and fixes them in bulk, and **Images** (drop an exported image; it is matched to the region it came from, named, and bound to the element it paints). |
-| **Send**  | A pre-flight (account, client, token set, loose values, background images, whether Studio answers), then **Send**: each selected frame is walked and sent on its own, one Send per frame. Progress is per frame, with Retry, Cancel and a ZIP fallback for when Studio is down. |
+| **Check** | Readiness: how much of the frame is bound to tokens, the fix queue that ranks the loose values and fixes them in bulk, **Images** (drop an exported image; it is matched to the region it came from, named, and bound to the element it paints) and **Notes** (what the builder must address on a layer). |
+| **Handoff**  | A pre-flight (account, client, token set, loose values, background images, whether Studio answers), then **Handoff**: each selected frame is walked and sent on its own, one Handoff per frame. Progress is per frame, with Retry, Cancel and a ZIP fallback for when Studio is down. |
 | **Runs**  | Every send this plugin has made, newest first, with what to do about it: Re-send, Download ZIP, Open in Studio. The tab carries a count of runs that need the designer. |
 
-Sending needs an account. **Connect** (top right, or on Send) signs in through the FanXP admin app in the browser;
-one sign-in covers every client the user may send for, and the Send tab picks the client, remembered on the file.
+Sending needs an account. **Connect** (top right, or on Handoff) signs in through the FanXP admin app in the browser;
+one sign-in covers every client the user may send for, and the Handoff tab picks the client, remembered on the file.
 Before a frame is uploaded the backend checks the user's access to that client and that the frame looks like a FanOS
 design. See `.scratch/surface-studio-fanxp/plugin-auth.md`.
 
@@ -24,7 +24,7 @@ still going out, *needs you* when some did not make it, *sent* when all did. Wha
 Studio does afterwards (matching, binding, waiting for approval) is not visible
 from the plugin until a plugin-facing runs API exists, and a status the plugin
 invented would be worse than none. History lives in `figma.clientStorage`
-(`fanos-studio.runs`, newest 20); `RunsSource` in `src/sends.ts` is the seam a
+(`fanos-studio.batches`, newest 20); `BatchesSource` in `src/handoffs.ts` is the seam a
 live source plugs into. A send still going when the plugin closed is settled as
 a failure on the next open, so Re-send can pick it up.
 
@@ -67,6 +67,21 @@ compiler **absorbs** it: the gradient plate, the texture and the cutout are all
 in the image, and emitting them again paints them on top of the picture that
 contains them. **Text is never absorbed, at any depth** — baking a headline into
 a bitmap freezes copy the CMS is supposed to change.
+
+### Notes: what the frame cannot show
+
+Select any layer, pick a kind (**Must do**, **Data**, **Behaviour**, **Ignore**), write what the builder has to
+know ("this strip swipes", "the badge is the live score", "keep this static") and add it. A note is intent, not a
+re-description of the layout: Figma already holds that, which is why this is not the marking feature below.
+
+Notes live in pluginData on the frame (`fanos/annotations`) and travel in the IR's `annotations` list (IR 1.11.0),
+so the Send needs no new file. Each note is checked against the tree at export: one whose layer was deleted is
+dropped and the panel says how many. 1000 characters at most.
+
+The agents treat a note as a requirement. `frame-match` and `data-bind` list the notes they are given and their
+`final` is refused until it has one entry for each: `addressed` with how, `not-addressed` with why, or `not-mine`
+(a look note for the data stage, a data note for the look stage). `section-builder` merges the two, and a note no
+stage met is listed in `remaining`.
 
 ### Replaced: marking layers
 
@@ -153,7 +168,7 @@ src/
   main.ts          sandbox entry: session, dispatch, debounce, incremental re-lint
   traverse.ts      Figma nodes -> Frame IR                          (figma-aware)
   export.ts        the walk a send carries: IR + screenshots + asset bytes (figma-aware)
-  sends.ts         runs: per-frame send status, history, ordering   PURE
+  handoffs.ts         runs: per-frame send status, history, ordering   PURE
   assets.ts        marks: name, bind, fit, placement                PURE
   reconcile.ts     token <-> Figma variable/style map               (figma-aware)
   fix.ts           apply proposals, undo checkpointing              (figma-aware)

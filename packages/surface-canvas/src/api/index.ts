@@ -6,27 +6,27 @@ export {
   type ApiClient,
 } from "./client.js";
 export {
-  createSendsClient,
-  runSend,
-  SENDS_PATH,
+  createHandoffsClient,
+  runHandoff,
+  HANDOFFS_PATH,
   UPLOAD_CONCURRENCY,
   type Failure,
-  type SendOutcome,
-  type SendSource,
-  type SendsClient,
+  type HandoffOutcome,
+  type HandoffSource,
+  type HandoffsClient,
   type Step,
   type Upload,
-} from "./sends-client.js";
+} from "./handoffs-client.js";
 export {
   manifestOf,
-  prepareSend,
+  prepareHandoff,
   sniffImageType,
   UnsupportedAssetError,
   type ManifestFile,
   type PreparedFile,
-  type PreparedSend,
-  type SendFileKind,
-  type SendInput,
+  type PreparedHandoff,
+  type HandoffFileKind,
+  type HandoffInput,
 } from "./uploads.js";
 export {
   API_ORIGINS,

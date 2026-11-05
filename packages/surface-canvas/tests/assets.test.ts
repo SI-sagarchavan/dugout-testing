@@ -91,6 +91,7 @@ function doc(root: FrameIRNode, irVersion: FrameIRDocument["irVersion"] = "1.6.0
     breakpointHint: 1366,
     root,
     assets: [],
+    annotations: [],
   };
 }
 

@@ -1,12 +1,12 @@
-# 19. Matching a Figma frame starts from the plugin's Send
+# 19. Matching a Figma frame starts from the plugin's Handoff
 
-> **Input source changes under [ADR 0027](0027-two-databases.md).** The decision to start from the Send stays.
-> Where the Send is read from changes: not `plane.getExport` on the control plane, but the backend's Send
+> **Input source changes under [ADR 0027](0027-two-databases.md).** The decision to start from the Handoff stays.
+> Where the Handoff is read from changes: not `plane.getExport` on the control plane, but the backend's Handoff
 > ledger and S3, through a Surface MCP tool (`surface.getSend`). Until that lands, this ADR describes how it works.
 
-The `card` agent reads a DSL file and a screenshot, and most of what decides fidelity never reaches it: the IR, the surfaces, the export's theme. `frame-match` starts from what the plugin's Send already stored, by export id.
+The `card` agent reads a DSL file and a screenshot, and most of what decides fidelity never reaches it: the IR, the surfaces, the export's theme. `frame-match` starts from what the plugin's Handoff already stored, by export id.
 
-- **Trigger.** `pnpm agent watch` is a host (ADR 0009) that looks at the control plane for new exports and queues a run per frame, so the plugin and the pipeline do not change. The plugin can't show the run's link, because the control plane doesn't know about it. A Send made while the watcher is down still runs when it next starts, once the tenant has a prior `frame-match` run.
+- **Trigger.** `pnpm agent watch` is a host (ADR 0009) that looks at the control plane for new exports and queues a run per frame, so the plugin and the pipeline do not change. The plugin can't show the run's link, because the control plane doesn't know about it. A Handoff made while the watcher is down still runs when it next starts, once the tenant has a prior `frame-match` run.
 - **The compiler stays the source.** The model never writes a tree. It adds overrides keyed by Figma id, and each is an input to a recompile, so they survive one.
 - **Code does what needs no judgement.** Tokenless gradients come from the IR's matrix. Placeholder icons are cropped from the screenshot, with any gradient above them taken back out of the pixels. Only then does the model look.
 - **Measured, not claimed.** Each override is rendered and compared. It is undone if the pixel match drops, conform errors rise, or nothing improves. The approval and `final` carry code's numbers, and `final` is refused if they differ. Publishing is refused until the worst findings have been examined, because models stop early when the first number looks high.
@@ -48,9 +48,9 @@ The plugin also exports a picture of each layer that is art (`src/art-plates.ts`
 - **1× before dropping.** A picture that does not fit at its scale is tried at 1×, and dropped only if that does not fit either.
 - **Marked backgrounds are not plates.** They stay on the platform and travel as the designer's own bytes, so their layers are skipped when pictures are chosen. Exporting a lower-quality copy would only spend the budget.
 
-The consumers already read each picture's scale from its size against the layer's box (`fitOf`), so mixed 1× and 2× pictures need nothing from them. Measured on that export's real pictures, the seven largest go from 17.6 MB to 5.5 MB. Whether the whole export now fits is for the next Send to say: `artPlatesTruncated` in its summary.
+The consumers already read each picture's scale from its size against the layer's box (`fitOf`), so mixed 1× and 2× pictures need nothing from them. Measured on that export's real pictures, the seven largest go from 17.6 MB to 5.5 MB. Whether the whole export now fits is for the next Handoff to say: `artPlatesTruncated` in its summary.
 
-Nothing here has been run against a Figma export yet. It is tested against the selection on real IRs and against stubbed Figma nodes. The first Send from a rebuilt plugin is the real test, and `pnpm eval measure` against it is how to read it.
+Nothing here has been run against a Figma export yet. It is tested against the selection on real IRs and against stubbed Figma nodes. The first Handoff from a rebuilt plugin is the real test, and `pnpm eval measure` against it is how to read it.
 
 ## Looking
 

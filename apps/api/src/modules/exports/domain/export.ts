@@ -1,5 +1,5 @@
 /**
- * Figma exports: the event a designer creates by pressing Send.
+ * Figma exports: the event a designer creates by pressing Handoff.
  *
  * The IR and the plates are artifacts; this is the record of the act. Every
  * rule about what a valid export is, and how two sends of the same frame relate

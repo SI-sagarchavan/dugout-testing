@@ -52,6 +52,35 @@
         "type": "string"
       },
       "description": "What the compiler should have done"
+    },
+    "notes": {
+      "default": [],
+      "description": "Each note the designer left: addressed by one of the stages, or why not",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "addressed",
+              "not-addressed"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "detail"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -64,7 +93,8 @@
     "bound",
     "collapsed",
     "remaining",
-    "compilerFindings"
+    "compilerFindings",
+    "notes"
   ],
   "additionalProperties": false
 }

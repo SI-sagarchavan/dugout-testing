@@ -1,23 +1,23 @@
 /**
- * Sends: what the Send tab shows while frames go out, and what the Runs tab
+ * Handoffs: what the Handoff tab shows while frames go out, and what the History tab
  * remembers afterwards.
  *
- * One click on Send is a *run*: a list of frames, each sent on its own (one Send
- * per frame, so one agent run per frame). The run record is the one structure
- * both tabs draw — the Send tab while it is in flight, Runs once it is history —
+ * One click on Handoff is a *batch*: a list of frames, each sent on its own (one Handoff
+ * per frame, so one agent build per frame). The batch record is the one structure
+ * both tabs draw — the Handoff tab while it is in flight, History once it is history —
  * and it is plain data so it survives `figma.clientStorage` and postMessage.
  *
  * Status here is what the plugin can honestly know: whether the files left the
  * building. What Studio does with them afterwards (matching, binding, waiting
- * for approval) is not visible from here until a runs API exists, and a status
- * the plugin invented would be worse than none. `RunsSource` is the seam that
+ * for approval) is not visible from here until a batches API exists, and a status
+ * the plugin invented would be worse than none. `BatchesSource` is the seam that
  * API plugs into.
  *
  * PURE. No Figma, no DOM.
  */
 
-export type FrameSendStatus =
-  /** Queued behind another frame of the same run. */
+export type FrameHandoffStatus =
+  /** Queued behind another frame of the same batch. */
   | "waiting"
   /** Reading the frame: IR, screenshots, marked assets. */
   | "walking"
@@ -25,55 +25,55 @@ export type FrameSendStatus =
   | "uploading"
   | "sent"
   | "failed"
-  /** The designer stopped the run before this frame went out. */
+  /** The designer stopped the batch before this frame went out. */
   | "cancelled";
 
-export interface FrameSend {
+export interface FrameHandoff {
   frameId: string;
   name: string;
-  status: FrameSendStatus;
+  status: FrameHandoffStatus;
   /** Files in the send: the IR, the screenshots, the marked assets. 0 until walked. */
   files: number;
   /** Why it failed. Only set when `status` is `failed`. */
   error?: string;
 }
 
-export interface RunRecord {
+export interface HandoffBatch {
   id: string;
-  /** ms since epoch, when the designer pressed Send. */
+  /** ms since epoch, when the designer pressed Handoff. */
   at: number;
   fileName: string;
   /** The Studio the frames were sent to. */
   origin: string;
-  frames: FrameSend[];
+  frames: FrameHandoff[];
   /** True once no frame is waiting or in flight. */
   finished: boolean;
 }
 
 /**
- * How a run reads on the Runs tab.
+ * How a batch reads on the History tab.
  *
  * - `running`: something is still going out
  * - `needs-you`: finished, and at least one frame did not make it
  * - `cancelled`: stopped by the designer, nothing failed
  * - `sent`: every frame reached Studio
  */
-export type RunStatus = "running" | "needs-you" | "cancelled" | "sent";
+export type BatchStatus = "running" | "needs-you" | "cancelled" | "sent";
 
-const IN_FLIGHT: ReadonlySet<FrameSendStatus> = new Set(["waiting", "walking", "uploading"]);
+const IN_FLIGHT: ReadonlySet<FrameHandoffStatus> = new Set(["waiting", "walking", "uploading"]);
 
-export function isInFlight(status: FrameSendStatus): boolean {
+export function isInFlight(status: FrameHandoffStatus): boolean {
   return IN_FLIGHT.has(status);
 }
 
-export function runStatus(run: RunRecord): RunStatus {
-  if (run.frames.some((frame) => isInFlight(frame.status))) return "running";
-  if (run.frames.some((frame) => frame.status === "failed")) return "needs-you";
-  if (run.frames.some((frame) => frame.status === "cancelled")) return "cancelled";
+export function batchStatus(batch: HandoffBatch): BatchStatus {
+  if (batch.frames.some((frame) => isInFlight(frame.status))) return "running";
+  if (batch.frames.some((frame) => frame.status === "failed")) return "needs-you";
+  if (batch.frames.some((frame) => frame.status === "cancelled")) return "cancelled";
   return "sent";
 }
 
-export interface RunCounts {
+export interface BatchCounts {
   total: number;
   sent: number;
   failed: number;
@@ -81,9 +81,9 @@ export interface RunCounts {
   inFlight: number;
 }
 
-export function countFrames(run: RunRecord): RunCounts {
-  const counts: RunCounts = { total: run.frames.length, sent: 0, failed: 0, cancelled: 0, inFlight: 0 };
-  for (const frame of run.frames) {
+export function countFrames(batch: HandoffBatch): BatchCounts {
+  const counts: BatchCounts = { total: batch.frames.length, sent: 0, failed: 0, cancelled: 0, inFlight: 0 };
+  for (const frame of batch.frames) {
     if (frame.status === "sent") counts.sent++;
     else if (frame.status === "failed") counts.failed++;
     else if (frame.status === "cancelled") counts.cancelled++;
@@ -92,43 +92,43 @@ export function countFrames(run: RunRecord): RunCounts {
   return counts;
 }
 
-/** Runs that are waiting on the designer: the number on the Runs tab. */
-export function needsAttention(runs: readonly RunRecord[]): number {
-  return runs.filter((run) => runStatus(run) === "needs-you").length;
+/** History that are waiting on the designer: the number on the History tab. */
+export function needsAttention(batches: readonly HandoffBatch[]): number {
+  return batches.filter((batch) => batchStatus(batch) === "needs-you").length;
 }
 
 /**
  * Which frames a Re-send should go out again.
  *
- * A run that left some frames behind re-sends only those: the frames that
+ * A batch that left some frames behind re-sends only those: the frames that
  * arrived are already in Studio, and sending them again would start a second
- * agent run on a design nobody changed. A run that went fine re-sends all of it,
- * because the designer asking for that wants a fresh run.
+ * agent build on a design nobody changed. A batch that went fine re-sends all of it,
+ * because the designer asking for that wants a fresh batch.
  */
-export function framesToResend(run: RunRecord): FrameSend[] {
-  const missed = run.frames.filter(
+export function framesToResend(batch: HandoffBatch): FrameHandoff[] {
+  const missed = batch.frames.filter(
     (frame) => frame.status === "failed" || frame.status === "cancelled",
   );
-  return missed.length > 0 ? missed : run.frames;
+  return missed.length > 0 ? missed : batch.frames;
 }
 
 /**
- * The order the Runs tab reads in: what needs the designer first, then what is
+ * The order the History tab reads in: what needs the designer first, then what is
  * still going, then everything else — each newest first. A failed send from this
  * morning must not sit under a successful one from a minute ago.
  */
-export function sortRuns(runs: readonly RunRecord[]): RunRecord[] {
-  const rank: Record<RunStatus, number> = { "needs-you": 0, running: 1, cancelled: 2, sent: 2 };
-  return [...runs].sort((a, b) => rank[runStatus(a)] - rank[runStatus(b)] || b.at - a.at);
+export function sortBatches(batches: readonly HandoffBatch[]): HandoffBatch[] {
+  const rank: Record<BatchStatus, number> = { "needs-you": 0, running: 1, cancelled: 2, sent: 2 };
+  return [...batches].sort((a, b) => rank[batchStatus(a)] - rank[batchStatus(b)] || b.at - a.at);
 }
 
-export function newRun(input: {
+export function newBatch(input: {
   id: string;
   at: number;
   fileName: string;
   origin: string;
   frames: ReadonlyArray<{ frameId: string; name: string }>;
-}): RunRecord {
+}): HandoffBatch {
   return {
     id: input.id,
     at: input.at,
@@ -145,21 +145,21 @@ export function newRun(input: {
 }
 
 /** `finished` is derived, never set by hand, so it cannot drift from the frames. */
-export function withFinished(run: RunRecord): RunRecord {
-  const finished = !run.frames.some((frame) => isInFlight(frame.status));
-  return finished === run.finished ? run : { ...run, finished };
+export function withFinished(batch: HandoffBatch): HandoffBatch {
+  const finished = !batch.frames.some((frame) => isInFlight(frame.status));
+  return finished === batch.finished ? batch : { ...batch, finished };
 }
 
 export function setFrame(
-  run: RunRecord,
+  batch: HandoffBatch,
   frameId: string,
-  patch: Partial<Omit<FrameSend, "frameId">>,
-): RunRecord {
+  patch: Partial<Omit<FrameHandoff, "frameId">>,
+): HandoffBatch {
   return withFinished({
-    ...run,
-    frames: run.frames.map((frame) => {
+    ...batch,
+    frames: batch.frames.map((frame) => {
       if (frame.frameId !== frameId) return frame;
-      const next: FrameSend = { ...frame, ...patch };
+      const next: FrameHandoff = { ...frame, ...patch };
       // A frame that is not failing any more must not keep its old reason.
       if (next.status !== "failed") delete next.error;
       return next;
@@ -168,10 +168,10 @@ export function setFrame(
 }
 
 /** Mark everything still queued as stopped. In-flight work finishes on its own. */
-export function cancelWaiting(run: RunRecord): RunRecord {
+export function cancelWaiting(batch: HandoffBatch): HandoffBatch {
   return withFinished({
-    ...run,
-    frames: run.frames.map((frame) =>
+    ...batch,
+    frames: batch.frames.map((frame) =>
       frame.status === "waiting" ? { ...frame, status: "cancelled" } : frame,
     ),
   });
@@ -181,11 +181,11 @@ export function cancelWaiting(run: RunRecord): RunRecord {
  * A plugin that closed mid-send left frames "uploading" forever. Whatever did not
  * land is a failure with a reason the designer can act on — Re-send picks it up.
  */
-export function settleInterrupted(run: RunRecord): RunRecord {
-  if (run.finished && !run.frames.some((frame) => isInFlight(frame.status))) return run;
+export function settleInterrupted(batch: HandoffBatch): HandoffBatch {
+  if (batch.finished && !batch.frames.some((frame) => isInFlight(frame.status))) return batch;
   return withFinished({
-    ...run,
-    frames: run.frames.map((frame) =>
+    ...batch,
+    frames: batch.frames.map((frame) =>
       isInFlight(frame.status)
         ? { ...frame, status: "failed", error: "The plugin closed before this frame finished sending." }
         : frame,
@@ -193,22 +193,22 @@ export function settleInterrupted(run: RunRecord): RunRecord {
   });
 }
 
-export const MAX_RUNS = 20;
+export const MAX_BATCHES = 20;
 
 /** Newest first, capped. */
-export function pushRun(runs: readonly RunRecord[], run: RunRecord): RunRecord[] {
-  return [run, ...runs.filter((item) => item.id !== run.id)].slice(0, MAX_RUNS);
+export function pushBatch(batches: readonly HandoffBatch[], batch: HandoffBatch): HandoffBatch[] {
+  return [batch, ...batches.filter((item) => item.id !== batch.id)].slice(0, MAX_BATCHES);
 }
 
-export function replaceRun(runs: readonly RunRecord[], run: RunRecord): RunRecord[] {
-  return runs.map((item) => (item.id === run.id ? run : item));
+export function replaceBatch(batches: readonly HandoffBatch[], batch: HandoffBatch): HandoffBatch[] {
+  return batches.map((item) => (item.id === batch.id ? batch : item));
 }
 
 // ---------------------------------------------------------------------------
 // Persistence
 // ---------------------------------------------------------------------------
 
-export const CLIENT_STORAGE_RUNS_KEY = "fanos-studio.runs";
+export const CLIENT_STORAGE_BATCHES_KEY = "fanos-studio.batches";
 
 const STATUSES: ReadonlySet<string> = new Set([
   "waiting",
@@ -220,19 +220,19 @@ const STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whatever clientStorage hands back, as runs. Anything malformed is dropped — a
+ * Whatever clientStorage hands back, as batches. Anything malformed is dropped — a
  * history entry from an older build must never stop the plugin from opening.
  */
-export function parseRuns(raw: unknown): RunRecord[] {
+export function parseBatches(raw: unknown): HandoffBatch[] {
   if (!Array.isArray(raw)) return [];
-  const runs: RunRecord[] = [];
+  const batches: HandoffBatch[] = [];
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
     const r = item as Record<string, unknown>;
     if (typeof r["id"] !== "string" || typeof r["at"] !== "number" || !Array.isArray(r["frames"])) {
       continue;
     }
-    const frames: FrameSend[] = [];
+    const frames: FrameHandoff[] = [];
     for (const f of r["frames"] as unknown[]) {
       if (!f || typeof f !== "object") continue;
       const frame = f as Record<string, unknown>;
@@ -244,17 +244,17 @@ export function parseRuns(raw: unknown): RunRecord[] {
       ) {
         continue;
       }
-      const parsed: FrameSend = {
+      const parsed: FrameHandoff = {
         frameId: frame["frameId"],
         name: frame["name"],
-        status: frame["status"] as FrameSendStatus,
+        status: frame["status"] as FrameHandoffStatus,
         files: typeof frame["files"] === "number" ? frame["files"] : 0,
       };
       if (typeof frame["error"] === "string") parsed.error = frame["error"];
       frames.push(parsed);
     }
     if (frames.length === 0) continue;
-    runs.push(
+    batches.push(
       withFinished({
         id: r["id"],
         at: r["at"],
@@ -265,31 +265,31 @@ export function parseRuns(raw: unknown): RunRecord[] {
       }),
     );
   }
-  return runs.slice(0, MAX_RUNS);
+  return batches.slice(0, MAX_BATCHES);
 }
 
 // ---------------------------------------------------------------------------
-// The Runs source
+// The History source
 // ---------------------------------------------------------------------------
 
 /**
- * Where the Runs tab gets its runs.
+ * Where the History tab gets its batches.
  *
  * Today that is this plugin's own history. When the control plane has a
- * plugin-facing runs API (after plugin auth), a second implementation merges
+ * plugin-facing batches API (after plugin auth), a second implementation merges
  * Studio's status — running, needs approval, report ready — into the same
- * `RunRecord`s, and nothing above this interface changes.
+ * `HandoffBatch`s, and nothing above this interface changes.
  */
-export interface RunsSource {
-  list(): Promise<RunRecord[]>;
-  save(runs: readonly RunRecord[]): Promise<void>;
+export interface BatchesSource {
+  list(): Promise<HandoffBatch[]>;
+  save(batches: readonly HandoffBatch[]): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
 // Words
 // ---------------------------------------------------------------------------
 
-/** `4 min ago`. Coarse on purpose: a run is hours old, not seconds. */
+/** `4 min ago`. Coarse on purpose: a batch is hours old, not seconds. */
 export function ago(at: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - at) / 1000));
   if (seconds < 45) return "just now";
@@ -301,16 +301,16 @@ export function ago(at: number, now: number): string {
   return `${days} d ago`;
 }
 
-/** `Home · Fixtures · Match centre`, trimmed when a run has many frames. */
-export function runTitle(run: RunRecord, max = 3): string {
-  const names = run.frames.map((frame) => frame.name);
+/** `Home · Fixtures · Match centre`, trimmed when a batch has many frames. */
+export function batchTitle(batch: HandoffBatch, max = 3): string {
+  const names = batch.frames.map((frame) => frame.name);
   if (names.length <= max) return names.join(" · ");
   return `${names.slice(0, max).join(" · ")} · +${names.length - max}`;
 }
 
-/** Why a run needs the designer, in one sentence. */
-export function runProblem(run: RunRecord): string {
-  const failed = run.frames.filter((frame) => frame.status === "failed");
+/** Why a batch needs the designer, in one sentence. */
+export function batchProblem(batch: HandoffBatch): string {
+  const failed = batch.frames.filter((frame) => frame.status === "failed");
   if (failed.length === 0) return "";
   const first = failed[0]!;
   const reason = first.error ? first.error : "didn’t finish uploading";

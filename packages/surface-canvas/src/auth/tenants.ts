@@ -28,7 +28,7 @@ export function chooseTenant(tenants: readonly Tenant[], remembered: string | nu
   return tenants.length === 1 ? tenants[0]!.code : null;
 }
 
-/** The sentence a blocked Send gives for a client problem, or null when it can go. */
+/** The sentence a blocked Handoff gives for a client problem, or null when it can go. */
 export function tenantBlocker(view: TenantsView): string | null {
   switch (view.status) {
     case "idle":

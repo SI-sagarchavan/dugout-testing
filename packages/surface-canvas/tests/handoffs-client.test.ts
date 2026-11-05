@@ -1,20 +1,20 @@
 /**
- * The three steps of a Send against a fake backend and a fake S3. Fetch is injected, so
+ * The three steps of a Handoff against a fake backend and a fake S3. Fetch is injected, so
  * nothing here touches the network.
  */
 import { describe, expect, it } from "vitest";
 import {
-  createSendsClient,
-  runSend,
+  createHandoffsClient,
+  runHandoff,
   UPLOAD_CONCURRENCY,
   type ApiFetch,
   type ApiFetchResponse,
   type PreparedFile,
-  type SendSource,
+  type HandoffSource,
 } from "../src/api/index.js";
 
 const BASE = "http://localhost:4000/fanxp/api/v1";
-const source: SendSource = {
+const source: HandoffSource = {
   fileKey: null,
   fileName: "Southern Brave",
   pageName: "Home",
@@ -46,8 +46,8 @@ const envelope = (data: unknown) => ({ data, meta: { message: "ok", code: "SUCCE
 const uploadFor = (name: string) => ({
   name,
   method: "PUT" as const,
-  url: `https://bucket.s3.us-east-1.amazonaws.com/ibl/surface-sends/aa/aa/${name}?sig=1`,
-  headers: { "Content-Type": "image/png", "x-amz-checksum-sha256": "q1M=", "x-amz-tagging": "kind=surface-send" },
+  url: `https://bucket.s3.us-east-1.amazonaws.com/ibl/surface-handoffs/aa/aa/${name}?sig=1`,
+  headers: { "Content-Type": "image/png", "x-amz-checksum-sha256": "q1M=", "x-amz-tagging": "kind=surface-handoff" },
 });
 
 interface Call {
@@ -71,13 +71,13 @@ function world(opts: {
   let peak = 0;
   const fetch: ApiFetch = async (url, init) => {
     calls.push({ url, method: init.method, headers: init.headers ?? {}, body: init.body });
-    if (url === `${BASE}/surface/sends`) {
+    if (url === `${BASE}/surface/handoffs`) {
       return (
         opts.start ??
         reply(
           201,
           envelope({
-            sendId: "send-1",
+            handoffId: "handoff-1",
             expiresIn: 900,
             uploads: (opts.want ?? []).map(uploadFor),
             present: opts.present ?? [],
@@ -85,8 +85,8 @@ function world(opts: {
         )
       );
     }
-    if (url === `${BASE}/surface/sends/send-1/complete`) {
-      return opts.complete ?? reply(200, envelope({ sendId: "send-1", status: "received", files: 2 }));
+    if (url === `${BASE}/surface/handoffs/handoff-1/complete`) {
+      return opts.complete ?? reply(200, envelope({ handoffId: "handoff-1", status: "received", files: 2 }));
     }
     inFlight++;
     peak = Math.max(peak, inFlight);
@@ -102,8 +102,8 @@ function world(opts: {
 }
 
 const run = (w: ReturnType<typeof world>, files: PreparedFile[], onProgress?: (d: number, t: number) => void) =>
-  runSend({
-    client: createSendsClient({ baseUrl: BASE, fetch: w.fetch }),
+  runHandoff({
+    client: createHandoffsClient({ baseUrl: BASE, fetch: w.fetch }),
     accessToken: "tok",
     tenant: "ibl",
     source,
@@ -144,8 +144,8 @@ describe("start", () => {
   });
 
   it("says what it was reaching when nothing answers", async () => {
-    const result = await runSend({
-      client: createSendsClient({
+    const result = await runHandoff({
+      client: createHandoffsClient({
         baseUrl: BASE,
         fetch: async () => {
           throw new Error("Failed to fetch");
@@ -251,9 +251,9 @@ describe("complete", () => {
   it("is called after every upload, and its answer is the verdict", async () => {
     const w = world({ want: ["a.png"] });
     const result = await run(w, [file("a.png")]);
-    expect(result).toMatchObject({ ok: true, value: { sendId: "send-1" } });
+    expect(result).toMatchObject({ ok: true, value: { handoffId: "handoff-1" } });
     const order = w.calls.map((c) => c.method + " " + c.url.replace(/\?.*/, "").split("/").slice(-1)[0]);
-    expect(order).toEqual(["POST sends", "PUT a.png", "POST complete"]);
+    expect(order).toEqual(["POST handoffs", "PUT a.png", "POST complete"]);
   });
 
   it("surfaces the backend's list of what is wrong when the send is incomplete", async () => {

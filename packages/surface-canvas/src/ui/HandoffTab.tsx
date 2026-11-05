@@ -1,5 +1,5 @@
 /**
- * Send: what is going out, whether it should, and how it is going.
+ * Handoff: what is going out, whether it should, and how it is going.
  *
  * Two screens on one tab. The pre-flight lists the frames and four checks, none
  * of which blocks the send: a designer who knows about a loose value should be
@@ -7,7 +7,7 @@
  * the send"). The progress screen takes over the moment a send starts and stays
  * until the designer leaves it, so a finished send is read, not missed.
  *
- * Frames go out one Send each. The files for a frame travel in a single request,
+ * Frames go out one Handoff each. The files for a frame travel in a single request,
  * so there is no honest percentage for a frame in flight: it shows how many files
  * it carries and a moving bar, and the overall bar counts frames.
  */
@@ -15,26 +15,26 @@ import type { JSX } from "react";
 import type { AuthView, Tab } from "../protocol.js";
 import {
   countFrames,
-  runStatus,
-  type FrameSend,
-  type RunRecord,
-} from "../sends.js";
+  batchStatus,
+  type FrameHandoff,
+  type HandoffBatch,
+} from "../handoffs.js";
 import { tenantBlocker } from "../auth/tenants.js";
 import { connect } from "./auth.js";
-import { framesToSend, sendLabel } from "./frames.js";
+import { framesToHandoff, handoffLabel } from "./frames.js";
 import {
   AlertIcon,
   ArchiveIcon,
   CheckIcon,
   ExternalIcon,
   RetryIcon,
-  SendIcon,
+  HandoffIcon,
 } from "./icons.js";
 import { send } from "./main.js";
 import { needsPick } from "./rows.js";
 import type { PanelAction, StudioState } from "./state.js";
 
-export function SendTab({
+export function HandoffTab({
   state,
   dispatch,
   go,
@@ -43,9 +43,9 @@ export function SendTab({
   dispatch: (action: PanelAction) => void;
   go: (tab: Tab, view?: "queue" | "images") => void;
 }): JSX.Element {
-  const run = state.activeRunId ? state.runs.find((item) => item.id === state.activeRunId) : undefined;
-  return run ? (
-    <Progress state={state} run={run} />
+  const batch = state.activeBatchId ? state.batches.find((item) => item.id === state.activeBatchId) : undefined;
+  return batch ? (
+    <Progress state={state} batch={batch} />
   ) : (
     <Preflight state={state} dispatch={dispatch} go={go} />
   );
@@ -64,7 +64,7 @@ function Preflight({
   dispatch: (action: PanelAction) => void;
   go: (tab: Tab, view?: "queue" | "images") => void;
 }): JSX.Element {
-  const frames = framesToSend(state);
+  const frames = framesToHandoff(state);
   const report = state.report;
   const theme = state.themes.find((item) => item.id === state.themeId);
   const loose = report?.coverage.loose ?? 0;
@@ -103,7 +103,7 @@ function Preflight({
           )}
           {frames.length > 0 ? (
             <p className="t-caption" style={{ color: "var(--ink-muted)" }}>
-              Select other frames on the canvas to change this. Each goes out as its own Send.
+              Select other frames on the canvas to change this. Each goes out as its own Handoff.
             </p>
           ) : null}
           <div
@@ -115,7 +115,7 @@ function Preflight({
             }}
           >
             <span className="t-overline" style={{ color: "var(--ink-muted)" }}>
-              Sends to
+              Hand off to
             </span>
             <span className="t-label truncate">FanXP backend</span>
           </div>
@@ -224,14 +224,14 @@ function Preflight({
           style={{ flex: 1 }}
           disabled={frames.length === 0 || blocked}
           title={blockedReason ?? undefined}
-          onClick={() => send({ type: "send-frames", frameIds: frames.map((frame) => frame.id) })}
+          onClick={() => send({ type: "handoff-frames", frameIds: frames.map((frame) => frame.id) })}
         >
-          <SendIcon />
+          <HandoffIcon />
           {blocked && frames.length > 0
             ? auth.phase !== "signed-in"
               ? "Connect to send"
               : "Choose a client"
-            : sendLabel(frames)}
+            : handoffLabel(frames)}
         </button>
       </footer>
     </>
@@ -341,12 +341,12 @@ function Verdict({ ok, label }: { ok: boolean; label: string }): JSX.Element {
 // Progress
 // ---------------------------------------------------------------------------
 
-function Progress({ state, run }: { state: StudioState; run: RunRecord }): JSX.Element {
-  const status = runStatus(run);
-  const counts = countFrames(run);
+function Progress({ state, batch }: { state: StudioState; batch: HandoffBatch }): JSX.Element {
+  const status = batchStatus(batch);
+  const counts = countFrames(batch);
   const running = status === "running";
   const percent = counts.total === 0 ? 0 : Math.round((counts.sent / counts.total) * 100);
-  const failed = run.frames.filter((frame) => frame.status === "failed" || frame.status === "cancelled");
+  const failed = batch.frames.filter((frame) => frame.status === "failed" || frame.status === "cancelled");
 
   const verdict =
     status === "running"
@@ -408,8 +408,8 @@ function Progress({ state, run }: { state: StudioState; run: RunRecord }): JSX.E
             Frames
           </h2>
           <ul className="fs-card is-list">
-            {run.frames.map((frame) => (
-              <FrameRow key={frame.frameId} run={run} frame={frame} busy={state.busy} />
+            {batch.frames.map((frame) => (
+              <FrameRow key={frame.frameId} batch={batch} frame={frame} busy={state.busy} />
             ))}
           </ul>
         </section>
@@ -434,7 +434,7 @@ function Progress({ state, run }: { state: StudioState; run: RunRecord }): JSX.E
               style={{ padding: "0 10px" }}
               disabled={state.busy}
               onClick={() =>
-                send({ type: "download-zip", frameIds: run.frames.map((frame) => frame.frameId) })
+                send({ type: "download-zip", frameIds: batch.frames.map((frame) => frame.frameId) })
               }
             >
               {state.busy ? "Preparing…" : "Download"}
@@ -465,7 +465,7 @@ function Progress({ state, run }: { state: StudioState; run: RunRecord }): JSX.E
                 onClick={() =>
                   send({
                     type: "retry-frames",
-                    runId: run.id,
+                    batchId: batch.id,
                     frameIds: failed.map((frame) => frame.frameId),
                   })
                 }
@@ -491,12 +491,12 @@ function Progress({ state, run }: { state: StudioState; run: RunRecord }): JSX.E
 }
 
 function FrameRow({
-  run,
+  batch,
   frame,
   busy,
 }: {
-  run: RunRecord;
-  frame: FrameSend;
+  batch: HandoffBatch;
+  frame: FrameHandoff;
   busy: boolean;
 }): JSX.Element {
   const files = `${frame.files} ${frame.files === 1 ? "file" : "files"}`;
@@ -519,7 +519,7 @@ function FrameRow({
         ) : frame.status === "failed" ? (
           <AlertIcon />
         ) : inFlight ? (
-          <SendIcon />
+          <HandoffIcon />
         ) : (
           <span className="fs-dot" />
         )}
@@ -549,7 +549,7 @@ function FrameRow({
           aria-label={`Retry ${frame.name}`}
           style={{ padding: "0 10px", background: "var(--surface-well)" }}
           disabled={busy}
-          onClick={() => send({ type: "retry-frames", runId: run.id, frameIds: [frame.frameId] })}
+          onClick={() => send({ type: "retry-frames", batchId: batch.id, frameIds: [frame.frameId] })}
         >
           <RetryIcon />
           Retry

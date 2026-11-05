@@ -275,7 +275,7 @@ function shortRef(ref: string): string {
  * designer: a near match with no token picked yet.
  *
  * A skipped batch is the designer's answer ("not now"), so it no longer counts.
- * The footer's "Review N picks" and the Send tab's "N batches need a pick" are
+ * The footer's "Review N picks" and the Handoff tab's "N batches need a pick" are
  * the same number because both read this.
  */
 export function needsPick(state: StudioState): Batch[] {

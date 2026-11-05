@@ -13,7 +13,7 @@ issues or judges an account.
 | Approval page                        | `wnm-fanxp-frontend` | `feat/surface-plugin-auth` (from `development`) | `apps/fanxp/src/features/connect-plugin`                                                                 |
 | Plugin                               | dugout               |                                                 | `packages/surface-canvas/src/auth/`, `tests/auth.test.ts`, `tests/pkce.test.ts`, `tests/tenants.test.ts` |
 
-Builds on `send-flow.md`: the presigned Send needs a user and a client on every call, and this is where they come from.
+Builds on `handoff-flow.md`: the presigned Handoff needs a user and a client on every call, and this is where they come from.
 
 ## Decisions
 
@@ -50,21 +50,21 @@ The sandbox does the network and opens the browser, so no token crosses `postMes
 Base `PATH_PREFIX + /api/v1` (`http://localhost:4000/fanxp/api/v1` locally). Every reply is wrapped in
 `{ data, meta: { message, code, error_code } }`; the plugin reads `data`, and `meta.message` for errors.
 
-| Endpoint                                                                                 | Auth                            | Answer                                                                                                                                                                                                                                                                                                                              |
-| ---------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /surface/auth/sessions` `{codeChallenge, codeChallengeMethod: "S256"}`             | none, 60 per minute per address | `201 {sessionId, userCode "KQ7M-4XPD", loginUrl, expiresIn: 600, interval: 3}`                                                                                                                                                                                                                                                      |
-| `GET /surface/auth/sessions/:id`                                                         | dashboard JWT                   | `{userCode, status, expiresAt, tenants: [{code, name}]}` for the approval page                                                                                                                                                                                                                                                      |
-| `POST /surface/auth/sessions/:id/approve` and `/deny`                                    | dashboard JWT                   | `{status}`. Approve fails if expired, already decided, or the user can send for no client                                                                                                                                                                                                                                           |
-| `GET /surface/setup`                                                                     | dashboard JWT + `client` header | The Surface Studio Setup page in one answer: `plugin` (`{canSend, connected, connections}`: this user's live plugin sign-ins and whether their role can send for the client), `mcp.servers` (the registry, each with this client's connection) and `theme` (`{synced, themeId, themeName}`, derived from the client's active theme) |
-| `POST /surface/mcp/servers/:id/connect`                                                  | dashboard JWT + `client`        | `{authorizationUrl}`: open it in the browser                                                                                                                                                                                                                                                                                        |
-| `GET /surface/mcp/callback`                                                              | none (browser redirect)         | 302 to the Setup page with `?mcp=<id>&status=connected\|denied\|failed`                                                                                                                                                                                                                                                             |
-| `DELETE /surface/mcp/servers/:id/connection`                                             | dashboard JWT + `client`        | `{connected: false}`                                                                                                                                                                                                                                                                                                                |
-| `PUT /surface/mcp/servers/:id`                                                           | super admin                     | add or change a registry entry                                                                                                                                                                                                                                                                                                      |
-| `POST /surface/auth/token` `{sessionId, codeVerifier}`                                   | none                            | `202 pending`, `200 {accessToken, refreshToken, expiresIn, user}`, `403` declined, `410` expired or already redeemed, `400` wrong verifier                                                                                                                                                                                          |
-| `POST /surface/auth/refresh` `{refreshToken}`                                            | none                            | as the `200` above. `401` means sign in again                                                                                                                                                                                                                                                                                       |
-| `POST /surface/auth/revoke` `{refreshToken}`                                             | none                            | always `200`                                                                                                                                                                                                                                                                                                                        |
-| `GET /surface/tenants`                                                                   | plugin token                    | `{tenants: [{code, name}]}`: the clients this user may send for now                                                                                                                                                                                                                                                                 |
-| `POST /surface/sends/check` `{client, frames: [{frameId, name, slots: {total, bound}}]}` | plugin token                    | `200 {ok}`, `403` client not allowed, `422` not a FanOS design (the reason is in `message`)                                                                                                                                                                                                                                         |
+| Endpoint                                                                                    | Auth                            | Answer                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /surface/auth/sessions` `{codeChallenge, codeChallengeMethod: "S256"}`                | none, 60 per minute per address | `201 {sessionId, userCode "KQ7M-4XPD", loginUrl, expiresIn: 600, interval: 3}`                                                                                                                                                                                                                                                      |
+| `GET /surface/auth/sessions/:id`                                                            | dashboard JWT                   | `{userCode, status, expiresAt, tenants: [{code, name}]}` for the approval page                                                                                                                                                                                                                                                      |
+| `POST /surface/auth/sessions/:id/approve` and `/deny`                                       | dashboard JWT                   | `{status}`. Approve fails if expired, already decided, or the user can send for no client                                                                                                                                                                                                                                           |
+| `GET /surface/setup`                                                                        | dashboard JWT + `client` header | The Surface Studio Setup page in one answer: `plugin` (`{canSend, connected, connections}`: this user's live plugin sign-ins and whether their role can send for the client), `mcp.servers` (the registry, each with this client's connection) and `theme` (`{synced, themeId, themeName}`, derived from the client's active theme) |
+| `POST /surface/mcp/servers/:id/connect`                                                     | dashboard JWT + `client`        | `{authorizationUrl}`: open it in the browser                                                                                                                                                                                                                                                                                        |
+| `GET /surface/mcp/callback`                                                                 | none (browser redirect)         | 302 to the Setup page with `?mcp=<id>&status=connected\|denied\|failed`                                                                                                                                                                                                                                                             |
+| `DELETE /surface/mcp/servers/:id/connection`                                                | dashboard JWT + `client`        | `{connected: false}`                                                                                                                                                                                                                                                                                                                |
+| `PUT /surface/mcp/servers/:id`                                                              | super admin                     | add or change a registry entry                                                                                                                                                                                                                                                                                                      |
+| `POST /surface/auth/token` `{sessionId, codeVerifier}`                                      | none                            | `202 pending`, `200 {accessToken, refreshToken, expiresIn, user}`, `403` declined, `410` expired or already redeemed, `400` wrong verifier                                                                                                                                                                                          |
+| `POST /surface/auth/refresh` `{refreshToken}`                                               | none                            | as the `200` above. `401` means sign in again                                                                                                                                                                                                                                                                                       |
+| `POST /surface/auth/revoke` `{refreshToken}`                                                | none                            | always `200`                                                                                                                                                                                                                                                                                                                        |
+| `GET /surface/tenants`                                                                      | plugin token                    | `{tenants: [{code, name}]}`: the clients this user may send for now                                                                                                                                                                                                                                                                 |
+| `POST /surface/handoffs/check` `{client, frames: [{frameId, name, slots: {total, bound}}]}` | plugin token                    | `200 {ok}`, `403` client not allowed, `422` not a FanOS design (the reason is in `message`)                                                                                                                                                                                                                                         |
 
 `loginUrl` is `<SURFACE_ADMIN_URL>/#/connect-plugin?session=<id>` (the admin app uses a hash router). The plugin
 opens it only if its origin is the API's own or is in `LOGIN_ORIGINS` (`src/api/origin.ts`).
@@ -85,7 +85,7 @@ are a super admin (every client, as in the dashboard). `SURFACE:SEND` is created
 that holds `PAGE:UPDATE`; seed 01 creates it on a fresh database. Roles in this system are per user, and clients come
 from `site_user_role_mapper`.
 
-The backend answers this in `GET /surface/tenants` (to fill the picker) and again in `POST /surface/sends/check`
+The backend answers this in `GET /surface/tenants` (to fill the picker) and again in `POST /surface/handoffs/check`
 (to decide). The plugin's list is a convenience, never the gate.
 
 ## The plugin token
@@ -105,7 +105,7 @@ Two layers.
 1. **Plugin, for feedback.** After walking a frame, the plugin asks the backend before anything is uploaded. A refusal
    shows in Runs as that frame's failure, with the backend's sentence, for example:
    `This does not look like a FanOS design. "Shop product page" binds 2% of its values to tokens (needs 20%).`
-2. **Backend, for enforcement.** `POST /surface/sends/check` rejects a frame that binds fewer than
+2. **Backend, for enforcement.** `POST /surface/handoffs/check` rejects a frame that binds fewer than
    `SURFACE_MIN_BOUND_RATIO` (default 0.2) of its design values to tokens, or has fewer than `SURFACE_MIN_SLOTS`
    (default 10) values to judge.
 
@@ -114,18 +114,18 @@ Two layers.
 - "Bound" means bound to a Figma variable or style, not specifically to a FanOS token. A design that carries its own
   variables passes this rule. The plugin does not yet send which tokens, and the backend has no token list to compare to.
 - The counts come from the plugin, so this guards against mistakes, not against a modified client.
-- Studio still accepts a send directly and carries no token today. Until Send moves onto the backend (the presigned
-  Send in `send-flow.md`), the check is advisory in the sense that nothing downstream demands it. When it moves, the
+- Studio still accepts a send directly and carries no token today. Until Handoff moves onto the backend (the presigned
+  Handoff in `handoff-flow.md`), the check is advisory in the sense that nothing downstream demands it. When it moves, the
   backend validates the uploaded IR itself, against the FanOS token vocabulary, and queues a run only for a send
   that passed. That also makes the client authoritative: the run's client comes from the verified token and the
   looked-up access, never from the plugin.
 
 ## Plugin behaviour
 
-- Signed out: Send says **Connect to send**. Check, Runs and Export ZIP still work.
-- After sign-in the plugin loads the client list. One client is preselected. With several, the Send tab has a
+- Signed out: Handoff says **Connect to send**. Check, History and Export ZIP still work.
+- After sign-in the plugin loads the client list. One client is preselected. With several, the Handoff tab has a
   Client picker, remembered on the file (`figma.root` plugin data `fanos-studio.client`), and dropped if the backend
-  no longer lists it. With none, Send says to ask an admin for Surface access.
+  no longer lists it. With none, Handoff says to ask an admin for Surface access.
 - Per frame, before upload: session refreshed if within 60 s of expiry, client chosen, then the backend check.
   A `403` reloads the client list. A `401` signs the plugin out with a reason.
 - A refresh the server **refuses** signs out. A refresh that **could not reach** the server does not.
@@ -176,7 +176,7 @@ CORS: Figma's sandbox sends `Origin: null`. `src/plugins/cors-origin.ts` accepts
   Figma after approval; the page says "go back to Figma".
 - Decide the roles that get `SURFACE:SEND` (today: every role with `PAGE:UPDATE`).
 - The in-memory rate limiters count per API task. Starting a session is limited by address (the last `X-Forwarded-For` entry, since the backend has no `trustProxy`), the token poll by session (40 per minute), refresh by address. Move them to Valkey if tasks multiply.
-- Move Send onto the backend (see above).
+- Move Handoff onto the backend (see above).
 - A list of connected plugins per user, with Revoke, in the admin app. The backend can already revoke a grant.
 
 ## Open

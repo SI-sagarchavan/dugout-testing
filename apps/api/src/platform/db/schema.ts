@@ -123,7 +123,7 @@ export const artifacts = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// figma exports — the front door. A designer pressing "Send" is an event.
+// figma exports — the front door. A designer pressing "Handoff" is an event.
 //
 // The IR and the section screenshots are NOT stored here: they are artifacts,
 // content-addressed like everything else. What this records is the act — which
@@ -237,7 +237,7 @@ export const figmaExports = pgTable(
      * Collapses a retried send into one event.
      *
      * Derived, not supplied: the plugin has no retry token, and a designer
-     * pressing Send twice on a flaky connection must not produce two rows
+     * pressing Handoff twice on a flaky connection must not produce two rows
      * claiming to be two exports. Built from the frame plus its Figma-side
      * timestamp — the same frame cannot be exported twice in the same
      * millisecond.

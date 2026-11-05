@@ -25,6 +25,39 @@
         "type": "string"
       },
       "description": "Problems still in the published plan, and what the design shows that the data lacks"
+    },
+    "notes": {
+      "default": [],
+      "description": "One entry for each note the designer left (bind.load lists them): met, or why not",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The id of the designer's note, as frame.load listed it"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "addressed",
+              "not-addressed",
+              "not-mine"
+            ],
+            "description": "addressed: done, and detail says how. not-addressed: not done, and detail says why. not-mine: the note is for the other stage (frame-match: look and layout; bind: data)"
+          },
+          "detail": {
+            "type": "string",
+            "description": "What was done, or why not"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "detail"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -33,7 +66,8 @@
     "dataArtifactId",
     "bound",
     "collapsed",
-    "remaining"
+    "remaining",
+    "notes"
   ],
   "additionalProperties": false
 }

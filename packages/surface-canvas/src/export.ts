@@ -5,6 +5,7 @@
  * function so the Health tab can share the traversal. It is still the thing that
  * feeds the corpus; Health is what makes the corpus worth having.
  */
+import { applyAnnotations, parseAnnotations, ANNOTATION_PLUGIN_KEY } from "./annotations.js";
 import { applyAssetBindings, parseBindings } from "./assets.js";
 import { ASSET_PLUGIN_KEY, type AssetBinding } from "./ir/schema";
 import { safeParseFrameIRDocument, type FrameIRDocument, type FrameIRNode } from "./ir/schema";
@@ -56,6 +57,7 @@ export type ExportSummary = {
   nodeCount: number;
   screenshotCount: number;
   assetCount: number;
+  annotationCount: number;
   skippedInvisible: number;
   extractionErrors: number;
   /**
@@ -98,7 +100,10 @@ export async function runExport(
   onProgress("Walking node tree…", 0);
   const { document, walk } = await traverseToDocument(rootNode, caches, onProgress);
   const bindings = parseBindings(rootNode.getPluginData(ASSET_PLUGIN_KEY));
-  const stamped = applyAssetBindings(document, bindings);
+  const stamped = applyAnnotations(
+    applyAssetBindings(document, bindings),
+    parseAnnotations(rootNode.getPluginData(ANNOTATION_PLUGIN_KEY)),
+  );
 
   onProgress("Validating IR…", walk.nodeCount);
   const parsed = safeParseFrameIRDocument(stamped);
@@ -130,6 +135,7 @@ export async function runExport(
     artPlateCandidates: art.candidates,
     artPlatesTruncated: art.truncated,
     assetCount: assets.length,
+    annotationCount: stamped.annotations.length,
     skippedInvisible: walk.skippedInvisible,
     extractionErrors: walk.extractionErrors,
     boundCount: coverage.bound,

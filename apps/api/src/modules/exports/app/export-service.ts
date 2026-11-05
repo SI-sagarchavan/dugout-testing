@@ -1,5 +1,5 @@
 /**
- * Ingest: turn a designer pressing Send into durable, content-addressed state.
+ * Ingest: turn a designer pressing Handoff into durable, content-addressed state.
  *
  * Ordering is the whole design, and it is the same rule the artifact store
  * already follows — **blobs first, rows second**. Artifacts written without an

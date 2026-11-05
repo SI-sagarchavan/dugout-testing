@@ -1,6 +1,6 @@
 // pnpm agent watch --tenant demo-cricket [--project default] [--latest] [--model sonnet] [--effort high] [--ask]
 //
-// Press Send in the Figma plugin and one section-builder run starts: the frame is matched to its
+// Press Handoff in the Figma plugin and one section-builder run starts: the frame is matched to its
 // screenshot and published (frame-match), then its data is found in Cast, or a hook is built there,
 // and bound (bind), and one preview is handed over. It publishes without asking; --ask brings the
 // approval prompt back (one for the whole pass). This host looks at the control plane
@@ -94,7 +94,7 @@ process.once("SIGINT", () => {
 });
 
 console.log(
-  `watching ${controlPlaneUrl()} (project ${project}) for Send, as ${tenantId}, on ${model ?? agent.spec.model}${values.ask ? "" : ", publishing without asking"}`,
+  `watching ${controlPlaneUrl()} (project ${project}) for Handoff, as ${tenantId}, on ${model ?? agent.spec.model}${values.ask ? "" : ", publishing without asking"}`,
 );
 let unreachable = false;
 while (!stop.signal.aborted) {

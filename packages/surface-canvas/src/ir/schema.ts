@@ -114,7 +114,13 @@ import { z } from "zod";
  * purple when normal and dark red when luminosity, and a banner drew purple
  * until the IR said which. Absent on a normal layer, and on older documents.
  */
-export const IR_VERSION = "1.10.0" as const;
+/**
+ * 1.11.0 — adds `annotations` on the document: notes a designer wrote on a layer
+ * for the agents that build the section. A note is intent the frame cannot show
+ * ("this strip swipes", "the badge is a live score"), not a re-description of the
+ * layout, which Figma already holds. Absent or empty on older documents.
+ */
+export const IR_VERSION = "1.11.0" as const;
 export const IR_VERSIONS = [
   "1.1.0",
   "1.2.0",
@@ -126,6 +132,7 @@ export const IR_VERSIONS = [
   "1.8.0",
   "1.9.0",
   "1.10.0",
+  "1.11.0",
 ] as const;
 
 /**
@@ -135,6 +142,28 @@ export const IR_VERSIONS = [
  * would hit this in its temporal dead zone from further down the file.
  */
 const SEMVER = /^\d+\.\d+\.\d+$/;
+
+/** pluginData key on the export root. The designer's notes live on the frame. */
+export const ANNOTATION_PLUGIN_KEY = "fanos/annotations";
+
+/** What a note asks of the builder, so each agent can pick out the ones for it. */
+export const annotationKindSchema = z.enum(["must-do", "data", "behaviour", "ignore"]);
+export type AnnotationKind = z.infer<typeof annotationKindSchema>;
+
+export const ANNOTATION_MAX_CHARS = 1000;
+
+/**
+ * A note the designer pinned to a layer. `targetName` is
+ * recorded at export so an agent can read the note without searching the tree.
+ */
+export const annotationSchema = z.object({
+  id: z.string().min(1),
+  targetId: z.string().min(1),
+  targetName: z.string(),
+  kind: annotationKindSchema.default("must-do"),
+  text: z.string().trim().min(1).max(ANNOTATION_MAX_CHARS),
+});
+export type Annotation = z.infer<typeof annotationSchema>;
 
 /** pluginData key on the export root. The list of bindings lives on the frame. */
 export const ASSET_PLUGIN_KEY = "fanos/assets";
@@ -650,6 +679,16 @@ export const frameIRDocumentSchema = z.object({
     .transform((items) =>
       items.flatMap((item) => {
         const parsed = assetBindingSchema.safeParse(item);
+        return parsed.success ? [parsed.data] : [];
+      }),
+    ),
+  /** Designer notes for the builder agents. Malformed entries are dropped, never fatal. */
+  annotations: z
+    .array(z.unknown())
+    .default([])
+    .transform((items) =>
+      items.flatMap((item) => {
+        const parsed = annotationSchema.safeParse(item);
         return parsed.success ? [parsed.data] : [];
       }),
     ),

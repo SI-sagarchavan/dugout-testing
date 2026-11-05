@@ -3,18 +3,18 @@
 Status: needs-triage
 
 **Decisions since this was written (2026-11-05).** The current flow and component list is
-`docs/architecture/section-builder.md`.
-- The control plane (`apps/api`, `fanos`) goes away, so the "control plane" parts below (the Send arrow
+`docs/architecture/handoff-flow.md`.
+- The control plane (`apps/api`, `fanos`) goes away, so the "control plane" parts below (the Handoff arrow
   in the target shape, "control-plane reads, proxied" in P1, open question 1) are superseded by
-  `docs/adr/0027-two-databases.md`. Exports and artifacts become the Send ledger, an index of results in the
+  `docs/adr/0027-two-databases.md`. Exports and artifacts become the Handoff ledger, an index of results in the
   FanXP DB, and files in S3, reached by agents through a Surface MCP server.
 - P5's Temporal item is now `docs/adr/0028-temporal-runs-agent-runs.md`.
-- The Send itself changed: presigned S3 uploads and a ledger in the backend (`send-flow.md`).
+- The Handoff itself changed: presigned S3 uploads and a ledger in the backend (`handoff-flow.md`).
 - Run events reach the panel over SSE with no Electric (Confluence ADR018).
 
 Surface Studio becomes a tool in the FanXP admin (`wnm-fanxp-frontend`), at
 `https://dev-fanxp.sportz.io/#/<tenant>/surface-studio`, opened from a tile on the tenant home. It
-is where agent runs start (a Figma Send), are followed live, reviewed and approved, and where
+is where agent runs start (a Figma Handoff), are followed live, reviewed and approved, and where
 the section templates they make are kept and placed on pages. After that, the site's renderer
 (`fanxp-web-renderer`) draws those templates as a V2 template type with live Cast data.
 
@@ -48,7 +48,7 @@ Gaps found on the way:
 ## Target shape
 
 ```
-Figma plugin ──Send──► control plane (exports, artifacts)
+Figma plugin ──Handoff──► control plane (exports, artifacts)
                               │
 admin app: apps/surface-studio (in wnm-fanxp-frontend)
    │  start run / decide / cancel / list          follow run (SSE, resumable)
@@ -140,11 +140,11 @@ The design is not final. These are the directions to design against.
 
 **2. Four nouns, in this order.** _Send_ (a Figma frame arrived) → _Run_ (the agents working on it) → _Template_ (a section, versioned, with its data source) → _Page_ (where it is placed, in Layout Builder). Navigation, URLs and empty states all use these four words. Not "artifact", "export", "dsl_tree" or "binding plan".
 
-**3. One studio layout for a Send:**
+**3. One studio layout for a Handoff:**
 
 ```
 ┌ Surface Studio · ibl ───────────────────── [Needs you 2] [Desktop|Tablet|Mobile] ┐
-│ Sends        │                 CANVAS                     │ Inspector            │
+│ Handoffs        │                 CANVAS                     │ Inspector            │
 │ ● News grid  │  ┌───────────────────────────────────────┐ │ ▸ Run   (timeline)   │
 │   running    │  │  rendered section, tenant theme+fonts │ │ ▸ Data  (bindings)   │
 │ ○ Fixtures   │  │  [Figma ◐ Render] slider · score 94   │ │ ▸ Issues (3)         │
@@ -154,7 +154,7 @@ The design is not final. These are the directions to design against.
 └──────────────┴────────────────────────────────────────────┴──────────────────────┘
 ```
 
-- **Left: the queue.** Sends with one status each: running, needs you, ready, published, failed. Filter by status and Figma file.
+- **Left: the queue.** Handoffs with one status each: running, needs you, ready, published, failed. Filter by status and Figma file.
 - **Centre: the canvas.**
   - The section in the tenant's own theme and fonts, at a device width.
   - **Figma vs render** as an onion-skin slider and a diff overlay, with the fidelity score. Mismatches are pinned on the canvas, not listed elsewhere.
@@ -165,7 +165,7 @@ The design is not final. These are the directions to design against.
   - **Issues:** what code measured (drift, unresolved refs, layout questions the frame could not answer). Each issue links to its node on the canvas.
 
 **4. Approvals are first-class.**
-- A **Needs you** inbox across all Sends: approve `page.build`, approve a hook build, answer a layout question (`frame.layout`).
+- A **Needs you** inbox across all Handoffs: approve `page.build`, approve a hook build, answer a layout question (`frame.layout`).
 - Each approval shows what code measured, never the model's account of it. It offers the same three verbs as the CLI: **Approve**, **Reject**, **Request a change** (free text, sent back to the run).
 - One click from a notification to the canvas with the thing in question selected.
 
@@ -173,7 +173,7 @@ The design is not final. These are the directions to design against.
 
 **6. Templates library.**
 - Every published `surface_v2` template, with: thumbnail, data source (hook name, last fetch OK or failed), version history, and the pages that use it ("Used on Home, Team").
-- Actions: open in Layout Builder, rerun from a new Send, roll back a version.
+- Actions: open in Layout Builder, rerun from a new Handoff, roll back a version.
 
 **7. Home of the tool (empty and steady state).**
 - **Setup checks, each with its fix:**
@@ -181,8 +181,8 @@ The design is not final. These are the directions to design against.
   - Cast connected (the tenant's OAuth grant)
   - Theme synced (the tenant theme the canvas uses)
   - Hooks available
-- Then: Needs you, Recent Sends, Templates.
-- The empty state is one instruction: "Press Send in the Figma plugin", with a link to install it.
+- Then: Needs you, Recent Handoffs, Templates.
+- The empty state is one instruction: "Press Handoff in the Figma plugin", with a link to install it.
 
 **8. Look and feel.**
 - Same visual language as the FanXP admin: the tile colour groups and type scale from the host's `tailwind.config.js`, and lucide icons.
@@ -203,4 +203,4 @@ The design is not final. These are the directions to design against.
 4. **The theme vocabulary** (P0.5): FanXP tokens into `@fanos/tokens`, or the reverse.
 5. **The stream path:** a CloudFront behavior for `/fanxp/api/v1/surface/runs/*/events` with compression off, or polling only for v1.
 6. **The permission:** who gets `SURFACE_STUDIO`, and is it super-admin only at first?
-7. **The Figma plugin in production:** its allowed origin (today `localhost:3000`), and how a Send is tied to a user and tenant.
+7. **The Figma plugin in production:** its allowed origin (today `localhost:3000`), and how a Handoff is tied to a user and tenant.

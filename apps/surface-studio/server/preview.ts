@@ -88,7 +88,7 @@ export async function renderPreview(source: PreviewSource): Promise<RenderedPrev
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { createElement } = await import("react");
 
-  // The same recipe apps/web follows, so a Send looks the same in both.
+  // The same recipe apps/web follows, so a Handoff looks the same in both.
   const page = preparePage({
     tree: source.tree,
     theme: source.theme,
