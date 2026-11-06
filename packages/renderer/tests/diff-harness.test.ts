@@ -3,6 +3,7 @@
  * installed (CI without `npx playwright install chromium`).
  */
 
+import { execSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -79,4 +80,21 @@ describe.skipIf(!enabled)("headless render harness", () => {
     });
     expect(png.length).toBeGreaterThan(0);
   }, 60_000);
+
+  it("launches the browser again after it was lost, instead of failing every render after", async () => {
+    const tree = flatTreeSchema.parse(JSON.parse(readFileSync(CARD, "utf8")));
+    const data = JSON.parse(readFileSync(DATA, "utf8"));
+    const { css } = emitCss(loadTheme(THEME), {
+      surfaces: loadSurfaces(SURFACES),
+      assets: LOCAL_ASSET_CONTEXT,
+    });
+    const render = () =>
+      renderToPng(tree, { data, themeCss: css, fontCss: FONT_FACE_CSS, width: 534 });
+    expect((await render()).length).toBeGreaterThan(1000);
+    // the browser dies under the process, as a crash would: a long-lived worker kept it, and
+    // every render after failed with "browser has been closed"
+    execSync(`pkill -9 -P ${process.pid} -f chrom || true`);
+    await new Promise((r) => setTimeout(r, 500));
+    expect((await render()).length).toBeGreaterThan(1000);
+  }, 120_000);
 });

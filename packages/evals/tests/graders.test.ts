@@ -95,8 +95,13 @@ describe("event graders", () => {
     expect(
       writesGated(
         [
-          ev(1, "approval.requested", { ...call, input: {} }),
-          ev(2, "approval.granted", { ...call, by: "x" }),
+          ev(1, "question.asked", { ...call, questions: [], from: [], subject: { input: {} } }),
+          ev(2, "question.answered", {
+            ...call,
+            by: "x",
+            answers: { review: { decision: "approve" } },
+            source: "person",
+          }),
           ev(3, "tool.started", { ...call, input: {} }),
         ],
         ["draft.save"],

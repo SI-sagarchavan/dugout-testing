@@ -1,70 +1,95 @@
 # Section library: search sections, generate UI from a description
 
-Status: planned 2026-11-06. No ADR yet; ticket 12 writes one once production placement is settled.
+Status: in progress 2026-11-06. `packages/library` indexes Handoffs from the control plane (`pnpm agent library index`) and searches them (`pnpm agent library search`); tried on the 20 latest local Handoffs. No ADR yet; ticket 12 writes one once production placement is settled.
 
-Every published Handoff leaves a frame we matched to its screenshot: Frame IR, a DSL tree that renders it, and the screenshot. Today those are used once. This feature keeps them, cut into sections, as a searchable library, and uses it for two things:
+Every Handoff carries a frame's Frame IR and its pictures: the whole frame's, or one per section, plus pictures of single art layers. frame-match later adds a DSL tree that renders it. Today all of that is used once. This feature keeps it, cut into sections, as a searchable library, and uses it for two things:
 
-1. **Search.** A person searches sections by words ("fixtures carousel with crests and kick-off time") or by an image, and gets UI samples back: rendered sections with their tags and the Handoff they came from.
+1. **Search.** A person searches sections by words ("fixtures carousel with crests and kick-off time") or by an image, and gets UI samples back: section pictures with their tags and the Handoff they came from.
 2. **Generate.** A person describes a UI, optionally adds a screenshot as inspiration, and gets a DSL tree in their own tokens, checked and rendered, ready for `data-bind`.
 
 Both run on one corpus. Search returns sections, and generation is most reliable when it adapts sections that are known to render well instead of writing a tree from nothing.
 
+Search needs no DSL: it runs on pictures, the IR and words. The DSL tree attaches to a section later (by the section's root node, which is every DSL node's `src`) and is what generation needs.
+
 ## Decisions (2026-11-06)
 
-| Question                          | Decision                                                                                                                                                                                                                                                                                             |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Unit of the library               | A **section**: a DSL subtree, not a whole frame. Whole frames are not entries.                                                                                                                                                                                                                       |
-| Where sections come from          | The page frame's top-level children, plus the containers layout detection names (carousel, list, row, grid, tabs; ADR 0024) as sub-sections. A person can mark any other subtree.                                                                                                                    |
-| What gets in                      | Only sections of a **published** Handoff whose fidelity score met the gate. Unreviewed or off output would become search results and, worse, examples generation copies.                                                                                                                             |
-| Duplicates                        | One entry per DSL subtree signature (`packages/dsl/src/subtree-signature.ts`) per tenant. A repeat sighting adds provenance, not a row. Six cards of one component are one entry.                                                                                                                    |
-| What is embedded                  | Two vectors per section: the **image** of its crop, and the **text** of a model-written caption plus tags. Raw IR or DSL JSON is never embedded: embedding models rank nested JSON by ids and numbers, so the same layout with other content lands far apart.                                        |
-| Embedding model                   | A multimodal model on Bedrock with text and images in one space, at 1024 dimensions (the column size `packages/memory` already uses). Which one is ticket 01; the hash embedder stands in for tests and dev until then.                                                                              |
-| Search                            | Hybrid, as `memory_items` does it: text vector, image vector and full-text over caption and tags, merged by reciprocal rank. A query may be words, an image, or both.                                                                                                                                |
-| Who writes the library            | An indexing job after a publish, like consolidation writes memory. No agent tool writes a library entry. People edit tags and hide entries.                                                                                                                                                          |
-| Tenancy                           | A section belongs to the tenant whose Handoff it came from, behind row-level security. A run and a search see their own tenant's library only. A shared library is not now.                                                                                                                          |
-| Where it lives during development | Its own package, `packages/library` (`@dugout/library`), with tables in the `harness` database (pgvector and RLS are already there). Crops are files under the run's artifacts locally, S3 keys later.                                                                                               |
-| Where it lives in production      | Open (ticket 12). ADR 0027 puts people-facing data in the FanXP DB and lets the admin app talk only to the backend, so the likely end state is the FanXP DB (Aurora supports pgvector) with agents reading through a Surface MCP tool. The store is an interface so the move does not touch callers. |
-| Generation strategy               | Retrieve, then **adapt** a retrieved section (reorder, restyle, change counts). Writing a tree from nothing is the fallback when nothing retrieved fits.                                                                                                                                             |
-| Generated nodes' `src`            | `FlatNode.src` stays mandatory. A node adapted from the library carries `lib:<sectionId>/<nodeId>`; a new node carries `gen:<n>`. Repair and binding accept both (ticket 09).                                                                                                                        |
-| Styling generated UI              | Looks only through the tenant's DSL tokens. A section borrowed from elsewhere has its token references mapped by role (primary, surface, heading…), never kept by name.                                                                                                                              |
-| An inspiration image              | Taken as structure and intent, not a target to match pixel for pixel. Generation is judged by a model against the description and image, not by `@fanos/conform`'s geometry gate.                                                                                                                    |
+| Question                          | Decision |
+| --------------------------------- | -------- |
+| Unit of the library               | A **section**, not a whole frame. A frame that is one section on its own is that section. |
+| Where sections come from          | The IR. A page's sections are its full-width children that hold layers (at least 80% of its width; a full-width picture or shape alone is a background), in order; a frame with fewer than two is one section, itself. A lone child filling its parent is looked through. Inside each, every container layout detection names (carousel, list, row, grid, tabs; ADR 0024) is a section one level down. A person can mark any other subtree (ticket 07). |
+| The IR                            | Used from day one, never stored. The indexer reads a Handoff's IR once (it is large, and in S3), takes what it needs (sections, boxes, signatures, layout, summary) and keeps a reference: each source names the IR's ref and the section's root node, so the full slice can be read again. |
+| Pictures                          | The section's own plate when the Handoff has one, otherwise cut from the nearest plate around it (the frame's, or a section's around a sub-section), at the plate's scale, by the root's pixel box (`renderBbox`, else `bbox`). When no plate holds it, its picture is put together from the plates of the outermost layers inside it, painted in order at the scale of the least detailed, if they cover at least 90% of it (the plugin often sends a frame's children and not the frame: a header arrives as its two bars and its logo). Pictures of art layers (`art-…`) are used only for that layer. A section no picture covers is left out, with the reason. Stored pictures are at most 2048 on the longer side; the captioner sees at most 1568. |
+| What gets in                      | Every section of every Handoff, into its own tenant's library. The picture is the designer's own, so it needs no fidelity gate. Only sections that reached a preview go into the shared pool (below). A DSL tree attaches to a section only from a published run whose fidelity met the gate, because generation copies trees. A person hides what should not be found. |
+| Duplicates                        | One entry per **IR structural signature over the whole subtree** (`computeStructuralSignature` at full depth: shape only, no text, colour or size) per tenant. A repeat adds a source, not a row: the same header on ten pages is one entry with ten sources. Known limit: two colourways of one shape are one entry. |
+| What is embedded                  | Two vectors per section: the **picture**, and the **words** (kind, layout, caption, tags and structural summary as one text). Raw IR or DSL JSON is never embedded: embedding models rank nested JSON by ids and numbers, so the same layout with other content lands far apart. |
+| Structural summary                | Code writes it from the IR: what the section is made of and what repeats, never what it says ("1000×200; 6 texts, 3 images, 3 icons; row 'Fixtures' [3× column 'Match Card' [image, 2× text, icon]]"). Text layers' names are never used (Figma names them by their words), nor Figma's default names. The captioner reads it beside the picture, so the caption names the component and not this week's match. |
+| Embedding model                   | A multimodal model on Bedrock with words and pictures in one space, at 1024 dimensions (the column size `packages/memory` already uses). Which one is ticket 01. Until then `createHashMultimodalEmbeddings`; its words and pictures are not in one space, so search does not cross them. |
+| Search                            | Hybrid, as `memory_items` does it: the words vector, the picture vector and full text, each ranking at most 50, merged by reciprocal rank (k = 60). Words also rank pictures and a picture also ranks words, once the model puts them in one space. Filters: kind, layout. Hidden sections never appear. |
+| Tags                              | A model's tags, a person's tags, and the model tags a person took away, kept apart. A model describing the section again replaces only its own; what a person added or removed stays. |
+| Who writes the library            | An indexing job when a Handoff arrives or a preview is built from one, and a backfill command, as consolidation writes memory. No agent tool writes a library entry. People edit tags and hide entries. |
+| Tenancy                           | A section belongs to the tenant whose Handoff it came from, and only that tenant writes it (row-level security per command). |
+| Sharing (2026-11-06)              | Every tenant reads every other tenant's **previewed** sections: a section is shared from the first frame-match or section-builder run that built a preview of a Handoff it was seen in. Sharing is on for every tenant; a tenant can turn it off (`library_tenants.shares`, `pnpm agent library share --off`). Search is the tenant's own by default and the shared pool with `scope: "shared"`. Hidden sections are shared with no one. More clubs' designs of one kind of section give generation more to draw on. |
+| What another tenant sees          | The **skeleton**: boxes drawn from the IR when the section is indexed (`skeletonOf`), with no word, picture, crest or colour of the club, painted when shown in the viewing tenant's colours (`skeletonSvg`). A box keeps the role of its paint (an accent band stays accent, a card stays surface), text is bars, a picture a placeholder, a small vector an icon, clipped as the design clips. With it: the caption, tags, kind, layout and structural summary. Never the picture, the layer name, which tenant it is, or its sources and previews: the store blanks them for anyone but the owner. Embeddings of the real picture are searched across tenants; a vector shows nothing. Re-rendering the DSL in the viewer's theme replaces the skeleton once the DSL is stored (ticket 09). |
+| Where it lives during development | `packages/library` (`@dugout/library`), table `library_sections` in the `harness` database (migration 013). Pictures under `.runs/library/<tenant>/<signature>.png` through `CropStore`, S3 later. |
+| Where it lives in production      | Open (ticket 12). ADR 0027 puts people-facing data in the FanXP DB and lets the admin app talk only to the backend, so the likely end state is the FanXP DB (Aurora supports pgvector) with agents reading through a Surface MCP tool. `SectionLibrary` and `CropStore` are interfaces so the move does not touch callers. |
+| Generation strategy               | Retrieve, then **adapt** a retrieved section (reorder, restyle, change counts). Writing a tree from nothing is the fallback when nothing retrieved fits. |
+| Generated nodes' `src`            | `FlatNode.src` stays mandatory. A node adapted from the library carries `lib:<sectionId>/<nodeId>`; a new node carries `gen:<n>`. Repair and binding accept both (ticket 09). |
+| Styling generated UI              | Looks only through the tenant's DSL tokens. A section borrowed from elsewhere has its token references mapped by role (primary, surface, heading…), never kept by name. |
+| An inspiration image              | Taken as structure and intent, not a target to match pixel for pixel. Generation is judged by a model against the description and image, not by `@fanos/conform`'s geometry gate. |
 
-## A library entry
+## A library entry (`library_sections`)
 
-| Field                               | Holds                                                                                            |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `id`                                | Stable id                                                                                        |
-| `tenant_id`                         | From the verified run that published the Handoff                                                 |
-| `signature`                         | DSL subtree signature, with its prefix (`d1…`); unique per tenant                                |
-| `kind`                              | hero, fixtures, results, news, standings, nav, promo, footer, … (a closed list, `other` allowed) |
-| `layout`                            | carousel, list, row, grid, tabs or none, from layout detection                                   |
-| `tree`                              | The section's flat DSL nodes, re-rooted (the root's `parent` is null)                            |
-| `ir`                                | The IR slice under the section's root, for later fidelity checks                                 |
-| `crop`                              | Where the crop image is: the frame screenshot cut to the root's `renderBbox` (or `bbox`)         |
-| `width`, `height`                   | The crop's size in CSS pixels                                                                    |
-| `caption`                           | One or two sentences a vision model writes                                                       |
-| `tags`                              | Short phrases; each says whether a model or a person added it                                    |
-| `text_embedding`, `image_embedding` | `vector(1024)`, with the embedding model's name next to each                                     |
-| `tsv`                               | Full text over caption and tags                                                                  |
-| `sources`                           | Every sighting: Handoff id, run id, Figma node id, fidelity score, when                          |
-| `hidden`                            | A person took it out of search and generation                                                    |
-
-The caption is written from the crop and a **structural summary** that code derives from the tree: for example "horizontal carousel, 4 cards; each card: image, crest, crest, score, date, button". Content props (`CONTENT_PROPS` in `subtree-signature.ts`) are left out of the summary, so the caption describes the component, not this week's match.
+| Column                              | Holds |
+| ----------------------------------- | ----- |
+| `id`, `tenant_id`                   | Stable id; the tenant, from the verified run or command |
+| `signature`                         | IR structural signature of the whole subtree; unique per tenant |
+| `name`                              | The root layer's name in Figma, for people; never searched |
+| `kind`                              | hero, fixtures, results, news, standings, nav, promo, footer, … (a closed list, `other` allowed; the captioner sets it) |
+| `layout`                            | carousel, list, row, grid, tabs or none, from layout detection |
+| `summary`                           | The structural summary, from the IR |
+| `caption`                           | One or two sentences a vision model writes; empty until captioned |
+| `tags`, `person_tags`, `removed_tags` | A model's tags, a person's, and model tags a person took away |
+| `box`                               | The root's layout box in its frame, from the first source |
+| `crop_key`, `crop_width`, `crop_height` | Where the picture is, and its size in pixels |
+| `sources`                           | Every sighting: `{ handoffId, irRef, nodeId, fileKey, at }`; one per Handoff and layer |
+| `tree`                              | The section's flat DSL nodes, re-rooted; null until the DSL is attached |
+| `embedding_model`, `text_embedding`, `image_embedding` | `vector(1024)` each, and the model that made them |
+| `search_text`, `tsv`                | The words that were embedded, and full text over them |
+| `hidden`                            | A person took it out of search and generation |
 
 ## Flow
 
 ```
-publish (frame.publish / page.build)
-  └─ index job: split → crop → summarise → caption → embed → upsert by signature
+Handoff arrives (or backfill)
+  └─ index job: read the IR and plates by ref → detectLayout → findSections
+     → for each: known signature? add a source : cut the picture → summarize → caption → embed → add
 
-search: query (words | image | both)
-  └─ embed query → three rankers → reciprocal rank → filters (kind, layout) → sections + crops
+search: words | picture | both
+  └─ embed the query → rankers (words, picture, full text) → reciprocal rank → filters → sections + pictures
 
 generate: description (+ inspiration image)
   └─ library.search → adapt / compose a flat tree in tenant tokens
      → validate + token lint → render → look (against description and image)
      → repair, a few rounds at most → publish preview (approval) → data-bind
 ```
+
+## What `packages/library` has (2026-11-06)
+
+| Module           | What it does |
+| ---------------- | ------------ |
+| `ir.ts`          | The part of the Frame IR the library reads, typed structurally, so a parsed document is passed as it is and no `@fanos` build is needed |
+| `sections.ts`    | `findSections(doc, { plates, layouts, sign })`: the sections and a plan for each one's picture (one plate's rectangle, or several put together), and what was left out and why. Pure |
+| `summary.ts`     | `summarize(node)`: the structural summary. Pure |
+| `crops.ts`       | `CropStore` (a directory now), `cropKey`, `pngSize` |
+| `image.ts`       | `cut`, `resize`, `fit`, `paste`, and `render(plan)` |
+| `caption.ts`     | `createVisionCaptioner` (`describeImage`, haiku by default): caption, kind, tags, from the picture and the summary |
+| `source.ts`      | `HandoffSource`: the control plane's exports and artifacts |
+| `fanos.ts`       | `loadFanosTools`: the IR parser, `detectLayout`, the full-depth signature, pngjs, from the built `@fanos` packages |
+| `indexer.ts`     | `indexHandoff`: one Handoff into the library; a section already there gets a source, and a caption if it had none |
+| `embeddings.ts`  | `MultimodalEmbeddings` (`embedText`, `embedImages`) and the hash stand-in |
+| `store.ts`       | `SectionLibrary` on Postgres: `add` (or one more source), `findBySignature`, `get`, `search`, `describe`, `editTags`, `setHidden` |
+
+Commands: `pnpm agent library index --tenant <t> (--handoff <id> | --latest <n> | --all) [--project default] [--model haiku] [--no-caption]` (needs the control plane, `pnpm dev`, and `pnpm db migrate`), and `pnpm agent library search --tenant <t> "<words>" [--image <png>] [--kind <k>] [--layout <l>]`. Pictures go to `.runs/library/` (`LIBRARY_CROPS_DIR`).
 
 ## Generation: the `section-composer` agent
 
@@ -81,34 +106,38 @@ generate: description (+ inspiration image)
 
 ## Tickets
 
-| #   | Ticket                                                                              | Status          | Blocked by |
-| --- | ----------------------------------------------------------------------------------- | --------------- | ---------- |
-| 01  | [Pick the multimodal embedding model](issues/01-embedding-model.md)                 | ready-for-human |            |
-| 02  | [Library package, schema and store](issues/02-library-store.md)                     | ready-for-agent |            |
-| 03  | [Split a published frame into sections](issues/03-section-splitter.md)              | ready-for-agent | 02         |
-| 04  | [Structural summary and caption](issues/04-caption.md)                              | ready-for-agent | 03         |
-| 05  | [Index after publish, and backfill](issues/05-indexer.md)                           | ready-for-agent | 02, 03, 04 |
-| 06  | [Search: words, image, both](issues/06-search.md)                                   | ready-for-agent | 02         |
-| 07  | [People edit tags and hide sections](issues/07-tag-review.md)                       | ready-for-agent | 02         |
-| 08  | [Retrieval eval](issues/08-retrieval-eval.md)                                       | ready-for-agent | 05, 06     |
-| 09  | [Generated sources and token roles in the DSL](issues/09-generated-src-tokens.md)   | ready-for-agent |            |
-| 10  | [The `section-composer` agent](issues/10-section-composer.md)                       | ready-for-agent | 06, 09     |
-| 11  | [Composer eval](issues/11-composer-eval.md)                                         | ready-for-agent | 10         |
-| 12  | [Production placement: FanXP DB and Surface MCP](issues/12-production-placement.md) | ready-for-human |            |
+| #   | Ticket | Status | Blocked by |
+| --- | ------ | ------ | ---------- |
+| 01  | [Pick the multimodal embedding model](issues/01-embedding-model.md) | ready-for-human | |
+| 02  | [Library package, schema and store](issues/02-library-store.md) | resolved | |
+| 03  | [Find a frame's sections from its IR](issues/03-section-splitter.md) | in progress | 02 |
+| 04  | [Structural summary and caption](issues/04-caption.md) | in progress | 03 |
+| 05  | [Index when a Handoff arrives, and backfill](issues/05-indexer.md) | in progress | 02, 03, 04 |
+| 06  | [Search: words, image, both](issues/06-search.md) | in progress | 02 |
+| 07  | [People edit tags and hide sections](issues/07-tag-review.md) | ready-for-agent | 02 |
+| 08  | [Retrieval eval](issues/08-retrieval-eval.md) | ready-for-agent | 05, 06 |
+| 09  | [Generated sources and token roles in the DSL](issues/09-generated-src-tokens.md) | ready-for-agent | the DSL |
+| 10  | [The `section-composer` agent](issues/10-section-composer.md) | ready-for-agent | 06, 09 |
+| 11  | [Composer eval](issues/11-composer-eval.md) | ready-for-agent | 10 |
+| 12  | [Production placement: FanXP DB and Surface MCP](issues/12-production-placement.md) | ready-for-human | |
+| 13  | [The shared pool across tenants](issues/13-shared-pool.md) | resolved | 02 |
+| 14  | [Skeletons for other tenants' sections](issues/14-skeletons.md) | in progress | 03 |
+| 15  | [Previewed sections](issues/15-previewed-sections.md) | in progress | 05, 13 |
+| 16  | [A section's data shape](issues/16-data-shape.md) | ready-for-agent | 15, the DSL |
 
-01 and 12 do not block development: the hash embedder and the `harness` tables carry everything until they are settled.
+01 and 12 do not block development: the hash stand-in and the `harness` table carry everything until they are settled. 09–11 wait for the DSL; their eval cases (ticket 11) are words and can be written now.
 
 ## Related
 
-- `.scratch/figma-to-dsl/issues/07-reuse-approved-subtrees.md` keys approved subtrees by the same signature, for frame-match to reuse. The library's rows can serve that lookup; keep one table, not two.
+- `.scratch/figma-to-dsl/issues/07-reuse-approved-subtrees.md` keys approved subtrees by the DSL signature, for frame-match to reuse. Once `tree` is filled, the library's rows can serve that lookup (with a DSL signature column beside the IR one); keep one table, not two.
 - ADR 0013/0014 (memory, shared memory): the model for who writes, who approves, and how a shared layer would be added later.
-- ADR 0024 (layout detection): where sub-section boundaries and `layout` come from.
-- ADR 0027 (two databases): why production placement is open.
+- ADR 0024 (layout detection): where sub-sections and `layout` come from.
+- ADR 0027 (two databases): why production placement is open, and why the IR and pictures are read by ref.
 
 ## Not now
 
-- A shared library across tenants (by sport or global, as ADR 0014 does for memory).
+- Sharing by sport or by agreement between particular clubs; today it is every tenant or none.
 - Generating whole pages. A page is sections; one section per run first.
 - Search and generation in the admin app's UI. The terminal and agent tools first; the backend's routes come with ticket 12.
 - Re-embedding on a model change beyond a command that does it in batch.
-- Near-duplicate merging beyond exact signatures.
+- Merging near-duplicates beyond exact signatures, and keeping colourways of one shape apart.

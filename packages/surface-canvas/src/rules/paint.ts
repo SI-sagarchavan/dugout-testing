@@ -32,7 +32,7 @@ export function paintRule(spec: PaintRuleSpec): Rule {
   return {
     id: spec.id,
     code: spec.code,
-    severity: "fixable",
+    group: "tokens",
     protects: spec.protects,
 
     check(ir) {
@@ -43,7 +43,7 @@ export function paintRule(spec: PaintRuleSpec): Rule {
         findings.push(
           slotFinding({
             ruleId: spec.id,
-            severity: "fixable",
+            group: "tokens",
             node: slot.node,
             scope: spec.slot,
             propPath: slot.propPath,

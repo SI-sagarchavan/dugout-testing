@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type {
   AgentDefinition,
-  ApprovalDecision,
-  ApprovalPending,
-  ApprovalRequest,
+  Decision,
   EventSink,
+  InterruptPending,
+  InterruptRequest,
   ModelClient,
   ModelTurn,
   RunContext,
@@ -18,7 +18,7 @@ import type {
   ToolInputDelta,
 } from "@dugout/contracts";
 import { createJsonlSink, createMemorySink, createRunLog, type RunLog } from "./events.ts";
-import { type RunResult, runAgent } from "./loop.ts";
+import { type AnswerMemory, type RunResult, runAgent } from "./loop.ts";
 import { type ModelConfig, modelEntry } from "./model/config.ts";
 import { TransientModelError } from "./model/errors.ts";
 import { priceTokens } from "./model/pricing.ts";
@@ -31,17 +31,17 @@ import {
 } from "./tools.ts";
 
 /**
- * Decides an approval request. An approver that can't decide now (a worker waiting for a person)
+ * Answers a pause for a person: questions, or a write waiting for a yes. A responder that can't decide now (a worker waiting for a person)
  * answers `{ pending: true }`: the run saves its state and ends, and the decision resumes it.
  */
-export type Approver = (req: ApprovalRequest) => Promise<ApprovalDecision | ApprovalPending>;
+export type Responder = (req: InterruptRequest) => Promise<Decision | InterruptPending>;
 
 export interface LocalStepsOptions {
   ctx: RunContext;
   client: ModelClient;
   models: ModelConfig;
   executor: ToolExecutor;
-  approver: Approver;
+  responder: Responder;
   log: RunLog;
   /** Keeps the run's working memory; without it the run cannot outlive this invocation. */
   store?: RunStore;
@@ -105,7 +105,7 @@ function batchFragments(log: RunLog, step: number, everyMs: number) {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** `Steps` that call the model, tools and approver directly in this process. */
+/** `Steps` that call the model, tools and responder directly in this process. */
 export function createLocalSteps(opts: LocalStepsOptions): Steps {
   return {
     async model({ step, model, messages, tools, toolChoice }) {
@@ -147,11 +147,11 @@ export function createLocalSteps(opts: LocalStepsOptions): Steps {
       }
     },
     tool: (req) => opts.executor.execute(req, opts.ctx),
-    async approval(req) {
-      const answer = await opts.approver(req);
+    async interrupt(req) {
+      const answer = await opts.responder(req);
       if ("pending" in answer && !opts.store) {
         throw new Error(
-          "an approver can only answer later when the run has a store to resume from",
+          "a responder can only answer later when the run has a store to resume from",
         );
       }
       return answer;
@@ -176,7 +176,7 @@ export interface RunLocalOptions {
   tools: Tool[];
   client: ModelClient;
   models: ModelConfig;
-  approver: Approver;
+  responder: Responder;
   runId?: string;
   /** Where run folders go; defaults to `.runs` in the working directory. */
   runsDir?: string;
@@ -187,20 +187,22 @@ export interface RunLocalOptions {
   maxInlineChars?: number;
   /** Builds the run's skills and memory context before the loop starts. */
   context?: (ctx: RunContext, input: unknown) => Promise<RunMemoryContext>;
+  /** What earlier answers tell the run about the questions it asks (ADR 0029). */
+  learned?: AnswerMemory;
   /** Runs after the loop ends, e.g. memory consolidation. Its error is reported, not thrown. */
   afterRun?: (run: CompletedRun) => Promise<void>;
-  /** Keeps the run's working memory; needed to wait for an approval or to resume. */
+  /** Keeps the run's working memory; needed to wait for a person or to resume. */
   store?: RunStore;
   /** Waits before each retry of a transient model error; tests pass a short one. */
   retryDelayMs?: (attempt: number) => number;
   /**
-   * Carry on from the state `store` holds for `runId`. `decision` answers the approval the run
+   * Carry on from the state `store` holds for `runId`. `decision` answers the questions the run
    * waits for. `startSeq` is the last `seq` the event log already has (defaults to the one saved
    * with the state), and `events` are the run's earlier events, for `afterRun`.
    */
   resume?: {
-    reason: "approval" | "recovery";
-    decision?: ApprovalDecision;
+    reason: "answered" | "recovery";
+    decision?: Decision;
     startSeq?: number;
     events?: RunEvent[];
   };
@@ -244,7 +246,7 @@ export async function runLocal(opts: RunLocalOptions) {
       outputs,
       ...(opts.maxInlineChars ? { maxInlineChars: opts.maxInlineChars } : {}),
     }),
-    approver: opts.approver,
+    responder: opts.responder,
     log,
     ...(opts.store ? { store: opts.store } : {}),
     ...(opts.retryDelayMs ? { retryDelayMs: opts.retryDelayMs } : {}),
@@ -259,6 +261,7 @@ export async function runLocal(opts: RunLocalOptions) {
     steps,
     log,
     ...(context ? { context } : {}),
+    ...(opts.learned ? { learned: opts.learned } : {}),
     ...(saved && opts.resume
       ? {
           resume: {

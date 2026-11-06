@@ -5,7 +5,19 @@ import { REPO_ROOT } from "@dugout/core";
 import { defaultMcpHost, hookOutput, type McpHost } from "@dugout/mcp";
 import { z } from "zod";
 import { asBag, type Dsl, type IrNode, indexIr, loadDsl, type Tree } from "./dsl.ts";
-import { type DryRun, dryRun, groups, lostLooks, outline, shapeOf } from "./facts.ts";
+import {
+  type DryRun,
+  dryRun,
+  groups,
+  type LeftAsDesigned,
+  leftAsDesigned,
+  lostLooks,
+  outline,
+  rowsOf,
+  shapeOf,
+  type Unbound,
+  unboundCopy,
+} from "./facts.ts";
 import { type DesignerNote, NOTES_RULE, notesOf } from "./notes.ts";
 
 export const BIND_DIR = join(REPO_ROOT, ".runs", "data-bind");
@@ -94,6 +106,11 @@ const Collapse = z
       .array(z.string())
       .min(1)
       .describe("Every sibling that is one item, Figma ids, the first is the template"),
+    slice: z
+      .tuple([z.number().int().min(0), z.number().int().min(1)])
+      .refine(([start, end]) => start < end, "slice is [start, end) with start < end")
+      .optional()
+      .describe("The items it draws, [start, end): one row of a grid drawn as rows, [2, 4]"),
     shape: z
       .enum(["identical", "varies"])
       .optional()
@@ -216,6 +233,8 @@ export interface Plane {
   json(id: string): Promise<unknown>;
   meta(id: string): Promise<Record<string, unknown>>;
   exportIr(exportId: string): Promise<{ root: IrNode; annotations: unknown[] }>;
+  /** A Figma IR stored as its own artifact (a Handoff's, stored by frame-match). */
+  ir(artifactId: string): Promise<{ root: IrNode; annotations: unknown[] }>;
   dataset(name: string): Promise<unknown>;
   upload(kind: string, json: unknown, meta: Record<string, unknown>): Promise<string>;
 }
@@ -230,6 +249,13 @@ export function createPlane(project: string, env: NodeJS.ProcessEnv = process.en
     if (!response.ok) throw new Error(`control plane ${url.replace(api, "")}: ${response.status}`);
     return response.json() as Promise<unknown>;
   };
+  const irOf = async (artifactId: string) => {
+    const doc = (await get(`${base}/artifacts/${encodeURIComponent(artifactId)}/content`)) as {
+      root: IrNode;
+      annotations?: unknown[];
+    };
+    return { root: doc.root, annotations: doc.annotations ?? [] };
+  };
   return {
     json: (id) => get(`${base}/artifacts/${encodeURIComponent(id)}/content`),
     meta: async (id) =>
@@ -242,11 +268,9 @@ export function createPlane(project: string, env: NodeJS.ProcessEnv = process.en
       const record = (await get(`${base}/exports/${encodeURIComponent(exportId)}`)) as {
         irArtifactId: string;
       };
-      const doc = (await get(
-        `${base}/artifacts/${encodeURIComponent(record.irArtifactId)}/content`,
-      )) as { root: IrNode; annotations?: unknown[] };
-      return { root: doc.root, annotations: doc.annotations ?? [] };
+      return irOf(record.irArtifactId);
     },
+    ir: (artifactId) => irOf(artifactId),
     dataset: (name) =>
       UUID.test(name)
         ? get(`${base}/artifacts/${name}/content`)
@@ -286,7 +310,7 @@ interface Loaded extends Frame {
 }
 
 const NO_DATA =
-  "This run has no data yet. Call agent.hookFinder with what the frame shows, then bind.source with the hook and input it returned.";
+  "This run has no data yet. Call agent.hookMaker with what the frame shows, then bind.source with the hook and input it returned.";
 
 /** Problems a person would see on the page: each is a reason not to publish. */
 export function problemsOf(
@@ -295,6 +319,9 @@ export function problemsOf(
   run: DryRun,
   plan?: z.infer<typeof Plan>,
   design?: Tree,
+  left: LeftAsDesigned[] = [],
+  unbound: Unbound[] = [],
+  unreachable: string[] = [],
 ): string[] {
   const lost = (plan?.collapse ?? []).flatMap((c) => {
     if (!design) return [];
@@ -311,9 +338,16 @@ export function problemsOf(
   });
   return [
     ...lost,
+    ...left.map(placeholdersLeft),
+    ...unbound.map(unboundMessage),
+    ...unreachable,
     ...run.repeated.map(
       (r) =>
         `${r.src} shows the design's "${r.copy}" in all ${r.times} items it draws in: a placeholder. Bind it to what it stands for (time left until an instant is a clock), or say in remaining why it stays`,
+    ),
+    ...run.relative.map(
+      (r) =>
+        `${r.src} src shows "${r.shows}" for ${r.times} item(s): a path with no domain, which no browser loads. Bind it with a template that puts the site's domain in front ("https://domain{item.image}"; ask which domain if the question was left unanswered), and read shows to see the whole URL`,
     ),
     ...run.capitals.map(
       (c) =>
@@ -334,6 +368,35 @@ export function problemsOf(
   ];
 }
 
+/** Design copy beside data, said so a plan can act on it. */
+function unboundMessage(u: Unbound): string {
+  return `${u.src} still shows the design's "${u.copy}" inside ${u.within}, which shows data: bind it to what it stands for, hide it with a when if the data has nothing for it, or say in remaining why it stays (a label)`;
+}
+
+const clipUrl = (url: string) => (url.length > 90 ? `${url.slice(0, 89)}…` : url);
+
+/** A picture's HTTP status. A network failure is not an answer about the picture. */
+async function probePicture(url: string): Promise<number | undefined> {
+  try {
+    const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(5000) });
+    await response.body?.cancel();
+    return response.status;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A repeat drawn as designed beside one drawn from data, said so a plan can fix it. */
+function placeholdersLeft(l: LeftAsDesigned): string {
+  const shows = `${l.src} still shows the design's placeholders${l.copy ? ` ("${l.copy}")` : ""} beside ${l.like}, which ${l.over ? `draws ${l.over}` : "draws data"}`;
+  if (!l.over || l.items.length === 0) {
+    return `${shows}. Give it data as ${l.like} has it, or say in remaining why it stays`;
+  }
+  const rows = l.slices?.map(([src, [a, b]]) => `${src} [${a}, ${b}]`).join(", ");
+  const fields = l.fields.map(([from, to]) => `${to} as ${from}`).join(", ");
+  return `${shows}: one grid drawn as rows, and the data's list is flat. Collapse each row's items over ${l.over} with its own slice, in order${rows ? ` (${rows})` : ""}: here members ${l.items.join(", ")}${fields ? `, fields ${fields}` : ""}, and its own copy of each set entry`;
+}
+
 const MAX_REFUSALS = 2;
 
 export function createBindTools(
@@ -343,11 +406,14 @@ export function createBindTools(
     web?: string;
     /** The MCP servers, for the live output of the Cast hook the run chooses as its data. */
     mcp?: McpHost;
+    /** The HTTP status of a picture's URL, or undefined when the site cannot be reached at all. */
+    probe?: (url: string) => Promise<number | undefined>;
   } = {},
 ) {
   const dir = opts.dir ?? BIND_DIR;
   const planeOf = opts.plane ?? createPlane;
   const mcp = opts.mcp ?? defaultMcpHost();
+  const probe = opts.probe ?? probePicture;
   const cache = new Map<string, Promise<Frame>>();
   const inputOf = (ctx: Pick<ToolContext, "input">) => RunInput.parse(ctx.input);
 
@@ -364,8 +430,14 @@ export function createBindTools(
           input.data ? plane.dataset(input.data) : undefined,
           loadDsl(),
         ]);
+        // An export's IR is in the control plane; a Handoff's was stored beside the tree.
         const exportId = typeof meta.exportId === "string" ? meta.exportId : undefined;
-        const ir = exportId ? await plane.exportIr(exportId) : undefined;
+        const irArtifactId = typeof meta.irArtifactId === "string" ? meta.irArtifactId : undefined;
+        const ir = irArtifactId
+          ? await plane.ir(irArtifactId)
+          : exportId
+            ? await plane.exportIr(exportId)
+            : undefined;
         const byId = ir ? indexIr(ir.root) : new Map<string, IrNode>();
         return {
           tree,
@@ -408,11 +480,19 @@ export function createBindTools(
     alwaysInline: true,
     async run(_input, ctx) {
       const { tree, byId, bag } = await loaded(ctx);
-      const found = groups(tree, byId).map((g) =>
-        g.shapes.length === 1
-          ? `${g.parent} holds ${g.members.length} of one shape: ${g.members.join(", ")}`
-          : `${g.parent} holds ${g.members.length}${g.component ? ` «${g.component}»` : ""} in ${g.shapes.length} shapes: ${g.shapes.map((s) => `[${s.join(", ")}]`).join(" ")}`,
-      );
+      const all = groups(tree, byId);
+      const found = all.map((g) => {
+        const line =
+          g.shapes.length === 1
+            ? `${g.parent} holds ${g.members.length} of one shape: ${g.members.join(", ")}`
+            : `${g.parent} holds ${g.members.length}${g.component ? ` «${g.component}»` : ""} in ${g.shapes.length} shapes: ${g.shapes.map((s) => `[${s.join(", ")}]`).join(" ")}`;
+        // a grid drawn as rows: the cards of every row, not only the first
+        const inner = all.find((i) => i.parent === g.members[0]);
+        const rows = inner ? rowsOf(tree, g, inner) : undefined;
+        return rows?.every((r) => r.length > 0)
+          ? `${line} (their items: ${g.members.map((m, i) => `${m} [${rows[i]?.join(", ")}]`).join(", ")})`
+          : line;
+      });
       const { notes } = await frameOf(ctx);
       return {
         ...(notes.length > 0 ? { designerNotes: notes, designerNotesRule: NOTES_RULE } : {}),
@@ -426,7 +506,7 @@ export function createBindTools(
   const source = defineTool({
     name: "bind.source",
     description:
-      "Make a Cast hook's live output this run's data: the hookId and input agent.hookFinder returned, and a short name the plan reads the data by (fixtures, news). Runs the hook once and returns every path in its output, as bind.load does for data it was given. Only for a run given no data.",
+      "Make a Cast hook's live output this run's data: the hookId and input agent.hookMaker returned, and a short name the plan reads the data by (fixtures, news). Runs the hook once and returns every path in its output, as bind.load does for data it was given. Only for a run given no data.",
     input: z
       .object({
         hookId: z.string().min(1),
@@ -510,7 +590,7 @@ export function createBindTools(
           .string()
           .min(2)
           .describe(
-            'The whole plan as JSON: {"note","collapse":[{"over","as","members","shape","when","variants":[{"src","when","fields"}],"fields":[{"src","prop","path"|"template"}]}],"bind":[…],"set":[{"src","prop","value"}]}',
+            'The whole plan as JSON: {"note","collapse":[{"over","as","members","slice","shape","when","variants":[{"src","when","fields"}],"fields":[{"src","prop","path"|"template"}]}],"bind":[…],"set":[{"src","prop","value"}]}',
           ),
       })
       .strict(),
@@ -540,11 +620,30 @@ export function createBindTools(
           ? { collapse: parsed.data.collapse.map((c) => ({ ...c, shape: c.shape ?? "varies" })) }
           : {}),
       };
-      const { tree, bag, dsl } = await withData(ctx);
+      const { tree, bag, dsl, byId } = await withData(ctx);
       const applied = dsl.applyBindingPlan(tree, plan);
       const structure = dsl.check(applied.tree);
       const run = dryRun(applied.tree, bag, dsl, tree);
-      const problems = problemsOf(applied, structure, run, plan, tree);
+      // the first picture of each node: a domain the site does not serve shows as a 404 here
+      const broken = (
+        await Promise.all(
+          run.pictures.slice(0, 6).map(async (p) => ({ ...p, status: await probe(p.url) })),
+        )
+      ).filter((p) => p.status !== undefined && p.status >= 400);
+      const left = leftAsDesigned(tree, applied.tree, byId, dsl.hasRef);
+      const problems = problemsOf(
+        applied,
+        structure,
+        run,
+        plan,
+        tree,
+        left,
+        unboundCopy(applied.tree, dsl.hasRef),
+        broken.map(
+          (p) =>
+            `${p.src} src loads nothing: ${clipUrl(p.url)} answers ${p.status}. The domain or the path is wrong; ask a person for the site's domain rather than guessing one`,
+        ),
+      );
       const state = readState(dir, ctx.runId);
       writeState(dir, ctx.runId, {
         ...state,
@@ -573,6 +672,9 @@ export function createBindTools(
     input: z.object({}).strict(),
     effect: "write",
     timeoutMs: 60_000,
+    // "not yet" sends the run back to bind.try, so asking again is the run working: the repeated
+    // refused call must not end it. MAX_REFUSALS bounds the loop, so it still ends with a preview
+    advisoryBlock: true,
     // the approval shows what code measured, never the model's account of it
     resolve(_input, ctx) {
       const tried = readState(dir, ctx.runId).tried;
@@ -591,7 +693,7 @@ export function createBindTools(
       if (!state.tried) return "Nothing to publish. Call bind.try with a plan first.";
       if (state.tried.problems.length === 0 || state.refusals >= MAX_REFUSALS) return undefined;
       writeState(dir, ctx.runId, { ...state, refusals: state.refusals + 1 });
-      return `Not yet (${state.refusals + 1} of ${MAX_REFUSALS}). The plan has problems: ${state.tried.problems.slice(0, 5).join(" | ")}. Fix their cause and call bind.try with the whole plan before bind.publish: calling bind.publish again now ends the run. If they cannot be fixed, call bind.try with the plan as it is, then bind.publish; after ${MAX_REFUSALS} refusals it goes through with them listed.`;
+      return `Not yet (${state.refusals + 1} of ${MAX_REFUSALS}). The plan has problems: ${state.tried.problems.slice(0, 5).join(" | ")}. Fix their cause and call bind.try with the whole plan, then bind.publish again: calling bind.publish again without a new bind.try only uses up a refusal. If they cannot be fixed, call bind.try with the plan as it is, then bind.publish; after ${MAX_REFUSALS} refusals it goes through with them listed.`;
     },
     async run(_input, ctx) {
       const state = readState(dir, ctx.runId);

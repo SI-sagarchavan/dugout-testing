@@ -117,23 +117,24 @@ export function createTracingSink(tracer: Tracer, onRunEnd?: () => Promise<void>
             at,
           );
           break;
-        case "approval.requested":
+        case "question.asked":
+          // a write waiting for a yes is a review of its call; the rest are the agent's questions
           run.open.set(
-            `approval:${event.data.callId}`,
-            child(`approval ${event.data.tool}`, at, {}),
+            `pause:${event.data.callId}`,
+            child(`${event.data.subject ? "review" : "ask"} ${event.data.tool}`, at, {}),
           );
           break;
-        case "approval.granted":
-        case "approval.rejected":
-        case "approval.changes_requested": {
-          const span = run.open.get(`approval:${event.data.callId}`);
-          span?.setAttribute("dugout.approved", event.type === "approval.granted");
-          span?.setAttribute("dugout.approver", event.data.by);
-          if (event.type === "approval.changes_requested") {
-            span?.setAttribute("dugout.changes", event.data.changes);
-          }
+        case "question.answered": {
+          const span = run.open.get(`pause:${event.data.callId}`);
+          const review = event.data.answers.review;
+          const verdict = typeof review === "object" && !Array.isArray(review) ? review : undefined;
+          if (verdict) span?.setAttribute("dugout.approved", verdict.decision === "approve");
+          if (verdict?.decision === "change")
+            span?.setAttribute("dugout.changes", verdict.comment ?? "");
+          span?.setAttribute("dugout.responder", event.data.by);
+          span?.setAttribute("dugout.answer_source", event.data.source);
           span?.end(at);
-          run.open.delete(`approval:${event.data.callId}`);
+          run.open.delete(`pause:${event.data.callId}`);
           break;
         }
         case "run.completed":

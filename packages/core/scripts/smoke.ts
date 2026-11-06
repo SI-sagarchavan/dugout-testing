@@ -2,7 +2,7 @@
 // usage. Run with `pnpm eval smoke [--model <name>]` (reads .env if present, for AWS_PROFILE and
 // AWS_REGION); the model is a name in config/models.json and defaults to nova-lite.
 import { existsSync } from "node:fs";
-import { defineTool } from "@dugout/contracts";
+import { defineTool, reject } from "@dugout/contracts";
 import { z } from "zod";
 import { createBedrockClient, loadModelConfig, modelEntry, runLocal } from "../src/index.ts";
 
@@ -47,7 +47,7 @@ const result = await runLocal({
   tools: [fixtureGet],
   client: createBedrockClient({ models }),
   models,
-  approver: async () => ({ approved: false, by: "smoke", reason: "smoke runs never write" }),
+  responder: async () => reject("smoke", "smoke runs never write"),
   sinks: [{ write: (e) => void (e.type !== "token" && console.log(`${e.seq} ${e.type}`)) }],
 });
 

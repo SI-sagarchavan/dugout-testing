@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
-import type { ApprovalDecision } from "@dugout/contracts";
-import { type Approver, RunInterrupted } from "@dugout/core";
+import type { Decision } from "@dugout/contracts";
+import { forkRun, type Responder, RunInterrupted } from "@dugout/core";
 import { type Pool, withTenant } from "@dugout/db";
 import { z } from "zod";
 import type { AgentEntry, ResumeOptions } from "./agents.ts";
 import { createChildRuns } from "./children.ts";
 import { createPostgresEventSink, readStoredEvents, type ValkeyEventLog } from "./event-log.ts";
 import { appendEnding, cancelledEvent, lastSeq } from "./records.ts";
-import { createPostgresRunStore } from "./run-store.ts";
+import { createPostgresRunStore, latestVersion, loadRun, writeFork } from "./run-store.ts";
 
 /** Approvals wait for a person: the run saves its state and ends; a decision queues it again. */
-const later: Approver = async () => ({ pending: true });
+const later: Responder = async () => ({ pending: true });
 
 export interface WorkerOptions {
   pool: Pool;
@@ -151,7 +151,7 @@ export function createWorker(opts: WorkerOptions) {
       agent.run({
         tenantId,
         input: input as never,
-        approver: later,
+        responder: later,
         runId,
         sinks: [opts.events.sink(), createPostgresEventSink(opts.pool, tenantId)],
         store: createPostgresRunStore(opts.pool, { owner: lease, leaseMs }),
@@ -185,6 +185,46 @@ export function createWorker(opts: WorkerOptions) {
     active.set(lease, { tenantId, runId, ended });
   };
 
+  /**
+   * Writes the state of a queued follow-up from its parent (ADR 0016, `forkRun`). Returns why it
+   * cannot, or undefined when the run now has the parent's transcript and a first save point.
+   */
+  const forkFromParent = async (
+    tenantId: string,
+    runId: string,
+    parentId: string,
+    version: number | null,
+    input: unknown,
+  ): Promise<string | undefined> => {
+    const parentCtx = { tenantId, runId: parentId };
+    const at = version ?? (await latestVersion(opts.pool, parentCtx));
+    const saved = at === undefined ? undefined : await loadRun(opts.pool, parentCtx, at);
+    if (at === undefined || !saved) return `the run it follows (${parentId}) has no save point`;
+    const parentAgent = await withTenant(opts.pool, tenantId, async (db) => {
+      const { rows } = await db.query<{ agent_id: string }>(
+        "select agent_id from runs where id = $1",
+        [parentId],
+      );
+      return rows[0]?.agent_id;
+    });
+    const own = await withTenant(opts.pool, tenantId, async (db) => {
+      const { rows } = await db.query<{ agent_id: string }>(
+        "select agent_id from runs where id = $1",
+        [runId],
+      );
+      return rows[0]?.agent_id;
+    });
+    if (parentAgent !== own) return `the run it follows (${parentId}) is another agent's`;
+    let forked: ReturnType<typeof forkRun>;
+    try {
+      forked = forkRun(saved, { runId: parentId, version: at }, { input });
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+    await withTenant(opts.pool, tenantId, (db) => writeFork(db, tenantId, runId, parentId, forked));
+    return undefined;
+  };
+
   /** Takes a claimed run over for one invocation, and starts or resumes it. */
   const takeOver = async ({ run_id: runId, tenant_id: tenantId, attempts }: Claimed) => {
     const lease = newLease();
@@ -192,15 +232,18 @@ export function createWorker(opts: WorkerOptions) {
       const { rows } = await db.query<{
         agent_id: string;
         input: unknown;
-        decision: ApprovalDecision | null;
+        decision: Decision | null;
         last_error: string | null;
         saved: boolean;
         status: string;
         model: string | null;
+        parent_run_id: string | null;
+        parent_version: number | null;
       }>(
         `update runs r set lease_owner = $3
          where r.id = $1 and r.lease_owner = $2
          returning r.agent_id, r.input, r.decision, r.last_error, r.status, r.model,
+           r.parent_run_id, r.parent_version,
            exists (select 1 from run_checkpoints where run_id = r.id) as saved`,
         [runId, owner, lease],
       );
@@ -214,7 +257,16 @@ export function createWorker(opts: WorkerOptions) {
       const why = run.last_error ? `: ${run.last_error}` : "";
       return giveUp(tenantId, runId, lease, `gave up after ${maxAttempts} attempts${why}`);
     }
-    if (!run.saved) {
+    // A host queued a follow-up: a run that names a parent and has no state of its own carries
+    // on from the parent's save point (its latest unless named), with its input as the change.
+    let saved = run.saved;
+    if (!saved && run.parent_run_id) {
+      const parent = run.parent_run_id;
+      const failed = await forkFromParent(tenantId, runId, parent, run.parent_version, run.input);
+      if (failed) return giveUp(tenantId, runId, lease, failed);
+      saved = true;
+    }
+    if (!saved) {
       // Nothing saved: start afresh, unless it got as far as events, which can't be numbered again.
       if ((await lastSeq(opts.pool, opts.events, tenantId, runId)) > 0) {
         return giveUp(tenantId, runId, lease, "the run stopped before any of its state was saved");
@@ -232,7 +284,7 @@ export function createWorker(opts: WorkerOptions) {
     ]);
     launch(lease, tenantId, runId, agent, run.input, run.model, {
       // a decision stays on the run until the first save after it, so a crash before then repeats it
-      reason: run.decision ? "approval" : "recovery",
+      reason: run.decision ? "answered" : "recovery",
       startSeq,
       events,
       ...(run.decision ? { decision: run.decision } : {}),

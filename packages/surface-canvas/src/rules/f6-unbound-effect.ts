@@ -26,7 +26,7 @@ import { slotFinding } from "./shared.js";
 export const unboundEffect: Rule = {
   id: "unbound-effect",
   code: "F6",
-  severity: "fixable",
+  group: "tokens",
   protects: "the elevation scale — a per-layer shadow never receives a change to it",
 
   check(ir) {
@@ -39,7 +39,7 @@ export const unboundEffect: Rule = {
       findings.push(
         slotFinding({
           ruleId: "unbound-effect",
-          severity: "fixable",
+          group: "tokens",
           node: slot.node,
           scope: "effect",
           propPath: slot.propPath,

@@ -11,7 +11,6 @@ import { unboundTextStyle } from "../src/rules/f3-unbound-text-style.js";
 import { unboundSpacing } from "../src/rules/f4-unbound-spacing.js";
 import { unboundRadius } from "../src/rules/f5-unbound-radius.js";
 import { unboundEffect } from "../src/rules/f6-unbound-effect.js";
-import { defaultLayerNames, DEFAULT_NAME_RE } from "../src/rules/w1-default-layer-names.js";
 import {
   bound,
   boundFill,
@@ -45,7 +44,7 @@ describe("the registry", () => {
     for (const rule of RULES) {
       expect(rule.protects.length).toBeGreaterThan(10);
       expect(rule.id).toMatch(/^[a-z0-9-]+$/);
-      expect(rule.code).toMatch(/^[BFW]\d$/);
+      expect(rule.code).toMatch(/^[SF]\d$/);
     }
   });
 
@@ -56,37 +55,8 @@ describe("the registry", () => {
   });
 });
 
-describe("B1 root-not-autolayout", () => {
-  const b1 = ruleById("root-not-autolayout")!;
-
-  it("fires on a root that isn't a vertical auto-layout frame", () => {
-    expect(runRule(b1, node({ layoutMode: "none" }))).toHaveLength(1);
-    expect(runRule(b1, node({ layoutMode: "horizontal" }))).toHaveLength(1);
-  });
-
-  it("stays quiet on a vertical root", () => {
-    expect(runRule(b1, node({ layoutMode: "vertical" }))).toHaveLength(0);
-  });
-
-  it("never offers a layout rewrite — that reflows the frame", () => {
-    expect(b1.propose).toBeUndefined();
-  });
-
-  it("stays quiet on an overlay — most children are absolutely placed", () => {
-    const root = node({
-      layoutMode: "none",
-      children: [
-        node({ positioning: "absolute" }),
-        node({ positioning: "absolute" }),
-        node({ positioning: "auto" }),
-      ],
-    });
-    expect(runRule(b1, root)).toHaveLength(0);
-  });
-});
-
-describe("B2 groups-instead-of-frames", () => {
-  const b2 = ruleById("groups-instead-of-frames")!;
+describe("S1 groups-instead-of-frames", () => {
+  const s1 = ruleById("groups-instead-of-frames")!;
 
   it("counts groups and the layers inside them", () => {
     const root = node({
@@ -96,7 +66,7 @@ describe("B2 groups-instead-of-frames", () => {
         node({ type: "GROUP", children: [node()] }),
       ],
     });
-    const finding = runRule(b2, root)[0]!;
+    const finding = runRule(s1, root)[0]!;
     expect(finding.detail).toMatchObject({ groups: 2, layers: 3 });
   });
 
@@ -105,42 +75,20 @@ describe("B2 groups-instead-of-frames", () => {
     // would say 2, and they would be right.
     const inner = node({ type: "GROUP", children: [node()] });
     const root = node({ children: [node({ type: "GROUP", children: [inner] })] });
-    expect(runRule(b2, root)[0]!.detail).toMatchObject({ groups: 2, layers: 2 });
+    expect(runRule(s1, root)[0]!.detail).toMatchObject({ groups: 2, layers: 2 });
   });
 
   it("stays quiet with no groups", () => {
-    expect(runRule(b2, node({ children: [node(), node()] }))).toHaveLength(0);
+    expect(runRule(s1, node({ children: [node(), node()] }))).toHaveLength(0);
   });
 
   it("offers to convert the groups it counted", () => {
     const a = node({ type: "GROUP", id: "g1", children: [node()] });
     const root = node({ children: [a] });
-    expect(proposalFor(b2, root)).toMatchObject({
+    expect(proposalFor(s1, root)).toMatchObject({
       kind: "structural",
       action: "convert-groups",
     });
-  });
-});
-
-describe("B3 no-mobile-frames", () => {
-  const b3 = ruleById("no-mobile-frames")!;
-
-  it("fires when nothing at the top level is mobile-width", () => {
-    const root = node({ width: 1366, children: [node({ width: 1368 })] });
-    const finding = runRule(b3, root)[0]!;
-    expect(finding.detail?.widthsPresent).toBe("1366, 1368");
-  });
-
-  it("stays quiet when a top-level frame is in range", () => {
-    const root = node({ width: 1366, children: [node({ width: 390 })] });
-    expect(runRule(b3, root)).toHaveLength(0);
-  });
-
-  it("ignores a mobile-width frame buried inside the design", () => {
-    // A 390px frame six levels deep is a component preview, not a mobile page.
-    const deep = node({ children: [node({ children: [node({ width: 390 })] })] });
-    const root = node({ width: 1366, children: [deep] });
-    expect(runRule(b3, root)).toHaveLength(1);
   });
 });
 
@@ -359,38 +307,8 @@ describe("F6 unbound-effect", () => {
   });
 });
 
-describe("W1 default-layer-names", () => {
-  it("matches the names Figma hands out", () => {
-    for (const name of ["Frame 427", "Group", "Rectangle 12", "image 3", "Union", "Vector_2"]) {
-      expect(DEFAULT_NAME_RE.test(name)).toBe(true);
-    }
-    for (const name of ["Hero", "player-card", "Frame with a name", "CTA Button"]) {
-      expect(DEFAULT_NAME_RE.test(name)).toBe(false);
-    }
-  });
-
-  it("excludes vectors from the percentage", () => {
-    const root = node({
-      name: "Home",
-      children: [
-        node({ name: "Frame 1" }),
-        node({ name: "hero" }),
-        node({ name: "Vector 1", type: "VECTOR" }),
-        node({ name: "Vector 2", type: "VECTOR" }),
-      ],
-    });
-    const finding = runRule(defaultLayerNames, root)[0]!;
-    // 1 of 3 non-vector nodes, not 3 of 5.
-    expect(finding.detail).toMatchObject({
-      defaultNamed: 1,
-      consideredNodes: 3,
-      excludedVectors: 2,
-    });
-  });
-});
-
 describe("lint()", () => {
-  it("splits findings by severity and never proposes for a blocker", () => {
+  it("splits findings by group and never queues a structure finding as a fix", () => {
     const root = withDepths(
       node({
         layoutMode: "none",
@@ -399,7 +317,9 @@ describe("lint()", () => {
       }),
     );
     const report = lint(document(root), ctx);
-    expect(report.blockers).toHaveLength(3);
+    // A desktop-only page whose root is not a column is not a finding: B1 and B3
+    // used to fire here, and on every frame the pipeline publishes.
+    expect(report.structure.map((finding) => finding.ruleId)).toEqual(["groups-instead-of-frames"]);
     expect(report.batches.every((b) => b.ruleCode.startsWith("F"))).toBe(true);
   });
 });

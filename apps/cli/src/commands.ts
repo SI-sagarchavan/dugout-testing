@@ -412,7 +412,14 @@ const TOOLS: Array<[string, string]> = [
     "watch",
     "A Handoff from the Figma plugin starts one section-builder run: frame matched, data bound, one preview",
   ],
-  ["memory <review|promote>", "Approve proposed facts, or propose shared memory"],
+  [
+    "memory <review|promote|answers>",
+    "Approve proposed facts, propose shared memory, or decide which learned answers stand",
+  ],
+  [
+    "library <index|search|share|previews>",
+    "The section library: add Handoffs' sections, search it (--shared: other clubs' too), sharing, previewed sections",
+  ],
   [
     "mcp <list|sync|login>",
     "The registry's MCP servers: list them, lock a server's tools, log a tenant in",

@@ -17,12 +17,12 @@ import type { Annotation, AssetBinding } from "../ir/schema.js";
 import type { LintReport } from "../health/types.js";
 import type { ReconciliationReport } from "../health/reconcile-report.js";
 import type {
-  ActivityActor,
-  ActivityEntry,
+  Person,
   AppliedPayload,
   AuthView,
   TenantsView,
   PanelState,
+  UiTheme,
   PluginMessage,
   SelectedFrame,
   SelectionPreview,
@@ -66,6 +66,8 @@ export type PanelAction =
   | { type: "unskip-batch"; batchId: string }
   /** Dismiss the "which element is this?" prompt without placing the image. */
   | { type: "dismiss-unmapped" }
+  /** The designer picked light or dark; the sandbox is told separately and keeps it. */
+  | { type: "ui-theme"; theme: UiTheme }
 
 
 export type PanelInput = PluginMessage | PanelAction;
@@ -77,6 +79,8 @@ export interface StudioState {
   themes: ThemeChoice[];
   themeId: string;
   panelState: PanelState;
+  /** The designer's light/dark choice; null follows Figma. */
+  uiTheme: UiTheme | null;
   report: LintReport | null;
   reconciliation: ReconciliationReport | null;
   /**
@@ -100,8 +104,6 @@ export interface StudioState {
    * just changed 110 layers should not have to catch a message.
    */
   applied: AppliedPayload | null;
-  heatmapOn: boolean;
-  heatmapNodes: number;
   selectionCount: number;
   selectionName: string | null;
   /** Set only when a single CONTAINER is selected — i.e. something checkable. */
@@ -143,8 +145,7 @@ export interface StudioState {
   auth: AuthView;
   /** The clients this account may send for, and which one this file is for. */
   tenants: TenantsView;
-  user: ActivityActor | null;
-  activity: ActivityEntry[];
+  user: Person | null;
 
   // --- the queue's own view state ---------------------------------------
   /** At most one card is expanded, always. */
@@ -179,6 +180,7 @@ export const initialState: StudioState = {
   themes: [],
   themeId: "",
   panelState: "expanded",
+  uiTheme: null,
   report: null,
   reconciliation: null,
   previousPercent: null,
@@ -188,8 +190,6 @@ export const initialState: StudioState = {
   busy: true,
   error: null,
   applied: null,
-  heatmapOn: false,
-  heatmapNodes: 0,
   selectionCount: 0,
   selectionName: null,
   selectionId: null,
@@ -209,7 +209,6 @@ export const initialState: StudioState = {
   auth: { phase: "signed-out" },
   tenants: { status: "idle" },
   user: null,
-  activity: [],
   openBatchId: null,
   picks: {},
   skipped: [],
@@ -265,11 +264,6 @@ export function reduce(state: StudioState, message: PanelInput): StudioState {
     case "batches":
       return { ...state, batches: message.batches, activeBatchId: message.activeId };
 
-    case "zip-ready":
-      // Saved by the iframe's message listener: writing a file is a side effect
-      // and this function is pure.
-      return state;
-
     case "boot":
       return {
         ...state,
@@ -279,6 +273,7 @@ export function reduce(state: StudioState, message: PanelInput): StudioState {
         themes: message.payload.themes,
         themeId: message.payload.themeId,
         panelState: message.payload.panelState,
+        uiTheme: message.payload.uiTheme,
         user: message.payload.user,
       };
 
@@ -300,7 +295,6 @@ export function reduce(state: StudioState, message: PanelInput): StudioState {
         ...view,
         report: message.report,
         reconciliation: message.reconciliation,
-        activity: message.activity,
         sessionBasePercent: state.sessionBasePercent ?? message.report.coverage.percent,
         // Only a real re-measurement counts as movement. A replayed report (the
         // `ui-ready` handshake posts the current one again) must not invent a
@@ -338,13 +332,14 @@ export function reduce(state: StudioState, message: PanelInput): StudioState {
         openBatchId: state.openBatchId === message.payload.batchId ? null : state.openBatchId,
       };
 
+    case "ui-theme":
+      return { ...state, uiTheme: message.theme };
+
     case "panel-state":
       // Authoritative: the sandbox posts this only after the window has actually
       // been resized, so the layout always matches the box it is drawn in.
       return { ...state, panelState: message.state };
 
-    case "heatmap":
-      return { ...state, heatmapOn: message.on, heatmapNodes: message.nodes };
 
     case "selection":
       return {

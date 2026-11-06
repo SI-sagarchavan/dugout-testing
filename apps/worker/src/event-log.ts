@@ -9,8 +9,8 @@ const RETAIN_SECONDS = 7 * 24 * 3600;
 /** The run is over. */
 export const isTerminal = (e: RunEvent) =>
   e.type === "run.completed" || e.type === "run.failed" || e.type === "run.cancelled";
-/** The invocation is over: the run ended, or it waits for a person to decide an approval. */
-export const endsInvocation = (e: RunEvent) => e.type === "approval.requested" || isTerminal(e);
+/** The invocation is over: the run ended, or it waits for a person (ADR 0029). */
+export const endsInvocation = (e: RunEvent) => e.type === "question.asked" || isTerminal(e);
 /** Streamed fragments: only the live stream has them; the finished messages are in the record. */
 const LIVE_ONLY = new Set<RunEvent["type"]>(["token", "tool.input.delta"]);
 const parse = (fields: string[]) => JSON.parse(fields[1] ?? "null") as RunEvent;

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "previewUrl": {
+      "type": "string"
+    },
+    "treeArtifactId": {
+      "type": "string"
+    },
+    "edits": {
+      "type": "number",
+      "description": "Edits applied"
+    },
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The id of the comment, as ui.load listed it"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "addressed",
+              "not-addressed"
+            ],
+            "description": "addressed: the edits meet it. not-addressed: they do not, and detail says why"
+          },
+          "detail": {
+            "type": "string",
+            "description": "What was changed, or why it was not"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "detail"
+        ],
+        "additionalProperties": false
+      },
+      "description": "One entry for each comment ui.load listed"
+    },
+    "remaining": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Problems ui.publish listed that were left, and anything else still off"
+    }
+  },
+  "required": [
+    "previewUrl",
+    "treeArtifactId",
+    "edits",
+    "comments",
+    "remaining"
+  ],
+  "additionalProperties": false
+}

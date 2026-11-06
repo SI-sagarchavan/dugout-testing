@@ -7,66 +7,41 @@
  * stays put.
  *
  * Undo is this session only, and only while the fix is still on top of Figma's
- * undo stack. Somebody else's bind is news, never a button.
+ * undo stack.
  */
 import type { JSX } from "react";
-import { recentActors, samePerson } from "../health/activity.js";
-import type { ActivityActor } from "../health/activity.js";
-import { initialOf } from "../health/activity.js";
+import { initialOf } from "../health/person.js";
 import { UndoIcon } from "./icons.js";
 import { send } from "./main.js";
-import { PersonChip } from "./PersonChip.js";
 import type { StudioState } from "./state.js";
 
 export function StatusLine({ state }: { state: StudioState }): JSX.Element {
   const applied = state.applied;
-  const latest = state.activity[0] ?? null;
-
-  const actor: ActivityActor | null = applied?.user ?? latest?.actor ?? state.user;
-  const change = applied
-    ? describe(applied.label, applied.tokenRef, applied.applied)
-    : latest
-      ? describe(latest.label, latest.tokenRef, latest.applied)
-      : null;
-
+  const person = applied?.user ?? state.user;
+  const change = applied ? describe(applied.label, applied.tokenRef, applied.applied) : null;
   const failure =
     applied && applied.failed > 0 ? (applied.failures[0] ?? `${applied.failed} failed`) : null;
 
-  // Everyone else who has touched this frame recently, as bare initials. The line
-  // has room for one name, and "who else is in here" is worth more than a second
-  // line to say it in.
-  const others = recentActors(state.activity).filter(
-    (other) => !(actor && samePerson(other, actor)),
-  );
-
   return (
     <div className="fs-item">
-      {actor ? (
-        <span className="fs-avatar" aria-hidden="true" title={actor.name}>
-          {initialOf(actor.name)}
+      {person ? (
+        <span className="fs-avatar" aria-hidden="true" title={person.name}>
+          {initialOf(person.name)}
         </span>
       ) : null}
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <span className="t-caption" style={{ fontWeight: 600 }}>
-          {actor ? firstWord(actor.name) : ""}
+          {person ? firstWord(person.name) : ""}
         </span>
         <span
           className="t-caption truncate"
           style={{ color: "var(--ink-muted)" }}
           title={applied?.failures.join("\n") || change || undefined}
         >
-          {failure ?? change ?? "No binds on this frame yet"}
+          {failure ?? change ?? "Nothing changed yet"}
         </span>
       </div>
-
-      {others.length > 0 ? (
-        <span className="others" title={`Also here: ${others.map((o) => o.name).join(", ")}`}>
-          {others.map((other) => (
-            <PersonChip key={other.id ?? other.name} actor={other} nameless />
-          ))}
-        </span>
-      ) : null}
 
       {applied && applied.undoable ? (
         <button

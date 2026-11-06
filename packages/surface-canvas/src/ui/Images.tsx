@@ -37,7 +37,7 @@ export function ImagesView({
   const frame = state.report?.rootName ?? state.selectionName ?? "";
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 8 }} aria-label="Background assets">
+    <section style={{ display: "flex", flexDirection: "column", gap: 10 }} aria-label="Background assets">
       <div className="fs-line1" style={{ justifyContent: "space-between", flexWrap: "nowrap" }}>
         <p className="t-mono" style={{ color: "var(--ink-muted)" }}>
           Background assets in the selected frame
@@ -48,7 +48,7 @@ export function ImagesView({
       {state.unmapped ? <UnmappedPrompt unmapped={state.unmapped} dispatch={dispatch} /> : null}
 
       {state.assets.length > 0 ? (
-        <ul style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <ul style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {state.assets.map((binding) => (
             <li key={binding.imageHash}>
               <AssetRow

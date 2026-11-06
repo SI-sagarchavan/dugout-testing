@@ -3,7 +3,15 @@ import { join } from "node:path";
 import { REPO_ROOT } from "@dugout/core";
 import { describe, expect, it } from "vitest";
 import { asBag, indexIr, loadDsl } from "../src/dsl.ts";
-import { dryRun, groups, outline, shapeOf } from "../src/facts.ts";
+import {
+  dryRun,
+  groups,
+  leftAsDesigned,
+  outline,
+  rowsOf,
+  shapeOf,
+  unboundCopy,
+} from "../src/facts.ts";
 import { Plan, previewOf, problemsOf } from "../src/tools.ts";
 
 /**
@@ -31,7 +39,15 @@ const check = (plan: unknown) => {
   return {
     applied,
     run,
-    problems: problemsOf(applied, dsl.check(applied.tree), run, plan as never, tree),
+    problems: problemsOf(
+      applied,
+      dsl.check(applied.tree),
+      run,
+      plan as never,
+      tree,
+      leftAsDesigned(tree, applied.tree, byId, dsl.hasRef),
+      unboundCopy(applied.tree, dsl.hasRef),
+    ),
   };
 };
 
@@ -208,6 +224,146 @@ describe("a plan drawn against the sample", () => {
   it("reports a node the plan names that the frame does not have", () => {
     const { problems } = check({ bind: [{ src: "9:9", prop: "content", path: "x" }] });
     expect(problems[0]).toMatch(/^not applied: src 9:9/);
+  });
+});
+
+/**
+ * A news grid: one big card, then two rows of two small cards, against a flat list of six. The plan
+ * that collapsed only the first row drew all six there and left the second row's Figma pictures and
+ * copy on the page.
+ */
+describe("a grid drawn as rows", () => {
+  const grid = read("agents/data-bind/tests/fixtures/news-grid.tree.json");
+  const gridIr = indexIr(read("agents/data-bind/tests/fixtures/news-grid.ir.json").root);
+  const gridBag = asBag(read("agents/data-bind/tests/fixtures/news-grid.data.json"), dsl);
+  const checkGrid = (plan: unknown) => {
+    const applied = dsl.applyBindingPlan(grid, plan);
+    const run = dryRun(applied.tree, gridBag, dsl, grid);
+    const left = leftAsDesigned(grid, applied.tree, gridIr, dsl.hasRef);
+    const unbound = unboundCopy(applied.tree, dsl.hasRef);
+    return {
+      left,
+      unbound,
+      problems: problemsOf(
+        applied,
+        dsl.check(applied.tree),
+        run,
+        plan as never,
+        grid,
+        left,
+        unbound,
+      ),
+    };
+  };
+
+  it("names the cards of every row, not only the first", () => {
+    const found = groups(grid, gridIr);
+    const rows = found.find((g) => g.parent === "35:10183");
+    const cards = found.find((g) => g.parent === "35:10184");
+    expect(rows && cards && rowsOf(grid, rows, cards)).toEqual([
+      ["35:10185", "35:10186"],
+      ["35:10188", "35:10189"],
+    ]);
+    // the pictures layered in a card are not its items
+    const layers = found.find((g) => g.parent === "35:10185");
+    expect(cards && layers && rowsOf(grid, cards, layers)).toBeUndefined();
+  });
+
+  it("reports a picture bound to a path with no domain", () => {
+    const plan = read("agents/data-bind/tests/fixtures/news-grid.plan.json");
+    for (const c of plan.collapse)
+      for (const f of c.fields)
+        if (f.prop === "src") {
+          f.path = "image";
+          delete f.template;
+        }
+    const { problems } = checkGrid(plan);
+    expect(problems).toContainEqual(
+      expect.stringMatching(
+        /^I35:10185;10169:11332 src shows "\/static-assets\/media\/.*" for 2 item\(s\): a path with no domain/,
+      ),
+    );
+    // with the domain in front, there is nothing to report
+    const ok = read("agents/data-bind/tests/fixtures/news-grid.plan.json");
+    expect(checkGrid(ok).problems.filter((p) => p.includes("no domain"))).toEqual([]);
+  });
+
+  it("hands the first picture of each node to a reachability probe, whole", () => {
+    const applied = dsl.applyBindingPlan(
+      grid,
+      read("agents/data-bind/tests/fixtures/news-grid.plan.json"),
+    );
+    const run = dryRun(applied.tree, gridBag, dsl, grid);
+    expect(run.pictures[0]).toEqual({
+      src: "I35:10182;13085:25357",
+      url: "https://www.southernbrave.com/static-assets/media/200868ec-e809-4921-9bab-ba57e008e13f.jpg",
+    });
+  });
+
+  it("takes a slice on each row's collapse", () => {
+    expect(
+      Plan.safeParse(read("agents/data-bind/tests/fixtures/news-grid.plan.json")).success,
+    ).toBe(true);
+  });
+
+  it("reports the row left showing the design, with each row's slice and its own ids", () => {
+    const { left, problems } = checkGrid(
+      read("agents/data-bind/tests/fixtures/news-grid.one-row.plan.json"),
+    );
+    expect(left).toEqual([
+      {
+        src: "35:10187",
+        like: "35:10184",
+        over: "news.cards",
+        copy: "Southern Brave in Women’s Hundred 2023 | Comple…",
+        items: ["35:10188", "35:10189"],
+        fields: [
+          ["I35:10185;10169:11332", "I35:10188;10169:11332"],
+          ["I35:10185;10169:11338", "I35:10188;10169:11338"],
+          ["I35:10185;10169:11342", "I35:10188;10169:11342"],
+        ],
+        slices: [
+          ["35:10184", [0, 2]],
+          ["35:10187", [2, 4]],
+        ],
+      },
+    ]);
+    expect(problems[0]).toMatch(
+      /^35:10187 still shows the design's placeholders .*\(35:10184 \[0, 2\], 35:10187 \[2, 4\]\)/,
+    );
+  });
+
+  it("finds nothing left when each row draws its own slice", () => {
+    const { left, problems } = checkGrid(
+      read("agents/data-bind/tests/fixtures/news-grid.plan.json"),
+    );
+    expect(left).toEqual([]);
+    expect(problems.filter((p) => p.includes("placeholders"))).toEqual([]);
+  });
+
+  it("reports design copy left beside bound data, in any container", () => {
+    const file = "agents/data-bind/tests/fixtures/news-grid.one-row.plan.json";
+    // a plan that binds the big card's title and date but neither binds nor hides its "32"
+    const plan = read(file);
+    plan.set = [];
+    const { unbound, problems } = checkGrid(plan);
+    expect(problems).toContainEqual(
+      expect.stringMatching(/^I35:10182;13753:35177 still shows the design's "32"/),
+    );
+    expect(unbound).toContainEqual({
+      src: "I35:10182;13753:35177",
+      copy: "32",
+      within: "I35:10182;13085:25458",
+    });
+    // hiding it with a when accounts for it
+    expect(checkGrid(read(file)).unbound.some((u) => u.copy === "32")).toBe(false);
+    // the page's own heading and button are labels, not placeholders
+    expect(unbound.some((u) => u.copy === "IN THE FRAME" || u.copy === "VIEW MORE")).toBe(false);
+  });
+
+  it("does not call the pictures layered in a card a list left unbound", () => {
+    const { left } = checkGrid(read("agents/data-bind/tests/fixtures/news-grid.plan.json"));
+    expect(left.some((l) => l.src.startsWith("I35:10182;"))).toBe(false);
   });
 });
 

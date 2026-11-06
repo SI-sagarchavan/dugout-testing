@@ -2,7 +2,7 @@
  * FanOS Surface Canvas — sandbox entry. FIGMA-AWARE.
  *
  * Owns the session: which frame is being checked, which theme it is checked
- * against, the reconciled binding index, the last report, and the heatmap. Every
+ * against, the reconciled binding index and the last report. Every
  * decision about *what is wrong* lives in the pure engine under src/health/;
  * this file only reads Figma, writes Figma, and posts messages.
  *
@@ -16,19 +16,9 @@
  *   - variables and styles are resolved once per session into Maps
  */
 import { inferBreakpoint } from "./match/type.js";
-import {
-  ACTIVITY_PREFIX,
-  appendLane,
-  laneKey,
-  mergeActivity,
-  parseLane,
-  popLane,
-  type ActivityActor,
-  type ActivityEntry,
-  type ActivityKind,
-} from "./health/activity.js";
+import type { Person } from "./health/person.js";
 import { reconciliationReport } from "./health/reconcile-report.js";
-import { invalidateSlots } from "./health/slots.js";
+import { invalidateSlots, walkNodes } from "./health/slots.js";
 import type { Batch, BatchItem, LintOptions, LintReport, ThemeSnapshot } from "./health/types.js";
 import { DEFAULT_LINT_OPTIONS, isFixProposal, isRoundProposal } from "./health/types.js";
 import type { Annotation, FrameIRDocument, FrameIRNode } from "./ir/schema";
@@ -45,7 +35,7 @@ import {
   type ApplyOptions,
   type ApplyOutcome,
 } from "./fix.js";
-import * as heatmap from "./heatmap.js";
+import { clearLegacyOverlays } from "./legacy-overlay.js";
 import { loadBindingIndex, reconcile, type BindingIndex } from "./reconcile.js";
 import {
   ANNOTATION_PLUGIN_KEY,
@@ -115,10 +105,12 @@ import {
   CLIENT_STORAGE_AUTH_BASE_URL_KEY,
   CLIENT_STORAGE_KEY,
   CLIENT_STORAGE_THEME_KEY,
+  CLIENT_STORAGE_UI_THEME_KEY,
   PANEL_SIZES,
   type AppliedPayload,
   type AuthView,
   type PanelState,
+  type UiTheme,
   type PluginMessage,
   type UiMessage,
 } from "./protocol.js";
@@ -150,12 +142,11 @@ interface State {
   rootId: string | null;
   ir: FrameIRDocument | null;
   report: LintReport | null;
-  heatmapOn: boolean;
   panelState: PanelState;
+  uiTheme: UiTheme | null;
   options: LintOptions;
   busy: boolean;
   quietUntil: number;
-  lastActivityId: string | null;
   /** Outbound Surface Studio client. Never blocks a lint. */
   api: ApiClient | null;
   /** The FanXP backend: where accounts live. Not the Studio `api` sends go to. */
@@ -199,12 +190,11 @@ const state: State = {
   rootId: null,
   ir: null,
   report: null,
-  heatmapOn: false,
   panelState: "expanded",
+  uiTheme: null,
   options: DEFAULT_LINT_OPTIONS,
   busy: false,
   quietUntil: 0,
-  lastActivityId: null,
   api: null,
   authBaseUrl: "",
   auth: null,
@@ -241,14 +231,14 @@ void boot().catch((err) => fail(`Couldn't start: ${errorMessage(err)}`));
 
 async function boot(): Promise<void> {
   state.panelState = await readPanelState();
+  state.uiTheme = await readUiTheme();
   const size = PANEL_SIZES[state.panelState];
 
   figma.showUI(__html__, { width: size.width, height: size.height, themeColors: true });
   // Applied again on `ui-ready` — see the note there. Once is not enough.
   applyPanelSize(state.panelState);
 
-  heatmap.registerCleanup();
-  heatmap.clearStaleOverlays();
+  clearLegacyOverlays();
 
   const storedTheme = await readStoredTheme();
   const theme = (storedTheme && themeById(storedTheme)) || defaultTheme();
@@ -389,15 +379,18 @@ async function handle(message: UiMessage): Promise<void> {
       return;
     case "undo-last":
       undoLastBatch();
-      if (state.root) retractActivity(state.root, state.lastActivityId);
-      state.lastActivityId = null;
       state.quietUntil = Date.now() + SELF_WRITE_QUIET_MS;
       await fullLint();
       return;
     case "dismiss-undo":
       return;
-    case "toggle-heatmap":
-      toggleHeatmap(message.on);
+    case "set-ui-theme":
+      state.uiTheme = message.theme;
+      try {
+        await figma.clientStorage.setAsync(CLIENT_STORAGE_UI_THEME_KEY, message.theme);
+      } catch (err) {
+        console.log(`[fanos-studio] could not keep the theme: ${errorMessage(err)}`);
+      }
       return;
     case "set-panel-state":
       await setPanelState(message.state);
@@ -441,9 +434,6 @@ async function handle(message: UiMessage): Promise<void> {
     case "dismiss-send":
       state.activeBatchId = null;
       postRuns();
-      return;
-    case "download-zip":
-      await downloadZip(message.frameIds);
       return;
     case "open-studio":
       if (state.api) figma.openExternal(state.api.origin);
@@ -507,7 +497,6 @@ async function fullLint(repick = false): Promise<void> {
 
     status("Linting…");
     runLint("full");
-    if (state.heatmapOn && state.ir) heatmap.draw(state.ir);
   });
 }
 
@@ -557,7 +546,8 @@ function postBoot(): void {
       themes: themeChoices(),
       themeId: state.themeId,
       panelState: state.panelState,
-      user: currentActor(),
+      uiTheme: state.uiTheme,
+      user: currentPerson(),
     },
   });
   postAssets();
@@ -570,9 +560,8 @@ function postReport(report: LintReport, scope: "full" | "incremental"): void {
     type: "report",
     report,
     reconciliation: reconciliationReport(state.snapshot),
-    activity: state.root ? readActivity(state.root) : [],
     scope,
-    nodeCount: state.ir ? heatmap.nodeCountFor(state.ir.root) : 0,
+    nodeCount: state.ir ? walkNodes(state.ir.root).length : 0,
   });
   // A report is a fact; `busy` is a fact about the sandbox. They travel together
   // so the panel can never end up holding one without the other.
@@ -628,7 +617,7 @@ function pickRoot(): SceneNode | null {
   if (selection.length === 1 && "children" in selection[0]!) return selection[0]!;
 
   const candidates = figma.currentPage.children.filter(
-    (node) => node.visible !== false && node.name !== heatmap.HEATMAP_FRAME_NAME,
+    (node) => node.visible !== false,
   );
   if (candidates.length === 0) return null;
 
@@ -748,7 +737,6 @@ async function relint(changedIds: string[]): Promise<void> {
       else if (state.ir) state.ir = { ...state.ir, root: fresh };
     }
     runLint("incremental");
-    if (state.heatmapOn && state.ir) heatmap.draw(state.ir);
   });
 }
 
@@ -834,7 +822,6 @@ async function applyBatchById(batchId: string, tokenRef: string | null): Promise
         failures: outcome.failures,
         undoable: outcome.applied > 0,
       },
-      "bind",
     );
 
     // Re-lint the affected subtrees only, per the spec — not the whole page.
@@ -1064,7 +1051,6 @@ async function createVariables(requested?: string[]): Promise<void> {
         failures: result.skipped.map((entry) => `${entry.ref}: ${entry.reason}`).slice(0, 5),
         undoable: result.created.length > 0,
       },
-      "add",
     );
 
     // The variables exist now, so the index and every proposal are stale.
@@ -1145,7 +1131,6 @@ async function runAutofix(): Promise<void> {
         ].slice(0, 5),
         undoable: outcome.applied > 0,
       },
-      "autofix",
     );
   });
 
@@ -1184,7 +1169,6 @@ async function relintItems(items: readonly BatchItem[]): Promise<void> {
   }
 
   runLint("incremental");
-  if (state.heatmapOn && state.ir) heatmap.draw(state.ir);
 }
 
 /**
@@ -1222,7 +1206,7 @@ function bindingFor(ref: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Selection, heatmap, panel, export
+// Selection, panel, export
 // ---------------------------------------------------------------------------
 
 function selectBatchLayers(batchId: string): void {
@@ -1242,24 +1226,6 @@ function selectBatchLayers(batchId: string): void {
     figma.currentPage.selection = nodes;
     figma.viewport.scrollAndZoomIntoView(nodes);
   })();
-}
-
-function toggleHeatmap(on: boolean): void {
-  state.heatmapOn = on;
-  if (!on) {
-    heatmap.clearStaleOverlays();
-    post({ type: "heatmap", on: false, nodes: 0 });
-    return;
-  }
-  if (!state.ir) {
-    post({ type: "heatmap", on: false, nodes: 0 });
-    return;
-  }
-  const result = heatmap.draw(state.ir);
-  if (result.truncated) {
-    figma.notify(`Heatmap drawn for the first ${result.nodes} layers.`);
-  }
-  post({ type: "heatmap", on: true, nodes: result.nodes });
 }
 
 async function selectTheme(themeId: string): Promise<void> {
@@ -1311,6 +1277,15 @@ async function readPanelState(): Promise<PanelState> {
     return stored === "collapsed" ? "collapsed" : "expanded";
   } catch {
     return "expanded";
+  }
+}
+
+async function readUiTheme(): Promise<UiTheme | null> {
+  try {
+    const stored = await figma.clientStorage.getAsync(CLIENT_STORAGE_UI_THEME_KEY);
+    return stored === "light" || stored === "dark" ? stored : null;
+  } catch {
+    return null;
   }
 }
 
@@ -1902,55 +1877,6 @@ async function checkWithBackend(
   return check.message;
 }
 
-/**
- * The same files a send carries, on disk. Walks each frame again rather than
- * reusing a result: this is the escape hatch for a broken Studio, and it has to
- * work without any send having happened.
- */
-async function downloadZip(frameIds: string[]): Promise<void> {
-  const ids = [...new Set(frameIds)];
-  if (ids.length === 0) {
-    fail("Select the frames you want in the ZIP.");
-    return;
-  }
-  await busy(async () => {
-    const files: Array<{ name: string; data: Uint8Array | string }> = [];
-    const several = ids.length > 1;
-    let single = "";
-
-    for (const id of ids) {
-      const node = await sceneNode(id);
-      if (!node) continue;
-      status(`Reading ${node.name}…`);
-      const result = await runExport(node, state.caches, () => {});
-      const folder = several ? `${safeFileName(node.name)}/` : "";
-      single = result.jsonName.replace(/\.ir\.json$/, "");
-      files.push({ name: `${folder}${result.jsonName}`, data: result.json });
-      for (const shot of result.screenshots) files.push({ name: `${folder}${shot.name}`, data: shot.bytes });
-      for (const asset of result.assets) {
-        files.push({
-          name: `${folder}assets/${asset.name}-${asset.nodeId.replace(/:/g, "-")}.png`,
-          data: asset.bytes,
-        });
-      }
-    }
-
-    if (files.length === 0) {
-      fail("None of those frames could be read.");
-      return;
-    }
-    post({
-      type: "zip-ready",
-      name: `${several ? `${safeFileName(figma.root.name)}-frames` : single}.zip`,
-      files,
-    });
-  });
-}
-
-function safeFileName(name: string): string {
-  return name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "frame";
-}
-
 function currentPageRef(root: SceneNode): StudioPage {
   return {
     fileKey: typeof figma.fileKey === "string" ? figma.fileKey : null,
@@ -2017,6 +1943,7 @@ async function exportPreview(seq: number): Promise<void> {
 
 function postSelection(): void {
   const selection = figma.currentPage.selection;
+  dismissFinishedSendOnNewSelection(selection);
   const only = selection.length === 1 ? selection[0]! : null;
   const parent = only && only.parent && "id" in only.parent && only.parent.type !== "PAGE" && only.parent.type !== "DOCUMENT"
     ? only.parent
@@ -2036,6 +1963,22 @@ function postSelection(): void {
       .filter((node) => "children" in node)
       .map((node) => ({ id: node.id, name: node.name })),
   });
+}
+
+/**
+ * The Handoff tab keeps showing the last send until Done is pressed. A designer who
+ * moves on and selects the next section would see that old result and no way to send
+ * the new frame, so a selection of frames the finished send did not hold clears it.
+ * A send still running is never dismissed.
+ */
+function dismissFinishedSendOnNewSelection(selection: readonly SceneNode[]): void {
+  if (state.sending || !state.activeBatchId) return;
+  const batch = getBatch(state.activeBatchId);
+  const sent = new Set(batch?.frames.map((frame) => frame.frameId) ?? []);
+  const picked = selection.filter((node) => "children" in node);
+  if (picked.length === 0 || picked.every((node) => sent.has(node.id))) return;
+  state.activeBatchId = null;
+  postRuns();
 }
 
 function readBindings(): AssetBinding[] {
@@ -2294,46 +2237,14 @@ async function busy<T>(work: () => Promise<T>): Promise<T | undefined> {
   }
 }
 
-function currentActor(): ActivityActor {
+function currentPerson(): Person {
   const user = figma.currentUser;
   if (!user) return { id: null, name: "Anonymous", color: "#6b6b6b" };
   return { id: user.id, name: user.name, color: user.color };
 }
 
-function readActivity(node: SceneNode): ActivityEntry[] {
-  const keys = node.getPluginDataKeys().filter((key) => key.startsWith(ACTIVITY_PREFIX));
-  return mergeActivity(keys.map((key) => parseLane(node.getPluginData(key))));
-}
-
-function recordActivity(node: SceneNode, entry: ActivityEntry): void {
-  const key = laneKey(entry.actor.id);
-  const next = appendLane(parseLane(node.getPluginData(key)), entry);
-  node.setPluginData(key, JSON.stringify(next));
-}
-
-function retractActivity(node: SceneNode, entryId: string | null): void {
-  const key = laneKey(currentActor().id);
-  const next = popLane(parseLane(node.getPluginData(key)), entryId ?? undefined);
-  node.setPluginData(key, next.length > 0 ? JSON.stringify(next) : "");
-}
-
-function postApplied(partial: Omit<AppliedPayload, "user">, kind?: ActivityKind): void {
-  const user = currentActor();
-  const payload: AppliedPayload = { ...partial, user };
-  if (kind && payload.applied > 0 && state.root) {
-    const entry: ActivityEntry = {
-      id: `${user.id ?? "anon"}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
-      actor: user,
-      kind,
-      label: payload.label,
-      tokenRef: payload.tokenRef,
-      applied: payload.applied,
-      at: Date.now(),
-    };
-    recordActivity(state.root, entry);
-    state.lastActivityId = entry.id;
-  }
-  post({ type: "applied", payload });
+function postApplied(partial: Omit<AppliedPayload, "user">): void {
+  post({ type: "applied", payload: { ...partial, user: currentPerson() } });
 }
 
 function post(message: PluginMessage): void {

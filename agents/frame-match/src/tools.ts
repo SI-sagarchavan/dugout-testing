@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defineTool, type ToolContext } from "@dugout/contracts";
+import { AwaitingAnswers, defineTool, type ToolContext } from "@dugout/contracts";
 import { describeImage, REPO_ROOT } from "@dugout/core";
 import { z } from "zod";
 import { type ControlPlane, createControlPlane, webUrl } from "./control-plane.ts";
@@ -21,14 +21,16 @@ import {
   type Unpainted,
   unpaintedLayers,
 } from "./frame.ts";
+import { createHandoffSource, type FrameSource, handoffConfig } from "./handoff.ts";
 import {
+  applyLayoutAnswers,
   describeChoice,
   describePlatform,
   LayoutChoice,
   type LayoutIntent,
   type LayoutReport,
+  layoutQuestions,
   type PlatformRead,
-  questionCard,
   withPlatform,
 } from "./layout.ts";
 import { type Looked, LookInputError, look, type See } from "./look.ts";
@@ -39,7 +41,13 @@ export const MATCH_DIR = join(REPO_ROOT, ".runs", "frame-match");
 
 /** The compile, render and compare steps, so a test can run the tools without a built pipeline. */
 export interface Engine {
-  bundle(plane: ControlPlane, exportId: string, themeArtifactId?: string): Promise<Bundle>;
+  /** `source` reads the frame's own files when they are not the control plane's (a Handoff). */
+  bundle(
+    plane: ControlPlane,
+    exportId: string,
+    themeArtifactId?: string,
+    source?: FrameSource,
+  ): Promise<Bundle>;
   build(bundle: Bundle, overrides: Overrides): Promise<Built>;
   measure(bundle: Bundle, built: Built): Promise<Measurement>;
   firstPass(
@@ -68,7 +76,8 @@ export interface Engine {
 export function pipelineEngine(tools?: Toolchain): Engine {
   const load = async () => tools ?? (await loadToolchain());
   return {
-    bundle: async (plane, exportId, theme) => loadBundle(await load(), plane, exportId, theme),
+    bundle: async (plane, exportId, theme, source) =>
+      loadBundle(await load(), plane, exportId, theme, source),
     build: async (bundle, overrides) => buildFrame(await load(), bundle, overrides),
     measure: async (bundle, built) => measureFrame(await load(), bundle, built),
     firstPass: async (bundle, start, plain) => firstPass(await load(), bundle, start, plain),
@@ -161,18 +170,36 @@ function writeState(dir: string, runId: string, state: State) {
   renameSync(`${path}.tmp`, path);
 }
 
-export const RunInput = z.object({
-  exportId: z
-    .string()
-    .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
-    .describe("The export a designer's Handoff stored"),
-  project: z
-    .string()
-    .regex(/^[a-zA-Z0-9_-]+$/)
-    .default("default")
-    .describe("The control plane project the export is in"),
-  receivedAt: z.string().optional().describe("When the control plane received the export"),
-});
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const RunInput = z
+  .object({
+    exportId: z
+      .string()
+      .regex(UUID)
+      .optional()
+      .describe("The export a designer's Handoff stored in the control plane"),
+    handoffId: z
+      .string()
+      .regex(UUID)
+      .optional()
+      .describe(
+        "A Handoff the FanXP backend received: its files are read from S3 through the backend",
+      ),
+    project: z
+      .string()
+      .regex(/^[a-zA-Z0-9_-]+$/)
+      .default("default")
+      .describe("The control plane project the export is in, and where results are stored"),
+    receivedAt: z.string().optional().describe("When the control plane received the export"),
+  })
+  .refine((input) => Boolean(input.exportId) !== Boolean(input.handoffId), {
+    message: "Give exportId or handoffId, not both",
+  });
+
+/** The frame a run works on: a Handoff's id, or an export's. */
+export const frameIdOf = (input: z.infer<typeof RunInput>): string =>
+  (input.handoffId ?? input.exportId) as string;
 
 const inputOf = (ctx: Pick<ToolContext, "input">) => RunInput.parse(ctx.input);
 const noArgs = z.object({}).strict();
@@ -305,8 +332,25 @@ const EXAMINED_ENOUGH = 12;
  * Every fix reshuffles which findings are worst, so a gate that keeps naming new nodes can use up
  * the whole step budget before the run is let publish, and then there is no preview link at all.
  * After this many refusals frame.publish goes through, and the reviewer sees what was left.
+ *
+ * Each refusal sends the run back to examine the findings it names and fix their causes, and then
+ * it asks again: that is the loop, so the gate is advisory (`advisoryBlock`) and asking again does
+ * not end the run as a repeated refused call would. It is still bounded, so a model that will not
+ * examine anything costs a few steps and no more, and a run always ends with a preview link.
  */
-const MAX_PUBLISH_REFUSALS = 2;
+const MAX_PUBLISH_REFUSALS = 4;
+
+/** One line for a finding the gate wants looked at: where it is and how far off. */
+function describeFinding(state: State, src: string): string {
+  const node = state.current.findings.find((f) => f.src === src);
+  if (node)
+    return `${src} (${node.type}, ${node.mismatch}px off, design ${node.design} but renders ${node.render})`;
+  const surface = (state.current.surfaces ?? []).find((f) => f.src === src);
+  if (surface) {
+    return `${src} (surface ${surface.surface}, ${surface.mismatch}px off, design ${surface.design} but renders ${surface.render})`;
+  }
+  return src;
+}
 
 function unexamined(state: State): string[] {
   if (state.unmeasured) return [];
@@ -345,7 +389,9 @@ export function createMatchTools(
     dir?: string;
     engine?: Engine;
     plane?: (project: string) => ControlPlane;
-    /** Where the preview link points: the Next.js site, `FANOS_WEB_URL` by default. */
+    /** Reads a Handoff's files for the run's tenant. The FanXP backend (`SURFACE_API_URL`) by default. */
+    handoffs?: (tenantId: string, handoffId: string) => FrameSource;
+    /** Where the preview link points: the host of the link, `FANOS_WEB_URL` by default; it names the tree and need not be served. */
     web?: string;
     /** `false` leaves frame.look out, which is how a run without eyes is made to compare with. */
     vision?: boolean;
@@ -363,6 +409,17 @@ export function createMatchTools(
   const dir = opts.dir ?? MATCH_DIR;
   const engine = opts.engine ?? pipelineEngine();
   const planeOf = opts.plane ?? ((project: string) => createControlPlane(project));
+  const handoffsOf =
+    opts.handoffs ??
+    ((tenantId: string, handoffId: string) => {
+      const config = handoffConfig();
+      if (!config) {
+        throw new Error(
+          "This run is for a Handoff, and reading one needs SURFACE_API_URL and SURFACE_SERVICE_KEY",
+        );
+      }
+      return createHandoffSource(tenantId, handoffId, config);
+    });
   const bundles = new Map<string, Promise<Bundle>>();
   const turns = new Map<string, Promise<unknown>>();
 
@@ -376,12 +433,14 @@ export function createMatchTools(
     return next;
   }
 
-  const bundleFor = (ctx: Pick<ToolContext, "input">, themeArtifactId?: string) => {
-    const { exportId, project } = inputOf(ctx);
-    const key = `${project}/${exportId}/${themeArtifactId ?? ""}`;
+  const bundleFor = (ctx: Pick<ToolContext, "input" | "tenantId">, themeArtifactId?: string) => {
+    const input = inputOf(ctx);
+    const frameId = frameIdOf(input);
+    const key = `${ctx.tenantId}/${input.project}/${frameId}/${themeArtifactId ?? ""}`;
     let held = bundles.get(key);
     if (!held) {
-      held = engine.bundle(planeOf(project), exportId, themeArtifactId);
+      const source = input.handoffId ? handoffsOf(ctx.tenantId, input.handoffId) : undefined;
+      held = engine.bundle(planeOf(input.project), frameId, themeArtifactId, source);
       held.catch(() => bundles.delete(key));
       bundles.set(key, held);
     }
@@ -389,7 +448,7 @@ export function createMatchTools(
   };
 
   /** The bundle this run measured, with the placements it found. */
-  const bundleOf = async (ctx: Pick<ToolContext, "input">, state: State) => {
+  const bundleOf = async (ctx: Pick<ToolContext, "input" | "tenantId">, state: State) => {
     const bundle = await bundleFor(ctx, state.themeArtifactId);
     bundle.found ??= new Map();
     for (const [id, at] of Object.entries(state.found)) bundle.found.set(id, at);
@@ -668,14 +727,6 @@ export function createMatchTools(
       }),
   });
 
-  /** What the reviewer is shown, and what the call then runs with: the choice, in the card. */
-  type LayoutAsk = {
-    card: string[];
-    layout: string;
-    choice: LayoutChoice;
-    /** A platform carousel config the reviewer gave, applied in run with the design first. */
-    platform?: Record<string, unknown>;
-  };
   // What the model sees is small: { src, kind, config } with config an open object. The full
   // LayoutChoice is a union of kinds with many optional fields, and as a strict tool schema its
   // grammar is more than Bedrock compiles. An open object leaves the tool out of strict mode (as
@@ -720,32 +771,37 @@ export function createMatchTools(
       return { choice: kept, platform: given } as z.input<typeof LayoutCall>;
     })
     .pipe(LayoutCall);
-  const layout = defineTool<z.infer<typeof layoutInput>, Record<string, unknown>, LayoutAsk>({
+  const layout = defineTool<z.infer<typeof layoutInput>, Record<string, unknown>>({
     name: "frame.layout",
     description:
-      "Decide what one container is: a carousel, a fixed row, a list, a grid or tabs. Pass { choice: { src, kind, config } }: frame.load lists each container with its evidence, the questions the frame cannot answer (ask) and a proposed choice. Call it once for each layout with questions, with the proposal as it stands. When the reviewer gives a platform carousel config (JSON with slides_per_view, nav_arrows, nav_indicator ...), call it with the proposal's config and that JSON whole as config.platform: code applies it, the design first. Needs approval: the reviewer reads the question card and approves, or answers in plain words; make that answer the choice ('autoplay every 5 seconds' is autoplay { delayMs: 5000 }, 'keep it a row' is kind row) and call it again. A carousel's first paint is the frame, so the match should not move.",
+      "Decide what one container is: a carousel, a fixed row, a list, a grid or tabs. Pass { choice: { src, kind, config } }: frame.load lists each container with its evidence, the questions the frame cannot answer (ask) and a proposed choice. Call it once for each layout with questions, with the proposal as it stands. The run then stops and a person answers questions written from the frame's evidence (what it is, how many items, autoplay, loop, a platform config); their answers are applied to your proposal and the call returns what was applied. Do not translate their words yourself: it is done for you. A carousel's first paint is the frame, so the match should not move.",
     input: layoutInput,
-    effect: "write",
+    // it writes nothing outside the run: what a person says about the frame is the question
+    effect: "read",
     timeoutMs: 120_000,
     alwaysInline: true,
-    // the reviewer reads what the frame showed and what is proposed, not the model's account
-    resolve({ choice, platform }, ctx) {
-      const state = readState(dir, ctx.runId);
-      const report = state?.layouts.find((l) => l.src === choice.src);
-      const card = questionCard(report, choice);
-      if (platform) card.splice(card.length - 1, 0, ...describePlatform(platform));
-      return { card, choice, layout: describeChoice(choice), ...(platform ? { platform } : {}) };
-    },
-    run: ({ choice: asked, platform }, ctx) =>
+    run: ({ choice: proposal, platform: modelPlatform }, ctx) =>
       inTurn(ctx.runId, async () => {
         const state = requireState(ctx);
-        const report = state.layouts.find((l) => l.src === asked.src);
+        const report = state.layouts.find((l) => l.src === proposal.src);
         if (!report) {
           return {
             kept: false,
-            reason: `frame.load found no repeated items in ${asked.src}. Pass the src of one of its layouts: ${state.layouts.map((l) => l.src).join(", ") || "it found none"}`,
+            reason: `frame.load found no repeated items in ${proposal.src}. Pass the src of one of its layouts: ${state.layouts.map((l) => l.src).join(", ") || "it found none"}`,
           };
         }
+        // Ask first (ADR 0029): the run stops here with questions about this frame, and the call
+        // runs again with the answers. A layout already decided, or one the frame leaves nothing
+        // open about, is applied as proposed.
+        const questions = report.decided ? [] : layoutQuestions(report, proposal);
+        if (!ctx.answered && questions.length > 0) throw new AwaitingAnswers(questions);
+        const read = ctx.answered ? applyLayoutAnswers(proposal, ctx.answered.answers) : undefined;
+        const asked: LayoutChoice = read?.choice ?? proposal;
+        const platform = read?.platform ?? modelPlatform;
+        const answerNotes = [
+          ...(read?.notes ?? []),
+          ...(read?.said.map((s) => `the person said ${s}`) ?? []),
+        ];
         const bundle = await bundleOf(ctx, state);
         let choice: LayoutChoice = asked;
         let platformNotes: string[] | undefined;
@@ -819,6 +875,8 @@ export function createMatchTools(
           ...(platformNotes
             ? { platform: platformNotes.length > 0 ? platformNotes : ["applied as given"] }
             : {}),
+          ...(platform ? { platformSets: describePlatform(platform) } : {}),
+          ...(answerNotes.length > 0 ? { answers: answerNotes } : {}),
           ...(state.unmeasured ? {} : { was: state.current.match }),
           ...standing(next),
         };
@@ -836,6 +894,8 @@ export function createMatchTools(
     input: noArgs,
     effect: "write",
     timeoutMs: 60_000,
+    // "not yet" here sends the run back to examine and fix, so asking again is the run working
+    advisoryBlock: true,
     // the approval shows numbers measured by code, never the model's account of them
     resolve(_input, ctx) {
       const state = readState(dir, ctx.runId);
@@ -881,13 +941,14 @@ export function createMatchTools(
       if (waiting.length === 0 || state.publishRefusals >= MAX_PUBLISH_REFUSALS) return undefined;
       const refusals = state.publishRefusals + 1;
       writeState(dir, ctx.runId, { ...state, publishRefusals: refusals });
-      return `Not yet (${refusals} of ${MAX_PUBLISH_REFUSALS}; the next frame.publish goes through). Examine these with frame.node, and fix what has a cause: ${waiting.join(", ")}`;
+      return `Not ready to publish (${refusals} of ${MAX_PUBLISH_REFUSALS}). Call frame.node on every one of these ${waiting.length}, in one go, before you ask again; fix what has a cause with frame.override. A difference you find is baked into a crop or a gradient with no token is not a cause: say so in remaining and go on.\n${waiting.map((src) => `- ${describeFinding(state, src)}`).join("\n")}\nAsking again without looking at them only uses up your turns: after ${MAX_PUBLISH_REFUSALS} refusals it goes through with them listed for the reviewer.`;
     },
     async run(_input, ctx) {
       return inTurn(ctx.runId, async () => {
         const state = requireState(ctx);
         if (state.published) return state.published;
-        const { project } = inputOf(ctx);
+        const input = inputOf(ctx);
+        const { project } = input;
         const plane = planeOf(project);
         const bundle = await bundleOf(ctx, state);
         const built = await engine.build(bundle, state.overrides);
@@ -898,7 +959,19 @@ export function createMatchTools(
             `the rebuilt frame has ${built.cropped.length} crops and the measured one had ${state.standIns}, so its numbers would not be about it`,
           );
         }
-        const meta = { exportId: state.exportId, source: "dugout:frame-match", runId: ctx.runId };
+        const by = { source: "dugout:frame-match", runId: ctx.runId };
+        // A Handoff is not in the control plane, so its IR is stored beside the tree: bind reads
+        // the designer's notes and the layers from it, as it reads an export's.
+        const meta = input.handoffId
+          ? {
+              ...by,
+              handoffId: input.handoffId,
+              irArtifactId: await plane.upload("figma_ir", bundle.ir, {
+                ...by,
+                handoffId: input.handoffId,
+              }),
+            }
+          : { ...by, exportId: state.exportId };
         const themeArtifactId =
           state.overrides.gradients.length > 0
             ? await plane.upload("token_set", built.themeRaw, meta)

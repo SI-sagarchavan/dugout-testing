@@ -1,17 +1,30 @@
-import type {
-  AgentDefinition,
-  AgentSpec,
-  ApprovalDecision,
-  Message,
-  RunCheckpoint,
-  RunContext,
-  RunMemoryContext,
-  RunUsage,
-  SavedAfter,
-  SavedRun,
-  Steps,
-  StepUsage,
-  ToolCall,
+import {
+  type AgentDefinition,
+  type AgentSpec,
+  type Answers,
+  type AskedQuestion,
+  AskInput,
+  AUTO_APPROVED,
+  AwaitingAnswers,
+  type Decision,
+  FROM_MEMORY,
+  type Message,
+  proposedAnswers,
+  type Question,
+  REVIEW_ID,
+  type ReviewAnswer,
+  type RunCheckpoint,
+  type RunContext,
+  type RunMemoryContext,
+  type RunUsage,
+  reviewQuestion,
+  type SavedAfter,
+  type SavedRun,
+  type Steps,
+  type StepUsage,
+  type Subject,
+  type ToolCall,
+  type ToolOutcome,
 } from "@dugout/contracts";
 import { z } from "zod";
 import { SpecError } from "./errors.ts";
@@ -27,8 +40,23 @@ import { TransientModelError } from "./model/errors.ts";
 import { BUILTIN_TOOLS, preflight, type ToolRegistry, toolDefinition } from "./tools.ts";
 
 export const FINAL_TOOL = "final";
+/** Built in like `final`: the run stops and asks a person, and waits for the answers (ADR 0029). */
+export const ASK_TOOL = "ask";
+const ASK_DESCRIPTION =
+  "Stop and ask a person what only they can settle: a choice the design and the data leave open, a value no tool can find (a domain, an id), or whether to go a way that costs something. Ask everything you need now in one call; the person answers each question and submits them together, and the run waits until they do. The answers come back as this call's result. Say in each question's why what you found, give options where there are some, and propose your best answer. Do not ask what a tool can find out, and do not ask to approve a write: writes are approved already.";
 /** Invalid `final` calls (or turns that skip it) tolerated before the run fails. */
 const MAX_INVALID_OUTPUTS = 2;
+
+/**
+ * What a run has learned from the answers people gave before (ADR 0029). The loop asks it before it
+ * stops for a person: `refine` puts what was learned into each question's proposal, and `answer`
+ * returns the answers when a person has approved every one of these questions as a standing
+ * answer, so the run need not stop at all.
+ */
+export interface AnswerMemory {
+  refine(questions: AskedQuestion[]): Promise<AskedQuestion[]>;
+  answer(questions: AskedQuestion[]): Promise<Answers | undefined>;
+}
 
 export interface RunAgentOptions {
   agent: AgentDefinition;
@@ -39,11 +67,13 @@ export interface RunAgentOptions {
   log: RunLog;
   /** Skills and memory to append to the instructions; required when the spec reads memory. */
   context?: RunMemoryContext;
+  /** What earlier answers tell this run about the questions it asks. */
+  learned?: AnswerMemory;
   /**
-   * Carry on from saved state instead of starting. `decision` answers the approval the run is
-   * waiting for; without one, a waiting run asks again.
+   * Carry on from saved state instead of starting. `decision` answers the questions the run is
+   * waiting on; without one, a waiting run asks again.
    */
-  resume?: { saved: SavedRun; reason: "approval" | "recovery"; decision?: ApprovalDecision };
+  resume?: { saved: SavedRun; reason: "answered" | "recovery"; decision?: Decision };
 }
 
 export type FailureReason = "budget" | "max_steps" | "invalid_output" | "model_stop" | "error";
@@ -62,8 +92,8 @@ export type RunResult =
   | { status: "completed"; output: unknown; usage: RunUsage }
   | { status: "rejected"; output: RejectedWrite; usage: RunUsage }
   | { status: "failed"; reason: FailureReason; message: string; usage: RunUsage }
-  /** The approver answered later: the state is saved and a decision resumes the run. */
-  | { status: "waiting"; approval: NonNullable<RunCheckpoint["waiting"]>; usage: RunUsage };
+  /** The host answers later: the state is saved and the person's decision resumes the run. */
+  | { status: "waiting"; waiting: NonNullable<RunCheckpoint["waiting"]>; usage: RunUsage };
 
 export interface RejectedWrite {
   tool: string;
@@ -117,6 +147,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   const writeExpected =
     agent.writeExpected?.(opts.ctx.input) ??
     spec.tools.some((name) => registry.get(name)?.effect === "write");
+  // not strict: its schema is rich, and it is offered to every agent (see ToolDefinition.strict)
+  tools.push({ ...toolDefinition(ASK_TOOL, ASK_DESCRIPTION, AskInput), strict: false });
   if (final) {
     tools.push(
       toolDefinition(
@@ -173,7 +205,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   const { usage } = state;
   let savedMessages = saved?.messages.length ?? 0;
   let decision = resume?.decision;
-  if (decision && !state.waiting) throw new Error("the run is not waiting for an approval");
+  if (decision && !state.waiting) throw new Error("the run is not waiting for a person");
 
   /** Saves the checkpoint and the messages added since the last save, as a new save point. */
   const save = async (after: SavedAfter) => {
@@ -278,6 +310,120 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       messages.push({ role: "tool", toolCallId: callId, content, isError: true });
     };
 
+    /**
+     * Saves the run as waiting for a person and hands the host the questions (ADR 0029): the
+     * model's, a tool's, a child run's, or the review of a write (`subject`). Returns the result
+     * that ends this invocation when the answers come later, or the decision when the host
+     * answered at once.
+     */
+    const askPerson = async (
+      call: ToolCall,
+      input: unknown,
+      questions: AskedQuestion[],
+      from: string[],
+      subject?: Subject,
+    ): Promise<{ ended: RunResult } | { decision: Decision }> => {
+      const ids = { step, callId: call.id, tool: call.name };
+      // what a person answered before goes into the proposals; and a question they approved as a
+      // standing answer is not asked again (a write's review is always asked)
+      if (!subject && opts.learned) {
+        questions = await opts.learned.refine(questions);
+        const standing = await opts.learned.answer(questions);
+        if (standing) {
+          await log.emit({ type: "question.asked", data: { ...ids, questions, from } });
+          return { decision: { by: FROM_MEMORY, answers: standing } };
+        }
+      }
+      // Saved as waiting, and the wait registered, before the questions are announced: an answer
+      // sent the moment the event is seen always finds the run waiting for it.
+      state.waiting = { ...ids, input, questions, from, ...(subject ? { subject } : {}) };
+      await save("waiting");
+      const pending = steps.interrupt({
+        step,
+        call,
+        tool: call.name,
+        input,
+        questions,
+        from,
+        ...(subject ? { subject } : {}),
+      });
+      // a host can fail before the questions are announced; that error is raised by the await below
+      pending.catch(() => {});
+      await log.emit({
+        type: "question.asked",
+        data: { ...ids, questions, from, ...(subject ? { subject } : {}) },
+      });
+      const got = await pending;
+      if ("pending" in got) {
+        await save("waiting");
+        return { ended: { status: "waiting", waiting: state.waiting, usage } };
+      }
+      return { decision: got };
+    };
+
+    /**
+     * What the person answered: their answers (a question left out is skipped; with no answers at
+     * all each proposal is used), the change they asked for on a write, or the end of the run when
+     * they rejected a write. A pause for questions is never ended by the person: only cancelling
+     * the run ends it, and that is the host's own call.
+     */
+    const settle = async (
+      call: ToolCall,
+      input: unknown,
+      questions: AskedQuestion[],
+      got: Decision,
+    ): Promise<
+      { by: string; answers: Answers } | { changes: string; by: string } | { ended: RunResult }
+    > => {
+      const ids = { step, callId: call.id, tool: call.name };
+      state.waiting = undefined;
+      const review = questions.some((q) => q.kind === "review");
+      const answers = got.answers ?? (review ? {} : proposedAnswers(questions));
+      await log.emit({
+        type: "question.answered",
+        data: {
+          ...ids,
+          by: got.by,
+          answers,
+          source:
+            got.by === FROM_MEMORY
+              ? "memory"
+              : got.by.endsWith(AUTO_APPROVED)
+                ? "auto"
+                : got.answers === undefined && !review
+                  ? "agent"
+                  : "person",
+        },
+      });
+      if (!review) {
+        await save("decision");
+        return { by: got.by, answers };
+      }
+      // a write waits for an explicit answer: no answer is not a yes
+      const verdict = answers[REVIEW_ID] as ReviewAnswer | undefined;
+      if (verdict?.decision === "change") {
+        const changes = verdict.comment?.trim();
+        if (!changes) {
+          throw new Error(`the responder sent ${call.name} back with an empty change request`);
+        }
+        await save("decision");
+        return { changes, by: got.by };
+      }
+      if (verdict?.decision !== "approve") {
+        const reason = verdict?.comment?.trim() || "no decision was made";
+        const rejected = { tool: call.name, input, by: got.by, reason };
+        state.ended = { status: "rejected", output: rejected };
+        await save("decision");
+        await log.emit({
+          type: "run.completed",
+          data: { status: "rejected", output: rejected, usage: { ...usage } },
+        });
+        return { ended: { status: "rejected", output: rejected, usage } };
+      }
+      // approved: the caller records it on the turn and saves, so a crash cannot lose the yes
+      return { by: got.by, answers };
+    };
+
     for (const call of assistant.toolCalls ?? []) {
       if (answered.has(call.id)) continue;
       if (turn.cutOff) {
@@ -299,6 +445,38 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           "skipped: the reviewer asked for changes to an earlier call in this turn",
           "Not run: the reviewer asked for changes to an earlier call in this turn.",
         );
+        await save("tool");
+        continue;
+      }
+      if (call.name === ASK_TOOL) {
+        const waited = state.waiting?.callId === call.id ? state.waiting : undefined;
+        let questions = waited?.questions;
+        if (!questions) {
+          const parsed = parseAsk(call);
+          if (!parsed.ok) {
+            await skip(call.id, call.name, parsed.error, `Not asked: ${parsed.error}`);
+            await save("tool");
+            continue;
+          }
+          questions = parsed.questions;
+        }
+        let got: Decision;
+        if (decision && waited) {
+          got = decision;
+          decision = undefined;
+        } else {
+          const asked = await askPerson(call, { questions }, questions, []);
+          if ("ended" in asked) return asked.ended;
+          got = asked.decision;
+        }
+        const settled = await settle(call, { questions }, questions, got);
+        if ("ended" in settled) return settled.ended;
+        if ("changes" in settled) throw new Error("a question was answered as a review");
+        messages.push({
+          role: "tool",
+          toolCallId: call.id,
+          content: answersText(questions, settled),
+        });
         await save("tool");
         continue;
       }
@@ -381,6 +559,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         const stop = hooks.afterTool({
           stage: "denied",
           reason: checked.reason,
+          ...(checked.advisory ? { advisory: true } : {}),
           step,
           call,
           args: stableArgs(call.arguments),
@@ -396,7 +575,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         }
         await log.emit({
           type: "tool.denied",
-          data: { ...ids, stage: checked.stage, reason: checked.reason },
+          data: {
+            ...ids,
+            stage: checked.stage,
+            reason: checked.reason,
+            ...(checked.advisory ? { advisory: true } : {}),
+          },
         });
         messages.push({
           role: "tool",
@@ -414,40 +598,35 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         args: stableArgs(call.arguments),
       });
 
+      // The call stopped the run with questions (a tool's own, or a child run's) and the answers
+      // came: it runs again with them, already approved and already started. A write waiting for
+      // a yes is the same pause with a review question, and goes on below.
+      let withAnswers: { by: string; answers: Answers } | undefined;
+      const waitedHere = state.waiting?.callId === call.id ? state.waiting : undefined;
+      if (decision && waitedHere && !waitedHere.subject) {
+        const settled = await settle(call, checked.input, waitedHere.questions, decision);
+        decision = undefined;
+        if ("ended" in settled) return settled.ended;
+        if ("changes" in settled) throw new Error("a question was answered as a review");
+        withAnswers = settled;
+      }
+
       // approved before a crash: the reviewer is not asked twice
-      if (checked.needsApproval && !turn.approved.includes(call.id)) {
-        let answer: ApprovalDecision;
+      if (checked.needsApproval && !turn.approved.includes(call.id) && !withAnswers) {
+        const review = [reviewQuestion(call.name)];
+        let got: Decision;
         if (decision && state.waiting?.callId === call.id) {
-          answer = decision;
+          got = decision;
           decision = undefined;
         } else {
-          const request = { step, call, tool: call.name, input: checked.input };
-          // Saved as waiting, and the wait registered, before the request is announced: a decision
-          // sent the moment the event is seen always finds the run waiting for it.
-          state.waiting = { step, callId: call.id, tool: call.name, input: checked.input };
-          await save("waiting");
-          const pendingDecision = steps.approval(request);
-          // an approver can fail before the request is announced; that error is raised by the
-          // await below, not reported as unhandled meanwhile
-          pendingDecision.catch(() => {});
-          await log.emit({ type: "approval.requested", data: { ...ids, input: checked.input } });
-          const got = await pendingDecision;
-          if ("pending" in got) {
-            await save("waiting");
-            return { status: "waiting", approval: state.waiting, usage } satisfies RunResult;
-          }
-          answer = got;
+          const asked = await askPerson(call, checked.input, review, [], { input: checked.input });
+          if ("ended" in asked) return asked.ended;
+          got = asked.decision;
         }
-        state.waiting = undefined;
-
-        if (!answer.approved && "changes" in answer) {
-          const { by } = answer;
-          const changes = answer.changes.trim();
-          if (!changes) {
-            throw new Error(`the approver sent ${call.name} back with an empty change request`);
-          }
-          await log.emit({ type: "approval.changes_requested", data: { ...ids, by, changes } });
-          state.pendingChanges[call.name] = changes;
+        const settled = await settle(call, checked.input, review, got);
+        if ("ended" in settled) return settled.ended;
+        if ("changes" in settled) {
+          state.pendingChanges[call.name] = settled.changes;
           messages.push({
             role: "tool",
             toolCallId: call.id,
@@ -458,19 +637,6 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           await save("decision");
           continue;
         }
-        if (!answer.approved) {
-          const { by, reason } = answer;
-          await log.emit({ type: "approval.rejected", data: { ...ids, by, reason } });
-          const rejected = { tool: call.name, input: checked.input, by, reason };
-          state.ended = { status: "rejected", output: rejected };
-          await save("decision");
-          await log.emit({
-            type: "run.completed",
-            data: { status: "rejected", output: rejected, usage: { ...usage } },
-          });
-          return { status: "rejected", output: rejected, usage } satisfies RunResult;
-        }
-        await log.emit({ type: "approval.granted", data: { ...ids, by: answer.by } });
         turn.approved.push(call.id);
         if (call.name in state.pendingChanges) {
           delete state.pendingChanges[call.name];
@@ -480,7 +646,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       }
 
       // Started before a crash and never answered: run it again only if that is safe.
-      if (turn.started.includes(call.id)) {
+      if (withAnswers) {
+        // it stopped cleanly to ask, so running it again is how it goes on
+      } else if (turn.started.includes(call.id)) {
         const tool = registry.get(call.name);
         if (tool?.effect !== "read" && !tool?.retries && !tool?.resumable) {
           await log.emit({
@@ -502,14 +670,31 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         await save("call");
       }
 
-      await log.emit({ type: "tool.started", data: { ...ids, input: checked.input } });
+      if (!withAnswers) {
+        await log.emit({ type: "tool.started", data: { ...ids, input: checked.input } });
+      }
       const started = Date.now();
-      const outcome = await steps.tool({
-        step,
-        call,
-        input: checked.input,
-        usdLeft: Math.max(0, spec.budget.usdPerRun - usage.budgetCostUsd),
-      });
+      let outcome: ToolOutcome | undefined;
+      // A tool, or a child run, may stop to ask a person: it runs again with the answers.
+      while (!outcome) {
+        try {
+          outcome = await steps.tool({
+            step,
+            call,
+            input: checked.input,
+            usdLeft: Math.max(0, spec.budget.usdPerRun - usage.budgetCostUsd),
+            ...(withAnswers ? { answered: withAnswers } : {}),
+          });
+        } catch (err) {
+          if (!(err instanceof AwaitingAnswers)) throw err;
+          const asked = await askPerson(call, checked.input, err.questions, err.from);
+          if ("ended" in asked) return asked.ended;
+          const settled = await settle(call, checked.input, err.questions, asked.decision);
+          if ("ended" in settled) return settled.ended;
+          if ("changes" in settled) throw new Error("a question was answered as a review");
+          withAnswers = settled;
+        }
+      }
       const content = outcome.ok ? outcome.content : `Error: ${outcome.error}`;
       if (!outcome.ok) turn.failed = call.name;
       // a child run's spend is the run's spend: its tokens and dollars, not its turns
@@ -690,7 +875,9 @@ export function assertSupportedSpec(
     throw new SpecError(`${spec.id}: calls agents, so budget.maxDepth must be 1 or more`);
   }
   for (const name of spec.tools) {
-    if (name === FINAL_TOOL) throw new SpecError(`${spec.id}: ${FINAL_TOOL} is reserved`);
+    if (name === FINAL_TOOL || name === ASK_TOOL) {
+      throw new SpecError(`${spec.id}: ${name} is reserved`);
+    }
     if (!registry.get(name)) throw new SpecError(`${spec.id}: unknown tool ${name}`);
   }
   for (const entry of spec.approvals) {
@@ -733,6 +920,39 @@ function sortJson(value: unknown): unknown {
     );
   }
   return value;
+}
+
+function parseAsk(
+  call: ToolCall,
+): { ok: true; questions: Question[] } | { ok: false; error: string } {
+  let args: unknown;
+  try {
+    args = call.arguments.trim() === "" ? {} : JSON.parse(call.arguments);
+  } catch {
+    return { ok: false, error: "arguments are not valid JSON" };
+  }
+  const parsed = AskInput.safeParse(args);
+  return parsed.success
+    ? { ok: true, questions: parsed.data.questions }
+    : { ok: false, error: z.prettifyError(parsed.error) };
+}
+
+/** The answers as the model reads them: each question with what the person said. */
+function answersText(
+  questions: AskedQuestion[],
+  { by, answers }: { by: string; answers: Answers },
+) {
+  return JSON.stringify({
+    answeredBy: by,
+    answers: questions.map((q) => ({
+      id: q.id,
+      question: q.question,
+      answer: q.id in answers ? answers[q.id] : null,
+    })),
+    ...(questions.some((q) => !(q.id in answers))
+      ? { note: "A null answer was left open: decide it yourself, and say so in your result." }
+      : {}),
+  });
 }
 
 function parseFinal(

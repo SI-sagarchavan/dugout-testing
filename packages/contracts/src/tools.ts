@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { RunUsage } from "./events.ts";
+import type { Answers } from "./questions.ts";
 
 /** Built from the run's verified context, never from model output. */
 export interface ToolContext {
@@ -16,6 +17,11 @@ export interface ToolContext {
   readonly usdLeft?: number;
   /** Counts what the call spent (a child run's model calls) against the run's budget. */
   spend?(usage: RunUsage): void;
+  /**
+   * The person's answers, when this call stopped the run with questions (`AwaitingAnswers`) and
+   * runs again now that they came (ADR 0029). A child run waiting on them resumes with them.
+   */
+  readonly answered?: { readonly by: string; readonly answers: Answers };
 }
 
 export interface Tool<I = unknown, O = unknown, R = I> {
@@ -45,6 +51,13 @@ export interface Tool<I = unknown, O = unknown, R = I> {
    * Use it for a gate that needs the verified run input, such as a file the host named.
    */
   block?(input: R, ctx: Pick<ToolContext, "tenantId" | "runId" | "input">): string | undefined;
+  /**
+   * What `block` says is advice for a step the run is working towards (the tool is not ready until
+   * something else is done), not a sign the model is stuck: the same call again after it does not
+   * end the run. The gate must bound itself, so the run still ends: it lets the call through after
+   * so many refusals.
+   */
+  advisoryBlock?: boolean;
   run(input: R, ctx: ToolContext): Promise<O>;
 }
 

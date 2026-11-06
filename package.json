@@ -19,8 +19,9 @@
     "eval": "tsx scripts/eval.ts",
     "db": "tsx scripts/db.ts",
     "infra": "scripts/infra.sh",
-    "dev": "pnpm --parallel --filter @fanos/surface-studio --filter @fanos/web --filter @fanos/api run \"/^dev(:worker)?$/\"",
-    "build": "pnpm --filter \"@fanos/*\" -r build"
+    "dev": "pnpm --parallel --filter @fanos/api run \"/^dev(:worker)?$/\"",
+    "build": "pnpm --filter \"@fanos/*\" -r build",
+    "fixture": "tsx apps/worker/scripts/fixture.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.3",

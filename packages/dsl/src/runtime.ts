@@ -26,3 +26,7 @@ export {
   parseInstant,
 } from "./clock.js";
 export type { Clock, ClockScope, ClockUnit, ClockValues } from "./clock.js";
+
+// Reading and writing a prop as the property panel shows it (the panel itself is `panelOf`, server side)
+export { measureOf, measureText, readProp, shownValue, storedValue } from "./panel-values.js";
+export type { PanelControl } from "./panel-values.js";

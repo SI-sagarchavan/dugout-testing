@@ -333,6 +333,10 @@ export interface DryRun {
   samples: Array<{ src: string; prop: string; values: string[] }>;
   /** Texts the design writes in capitals that the data does not, with no `textCase` set. */
   capitals: Array<{ src: string; design: string; shows: string }>;
+  /** Pictures bound to a value no browser can load: a path with no domain. */
+  relative: Array<{ src: string; shows: string; times: number }>;
+  /** The first absolute URL each picture was bound to, whole: what a reachability probe asks. */
+  pictures: Array<{ src: string; url: string }>;
   /** Unbound texts with figures in them, drawn the same in every item of a list: placeholders. */
   repeated: Array<{ src: string; copy: string; times: number }>;
 }
@@ -386,6 +390,8 @@ export function dryRun(
   const unresolved = new Map<string, DryRun["unresolved"][number]>();
   const variants = new Map<string, DryRun["variants"][number]>();
   const samples = new Map<string, DryRun["samples"][number]>();
+  const relative = new Map<string, DryRun["relative"][number]>();
+  const pictures = new Map<string, string>();
 
   const props = (node: TreeNode, scope: unknown, item: string) => {
     for (const [prop, value] of Object.entries(node.props)) {
@@ -418,6 +424,14 @@ export function dryRun(
         u.times += 1;
         unresolved.set(key, u);
       } else {
+        // a picture needs a URL the browser can reach: "/static/a.jpg" is a path on no site
+        if (prop === "src" && drawn !== "" && !/^(https?:)?\/\/|^data:/i.test(drawn)) {
+          const r = relative.get(key) ?? { src: node.src, shows: clip(drawn, 60), times: 0 };
+          r.times += 1;
+          relative.set(key, r);
+        }
+        if (prop === "src" && /^https?:\/\//i.test(drawn) && !pictures.has(node.src))
+          pictures.set(node.src, drawn);
         const s = samples.get(key) ?? { src: node.src, prop, values: [] };
         if (s.values.length < 4 && !s.values.includes(drawn)) s.values.push(clip(drawn, 60));
         samples.set(key, s);
@@ -517,6 +531,8 @@ export function dryRun(
     unresolved: [...unresolved.values()],
     variants: [...variants.values()],
     samples: [...samples.values()],
+    relative: [...relative.values()],
+    pictures: [...pictures].map(([src, url]) => ({ src, url })),
     capitals: [...capitals.values()],
     repeated: [...repeated.values()].filter((r) => r.times > 1),
   };
@@ -558,6 +574,239 @@ export function lostLooks(tree: Tree, members: string[]): string[] {
     if (member && sk.get(member.id) === sk.get(template.id)) compare(template, member);
   }
   return found;
+}
+
+/** The outermost nodes under `root` built like `like`: the items one row of a grid draws. */
+function itemsUnder(
+  root: TreeNode,
+  key: string | undefined,
+  kids: Map<string, TreeNode[]>,
+  sk: Map<string, string>,
+): TreeNode[] {
+  const items: TreeNode[] = [];
+  if (key === undefined) return items;
+  const walk = (node: TreeNode) => {
+    if (sk.get(node.id) === key) {
+      items.push(node);
+      return;
+    }
+    for (const child of kids.get(node.id) ?? []) walk(child);
+  };
+  walk(root);
+  return items;
+}
+
+/**
+ * The items of each member of a repeat, when the repeat's first member holds a repeat of its own:
+ * the cards in each row of a grid drawn as rows. `groups` names only the first row's cards (a
+ * collapse of the rows would fold the others away), so a plan that slices one flat list across the
+ * rows reads the other rows' ids here.
+ */
+export function rowsOf(tree: Tree, outer: Group, inner: Group): string[][] | undefined {
+  const bySrc = new Map(tree.nodes.map((n) => [n.src, n]));
+  if (bySrc.get(inner.parent) === undefined) return undefined;
+  const first = bySrc.get(outer.members[0] ?? "");
+  const card = bySrc.get(inner.members[0] ?? "");
+  // items are cards, not the pictures layered in one
+  if (!first || !card || CONTENT.has(card.type)) return undefined;
+  const kids = childrenOf(tree);
+  if (!subtree(first.id, kids).includes(card.id)) return undefined;
+  const sk = skeletons(tree);
+  const key = sk.get(card.id);
+  return outer.members.map((src) => {
+    const member = bySrc.get(src);
+    return member ? itemsUnder(member, key, kids, sk).map((n) => n.src) : [];
+  });
+}
+
+export interface Unbound {
+  /** The text node still showing the designer's copy. */
+  src: string;
+  copy: string;
+  /** The nearest container around it that does show data. */
+  within: string;
+}
+
+/**
+ * Design copy left standing beside data, whatever the layout. A text the plan neither bound nor
+ * hid, inside a container that otherwise shows data (a count on a card whose title and date are
+ * bound), is a placeholder far more often than a label: labels sit beside other labels, not beside
+ * the data they would describe. It looks up at most three containers and never as far as the root,
+ * so a page's own headings and buttons stay out. Nodes inside a repeat, a button or a node the
+ * plan gave a `when` are not reported (`dryRun.repeated` has the repeats).
+ */
+export function unboundCopy(
+  applied: Tree,
+  hasRef: (value: unknown) => boolean,
+  maxUp = 3,
+): Unbound[] {
+  const kids = childrenOf(applied);
+  const byId = new Map(applied.nodes.map((n) => [n.id, n]));
+  const shows = new Map<string, boolean>();
+  const showsData = (id: string): boolean => {
+    const known = shows.get(id);
+    if (known !== undefined) return known;
+    const node = byId.get(id);
+    const yes =
+      !!node &&
+      (node.type === "Repeater" ||
+        Object.values(node.props).some(hasRef) ||
+        (kids.get(id) ?? []).some((k) => showsData(k.id)));
+    shows.set(id, yes);
+    return yes;
+  };
+  const SKIPPED = new Set(["Repeater", "Button", "Link", "Tag"]);
+  const out: Unbound[] = [];
+  for (const node of applied.nodes) {
+    const copy = node.props.content;
+    if (node.type !== "Text" || typeof copy !== "string" || !copy.trim()) continue;
+    if (hasRef(copy) || node.props.when !== undefined) continue;
+    const chain: TreeNode[] = [];
+    for (let at = node.parent; at !== null; ) {
+      const up = byId.get(at);
+      if (!up) break;
+      chain.push(up);
+      at = up.parent;
+    }
+    if (chain.some((up) => SKIPPED.has(up.type) || up.props.when !== undefined)) continue;
+    for (const up of chain.slice(0, maxUp)) {
+      if (up.parent === null) break;
+      if (showsData(up.id)) {
+        out.push({ src: node.src, copy: clip(copy), within: up.src });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+export interface LeftAsDesigned {
+  /** The member a plan left as the designer drew it. */
+  src: string;
+  /** Its sibling of the same shape, which draws data. */
+  like: string;
+  /** The list that sibling repeats, when it repeats one. */
+  over?: string;
+  /** A placeholder it still shows. */
+  copy?: string;
+  /** Its own items, each the shape of the template of the sibling's list. */
+  items: string[];
+  /** Where the template's bound nodes sit in the first of `items`: [template's src, its own]. */
+  fields: Array<[string, string]>;
+  /**
+   * When every member holds items of the list's shape: each member's share of one flat list, in
+   * document order (`[start, end)`), so the rows of a grid draw consecutive items.
+   */
+  slices?: Array<[string, [number, number]]>;
+}
+
+/**
+ * A repeat the plan left showing the design's placeholders, beside a sibling of the same shape
+ * that it gave data: the page shows real items next to the designer's dummy copy and pictures.
+ *
+ * The common case is a grid the design draws as rows: two rows of two cards, a list of rows the
+ * data does not have (its list is flat). Collapsing the cards of the first row draws every item
+ * there and leaves the second row as designed. Only containers count (three pictures layered in
+ * a card are not a list), and a repeat with no member given data is the plan leaving it on purpose.
+ */
+export function leftAsDesigned(
+  design: Tree,
+  applied: Tree,
+  byId: Map<string, IrNode>,
+  hasRef: (value: unknown) => boolean,
+): LeftAsDesigned[] {
+  const kids = childrenOf(applied);
+  const designKids = childrenOf(design);
+  const sk = skeletons(design);
+  const appliedBySrc = new Map(applied.nodes.map((n) => [n.src, n]));
+  const designBySrc = new Map(design.nodes.map((n) => [n.src, n]));
+  const appliedById = new Map(applied.nodes.map((n) => [n.id, n]));
+  const designById = new Map(design.nodes.map((n) => [n.id, n]));
+
+  const insideRepeater = (node: TreeNode): boolean => {
+    for (let at = node.parent; at !== null; ) {
+      const parent = appliedById.get(at);
+      if (!parent) return false;
+      if (parent.type === "Repeater") return true;
+      at = parent.parent;
+    }
+    return false;
+  };
+  const drawn = (node: TreeNode): TreeNode[] =>
+    subtree(node.id, kids).flatMap((id) => appliedById.get(id) ?? []);
+  const drawsData = (node: TreeNode) =>
+    insideRepeater(node) ||
+    drawn(node).some((n) => n.type === "Repeater" || Object.values(n.props).some(hasRef));
+
+  const out: LeftAsDesigned[] = [];
+  for (const group of groups(design, byId)) {
+    const members = group.members.flatMap((src) => designBySrc.get(src) ?? []);
+    if (members.some((m) => CONTENT.has(m.type))) continue;
+    // a member a collapse folded away is drawn by its template: it counts as given data
+    const given = members.filter((m) => {
+      const now = appliedBySrc.get(m.src);
+      return !now || drawsData(now);
+    });
+    if (given.length === 0 || given.length === members.length) continue;
+    const like = given[0];
+    if (!like) continue;
+    const likeNow = appliedBySrc.get(like.src);
+    const repeater = likeNow ? drawn(likeNow).find((n) => n.type === "Repeater") : undefined;
+    const template = repeater ? kids.get(repeater.id)?.[0] : undefined;
+    const templateKey = template ? sk.get(designBySrc.get(template.src)?.id ?? "") : undefined;
+    const bound = template
+      ? drawn(template)
+          .filter((n) => Object.values(n.props).some(hasRef))
+          .map((n) => n.src)
+      : [];
+
+    const itemsOf = (member: TreeNode) => itemsUnder(member, templateKey, designKids, sk);
+    const counts = members.map((m) => itemsOf(m).length);
+    let start = 0;
+    const slices = counts.every((n) => n > 0)
+      ? members.map((m, i): [string, [number, number]] => {
+          const share: [number, number] = [start, start + (counts[i] ?? 0)];
+          start = share[1];
+          return [m.src, share];
+        })
+      : undefined;
+
+    for (const member of members) {
+      const now = appliedBySrc.get(member.src);
+      if (!now || drawsData(now)) continue;
+      const nodes = subtree(member.id, designKids).flatMap((id) => designById.get(id) ?? []);
+      const items = itemsOf(member);
+      // node for node, the template and the first item are one shape: their walks line up
+      const fields: Array<[string, string]> = [];
+      const first = items[0];
+      const templateDesign = template ? designBySrc.get(template.src) : undefined;
+      if (first && templateDesign) {
+        const a = subtree(templateDesign.id, designKids);
+        const b = subtree(first.id, designKids);
+        a.forEach((id, i) => {
+          const from = designById.get(id);
+          const to = designById.get(b[i] ?? "");
+          if (from && to && bound.includes(from.src)) fields.push([from.src, to.src]);
+        });
+      }
+      // its longest copy says best what it is: a headline, not a badge's "32"
+      const text = nodes
+        .filter((n) => n.type === "Text" && typeof n.props.content === "string")
+        .sort((a, b) => String(b.props.content).length - String(a.props.content).length)[0];
+      out.push({
+        src: member.src,
+        like: like.src,
+        ...(repeater && typeof repeater.props.over === "string"
+          ? { over: repeater.props.over }
+          : {}),
+        ...(text ? { copy: clip(String(text.props.content)) } : {}),
+        items: items.map((i) => i.src),
+        fields,
+        ...(slices ? { slices } : {}),
+      });
+    }
+  }
+  return out;
 }
 
 function sliceOf(list: unknown[], props: Record<string, unknown>): unknown[] {

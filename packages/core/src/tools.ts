@@ -1,14 +1,15 @@
-import type {
-  AgentSpec,
-  DenialStage,
-  RunContext,
-  RunUsage,
-  Tool,
-  ToolCall,
-  ToolContext,
-  ToolDefinition,
-  ToolOutcome,
-  ToolStepRequest,
+import {
+  type AgentSpec,
+  AwaitingAnswers,
+  type DenialStage,
+  type RunContext,
+  type RunUsage,
+  type Tool,
+  type ToolCall,
+  type ToolContext,
+  type ToolDefinition,
+  type ToolOutcome,
+  type ToolStepRequest,
 } from "@dugout/contracts";
 import { z } from "zod";
 import type { OutputStore } from "./output-store.ts";
@@ -54,7 +55,7 @@ export function toolDefinition(name: string, description: string, input: z.ZodTy
 }
 
 export type Preflight =
-  | { ok: false; stage: DenialStage; reason: string }
+  | { ok: false; stage: DenialStage; reason: string; advisory?: boolean }
   | { ok: true; tool: Tool; input: unknown; needsApproval: boolean };
 
 /**
@@ -102,7 +103,14 @@ export function preflight(
   if (tool.block && ctx) {
     try {
       const reason = tool.block(value, ctx);
-      if (reason) return { ok: false, stage: "policy", reason };
+      if (reason) {
+        return {
+          ok: false,
+          stage: "policy",
+          reason,
+          ...(tool.advisoryBlock ? { advisory: true } : {}),
+        };
+      }
     } catch (err) {
       return {
         ok: false,
@@ -136,7 +144,7 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
   const maxInline = opts.maxInlineChars ?? 16_000;
 
   return {
-    async execute({ call, input, usdLeft }, ctx) {
+    async execute({ call, input, usdLeft, answered }, ctx) {
       const tool = opts.registry.get(call.name);
       if (!tool) return { ok: false, error: `unknown tool ${call.name}` };
 
@@ -148,6 +156,7 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
       const forCall = {
         callId: call.id,
         ...(usdLeft !== undefined ? { usdLeft } : {}),
+        ...(answered ? { answered } : {}),
         spend,
       };
       const withSpend = (outcome: ToolOutcome): ToolOutcome =>
@@ -174,6 +183,8 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
             }),
           });
         } catch (err) {
+          // a tool, or a child run, stopping to ask a person: the loop waits, then runs it again
+          if (err instanceof AwaitingAnswers) throw err;
           lastError = redactor.text(err instanceof Error ? err.message : String(err));
         }
       }
@@ -199,7 +210,7 @@ async function runWithTimeout(
   tool: Tool,
   input: unknown,
   ctx: RunContext,
-  call: Pick<ToolContext, "callId" | "usdLeft" | "spend">,
+  call: Pick<ToolContext, "callId" | "usdLeft" | "spend" | "answered">,
 ): Promise<unknown> {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;

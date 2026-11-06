@@ -8,5 +8,10 @@
     "id": "demo-football",
     "name": "Demo Football",
     "sports": ["football"]
+  },
+  {
+    "id": "sb",
+    "name": "SI Build (FanXP client sb)",
+    "sports": ["cricket"]
   }
 ]

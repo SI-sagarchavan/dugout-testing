@@ -3,13 +3,18 @@
   "type": "object",
   "properties": {
     "exportId": {
+      "description": "The export a designer's Handoff stored in the control plane",
       "type": "string",
-      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-      "description": "The export a designer's Handoff stored"
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "handoffId": {
+      "description": "A Handoff the FanXP backend received: its files are read from S3 through the backend",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     },
     "project": {
       "default": "default",
-      "description": "The control plane project the export is in",
+      "description": "The control plane project the export is in, and where results are stored",
       "type": "string",
       "pattern": "^[a-zA-Z0-9_-]+$"
     },
@@ -17,8 +22,5 @@
       "description": "When the control plane received the export",
       "type": "string"
     }
-  },
-  "required": [
-    "exportId"
-  ]
+  }
 }

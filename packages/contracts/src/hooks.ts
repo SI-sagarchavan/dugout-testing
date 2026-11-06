@@ -65,7 +65,8 @@ export interface AfterModelOutcome<S> {
 }
 
 export type AfterToolStage =
-  | { stage: "denied"; reason: string }
+  /** `advisory`: the tool's own gate said "not yet" (`Tool.advisoryBlock`), which is not a sign the model is stuck. */
+  | { stage: "denied"; reason: string; advisory?: boolean }
   /** The call passed the checks before it. It may still wait for an approval. */
   | { stage: "cleared" }
   | { stage: "ran"; ok: boolean };

@@ -68,3 +68,41 @@ export function sitemapWriter(): Array<(req: ModelRequest) => ScriptedTurn> {
   };
   return Array.from({ length: 10 }, () => turn);
 }
+
+/** What the asking drafter asks before it writes: a choice and a text question. */
+export const DRAFT_QUESTIONS = [
+  {
+    id: "tone",
+    question: "Which tone should the draft take?",
+    why: "The brief does not say",
+    kind: "choice",
+    options: [
+      { value: "measured", label: "Measured", description: "" },
+      { value: "excited", label: "Excited", description: "Opening-day energy" },
+    ],
+    allowOther: false,
+    proposed: ["measured"],
+  },
+  {
+    id: "title",
+    question: "What should the draft be called?",
+    why: "No title was given",
+    kind: "text",
+    options: [],
+    allowOther: false,
+    proposed: ["Season opener"],
+  },
+];
+
+/** The writer, asking a person two questions first (ADR 0029); then as `writer` does. */
+export function askingWriter(): Array<(req: ModelRequest) => ScriptedTurn> {
+  const [base] = writer() as [(req: ModelRequest) => ScriptedTurn];
+  const turn = (req: ModelRequest): ScriptedTurn => {
+    const at = req.messages.findIndex((m) => m.role === "assistant");
+    if (at === -1)
+      return { toolCalls: [{ name: "ask", arguments: { questions: DRAFT_QUESTIONS } }] };
+    // the answers are the ask's tool result; from there on it is the writer's run
+    return base({ ...req, messages: req.messages.filter((_, i) => i !== at && i !== at + 1) });
+  };
+  return Array.from({ length: 10 }, () => turn);
+}

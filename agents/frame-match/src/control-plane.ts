@@ -24,8 +24,9 @@ export function controlPlaneUrl(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
- * The Next.js site (`apps/web`), which renders a stored tree as a page with the renderer's client
- * components running, so a carousel swipes. Its preview is `/preview/<project>/<tree id>`.
+ * The host of a stored tree's preview link, `/preview/<project>/<tree id>`. Nothing in this repo
+ * serves it now: the link names the tree for the agents that take it as input, and a person sees
+ * the section in Surface Studio (the admin app).
  */
 export function webUrl(env: NodeJS.ProcessEnv = process.env): string {
   return (env.FANOS_WEB_URL ?? "http://localhost:3000").replace(/\/+$/, "");

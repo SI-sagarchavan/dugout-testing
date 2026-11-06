@@ -33,7 +33,7 @@ export type {
   Proposal,
   RoundProposal,
   Rule,
-  Severity,
+  RuleGroup,
   ShadowEntry,
   StructuralAction,
   StructuralActionId,
@@ -56,21 +56,8 @@ export { computeCoverage, coverageFromSlots, emptyTally, percent } from "./cover
 export type { AxisTally, PinnedText, SizingReport } from "./sizing.js";
 export { emptyAxes, sizingReady, sizingReport } from "./sizing.js";
 
-export type { ActivityActor, ActivityEntry, ActivityKind } from "./activity.js";
-export {
-  ACTIVITY_KEEP,
-  ACTIVITY_PREFIX,
-  appendLane,
-  firstName,
-  initialOf,
-  laneKey,
-  mergeActivity,
-  parseLane,
-  popLane,
-  recentActors,
-  RECENT_WINDOW_MS,
-  samePerson,
-} from "./activity.js";
+export type { Person } from "./person.js";
+export { firstName, initialOf } from "./person.js";
 
 export type { Slot, PaddingSide } from "./slots.js";
 export {
@@ -106,7 +93,7 @@ export type {
 export { reconciliationReport } from "./reconcile-report.js";
 
 export type { LintEntry } from "../rules/index.js";
-export { BLOCKERS, FIXABLE, lint, RULES, ruleById, WARNS } from "../rules/index.js";
+export { lint, RULES, ruleById, STRUCTURE, TOKENS } from "../rules/index.js";
 
 export type { ColorMatch, ColorMatchOptions, ColorMetric, Lab } from "../match/color.js";
 export {
@@ -131,7 +118,6 @@ export { leafKeys, nameKeys, namesMatch } from "./name-keys.js";
 
 export { classifyPaint, fieldForPropPath } from "../rules/shared.js";
 export type { PaintKind, PaintValue } from "../rules/shared.js";
-export { DEFAULT_NAME_RE } from "../rules/w1-default-layer-names.js";
 
 export type { EffectGeometry, EffectMatch } from "../match/effect.js";
 export { fingerprintEffect, hasEffectGeometry, matchEffect } from "../match/effect.js";

@@ -2,7 +2,7 @@
   "name": "@fanos/renderer",
   "version": "0.2.0",
   "private": true,
-  "description": "SDUI rendering SDK: resolvers + React Server Components. Consumed by @fanos/web.",
+  "description": "SDUI rendering SDK: resolvers + React Server Components. Consumed by Surface Studio.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

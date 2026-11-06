@@ -57,13 +57,19 @@ interface Repeats {
   failed?: { tool: string; args: string; count: number } | undefined;
 }
 
-/** One refusal is feedback. The same call again is the model stuck, so the run stops. */
+/**
+ * One refusal is feedback. The same call again is the model stuck, so the run stops. Except a tool's
+ * advisory gate (`Tool.advisoryBlock`): it refuses until the run has done what it names, and that
+ * is the run working, not being stuck.
+ */
 const repeatedCalls = defineHook<Repeats>({
   id: "repeatedCalls",
   initial: {},
   afterTool(event: AfterTool, state) {
     const { call, args } = event;
     if (event.stage === "denied") {
+      // a gate that says "not yet" is guiding the run, and bounds itself: not the model stuck
+      if (event.advisory) return undefined;
       if (state.refused?.tool === call.name && state.refused.args === args) {
         return { stop: `${call.name} was refused, and the same call was sent again unchanged` };
       }

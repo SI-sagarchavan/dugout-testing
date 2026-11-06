@@ -3,13 +3,14 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelClient } from "@dugout/contracts";
+import { approve } from "@dugout/contracts";
 import {
-  type Approver,
   createBedrockClient,
   createMemorySink,
   createScriptedModel,
   loadModelConfig,
   type ModelConfig,
+  type Responder,
   scriptedModelConfig,
 } from "@dugout/core";
 import { type EvalSuite, endedGracefully, writesGated } from "@dugout/evals";
@@ -63,7 +64,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<(typeof
   } else {
     models = scriptedModelConfig();
   }
-  const approver: Approver = async () => ({ approved: true, by: "eval" });
+  const responder: Responder = async () => approve("eval");
 
   return {
     agentId: spec.id,
@@ -99,7 +100,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<(typeof
       const result = await run({
         tenantId: c.tenant,
         input: { exportId: c.exportId, project: "default" },
-        approver,
+        responder,
         sinks: [sink],
       });
       const output = result.status === "completed" ? (result.output as Output) : undefined;

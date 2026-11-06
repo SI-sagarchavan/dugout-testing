@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 Type: task
-Blocked by: none
+Blocked by: the DSL being ready to store and generate
 
 ## What
 

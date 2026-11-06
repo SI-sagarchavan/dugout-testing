@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   type AgentDefinition,
   type AgentSpec,
+  approve,
   defineHook,
   defineTool,
   type RunCheckpoint,
@@ -66,7 +67,7 @@ async function run(script: ScriptStep[], definition: Partial<AgentDefinition> = 
     tools: [ping],
     client: model,
     models: scriptedModelConfig(),
-    approver: async () => ({ approved: true, by: "tester" }),
+    responder: async () => approve("tester"),
     runsDir,
     outputs: createMemoryOutputStore(),
     store,
@@ -282,6 +283,21 @@ describe("the harness's hooks", () => {
     expect(failing.afterTool(ran)).toBeUndefined();
     expect(failing.afterTool(ran)).toBeUndefined();
     expect(failing.afterTool(ran)).toBe("ping failed 3 times with the same input");
+  });
+
+  it("do not stop a gate that says not yet, however often it is asked again", () => {
+    const hooks = createHooks(harnessHooks(agent), checkpoint());
+    const event = { step: 1, call: toolCall, args: "{}" };
+    for (let i = 0; i < 5; i++) {
+      expect(
+        hooks.afterTool({ stage: "denied", reason: "not yet", advisory: true, ...event }),
+      ).toBeUndefined();
+    }
+    // and an ordinary refusal after them still starts its own count
+    expect(hooks.afterTool({ stage: "denied", reason: "x", ...event })).toBeUndefined();
+    expect(hooks.afterTool({ stage: "denied", reason: "x", ...event })).toBe(
+      "ping was refused, and the same call was sent again unchanged",
+    );
   });
 
   it("carry a run saved before hooks over to the new state", () => {

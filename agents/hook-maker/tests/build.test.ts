@@ -2,6 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Tool, ToolContext } from "@dugout/contracts";
+import { approve } from "@dugout/contracts";
 import { createScriptedModel, scriptedModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
@@ -142,6 +143,7 @@ describe("hook-maker", () => {
           arguments: {
             hookId: HOOK,
             name: "dugout: Cricket fixtures",
+            built: true,
             input: {},
             covers: ["venue → venue"],
             missing: [],
@@ -189,13 +191,10 @@ describe("hook-maker", () => {
       mcp: createMcpHost({ hub }),
     })({
       tenantId: "demo-cricket",
-      input: {
-        need: "A strip of matches, each with its venue.",
-        apis: ["fanxp-seed-api-cricket-schedule"],
-      },
-      approver: async (req) => {
+      input: { need: "A strip of matches, each with its venue." },
+      responder: async (req) => {
         asked.push(req.tool);
-        return { approved: true, by: "editor" };
+        return approve("editor");
       },
     });
     expect(result).toMatchObject({
@@ -220,17 +219,18 @@ describe("hook-maker", () => {
     expect(hub.calls.filter((c) => c.tool === "cast_run_hook")).toHaveLength(2);
   });
 
-  const finalFor = (hookId: string) => ({
+  const finalFor = (hookId: string | null, built = false) => ({
     toolCalls: [
       {
         name: "final",
         arguments: {
           hookId,
           name: "dugout: Cricket fixtures",
+          built,
           input: {},
           covers: ["venue → venue"],
           missing: [],
-          why: "Finished an existing hook.",
+          why: built ? "Built it." : "It was already there.",
         },
       },
     ],
@@ -238,8 +238,10 @@ describe("hook-maker", () => {
   const call = (name: string, args: Record<string, unknown>) => ({
     toolCalls: [{ name, arguments: args }],
   });
+  const asked: string[] = [];
   const runWith = async (script: Parameters<typeof createScriptedModel>[0]) => {
     const model = createScriptedModel(script);
+    asked.length = 0;
     const result = await agent.create({
       store: createMemoryStore({ pool, embeddings: createHashEmbeddings() }),
       client: model,
@@ -250,39 +252,103 @@ describe("hook-maker", () => {
     })({
       tenantId: "demo-cricket",
       input: { need: "A strip of matches, each with its venue." },
-      approver: async () => ({ approved: true, by: "editor" }),
+      responder: async (req) => {
+        asked.push(req.tool);
+        return approve("editor");
+      },
     });
     const refusals = model.requests
       .map((r) => String(r.messages.at(-1)?.content))
       .filter((m) => m.startsWith("Not accepted"));
-    return { result, refusals };
+    return { result, refusals, asked: [...asked] };
   };
 
-  it("finishes a hook that already exists without creating another: run it, publish it, answer", async () => {
-    const { result, refusals } = await runWith([
+  it("finds a hook that fits and answers with it: nothing created, changed or published, nobody asked", async () => {
+    const { result, refusals, asked } = await runWith([
       call("cast.listHooks", {}),
       call("cast.describeHook", { hookId: HOOK }),
       call("cast.runHook", { hookId: HOOK, applyTransform: true, input: { page_size: "2" } }),
-      call("cast.publishHook", { hookId: HOOK }),
       finalFor(HOOK),
     ]);
     expect(refusals).toEqual([]);
-    expect(result).toMatchObject({ status: "completed", output: { hookId: HOOK } });
+    expect(asked).toEqual([]);
+    expect(result).toMatchObject({
+      status: "completed",
+      output: { hookId: HOOK, built: false, input: { page_size: "2" } },
+    });
   });
 
-  it("will not answer with a hook it has not run with its transform, or not published", async () => {
+  it("will not answer with a hook it has not run with its transform", async () => {
     const { result, refusals } = await runWith([
+      finalFor(HOOK),
+      call("cast.runHook", { hookId: HOOK }),
       finalFor(HOOK),
       call("cast.runHook", { hookId: HOOK, applyTransform: true }),
       finalFor(HOOK),
+    ]);
+    expect(result.status).toBe("completed");
+    // a run without the transform shows the raw API answers, which is not what a page reads
+    expect(refusals).toEqual([
+      expect.stringContaining(`${HOOK} was not run in this run. Run it with applyTransform true`),
+      expect.stringContaining(`${HOOK} was not run in this run. Run it with applyTransform true`),
+    ]);
+  });
+
+  it("will not answer with a hook it built that it has not run with its transform, or not published", async () => {
+    const { result, refusals } = await runWith([
+      call("cast.createHook", { id: HOOK, name: "dugout: Cricket fixtures" }),
+      call("cast.setTransform", { hookId: HOOK, mode: "whole", expression: "$" }),
+      finalFor(HOOK, true),
+      call("cast.runHook", { hookId: HOOK, applyTransform: true }),
+      finalFor(HOOK, true),
       call("cast.publishHook", { hookId: HOOK }),
-      finalFor(HOOK),
+      finalFor(HOOK, true),
     ]);
     expect(result.status).toBe("completed");
     expect(refusals).toEqual([
-      expect.stringContaining(`Run ${HOOK} with applyTransform true, and say only`),
+      expect.stringContaining(`Run ${HOOK} with applyTransform true after your last change`),
       expect.stringContaining(`Publish ${HOOK} before final`),
     ]);
+  });
+
+  it("says built the way it happened: not for a hook it found, and for one it changed", async () => {
+    const { result, refusals } = await runWith([
+      call("cast.runHook", { hookId: HOOK, applyTransform: true }),
+      finalFor(HOOK, true),
+      call("cast.setTransform", { hookId: HOOK, mode: "whole", expression: "$" }),
+      finalFor(HOOK, false),
+      call("cast.runHook", { hookId: HOOK, applyTransform: true }),
+      call("cast.publishHook", { hookId: HOOK }),
+      finalFor(HOOK, true),
+    ]);
+    expect(result.status).toBe("completed");
+    expect(refusals).toEqual([
+      expect.stringContaining(`${HOOK} was found. Say built false`),
+      expect.stringContaining(`You changed ${HOOK} in this run, so built is true`),
+    ]);
+  });
+
+  it("answers with no hook when none fits and no connector could give it, but not after building one", async () => {
+    const { result, refusals } = await runWith([
+      call("cast.listHooks", {}),
+      call("cast.createHook", { id: HOOK, name: "dugout: Cricket fixtures" }),
+      finalFor(null),
+      call("cast.setTransform", { hookId: HOOK, mode: "whole", expression: "$" }),
+      call("cast.runHook", { hookId: HOOK, applyTransform: true }),
+      call("cast.publishHook", { hookId: HOOK }),
+      finalFor(HOOK, true),
+    ]);
+    expect(refusals).toEqual([
+      expect.stringContaining("You created a hook in this run: answer with it"),
+    ]);
+    expect(result.status).toBe("completed");
+
+    const none = await runWith([call("cast.listHooks", {}), finalFor(null)]);
+    expect(none.refusals).toEqual([]);
+    expect(none.result).toMatchObject({
+      status: "completed",
+      output: { hookId: null, built: false },
+    });
   });
 
   it("will not answer with a hook it changed after running or publishing it", async () => {
@@ -290,11 +356,11 @@ describe("hook-maker", () => {
       call("cast.runHook", { hookId: HOOK, applyTransform: true }),
       call("cast.publishHook", { hookId: HOOK }),
       call("cast.setTransform", { hookId: HOOK, mode: "whole", expression: "$" }),
-      finalFor(HOOK),
+      finalFor(HOOK, true),
       call("cast.runHook", { hookId: HOOK, applyTransform: true }),
-      finalFor(HOOK),
+      finalFor(HOOK, true),
       call("cast.publishHook", { hookId: HOOK }),
-      finalFor(HOOK),
+      finalFor(HOOK, true),
     ]);
     expect(result.status).toBe("completed");
     expect(refusals).toEqual([
@@ -326,6 +392,7 @@ describe("hook-maker", () => {
           arguments: {
             hookId: HOOK,
             name: "dugout: Cricket fixtures",
+            built: true,
             input: {},
             covers: ["venue → venue"],
             missing: [],

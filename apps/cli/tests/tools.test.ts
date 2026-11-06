@@ -23,7 +23,7 @@ describe("tools", () => {
   });
 
   it("lists what follows a group word", () => {
-    expect(subcommandsOf(AGENT_TOOLS, "memory").sort()).toEqual(["promote", "review"]);
+    expect(subcommandsOf(AGENT_TOOLS, "memory").sort()).toEqual(["answers", "promote", "review"]);
     expect(subcommandsOf(AGENT_TOOLS, "watch")).toEqual([]);
   });
 

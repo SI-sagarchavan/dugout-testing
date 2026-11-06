@@ -6,7 +6,9 @@
  * would make, which is the reason none of this touches Figma.
  *
  * Every rule declares the downstream failure it prevents. If one cannot, it does
- * not belong in this array.
+ * not belong in this array. B1 (root not a column), B3 (no mobile frame) and W1
+ * (default layer names) were removed on that test: B3 fired on all 18 eval
+ * frames and B1 on 16, every one of which compiles and publishes.
  */
 import { buildBatches, batchesToReach, safeSlotCount } from "../health/batch.js";
 import { coverageFromSlots } from "../health/coverage.js";
@@ -24,24 +26,23 @@ import type {
 import { isStructuralProposal } from "../health/types.js";
 import type { FrameIRDocument } from "../ir/schema.js";
 
-import { rootNotAutolayout } from "./b1-root-not-autolayout.js";
-import { groupsInsteadOfFrames } from "./b2-groups-instead-of-frames.js";
-import { noMobileFrames } from "./b3-no-mobile-frames.js";
+import { groupsInsteadOfFrames } from "./s1-groups-instead-of-frames.js";
 import { unboundFill } from "./f1-unbound-fill.js";
 import { unboundStroke } from "./f2-unbound-stroke.js";
 import { unboundTextStyle } from "./f3-unbound-text-style.js";
 import { unboundSpacing } from "./f4-unbound-spacing.js";
 import { unboundRadius } from "./f5-unbound-radius.js";
 import { unboundEffect } from "./f6-unbound-effect.js";
-import { defaultLayerNames } from "./w1-default-layer-names.js";
 
-export const BLOCKERS: readonly Rule[] = [
-  rootNotAutolayout,
-  groupsInsteadOfFrames,
-  noMobileFrames,
-];
+/**
+ * How the frame is built. Pinned text is the other structure check; it is read
+ * from the sizing report, not a rule, because its fix is a bulk property change
+ * and not a finding with a proposal.
+ */
+export const STRUCTURE: readonly Rule[] = [groupsInsteadOfFrames];
 
-export const FIXABLE: readonly Rule[] = [
+/** Whether each value follows a theme. */
+export const TOKENS: readonly Rule[] = [
   unboundFill,
   unboundStroke,
   unboundTextStyle,
@@ -50,9 +51,7 @@ export const FIXABLE: readonly Rule[] = [
   unboundEffect,
 ];
 
-export const WARNS: readonly Rule[] = [defaultLayerNames];
-
-export const RULES: readonly Rule[] = [...BLOCKERS, ...FIXABLE, ...WARNS];
+export const RULES: readonly Rule[] = [...STRUCTURE, ...TOKENS];
 
 export function ruleById(id: string): Rule | undefined {
   return RULES.find((rule) => rule.id === id);
@@ -66,15 +65,14 @@ export interface LintEntry {
 
 export function lint(ir: FrameIRDocument, ctx: LintContext, startedAt = 0): LintReport {
   const entries: LintEntry[] = [];
-  const blockers: Finding[] = [];
-  const warns: Finding[] = [];
+  const structure: Finding[] = [];
   const actions: StructuralAction[] = [];
 
   for (const rule of RULES) {
     const findings = rule.check(ir, ctx);
     for (const finding of findings) {
-      if (rule.severity === "blocker") {
-        blockers.push(finding);
+      if (rule.group === "structure") {
+        structure.push(finding);
         const proposal = rule.propose ? rule.propose(finding, ctx) : null;
         if (proposal && isStructuralProposal(proposal)) {
           actions.push({
@@ -87,10 +85,6 @@ export function lint(ir: FrameIRDocument, ctx: LintContext, startedAt = 0): Lint
             nodeIds: proposal.nodeIds,
           });
         }
-        continue;
-      }
-      if (rule.severity === "warn") {
-        warns.push(finding);
         continue;
       }
       entries.push({
@@ -125,8 +119,7 @@ export function lint(ir: FrameIRDocument, ctx: LintContext, startedAt = 0): Lint
     breakpoint: ctx.breakpoint,
     coverage,
     sizing: sizingReport(ir),
-    blockers,
-    warns,
+    structure,
     batches,
     actions,
     fixableFindings: entries.length,

@@ -2,12 +2,14 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  approve,
   defineTool,
   type ModelClient,
   type ModelRequest,
   type RunCheckpoint,
   type RunContext,
   type RunEvent,
+  reject,
 } from "@dugout/contracts";
 import {
   createMemoryRunStore,
@@ -159,7 +161,7 @@ const askThenSum = (): Record<string, ScriptStep[]> => ({
 
 describe("subagents (ADR 0025)", () => {
   it("names the tool after the agent, and a child's run id after the call", () => {
-    expect(agentToolName("hook-finder")).toBe("agent.hookFinder");
+    expect(agentToolName("hook-maker")).toBe("agent.hookMaker");
     expect(childRunId("run-1", "call_1_0")).toBe(childRunId("run-1", "call_1_0"));
     expect(childRunId("run-1", "call_1_0")).not.toBe(childRunId("run-1", "call_2_0"));
     expect(childRunId("run-1", "call_1_0")).toMatch(
@@ -174,7 +176,7 @@ describe("subagents (ADR 0025)", () => {
     const result = await lead(researcher()).create(deps(client))({
       tenantId: "club-a",
       input: { topic: "the opener" },
-      approver: never,
+      responder: never,
       runId: "parent-1",
       sinks: [sink],
     });
@@ -203,7 +205,7 @@ describe("subagents (ADR 0025)", () => {
     await lead(researcher()).create(deps(own))({
       tenantId: "club-a",
       input: { topic: "the opener" },
-      approver: never,
+      responder: never,
     });
     expect(new Set(own.requests.map((r) => r.model))).toEqual(new Set(["nova-lite"]));
 
@@ -212,7 +214,7 @@ describe("subagents (ADR 0025)", () => {
     await lead(researcher()).create(deps(named))({
       tenantId: "club-a",
       input: { topic: "the opener" },
-      approver: never,
+      responder: never,
       model: "haiku",
     });
     expect(named.requests).toHaveLength(4);
@@ -224,7 +226,7 @@ describe("subagents (ADR 0025)", () => {
     await lead(researcher()).create(deps(client))({
       tenantId: "club-a",
       input: { topic: "the opener" },
-      approver: never,
+      responder: never,
     });
     const first = client.requests.find((r) => String(r.messages[0]?.content).startsWith(CHILD));
     expect(first?.messages).toHaveLength(2);
@@ -244,7 +246,7 @@ describe("subagents (ADR 0025)", () => {
     const result = await lead(researcher()).create(deps(client))({
       tenantId: "club-a",
       input: { topic: "the opener" },
-      approver: never,
+      responder: never,
       sinks: [sink],
     });
     // two parent turns and two child turns
@@ -261,7 +263,7 @@ describe("subagents (ADR 0025)", () => {
     const capped = await lead(researcher(), { usdPerRun: 0.002 }).create(deps(tight))({
       tenantId: "club-a",
       input: { topic: "the opener" },
-      approver: never,
+      responder: never,
     });
     expect(capped).toMatchObject({ status: "failed", reason: "budget" });
   });
@@ -289,7 +291,7 @@ describe("subagents (ADR 0025)", () => {
     const opts = {
       tenantId: "club-a",
       input: { topic: "the opener" },
-      approver: never,
+      responder: never,
       runId: "parent-2",
       store: flaky,
     };
@@ -321,12 +323,128 @@ describe("subagents (ADR 0025)", () => {
     const result = await lead(middle, { maxDepth: 2 }).create(deps(client))({
       tenantId: "club-a",
       input: { topic: "t" },
-      approver: never,
+      responder: never,
     });
     expect(result.status).toBe("completed");
     const refusal = client.requests[2]?.messages.at(-1);
     expect(refusal).toMatchObject({ role: "tool", isError: true });
     expect(String(refusal?.content)).toContain("would run 2 level(s) below");
+  });
+
+  it("keeps a record for a grandchild too: every level's `runs` row is opened", async () => {
+    // lead → researcher → researcher. Without the host's recorder passed down, the grandchild has
+    // no row, and writing its first event breaks the foreign key from `run_events` to `runs`.
+    const opened: Array<{ runId: string; parent: { runId: string; callId: string } }> = [];
+    const children = {
+      open: async (o: (typeof opened)[number]) => {
+        opened.push(o);
+        return { lastSeq: 0 };
+      },
+    };
+    const client = routed({
+      [PARENT]: [
+        { toolCalls: [{ name: "agent.researcher", arguments: { question: "q" } }] },
+        { toolCalls: [{ name: "final", arguments: { summary: "s" } }] },
+      ],
+      // the middle researcher and the inner one share a prompt, so one script is read in turn
+      [CHILD]: [
+        { toolCalls: [{ name: "agent.researcher", arguments: { question: "deeper" } }] },
+        { toolCalls: [{ name: "final", arguments: { answer: "inner" } }] },
+        { toolCalls: [{ name: "final", arguments: { answer: "outer" } }] },
+      ],
+    });
+    const middle = researcher({ agents: [researcher()], maxDepth: 2 });
+    const result = await lead(middle, { maxDepth: 2 }).create(deps(client))({
+      tenantId: "club-a",
+      input: { topic: "t" },
+      responder: never,
+      runId: "parent-g",
+      children,
+    });
+    expect(result.status).toBe("completed");
+    const middleId = childRunId("parent-g", "call_1_0");
+    expect(opened.map((o) => o.parent.runId)).toEqual(["parent-g", middleId]);
+    expect(opened).toHaveLength(2);
+  });
+
+  it("brings a grandchild's questions up to the run a host follows, and its answers back down (ADR 0029)", async () => {
+    // lead → researcher → researcher, and the innermost asks a person
+    const runStore = createMemoryRunStore();
+    const question = {
+      id: "source",
+      question: "Which fixtures feed?",
+      why: "Two hooks fit",
+      kind: "choice" as const,
+      options: [
+        { value: "by_day", label: "By day", description: "" },
+        { value: "carousel", label: "Carousel", description: "" },
+      ],
+      allowOther: false,
+      proposed: ["by_day"],
+    };
+    const tree = () => lead(researcher({ agents: [researcher()], maxDepth: 2 }), { maxDepth: 2 });
+    const first = await tree().create(
+      deps(
+        routed({
+          [PARENT]: [{ toolCalls: [{ name: "agent.researcher", arguments: { question: "q" } }] }],
+          [CHILD]: [
+            { toolCalls: [{ name: "agent.researcher", arguments: { question: "deeper" } }] },
+            { toolCalls: [{ name: "ask", arguments: { questions: [question] } }] },
+          ],
+        }),
+      ),
+    )({
+      tenantId: "club-a",
+      input: { topic: "t" },
+      // the host answers later: the run is saved as waiting, as the worker's runs are
+      responder: async () => ({ pending: true }),
+      runId: "ask-top",
+      store: runStore,
+      sinks: [createMemorySink()],
+    });
+
+    const middleId = childRunId("ask-top", "call_1_0");
+    const innerId = childRunId(middleId, "call_1_0");
+    expect(first).toMatchObject({
+      status: "waiting",
+      waiting: {
+        tool: "agent.researcher",
+        questions: [{ id: "source" }],
+        from: [middleId, innerId],
+      },
+    });
+
+    // the person answers on the top run; it resumes, and the answer reaches the one that asked
+    const client = routed({
+      [PARENT]: [{ toolCalls: [{ name: "final", arguments: { summary: "carousel feed" } }] }],
+      [CHILD]: [
+        { toolCalls: [{ name: "final", arguments: { answer: "inner: carousel" } }] },
+        { toolCalls: [{ name: "final", arguments: { answer: "middle: carousel" } }] },
+      ],
+    });
+    const sink = createMemorySink();
+    const second = await tree().create(deps(client))({
+      tenantId: "club-a",
+      input: { topic: "t" },
+      responder: never,
+      runId: "ask-top",
+      store: runStore,
+      sinks: [sink],
+      resume: {
+        reason: "answered",
+        decision: { by: "editor", answers: { source: "carousel" } },
+      },
+    });
+    expect(second).toMatchObject({ status: "completed", output: { summary: "carousel feed" } });
+    // the innermost model read the answer as the result of its ask
+    const innerRead = client.requests.find((r) =>
+      r.messages.some((m) => m.role === "tool" && m.content.includes('"answer":"carousel"')),
+    );
+    expect(innerRead).toBeDefined();
+    const answeredAt = sink.events
+      .filter((e) => e.type === "question.answered")
+      .map((e) => e.runId);
+    expect(answeredAt).toEqual(["ask-top", middleId, innerId]);
   });
 
   it("refuses to load an agent that calls agents with no depth for one", () => {
@@ -349,9 +467,9 @@ describe("subagents (ADR 0025)", () => {
     const result = await lead(researcher({ write: true })).create(deps(client))({
       tenantId: "club-a",
       input: { topic: "t" },
-      approver: async (req) => {
+      responder: async (req) => {
         asked.push(req.tool);
-        return { approved: true, by: "editor" };
+        return approve("editor");
       },
       runId: "parent-w",
       sinks: [sink],
@@ -360,7 +478,7 @@ describe("subagents (ADR 0025)", () => {
     // the person was asked about the call to the child, not about the child's own write
     expect(asked).toEqual(["agent.researcher"]);
     const granted = sink.events.filter(
-      (e): e is Extract<RunEvent, { type: "approval.granted" }> => e.type === "approval.granted",
+      (e): e is Extract<RunEvent, { type: "question.answered" }> => e.type === "question.answered",
     );
     expect(granted.map((e) => [e.runId, e.data.tool, e.data.by])).toEqual([
       ["parent-w", "agent.researcher", "editor"],
@@ -368,7 +486,8 @@ describe("subagents (ADR 0025)", () => {
         // a child that writes is named after its agent, not the call: it runs once per run
         childRunId("parent-w", "once:researcher"),
         "facts.save",
-        "the call that started this run (parent-w call_1_0)",
+        // said as a host's answer, not a person's: it was the parent's yes that let it through
+        "the call that started this run (parent-w call_1_0) (auto)",
       ],
     ]);
   });
@@ -428,9 +547,9 @@ describe("subagents (ADR 0025)", () => {
     const result = await lead(capable).create({ ...deps(client), mcp })({
       tenantId: "club-a",
       input: { topic: "t" },
-      approver: async (req) => {
+      responder: async (req) => {
         asked.push(req.tool);
-        return { approved: true, by: "editor" };
+        return approve("editor");
       },
     });
     expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
@@ -447,7 +566,7 @@ describe("subagents (ADR 0025)", () => {
     const result = await lead(researcher({ write: true })).create(deps(client))({
       tenantId: "club-a",
       input: { topic: "t" },
-      approver: async () => ({ approved: false, by: "editor", reason: "not now" }),
+      responder: async () => reject("editor", "not now"),
     });
     expect(result.status).toBe("rejected");
     expect(
@@ -472,9 +591,9 @@ describe("subagents (ADR 0025)", () => {
     const result = await lead(researcher({ write: true })).create(deps(client))({
       tenantId: "club-a",
       input: { topic: "t" },
-      approver: async (req) => {
+      responder: async (req) => {
         asked.push(req.tool);
-        return { approved: true, by: "editor" };
+        return approve("editor");
       },
       runId: "parent-once",
       store: runs,
@@ -519,9 +638,9 @@ describe("subagents (ADR 0025)", () => {
     const result = await lead(researcher({ write: true })).create(deps(client))({
       tenantId: "club-a",
       input: { topic: "t" },
-      approver: async (req) => {
+      responder: async (req) => {
         asked.push({ tool: req.tool, input: req.input });
-        return { approved: true, by: "editor" };
+        return approve("editor");
       },
       runId: "parent-retry",
       store: createMemoryRunStore(),
@@ -570,9 +689,9 @@ describe("subagents (ADR 0025)", () => {
     const result = await lead(researcher({ write: true }), { maxSteps: 8 }).create(deps(client))({
       tenantId: "club-a",
       input: { topic: "t" },
-      approver: async (req) => {
+      responder: async (req) => {
         asked.push(req.tool);
-        return { approved: true, by: "editor" };
+        return approve("editor");
       },
       runId: "parent-stop",
       store: createMemoryRunStore(),
@@ -677,9 +796,9 @@ describe("subagents (ADR 0025)", () => {
       const result = await build().create(deps(client))({
         tenantId: "club-a",
         input: { topic: "t" },
-        approver: async (req) => {
+        responder: async (req) => {
           asked.push(req.tool);
-          return { approved: true, by: "editor" };
+          return approve("editor");
         },
         runId: "parent-pipe",
         store: createMemoryRunStore(),
@@ -711,9 +830,9 @@ describe("subagents (ADR 0025)", () => {
       const result = await build().create(deps(client))({
         tenantId: "club-a",
         input: { topic: "t" },
-        approver: async (req) => {
+        responder: async (req) => {
           asked.push({ tool: req.tool, input: req.input });
-          return { approved: true, by: "editor" };
+          return approve("editor");
         },
         runId: "parent-pipe-retry",
         store: createMemoryRunStore(),

@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ApprovalRequest } from "@dugout/contracts";
+import type { InterruptRequest } from "@dugout/contracts";
 import { defineTool } from "@dugout/contracts";
 import { z } from "zod";
 import { defineAgent } from "./agent.ts";
@@ -99,7 +99,7 @@ export function drafterTools(opts: { draftsDir: string }) {
 const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
 
 /** The draft a `draft.save` approval request carries. */
-export const draftOf = (req: Pick<ApprovalRequest, "input">) => req.input as Draft;
+export const draftOf = (req: Pick<InterruptRequest, "input">) => req.input as Draft;
 
 export const drafter = defineAgent({
   spec: {

@@ -114,34 +114,6 @@
         "cast_get_template_binding": {}
       }
     },
-    "hooks.choose": {
-      "description": "Choose among dugout's own hooks (ids that start dugout_), and run one to see its data. The hooks people made are not listed. Connectors may be read and sampled, to say which could give what no hook does.",
-      "tools": {
-        "cast_list_hooks": {
-          "set": {
-            "idPrefix": "dugout_"
-          }
-        },
-        "cast_describe_hook": {
-          "arguments": {
-            "hookId": "^dugout_"
-          }
-        },
-        "cast_run_hook": {
-          "arguments": {
-            "hookId": "^dugout_"
-          }
-        },
-        "cast_validate": {
-          "arguments": {
-            "hookId": "^dugout_"
-          }
-        },
-        "cast_list_apis": {},
-        "cast_describe_api": {},
-        "cast_fetch_sample": {}
-      }
-    },
     "hooks.author": {
       "description": "Build and publish hooks in dugout's namespace (dugout_). Any hook may be read, to copy what it passes a connector; only dugout_ hooks are written or run.",
       "tools": {

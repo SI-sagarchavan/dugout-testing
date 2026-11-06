@@ -24,13 +24,13 @@ import { connect } from "./auth.js";
 import { framesToHandoff, handoffLabel } from "./frames.js";
 import {
   AlertIcon,
-  ArchiveIcon,
   CheckIcon,
   ExternalIcon,
   RetryIcon,
   HandoffIcon,
 } from "./icons.js";
 import { send } from "./main.js";
+import { Select } from "./Select.js";
 import { needsPick } from "./rows.js";
 import type { PanelAction, StudioState } from "./state.js";
 
@@ -121,7 +121,7 @@ function Preflight({
           </div>
         </section>
 
-        <section style={{ display: "flex", flexDirection: "column", gap: 8 }} aria-label="Pre-flight">
+        <section style={{ display: "flex", flexDirection: "column", gap: 10 }} aria-label="Pre-flight">
           <h2 className="t-overline" style={{ color: "var(--ink-muted)" }}>
             Pre-flight
           </h2>
@@ -210,15 +210,6 @@ function Preflight({
       </main>
 
       <footer className="fs-foot">
-        <button
-          className="fs-btn"
-          disabled={frames.length === 0 || state.busy}
-          onClick={() => send({ type: "download-zip", frameIds: frames.map((frame) => frame.id) })}
-          title="Same files as the send, on disk. For when the backend is down."
-        >
-          <ArchiveIcon />
-          {state.busy ? "Preparing…" : "Export ZIP"}
-        </button>
         <button
           className="fs-btn is-primary"
           style={{ flex: 1 }}
@@ -363,7 +354,7 @@ function Progress({ state, batch }: { state: StudioState; batch: HandoffBatch })
       ? "Everything is uploaded and checked."
       : status === "cancelled"
         ? "Stopped. Frames that were already sent are uploaded."
-        : "Some frames didn’t make it. Retry them, or download a ZIP.";
+        : "Some frames didn’t make it. Retry them.";
 
   return (
     <>
@@ -403,7 +394,7 @@ function Progress({ state, batch }: { state: StudioState; batch: HandoffBatch })
           </p>
         </section>
 
-        <section style={{ display: "flex", flexDirection: "column", gap: 8 }} aria-label="Per frame">
+        <section style={{ display: "flex", flexDirection: "column", gap: 10 }} aria-label="Per frame">
           <h2 className="t-overline" style={{ color: "var(--ink-muted)" }}>
             Frames
           </h2>
@@ -413,34 +404,6 @@ function Progress({ state, batch }: { state: StudioState; batch: HandoffBatch })
             ))}
           </ul>
         </section>
-
-        {failed.length > 0 && !running ? (
-          <section
-            className="fs-card"
-            aria-label="ZIP fallback"
-            style={{ flexDirection: "row", alignItems: "center" }}
-          >
-            <span className="fs-well" aria-hidden="true">
-              <ArchiveIcon />
-            </span>
-            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-              <span className="t-label">Still failing?</span>
-              <span className="t-caption" style={{ color: "var(--ink-muted)" }}>
-                Download everything as a ZIP and add it in Studio yourself.
-              </span>
-            </div>
-            <button
-              className="fs-btn"
-              style={{ padding: "0 10px" }}
-              disabled={state.busy}
-              onClick={() =>
-                send({ type: "download-zip", frameIds: batch.frames.map((frame) => frame.frameId) })
-              }
-            >
-              {state.busy ? "Preparing…" : "Download"}
-            </button>
-          </section>
-        ) : null}
       </main>
 
       <footer className="fs-foot">
@@ -612,19 +575,14 @@ function ClientRow({ state }: { state: StudioState }): JSX.Element {
         view.tenants.length === 1 ? (
           <Verdict ok label="Passed" />
         ) : (
-          <select
-            aria-label="Client"
-            value={view.selected ?? ""}
-            onChange={(event) => send({ type: "tenant-select", code: event.target.value })}
-            style={{ maxWidth: 170 }}
-          >
-            {view.selected === null ? <option value="">Choose…</option> : null}
-            {view.tenants.map((tenant) => (
-              <option key={tenant.code} value={tenant.code}>
-                {tenant.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            label="Client"
+            value={view.selected}
+            options={view.tenants.map((tenant) => ({ value: tenant.code, label: tenant.name }))}
+            onChange={(code) => send({ type: "tenant-select", code })}
+            placeholder="Choose…"
+            width={170}
+          />
         )
       }
     />

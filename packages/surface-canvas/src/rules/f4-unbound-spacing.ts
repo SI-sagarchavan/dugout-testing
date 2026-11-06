@@ -16,7 +16,7 @@ import { noMatch, slotFinding } from "./shared.js";
 export const unboundSpacing: Rule = {
   id: "unbound-spacing",
   code: "F4",
-  severity: "fixable",
+  group: "tokens",
   protects: "the spacing scale — and every responsive value derived from it",
 
   check(ir) {
@@ -30,7 +30,7 @@ export const unboundSpacing: Rule = {
       findings.push(
         slotFinding({
           ruleId: "unbound-spacing",
-          severity: "fixable",
+          group: "tokens",
           node: slot.node,
           scope: slot.kind,
           propPath: slot.propPath,

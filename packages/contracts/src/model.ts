@@ -10,6 +10,13 @@ export interface ToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /**
+   * `false`: never sent as a strict tool, however many optional parameters are left. Strict mode
+   * compiles every strict tool's schema into one grammar with a size limit, and a rich schema
+   * offered to every agent (`ask`) can push an agent with many strict tools over it. Its calls are
+   * still checked by zod when they arrive.
+   */
+  strict?: false;
 }
 
 export const TokenUsage = z.object({

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ControlPlane } from "./control-plane.ts";
+import type { FrameSource } from "./handoff.ts";
 import { LayoutChoice } from "./layout.ts";
 import { type DesignerNote, notesOf } from "./notes.ts";
 import type {
@@ -75,18 +76,23 @@ export interface Bundle {
   plates: Array<{ nodeId: string; name: string; png: Buffer }>;
 }
 
-/** What a designer's Handoff stored, by export id. Immutable, so a resumed run reads the same. */
+/**
+ * What a designer's Handoff stored, by id: an export in the control plane, or a Handoff in the FanXP
+ * backend when `source` reads one. The theme always comes from the control plane. Immutable, so a
+ * resumed run reads the same.
+ */
 export async function loadBundle(
   tools: Toolchain,
   plane: ControlPlane,
   exportId: string,
   pinnedTheme?: string,
+  source: FrameSource = plane,
 ): Promise<Bundle> {
-  const record = await plane.getExport(exportId);
+  const record = await source.getExport(exportId);
   // Pinned once chosen: a token set stored mid-run must not move the numbers under a run.
   const themeArtifactId = pinnedTheme ?? (await plane.newestArtifactId("token_set"));
   if (!themeArtifactId) throw new Error("the project has no token set");
-  const ir = await plane.json(record.irArtifactId);
+  const ir = await source.json(record.irArtifactId);
   const doc = tools.parseIr(ir);
   const byId = new Map<string, IrNode>();
   const order = new Map<string, number>();
@@ -113,7 +119,7 @@ export async function loadBundle(
       record.plates.map(async (plate) => ({
         nodeId: plate.nodeId,
         name: plate.name,
-        png: await plane.bytes(plate.artifactId),
+        png: await source.bytes(plate.artifactId),
       })),
     ),
   };

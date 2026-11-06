@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
-import { type AgentSpec, defineTool, type Tool, type ToolContext } from "@dugout/contracts";
-import type { Approver } from "@dugout/core";
+import {
+  type AgentSpec,
+  AUTO_APPROVED,
+  AwaitingAnswers,
+  approve,
+  defineTool,
+  reject,
+  type Tool,
+  type ToolContext,
+} from "@dugout/contracts";
+import type { Responder } from "@dugout/core";
 import { z } from "zod";
 import type { AgentResult, AnyAgent, RunOptions } from "./agent.ts";
 
@@ -25,7 +34,7 @@ export interface ChildRuns {
   }): Promise<{ lastSeq: number }>;
 }
 
-/** `hook-finder` is called as `agent.hookFinder`. */
+/** `hook-maker` is called as `agent.hookMaker`. */
 export function agentToolName(agentId: string): string {
   const camel = agentId.replace(/[-_]+([a-zA-Z0-9])/g, (_, c: string) => c.toUpperCase());
   return `agent.${camel.charAt(0).toLowerCase()}${camel.slice(1)}`;
@@ -43,11 +52,8 @@ export function childRunId(parentRunId: string, callId: string): string {
 }
 
 /** A child that reads is never asked; a write reaching here is refused. */
-const refuseWrites: Approver = async (req) => ({
-  approved: false,
-  by: "harness",
-  reason: `${req.tool} writes, and this child run may not write`,
-});
+const refuseWrites: Responder = async (req) =>
+  reject("harness", `${req.tool} writes, and this child run may not write`);
 
 /**
  * A child that writes was approved as a whole: the parent's call to it was the write a person
@@ -55,11 +61,19 @@ const refuseWrites: Approver = async (req) => ({
  * bounded by its own tools (hook-maker writes only the one hook it creates).
  */
 const approvedWithCall =
-  (parent: { runId: string; callId: string }): Approver =>
-  async () => ({
-    approved: true,
-    by: `the call that started this run (${parent.runId} ${parent.callId})`,
-  });
+  (parent: { runId: string; callId: string }): Responder =>
+  async () =>
+    approve(`the call that started this run (${parent.runId} ${parent.callId})${AUTO_APPROVED}`);
+
+/**
+ * A child's write waits for a yes that its parent's call already gave. Its questions are another
+ * matter: a question waits for a person (ADR 0029). The child saves itself as waiting and its
+ * parent's call stops with the questions, up to the run the host follows.
+ */
+const askingAPerson =
+  (responder: Responder): Responder =>
+  async (req) =>
+    req.subject ? responder(req) : { pending: true };
 
 type RunChild = (opts: RunOptions<never>) => Promise<AgentResult>;
 
@@ -181,13 +195,15 @@ export function childCaller(
         parent: parentOf,
       });
       const saved = await run.store?.load(childCtx);
+      // the child stopped to ask a person, and the answers came down with this call
+      const answering = saved?.checkpoint.waiting?.questions && ctx.answered;
       const earlier = answered.get(runId);
       const result =
         earlier ??
         (await runChild({
           tenantId: ctx.tenantId,
           input: input as never,
-          approver: opts.writes ? approvedWithCall(parentOf) : refuseWrites,
+          responder: askingAPerson(opts.writes ? approvedWithCall(parentOf) : refuseWrites),
           runId,
           depth,
           parent: parentOf,
@@ -196,15 +212,26 @@ export function childCaller(
           ...(run.model ? { model: run.model } : {}),
           ...(run.sinks ? { sinks: run.sinks } : {}),
           ...(run.store ? { store: run.store } : {}),
+          // the child's own children need their records too: without it a grandchild has no
+          // `runs` row, and its first event breaks the foreign key on `run_events`
+          ...(run.children ? { children: run.children } : {}),
           ...(saved
             ? {
                 resume: {
-                  reason: "recovery" as const,
+                  ...(answering
+                    ? { reason: "answered" as const, decision: answering }
+                    : { reason: "recovery" as const }),
                   ...(opened ? { startSeq: opened.lastSeq } : {}),
                 },
               }
             : {}),
         }));
+      // A child waiting on a person stops this call with its questions, up to the run the host
+      // follows. Its spend so far is counted when it ends: its usage carries on from its save.
+      if (result.status === "waiting") {
+        const { questions, from } = result.waiting;
+        throw new AwaitingAnswers(questions, [runId, ...from]);
+      }
       if (opts.writes) answered.set(runId, result);
       // A second call answered from the first spends nothing. A child found ended in the store is
       // counted: its parent stopped before it saved the answer, so the spend is not counted yet.

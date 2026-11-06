@@ -13,6 +13,7 @@ import { ANNOTATION_KINDS, ANNOTATION_MAX_CHARS } from "../annotations.js";
 import type { Annotation, AnnotationKind } from "../ir/schema.js";
 import { TargetIcon } from "./icons.js";
 import { send } from "./main.js";
+import { Select } from "./Select.js";
 import type { StudioState } from "./state.js";
 
 const KIND_LABEL: Record<AnnotationKind, { label: string; hint: string }> = {
@@ -28,7 +29,7 @@ export function NotesView({ state }: { state: StudioState }): JSX.Element {
   const editingNote = state.notes.find((n) => n.id === editing) ?? null;
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 8 }} aria-label="Notes for the builder">
+    <section style={{ display: "flex", flexDirection: "column", gap: 10 }} aria-label="Notes for the builder">
       <p className="t-mono" style={{ color: "var(--ink-muted)" }}>
         Notes the builder must address
       </p>
@@ -43,7 +44,7 @@ export function NotesView({ state }: { state: StudioState }): JSX.Element {
       ) : null}
 
       {state.notes.length > 0 ? (
-        <ul style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <ul style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {state.notes.map((note) => (
             <li key={note.id}>
               <NoteRow
@@ -151,18 +152,12 @@ function NoteEditor({
           "Select a layer to write a note on it"
         )}
       </div>
-      <select
+      <Select
         value={kind}
-        onChange={(event) => setKind(event.target.value as AnnotationKind)}
-        aria-label="What kind of note"
-        title={KIND_LABEL[kind].hint}
-      >
-        {ANNOTATION_KINDS.map((k) => (
-          <option key={k} value={k}>
-            {KIND_LABEL[k].label} — {KIND_LABEL[k].hint}
-          </option>
-        ))}
-      </select>
+        options={ANNOTATION_KINDS.map((k) => ({ value: k, label: KIND_LABEL[k].label, hint: KIND_LABEL[k].hint }))}
+        onChange={setKind}
+        label="What kind of note"
+      />
       <textarea
         value={text}
         maxLength={ANNOTATION_MAX_CHARS}

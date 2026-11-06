@@ -2,7 +2,7 @@
  * Helpers shared by the rules. PURE — no Figma import.
  */
 import type { FrameIRNode } from "../ir/schema.js";
-import type { Finding, NodeField, NoFix, Severity } from "../health/types.js";
+import type { Finding, NodeField, NoFix, RuleGroup } from "../health/types.js";
 import { paddingFieldFor, paddingSideOf } from "../health/slots.js";
 import { isGradient, parseSolid } from "../match/color.js";
 
@@ -58,10 +58,10 @@ export function noMatch(what: string): NoFix {
   };
 }
 
-/** Builds a slot finding. Blockers and warns use {@link pageFinding}. */
+/** Builds a slot finding. Structure findings use {@link pageFinding}. */
 export function slotFinding(args: {
   ruleId: string;
-  severity: Severity;
+  group: RuleGroup;
   node: FrameIRNode;
   scope: Finding["scope"];
   propPath: string;
@@ -80,7 +80,7 @@ export function slotFinding(args: {
 }): Finding {
   const finding: Finding = {
     ruleId: args.ruleId,
-    severity: args.severity,
+    group: args.group,
     nodeId: args.node.id,
     nodeName: args.node.name,
     nodeType: args.node.type,
@@ -100,7 +100,7 @@ export function slotFinding(args: {
 
 export function pageFinding(args: {
   ruleId: string;
-  severity: Severity;
+  group: RuleGroup;
   nodeId: string;
   nodeName: string;
   propPath: string;
@@ -112,7 +112,7 @@ export function pageFinding(args: {
 }): Finding {
   const finding: Finding = {
     ruleId: args.ruleId,
-    severity: args.severity,
+    group: args.group,
     nodeId: args.nodeId,
     nodeName: args.nodeName,
     nodeType: "PAGE",

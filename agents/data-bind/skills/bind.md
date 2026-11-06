@@ -13,6 +13,7 @@ A compiled frame shows the designer's placeholder copy. You decide where the rea
 - A list inside a list's item comes first in `collapse`, before the outer list. Its `over` starts with the outer alias: `{ "over": "section.entries", "as": "entry" }` inside `{ "over": "page.sections", "as": "section" }`.
 - When each item of the design draws several of something (a day card with two matches, a section with three entries), that is a list inside a list, and the data has a list there too (`matches[]`). Collapse it. Never bind `matches.0.…` to show one of a list: an item with two would show one.
 - A list the data always holds the same number of (`list of 2`: home and away) whose positions the design draws each in its own look (the second score in another colour) is not collapsed: bind each by position, `teams.0.score` on the first, `teams.1.score` on the second. bind.try says when a collapse would lose such looks.
+- A grid the design draws as rows (`X holds 2 of one shape: rowA, rowB`, and `rowA holds 2 of one shape: card, card`) over a flat list (`news.cards[]`, no list of rows) is one list in pieces. Collapse each row's cards over the same list, each with its own `slice` in order: rowA's `[0, 2]`, rowB's `[2, 4]`. "What repeats" lists every row's cards (`their items: rowA [card, card], rowB [card, card]`); give rowB's cards the same fields and `set` entries as rowA's, at their own ids (bind.try names any you miss). Collapsing only the first row draws every item there and leaves the other rows showing the designer's pictures and copy. A list of rows is a collapse of the rows only when the data groups its items into rows.
 - A list's `fields` take paths relative to the item (`title`, `teams.0.name`), with no alias.
 
 **Variants.** When members are one component in several shapes, each shape is what one item looks like in some state. Choose a few-valued field whose values match what the shapes say (a shape whose copy says "SOLD OUT" goes with `status: "sold_out"`).
@@ -35,9 +36,24 @@ A compiled frame shows the designer's placeholder copy. You decide where the rea
 
 **What stays.** Labels, units and headings the design writes are design copy, not data: "VIEW MORE", "DAYS", "Buy now". Leave them. Never bind a node to a field that does not mean what the node shows; leave it and say so in `remaining`.
 
+Design copy inside something that shows data is a placeholder until shown otherwise: a count on a card whose title and date you bound, a second row's headline. bind.try lists each one. Bind it, hide it with a `when` when the data has nothing for it, or leave it and say in `remaining` that it is a label. A page's own headings and buttons, which sit apart from the data, are not listed.
+
 **`set`.** Literal props the binding needs:
 - `{ "prop": "textCase", "value": "upper" }` when the design shows capitals and the data is not in capitals. Never change the data.
 - `{ "prop": "when", "value": { "path": "entry.note", "exists": true } }` on a node whose field some items lack, so it hides instead of showing a hole.
+
+## When to ask a person
+
+`ask` stops the run and puts your questions to a person. They answer them together, or let you decide, and the run goes on. Ask what the design and the data leave open, where a wrong guess would show on the page. Ask once, after `bind.source` and before your first `bind.try`, with every question you have.
+
+- **Pictures with a relative path** (`/static-assets/a.png`, `images/b.jpg`): the page needs a domain in front. Ask which domain, as a text question. Then bind each with a `template` that puts it in front (`"https://domain{item.image}"`) and read `shows` to see it.
+- **The data is not what the design shows**: the design draws videos and the data is articles, or a field the design shows (a duration, a ticket link, a competition label) is missing for every item. Ask what to do: bind what exists and leave the rest as designed, hide what has no data, or stop. State what the design shows and what the data has.
+- **A different number of items**: the design draws four cards and the data has six. Ask whether to show all, or four. Count the cards across every row of a grid, and ask when hookMaker's `missing` says the counts differ.
+- **A countdown with no instant**: the design counts down and the data has no timestamp to count to. Ask whether to leave the digits as designed or hide the clock.
+
+Give every question its `why` (what you found, with the real values), options when there are some with what each means for the page, and the answer you would pick as `proposed`. A person may have answered the same question before: the proposal then says so, and is usually right.
+
+Do not ask about the designer's notes (answer those in `final.notes`), what `bind.try` or `bind.node` shows you, or whether to publish.
 
 ## Checking
 

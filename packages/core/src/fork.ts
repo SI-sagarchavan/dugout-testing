@@ -1,9 +1,9 @@
-import type { ApprovalDecision, SavedRun } from "@dugout/contracts";
+import type { Decision, SavedRun } from "@dugout/contracts";
 
 /** What a fork changes. Another model is chosen where the fork is run, not in its state. */
 export interface ForkChange {
-  /** The decision on the approval the save point waits for, perhaps the other one. */
-  decision?: ApprovalDecision;
+  /** The decision on the pause the save point waits at, perhaps another one. */
+  decision?: Decision;
   /** A corrected input, sent as the next user message. */
   input?: unknown;
 }
@@ -21,7 +21,7 @@ export function forkRun(
 ): SavedRun {
   const { checkpoint } = saved;
   if (change.decision && !checkpoint.waiting) {
-    throw new Error(`save point ${from.version} of run ${from.runId} waits for no approval`);
+    throw new Error(`save point ${from.version} of run ${from.runId} waits for no one`);
   }
   const messages = structuredClone(saved.messages);
   if (change.input !== undefined) {

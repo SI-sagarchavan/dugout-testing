@@ -16,7 +16,7 @@ import { noMatch, slotFinding } from "./shared.js";
 export const unboundTextStyle: Rule = {
   id: "unbound-text-style",
   code: "F3",
-  severity: "fixable",
+  group: "tokens",
   protects: "the type scale — per-layer text never receives a change to the scale",
 
   check(ir) {
@@ -29,7 +29,7 @@ export const unboundTextStyle: Rule = {
       findings.push(
         slotFinding({
           ruleId: "unbound-text-style",
-          severity: "fixable",
+          group: "tokens",
           node: slot.node,
           scope: "text",
           propPath: slot.propPath,

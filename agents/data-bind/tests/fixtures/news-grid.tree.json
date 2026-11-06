@@ -1,0 +1,1647 @@
+{
+  "nodes": [
+    {
+      "id": "overlay",
+      "idx": 0,
+      "parent": null,
+      "props": {
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 695
+          },
+          "w": "full"
+        },
+        "surface": "surface.surface_overlay"
+      },
+      "src": "35:10176",
+      "type": "Overlay"
+    },
+    {
+      "id": "box",
+      "idx": 0,
+      "parent": "overlay",
+      "props": {
+        "_meta": {
+          "deviations": [
+            {
+              "check": "C2",
+              "max": 1,
+              "reason": "stretched to follow a fluid parent: the IR's 1368px box at x=0 became the parent's full width with the side gaps as padding, so the content sits where the IR puts it and the box does not"
+            }
+          ]
+        },
+        "place": {
+          "anchor": "top-fill",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": -131
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 496
+          }
+        },
+        "surface": "surface.surface_overlay"
+      },
+      "src": "35:10177",
+      "type": "Box"
+    },
+    {
+      "id": "stack",
+      "idx": 1,
+      "parent": "overlay",
+      "props": {
+        "align": "center",
+        "column": 1368,
+        "direction": "row",
+        "gap": "space.8",
+        "justify": "between",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": -7
+            },
+            "inline": {
+              "_unbound": true,
+              "raw": 97
+            }
+          }
+        },
+        "size": {
+          "h": "auto",
+          "w": {
+            "_unbound": true,
+            "raw": 1172
+          }
+        }
+      },
+      "src": "35:10178",
+      "type": "Stack"
+    },
+    {
+      "id": "in_the_frame",
+      "idx": 0,
+      "parent": "stack",
+      "props": {
+        "align": "end",
+        "content": "IN THE FRAME",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.dp_4_regular",
+        "tone": "color.text_main_sec",
+        "wrap": false
+      },
+      "src": "35:10179",
+      "type": "Text"
+    },
+    {
+      "id": "atom_button",
+      "idx": 1,
+      "parent": "stack",
+      "props": {
+        "action": {
+          "kind": "none"
+        },
+        "iconEnd": "data:image/png;base64,",
+        "iconSize": 18,
+        "label": "VIEW MORE",
+        "size": "sm",
+        "space": {
+          "px": "space.4",
+          "py": "space.1_5"
+        },
+        "styleN": 2,
+        "textCase": "upper",
+        "variant": "outline"
+      },
+      "src": "35:10180",
+      "type": "Button"
+    },
+    {
+      "id": "stack_2",
+      "idx": 2,
+      "parent": "overlay",
+      "props": {
+        "align": "center",
+        "column": 1368,
+        "direction": "row",
+        "gap": "space.4",
+        "justify": "start",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 57
+            },
+            "inline": {
+              "_unbound": true,
+              "raw": 98
+            }
+          }
+        },
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        }
+      },
+      "src": "35:10181",
+      "type": "Stack"
+    },
+    {
+      "id": "organism_news_card_big",
+      "idx": 0,
+      "parent": "stack_2",
+      "props": {
+        "clip": true,
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 578
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 578
+          }
+        },
+        "surface": "surface.organism_news_card_big"
+      },
+      "src": "35:10182",
+      "type": "Overlay"
+    },
+    {
+      "id": "box_2",
+      "idx": 0,
+      "parent": "organism_news_card_big",
+      "props": {
+        "alt": "Rectangle 7221",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start"
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 325.392578125
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 578.4757080078125
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10182;13085:25356",
+      "type": "Image"
+    },
+    {
+      "id": "image",
+      "idx": 1,
+      "parent": "organism_news_card_big",
+      "props": {
+        "alt": "image 649",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": -12
+            },
+            "inline": {
+              "_unbound": true,
+              "raw": -111
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 606
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 1078
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10182;13085:25357",
+      "type": "Image"
+    },
+    {
+      "id": "box_3",
+      "idx": 2,
+      "parent": "organism_news_card_big",
+      "props": {
+        "alt": "Rectangle 4289",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 298
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 280
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 578
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10182;13085:25358",
+      "type": "Image"
+    },
+    {
+      "id": "stack_3",
+      "idx": 3,
+      "parent": "organism_news_card_big",
+      "props": {
+        "align": "start",
+        "gap": "space.8",
+        "justify": "start",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 445
+            }
+          }
+        },
+        "size": {
+          "h": "auto",
+          "w": {
+            "_unbound": true,
+            "raw": 578
+          }
+        },
+        "space": {
+          "p": "space.5"
+        }
+      },
+      "src": "I35:10182;13085:25359",
+      "type": "Stack"
+    },
+    {
+      "id": "stack_4",
+      "idx": 0,
+      "parent": "stack_3",
+      "props": {
+        "align": "start",
+        "gap": "space.4",
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "full"
+        }
+      },
+      "src": "I35:10182;13085:25458",
+      "type": "Stack"
+    },
+    {
+      "id": "molecule_article_extension",
+      "idx": 0,
+      "parent": "stack_4",
+      "props": {
+        "align": "center",
+        "clip": true,
+        "direction": "row",
+        "gap": "space.1",
+        "justify": "center",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 24
+          },
+          "w": "auto"
+        },
+        "space": {
+          "px": "space.2_5",
+          "py": "space.1_5"
+        },
+        "surface": "surface.molecule_article_extension"
+      },
+      "src": "I35:10182;13753:35175",
+      "type": "Stack"
+    },
+    {
+      "id": "icon",
+      "idx": 0,
+      "parent": "molecule_article_extension",
+      "props": {
+        "alt": "Vector",
+        "fit": "fill",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 12
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 14.117644309997559
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10182;13753:35176",
+      "type": "Image"
+    },
+    {
+      "id": "videos",
+      "idx": 1,
+      "parent": "molecule_article_extension",
+      "props": {
+        "content": "32",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "wrap": false
+      },
+      "src": "I35:10182;13753:35177",
+      "type": "Text"
+    },
+    {
+      "id": "stack_5",
+      "idx": 1,
+      "parent": "stack_4",
+      "props": {
+        "align": "start",
+        "gap": "space.3",
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        }
+      },
+      "src": "I35:10182;13085:25385",
+      "type": "Stack"
+    },
+    {
+      "id": "jordan_saw_it_through_late_on_calm_as_ev",
+      "idx": 0,
+      "parent": "stack_5",
+      "props": {
+        "content": "Jordan saw it through late on. Calm as ever.",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.h2_bold",
+        "tone": "color.text_sec_high",
+        "wrap": false
+      },
+      "src": "I35:10182;13085:25363",
+      "type": "Text"
+    },
+    {
+      "id": "stack_6",
+      "idx": 1,
+      "parent": "stack_3",
+      "props": {
+        "align": "center",
+        "direction": "row",
+        "gap": {
+          "_unbound": true,
+          "raw": 315
+        },
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        }
+      },
+      "src": "I35:10182;13085:25367",
+      "type": "Stack"
+    },
+    {
+      "id": "date",
+      "idx": 0,
+      "parent": "stack_6",
+      "props": {
+        "content": "09 Jul, 2025",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.body_sm_regular",
+        "tone": "color.text_sec_low",
+        "wrap": false
+      },
+      "src": "I35:10182;13085:25368",
+      "type": "Text"
+    },
+    {
+      "id": "stack_7",
+      "idx": 1,
+      "parent": "stack_2",
+      "props": {
+        "align": "start",
+        "gap": "space.4",
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": {
+            "_unbound": true,
+            "raw": 578
+          }
+        }
+      },
+      "src": "35:10183",
+      "type": "Stack"
+    },
+    {
+      "id": "stack_8",
+      "idx": 0,
+      "parent": "stack_7",
+      "props": {
+        "align": "center",
+        "direction": "row",
+        "gap": "space.4",
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": {
+            "_unbound": true,
+            "raw": 578
+          }
+        }
+      },
+      "src": "35:10184",
+      "type": "Stack"
+    },
+    {
+      "id": "organism_news_card_sm",
+      "idx": 0,
+      "parent": "stack_8",
+      "props": {
+        "clip": true,
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 281
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "surface": "surface.organism_news_card_big"
+      },
+      "src": "35:10185",
+      "type": "Overlay"
+    },
+    {
+      "id": "box_4",
+      "idx": 0,
+      "parent": "organism_news_card_sm",
+      "props": {
+        "alt": "Rectangle 7221",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start"
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 158.1925811767578
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281.2312927246094
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10185;10169:11331",
+      "type": "Image"
+    },
+    {
+      "id": "image_2",
+      "idx": 1,
+      "parent": "organism_news_card_sm",
+      "props": {
+        "alt": "image 649",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": -5.834
+            },
+            "inline": {
+              "_unbound": true,
+              "raw": -83.9648
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 294.70361328125
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 523.9175415039062
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10185;10169:11332",
+      "type": "Image"
+    },
+    {
+      "id": "box_5",
+      "idx": 2,
+      "parent": "organism_news_card_sm",
+      "props": {
+        "alt": "Rectangle 4289",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 141
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 140
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10185;10169:11333",
+      "type": "Image"
+    },
+    {
+      "id": "stack_9",
+      "idx": 3,
+      "parent": "organism_news_card_sm",
+      "props": {
+        "align": "start",
+        "gap": "space.6",
+        "justify": "start",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 137
+            }
+          }
+        },
+        "size": {
+          "h": "auto",
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "space": {
+          "pl": "space.4",
+          "pr": "space.3",
+          "py": "space.5"
+        }
+      },
+      "src": "I35:10185;10169:11334",
+      "type": "Stack"
+    },
+    {
+      "id": "stack_10",
+      "idx": 0,
+      "parent": "stack_9",
+      "props": {
+        "align": "start",
+        "gap": "space.3",
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "full"
+        }
+      },
+      "src": "I35:10185;10169:11335",
+      "type": "Stack"
+    },
+    {
+      "id": "molecule_article_extension_2",
+      "idx": 0,
+      "parent": "stack_10",
+      "props": {
+        "align": "center",
+        "clip": true,
+        "direction": "row",
+        "gap": "space.1",
+        "justify": "center",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 24
+          },
+          "w": "auto"
+        },
+        "space": {
+          "px": "space.2_5",
+          "py": "space.1_5"
+        },
+        "surface": "surface.molecule_article_extension"
+      },
+      "src": "I35:10185;13753:35768",
+      "type": "Stack"
+    },
+    {
+      "id": "icon_2",
+      "idx": 0,
+      "parent": "molecule_article_extension_2",
+      "props": {
+        "alt": "Vector",
+        "fit": "fill",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 12
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 14.117644309997559
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10185;13753:35769",
+      "type": "Image"
+    },
+    {
+      "id": "videos_2",
+      "idx": 1,
+      "parent": "molecule_article_extension_2",
+      "props": {
+        "content": "32",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "wrap": false
+      },
+      "src": "I35:10185;13753:35770",
+      "type": "Text"
+    },
+    {
+      "id": "james_vince_fires_southern_brave_to_firs",
+      "idx": 1,
+      "parent": "stack_10",
+      "props": {
+        "content": "James Vince fires Southern Brave to first win despite Adam Milne heroics",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 36
+          },
+          "w": "full"
+        },
+        "style": "type.body_md_bold",
+        "tone": "color.text_sec_high",
+        "truncate": 2
+      },
+      "src": "I35:10185;10169:11338",
+      "type": "Text"
+    },
+    {
+      "id": "stack_11",
+      "idx": 1,
+      "parent": "stack_9",
+      "props": {
+        "align": "center",
+        "direction": "row",
+        "gap": {
+          "_unbound": true,
+          "raw": 153.14
+        },
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        }
+      },
+      "src": "I35:10185;10169:11341",
+      "type": "Stack"
+    },
+    {
+      "id": "date_2",
+      "idx": 0,
+      "parent": "stack_11",
+      "props": {
+        "content": "08 Jul, 2025",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.body_sm_regular",
+        "tone": "color.text_sec_low",
+        "wrap": false
+      },
+      "src": "I35:10185;10169:11342",
+      "type": "Text"
+    },
+    {
+      "id": "overlay_2",
+      "idx": 1,
+      "parent": "stack_8",
+      "props": {
+        "clip": true,
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 281
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "surface": "surface.organism_news_card_big"
+      },
+      "src": "35:10186",
+      "type": "Overlay"
+    },
+    {
+      "id": "box_6",
+      "idx": 0,
+      "parent": "overlay_2",
+      "props": {
+        "alt": "Rectangle 7221",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start"
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 158.1925811767578
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281.2312927246094
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10186;10169:11331",
+      "type": "Image"
+    },
+    {
+      "id": "image_3",
+      "idx": 1,
+      "parent": "overlay_2",
+      "props": {
+        "alt": "image 649",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": -5.834
+            },
+            "inline": {
+              "_unbound": true,
+              "raw": -83.9648
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 294.70361328125
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 523.9175415039062
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10186;10169:11332",
+      "type": "Image"
+    },
+    {
+      "id": "box_7",
+      "idx": 2,
+      "parent": "overlay_2",
+      "props": {
+        "alt": "Rectangle 4289",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 141
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 140
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10186;10169:11333",
+      "type": "Image"
+    },
+    {
+      "id": "stack_12",
+      "idx": 3,
+      "parent": "overlay_2",
+      "props": {
+        "align": "start",
+        "gap": "space.6",
+        "justify": "start",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 137
+            }
+          }
+        },
+        "size": {
+          "h": "auto",
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "space": {
+          "pl": "space.4",
+          "pr": "space.3",
+          "py": "space.5"
+        }
+      },
+      "src": "I35:10186;10169:11334",
+      "type": "Stack"
+    },
+    {
+      "id": "stack_13",
+      "idx": 0,
+      "parent": "stack_12",
+      "props": {
+        "align": "start",
+        "gap": "space.3",
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "full"
+        }
+      },
+      "src": "I35:10186;10169:11335",
+      "type": "Stack"
+    },
+    {
+      "id": "molecule_article_extension_3",
+      "idx": 0,
+      "parent": "stack_13",
+      "props": {
+        "align": "center",
+        "clip": true,
+        "direction": "row",
+        "gap": "space.1",
+        "justify": "center",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 24
+          },
+          "w": "auto"
+        },
+        "space": {
+          "px": "space.2_5",
+          "py": "space.1_5"
+        },
+        "surface": "surface.molecule_article_extension"
+      },
+      "src": "I35:10186;13753:35768",
+      "type": "Stack"
+    },
+    {
+      "id": "icon_3",
+      "idx": 0,
+      "parent": "molecule_article_extension_3",
+      "props": {
+        "alt": "Vector",
+        "fit": "fill",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 12
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 14.117644309997559
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10186;13753:35769",
+      "type": "Image"
+    },
+    {
+      "id": "videos_3",
+      "idx": 1,
+      "parent": "molecule_article_extension_3",
+      "props": {
+        "content": "32",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "wrap": false
+      },
+      "src": "I35:10186;13753:35770",
+      "type": "Text"
+    },
+    {
+      "id": "james_vince_fires_southern_brave_to_firs_2",
+      "idx": 1,
+      "parent": "stack_13",
+      "props": {
+        "content": "Hampshire owners have Southern Brave 'intention'",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 36
+          },
+          "w": "full"
+        },
+        "style": "type.body_md_bold",
+        "tone": "color.text_sec_high",
+        "truncate": 2
+      },
+      "src": "I35:10186;10169:11338",
+      "type": "Text"
+    },
+    {
+      "id": "stack_14",
+      "idx": 1,
+      "parent": "stack_12",
+      "props": {
+        "align": "center",
+        "direction": "row",
+        "gap": {
+          "_unbound": true,
+          "raw": 153.14
+        },
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        }
+      },
+      "src": "I35:10186;10169:11341",
+      "type": "Stack"
+    },
+    {
+      "id": "date_3",
+      "idx": 0,
+      "parent": "stack_14",
+      "props": {
+        "content": "07 Jul, 2025",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.body_sm_regular",
+        "tone": "color.text_sec_low",
+        "wrap": false
+      },
+      "src": "I35:10186;10169:11342",
+      "type": "Text"
+    },
+    {
+      "id": "stack_15",
+      "idx": 1,
+      "parent": "stack_7",
+      "props": {
+        "align": "center",
+        "direction": "row",
+        "gap": "space.4",
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": {
+            "_unbound": true,
+            "raw": 578
+          }
+        }
+      },
+      "src": "35:10187",
+      "type": "Stack"
+    },
+    {
+      "id": "overlay_3",
+      "idx": 0,
+      "parent": "stack_15",
+      "props": {
+        "clip": true,
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 281
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "surface": "surface.organism_news_card_big"
+      },
+      "src": "35:10188",
+      "type": "Overlay"
+    },
+    {
+      "id": "box_8",
+      "idx": 0,
+      "parent": "overlay_3",
+      "props": {
+        "alt": "Rectangle 7221",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start"
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 158.1925811767578
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281.2312927246094
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10188;10169:11331",
+      "type": "Image"
+    },
+    {
+      "id": "image_4",
+      "idx": 1,
+      "parent": "overlay_3",
+      "props": {
+        "alt": "image 649",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": -5.834
+            },
+            "inline": {
+              "_unbound": true,
+              "raw": -83.9648
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 294.70361328125
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 523.9175415039062
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10188;10169:11332",
+      "type": "Image"
+    },
+    {
+      "id": "box_9",
+      "idx": 2,
+      "parent": "overlay_3",
+      "props": {
+        "alt": "Rectangle 4289",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 141
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 140
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10188;10169:11333",
+      "type": "Image"
+    },
+    {
+      "id": "stack_16",
+      "idx": 3,
+      "parent": "overlay_3",
+      "props": {
+        "align": "start",
+        "gap": "space.6",
+        "justify": "start",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 137
+            }
+          }
+        },
+        "size": {
+          "h": "auto",
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "space": {
+          "pl": "space.4",
+          "pr": "space.3",
+          "py": "space.5"
+        }
+      },
+      "src": "I35:10188;10169:11334",
+      "type": "Stack"
+    },
+    {
+      "id": "stack_17",
+      "idx": 0,
+      "parent": "stack_16",
+      "props": {
+        "align": "start",
+        "gap": "space.3",
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "full"
+        }
+      },
+      "src": "I35:10188;10169:11335",
+      "type": "Stack"
+    },
+    {
+      "id": "molecule_article_extension_4",
+      "idx": 0,
+      "parent": "stack_17",
+      "props": {
+        "align": "center",
+        "clip": true,
+        "direction": "row",
+        "gap": "space.1",
+        "justify": "center",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 24
+          },
+          "w": "auto"
+        },
+        "space": {
+          "px": "space.2_5",
+          "py": "space.1_5"
+        },
+        "surface": "surface.molecule_article_extension"
+      },
+      "src": "I35:10188;13753:35768",
+      "type": "Stack"
+    },
+    {
+      "id": "icon_4",
+      "idx": 0,
+      "parent": "molecule_article_extension_4",
+      "props": {
+        "alt": "Vector",
+        "fit": "fill",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 12
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 14.117644309997559
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10188;13753:35769",
+      "type": "Image"
+    },
+    {
+      "id": "videos_4",
+      "idx": 1,
+      "parent": "molecule_article_extension_4",
+      "props": {
+        "content": "32",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "wrap": false
+      },
+      "src": "I35:10188;13753:35770",
+      "type": "Text"
+    },
+    {
+      "id": "james_vince_fires_southern_brave_to_firs_3",
+      "idx": 1,
+      "parent": "stack_17",
+      "props": {
+        "content": "Southern Brave in Women\u2019s Hundred 2023 | Complete Squad, Schedule, Players to Watch Out",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 36
+          },
+          "w": "full"
+        },
+        "style": "type.body_md_bold",
+        "tone": "color.text_sec_high",
+        "truncate": 2
+      },
+      "src": "I35:10188;10169:11338",
+      "type": "Text"
+    },
+    {
+      "id": "stack_18",
+      "idx": 1,
+      "parent": "stack_16",
+      "props": {
+        "align": "center",
+        "direction": "row",
+        "gap": {
+          "_unbound": true,
+          "raw": 153.14
+        },
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        }
+      },
+      "src": "I35:10188;10169:11341",
+      "type": "Stack"
+    },
+    {
+      "id": "date_4",
+      "idx": 0,
+      "parent": "stack_18",
+      "props": {
+        "content": "05 Jul, 2025",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.body_sm_regular",
+        "tone": "color.text_sec_low",
+        "wrap": false
+      },
+      "src": "I35:10188;10169:11342",
+      "type": "Text"
+    },
+    {
+      "id": "overlay_4",
+      "idx": 1,
+      "parent": "stack_15",
+      "props": {
+        "clip": true,
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 281
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "surface": "surface.organism_news_card_big"
+      },
+      "src": "35:10189",
+      "type": "Overlay"
+    },
+    {
+      "id": "box_10",
+      "idx": 0,
+      "parent": "overlay_4",
+      "props": {
+        "alt": "Rectangle 7221",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start"
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 158.1925811767578
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281.2312927246094
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10189;10169:11331",
+      "type": "Image"
+    },
+    {
+      "id": "image_5",
+      "idx": 1,
+      "parent": "overlay_4",
+      "props": {
+        "alt": "image 649",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": -5.834
+            },
+            "inline": {
+              "_unbound": true,
+              "raw": -83.9648
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 294.70361328125
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 523.9175415039062
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10189;10169:11332",
+      "type": "Image"
+    },
+    {
+      "id": "box_11",
+      "idx": 2,
+      "parent": "overlay_4",
+      "props": {
+        "alt": "Rectangle 4289",
+        "fit": "fill",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 141
+            }
+          }
+        },
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 140
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10189;10169:11333",
+      "type": "Image"
+    },
+    {
+      "id": "stack_19",
+      "idx": 3,
+      "parent": "overlay_4",
+      "props": {
+        "align": "start",
+        "gap": "space.6",
+        "justify": "start",
+        "place": {
+          "anchor": "top-start",
+          "offset": {
+            "block": {
+              "_unbound": true,
+              "raw": 137
+            }
+          }
+        },
+        "size": {
+          "h": "auto",
+          "w": {
+            "_unbound": true,
+            "raw": 281
+          }
+        },
+        "space": {
+          "pl": "space.4",
+          "pr": "space.3",
+          "py": "space.5"
+        }
+      },
+      "src": "I35:10189;10169:11334",
+      "type": "Stack"
+    },
+    {
+      "id": "stack_20",
+      "idx": 0,
+      "parent": "stack_19",
+      "props": {
+        "align": "start",
+        "gap": "space.3",
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "full"
+        }
+      },
+      "src": "I35:10189;10169:11335",
+      "type": "Stack"
+    },
+    {
+      "id": "molecule_article_extension_5",
+      "idx": 0,
+      "parent": "stack_20",
+      "props": {
+        "align": "center",
+        "clip": true,
+        "direction": "row",
+        "gap": "space.1",
+        "justify": "center",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 24
+          },
+          "w": "auto"
+        },
+        "space": {
+          "px": "space.2_5",
+          "py": "space.1_5"
+        },
+        "surface": "surface.molecule_article_extension"
+      },
+      "src": "I35:10189;13753:35768",
+      "type": "Stack"
+    },
+    {
+      "id": "icon_5",
+      "idx": 0,
+      "parent": "molecule_article_extension_5",
+      "props": {
+        "alt": "Vector",
+        "fit": "fill",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 12
+          },
+          "w": {
+            "_unbound": true,
+            "raw": 14.117644309997559
+          }
+        },
+        "src": "data:image/png;base64,"
+      },
+      "src": "I35:10189;13753:35769",
+      "type": "Image"
+    },
+    {
+      "id": "videos_5",
+      "idx": 1,
+      "parent": "molecule_article_extension_5",
+      "props": {
+        "content": "32",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.body_sm_bold",
+        "tone": "color.text_main_sec",
+        "wrap": false
+      },
+      "src": "I35:10189;13753:35770",
+      "type": "Text"
+    },
+    {
+      "id": "james_vince_fires_southern_brave_to_firs_4",
+      "idx": 1,
+      "parent": "stack_20",
+      "props": {
+        "content": "Rhianna Southby and bowlers script Brave win over Superchargers",
+        "size": {
+          "h": {
+            "_unbound": true,
+            "raw": 36
+          },
+          "w": "full"
+        },
+        "style": "type.body_md_bold",
+        "tone": "color.text_sec_high",
+        "truncate": 2
+      },
+      "src": "I35:10189;10169:11338",
+      "type": "Text"
+    },
+    {
+      "id": "stack_21",
+      "idx": 1,
+      "parent": "stack_19",
+      "props": {
+        "align": "center",
+        "direction": "row",
+        "gap": {
+          "_unbound": true,
+          "raw": 153.14
+        },
+        "justify": "start",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        }
+      },
+      "src": "I35:10189;10169:11341",
+      "type": "Stack"
+    },
+    {
+      "id": "date_5",
+      "idx": 0,
+      "parent": "stack_21",
+      "props": {
+        "content": "04 Jul, 2025",
+        "size": {
+          "h": "auto",
+          "w": "auto"
+        },
+        "style": "type.body_sm_regular",
+        "tone": "color.text_sec_low",
+        "wrap": false
+      },
+      "src": "I35:10189;10169:11342",
+      "type": "Text"
+    }
+  ],
+  "schemaVersion": "1.0.0"
+}

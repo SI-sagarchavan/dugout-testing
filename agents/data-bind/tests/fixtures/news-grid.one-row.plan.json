@@ -1,0 +1,62 @@
+{
+  "bind": [
+    {
+      "prop": "src",
+      "src": "I35:10182;13085:25357",
+      "template": "https://www.southernbrave.com{news.featured.image}"
+    },
+    {
+      "path": "news.featured.title",
+      "prop": "content",
+      "src": "I35:10182;13085:25363"
+    },
+    {
+      "path": "news.featured.date | date:\"DD MMM, YYYY\"",
+      "prop": "content",
+      "src": "I35:10182;13085:25368"
+    }
+  ],
+  "collapse": [
+    {
+      "as": "c",
+      "fields": [
+        {
+          "prop": "src",
+          "src": "I35:10185;10169:11332",
+          "template": "https://www.southernbrave.com{c.image}"
+        },
+        {
+          "path": "title",
+          "prop": "content",
+          "src": "I35:10185;10169:11338"
+        },
+        {
+          "path": "date | date:\"DD MMM, YYYY\"",
+          "prop": "content",
+          "src": "I35:10185;10169:11342"
+        }
+      ],
+      "members": ["35:10185", "35:10186"],
+      "over": "news.cards",
+      "shape": "varies"
+    }
+  ],
+  "set": [
+    {
+      "prop": "when",
+      "src": "I35:10185;13753:35768",
+      "value": {
+        "exists": false,
+        "path": "c.id"
+      }
+    },
+    {
+      "prop": "when",
+      "src": "I35:10182;13753:35175",
+      "value": {
+        "exists": false,
+        "path": "news.featured.id"
+      }
+    }
+  ]
+}

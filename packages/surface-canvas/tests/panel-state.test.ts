@@ -20,7 +20,6 @@ const reportMessage: PluginMessage = {
   type: "report",
   report,
   reconciliation: reconciliationReport(snapshot),
-  activity: [],
   scope: "full",
   nodeCount: 2,
 };
@@ -46,6 +45,7 @@ describe("reduce", () => {
         themes: [{ id: "t1", name: "Southern Brave", slug: "southern-brave", source: "f.json" }],
         themeId: "t1",
         panelState: "collapsed",
+      uiTheme: null,
         user: { id: "u1", name: "Priya Shah", color: "#e10a15" },
       },
     });
@@ -62,26 +62,6 @@ describe("reduce", () => {
     expect(next.error).toBeNull();
     expect(next.report?.coverage.loose).toBe(1);
     expect(next.nodeCount).toBe(2);
-    expect(next.activity).toEqual([]);
-  });
-
-  it("keeps another designer's activity without turning it into Undo", () => {
-    const withActivity = reduce(initialState, {
-      ...reportMessage,
-      activity: [
-        {
-          id: "a1",
-          actor: { id: "u2", name: "Amit Rao", color: "#2939a3" },
-          kind: "bind",
-          label: "fill #ffffff",
-          tokenRef: "color.core_neu_00",
-          applied: 110,
-          at: 1,
-        },
-      ],
-    });
-    expect(withActivity.activity).toHaveLength(1);
-    expect(withActivity.applied).toBeNull();
   });
 
   it("keeps the undo notice across a later report", () => {
@@ -141,12 +121,7 @@ describe("reduce", () => {
     expect(next.report?.rootName.length).toBeGreaterThan(0);
   });
 
-  it("tracks the heatmap and the selection", () => {
-    const on = reduce(initialState, { type: "heatmap", on: true, nodes: 1400 });
-    expect(on).toMatchObject({ heatmapOn: true, heatmapNodes: 1400 });
-    const off = reduce(on, { type: "heatmap", on: false, nodes: 0 });
-    expect(off.heatmapOn).toBe(false);
-
+  it("tracks the selection", () => {
     const selected = reduce(initialState, {
       type: "selection",
       count: 1,
@@ -187,6 +162,7 @@ describe("reduce", () => {
       themes: [],
       themeId: "t",
       panelState: "expanded",
+      uiTheme: null,
       user: { id: null, name: "Anonymous", color: "#6b6b6b" },
     }});
     expect(reduce(next, { type: "not-a-message" } as never)).toBe(next);
@@ -236,11 +212,6 @@ describe("reduce", () => {
       tenants: { status: "ready", tenants: [{ code: "sb", name: "Southern Brave" }], selected: "sb" },
     });
     expect(withClients.tenants).toMatchObject({ status: "ready", selected: "sb" });
-  });
-
-  it("leaves state alone for a ZIP: saving it is the iframe's job, not the reducer's", () => {
-    const next = reduce(initialState, { type: "zip-ready", name: "a.zip", files: [] });
-    expect(next).toBe(initialState);
   });
 });
 

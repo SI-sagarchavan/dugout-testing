@@ -18,7 +18,7 @@ import { noMatch, slotFinding } from "./shared.js";
 export const unboundRadius: Rule = {
   id: "unbound-radius",
   code: "F5",
-  severity: "fixable",
+  group: "tokens",
   protects: "the radius scale — a per-layer corner can't follow a tenant's shape language",
 
   check(ir) {
@@ -30,7 +30,7 @@ export const unboundRadius: Rule = {
       findings.push(
         slotFinding({
           ruleId: "unbound-radius",
-          severity: "fixable",
+          group: "tokens",
           node: slot.node,
           scope: "radius",
           propPath: slot.propPath,

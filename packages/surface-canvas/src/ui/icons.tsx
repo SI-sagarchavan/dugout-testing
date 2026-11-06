@@ -104,28 +104,11 @@ export const RetryIcon = ({ size }: IconProps): JSX.Element => (
   </Icon>
 );
 
-export const ArchiveIcon = ({ size }: IconProps): JSX.Element => (
-  <Icon size={size}>
-    <rect x="3.5" y="4" width="17" height="4.5" rx="1.5" />
-    <path d="M5 8.5V18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5" />
-    <path d="M10 13h4" />
-  </Icon>
-);
-
 export const ExternalIcon = ({ size }: IconProps): JSX.Element => (
   <Icon size={size}>
     <path d="M14 4h6v6" />
     <path d="M20 4 11 13" />
     <path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" />
-  </Icon>
-);
-
-export const HeatmapIcon = ({ size }: IconProps): JSX.Element => (
-  <Icon size={size}>
-    <rect x="4" y="4" width="7" height="7" rx="1.5" />
-    <rect x="13" y="4" width="7" height="7" rx="1.5" />
-    <rect x="4" y="13" width="7" height="7" rx="1.5" />
-    <rect x="13" y="13" width="7" height="7" rx="1.5" />
   </Icon>
 );
 

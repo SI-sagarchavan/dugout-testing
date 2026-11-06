@@ -1,6 +1,7 @@
 import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
-import type { ApprovalDecision, SavePoint } from "@dugout/contracts";
+import type { Decision, SavePoint } from "@dugout/contracts";
+import { approve, reject, requestChange } from "@dugout/contracts";
 import { type ForkChange, loadEnv, loadModelConfig, loadTenants, runModel } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import { type AnyAgent, agentIds, loadAgent } from "@dugout/sdk";
@@ -505,27 +506,27 @@ async function forkChange(
     { value: "reject", label: "Reject" },
     { value: "changes", label: "Request a change" },
   ]);
-  if (which === "approve") return { decision: { approved: true, by } };
+  if (which === "approve") return { decision: approve(by) };
   if (which === "reject") {
     const reason = (await host.prompter.text("Reason")).trim();
     if (!reason) {
       console.error("a rejection needs a reason");
       return undefined;
     }
-    return { decision: { approved: false, by, reason } };
+    return { decision: reject(by, reason) };
   }
   const changes = (await host.prompter.multiline("Change")).trim();
   if (!changes) {
     console.error("a change request needs the change");
     return undefined;
   }
-  return { decision: { approved: false, by, changes } };
+  return { decision: requestChange(by, changes) };
 }
 
-function decided(decision: ForkDecision, by: string): ApprovalDecision {
-  if (decision.approved) return { approved: true, by };
-  if ("changes" in decision) return { approved: false, by, changes: decision.changes };
-  return { approved: false, by, reason: decision.reason };
+function decided(decision: ForkDecision, by: string): Decision {
+  if (decision.approved) return approve(by);
+  if ("changes" in decision) return requestChange(by, decision.changes);
+  return reject(by, decision.reason);
 }
 
 /** JSON when it parses, and the text itself when it does not. */

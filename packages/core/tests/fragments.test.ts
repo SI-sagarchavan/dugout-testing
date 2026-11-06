@@ -1,4 +1,5 @@
 import type { ModelClient } from "@dugout/contracts";
+import { approve } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import {
   createLocalSteps,
@@ -55,7 +56,7 @@ describe("streamed fragments", () => {
         registry: createToolRegistry([]),
         outputs: createMemoryOutputStore(),
       }),
-      approver: async () => ({ approved: true, by: "x" }),
+      responder: async () => approve("x"),
       log,
       fragmentMs: 10,
     });

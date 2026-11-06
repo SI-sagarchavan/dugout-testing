@@ -556,7 +556,10 @@ describe("frame.publish", () => {
     expect(named("frame.publish").block({}, ctx("g1"))).toBeUndefined();
   });
 
-  it("stops holding a publish after two refusals, so a run always ends with a preview link", async () => {
+  // Each refusal sends the run back to examine what it names, and it asks again: the gate is
+  // advisory, so asking again is not a repeated refused call that ends the run. It is bounded all
+  // the same, so a run that will not examine anything still ends with a preview link.
+  it("keeps refusing a publish while nothing is examined, then lets it go, so a run always ends with a preview link", async () => {
     const finding = {
       nodeId: "n",
       src: "worst",
@@ -583,8 +586,16 @@ describe("frame.publish", () => {
         resolve(i: unknown, c: unknown): Record<string, unknown>;
       };
     await named("frame.load").run({}, ctx("g3"));
-    expect(named("frame.publish").block({}, ctx("g3"))).toContain("1 of 2");
-    expect(named("frame.publish").block({}, ctx("g3"))).toContain("2 of 2");
+    // without this the loop ends the run on the second refusal, whatever the gate says
+    expect((named("frame.publish") as { advisoryBlock?: boolean }).advisoryBlock).toBe(true);
+    // it names every node to look at, with what is off, and asks for all of them at once
+    const first = named("frame.publish").block({}, ctx("g3")) ?? "";
+    expect(first).toContain("1 of 4");
+    expect(first).toContain("on every one of these 1");
+    expect(first).toContain("- worst (Box, 500px off, design #000000 but renders #ffffff)");
+    for (const n of [2, 3, 4]) {
+      expect(named("frame.publish").block({}, ctx("g3"))).toContain(`${n} of 4`);
+    }
     // examined nothing, and it publishes anyway; the reviewer is shown what was left
     expect(named("frame.publish").block({}, ctx("g3"))).toBeUndefined();
     expect(named("frame.publish").resolve({}, ctx("g3")).unexamined).toEqual(["worst"]);

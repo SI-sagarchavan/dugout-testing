@@ -39,36 +39,19 @@ describe("the reference page", () => {
   });
 });
 
-describe("blockers", () => {
-  it("fires all three", () => {
-    expect(report.blockers.map((b) => b.ruleId).sort()).toEqual([
-      "groups-instead-of-frames",
-      "no-mobile-frames",
-      "root-not-autolayout",
-    ]);
+describe("structure", () => {
+  it("fires the one rule left: groups", () => {
+    expect(report.structure.map((finding) => finding.ruleId)).toEqual(["groups-instead-of-frames"]);
   });
 
-  it("B1 names the root's layout mode", () => {
-    const b1 = report.blockers.find((b) => b.ruleId === "root-not-autolayout")!;
-    expect(b1.currentValue).toBe("none");
-    expect(b1.nodeId).toBe("1:4366");
-    expect(b1.message).toContain("Not a column");
+  it("S1 counts 79 groups holding 516 layers", () => {
+    const s1 = report.structure.find((b) => b.ruleId === "groups-instead-of-frames")!;
+    expect(s1.detail).toMatchObject({ groups: SHAPE.groups, layers: SHAPE.groupedLayers });
+    expect(s1.message).toContain("79 groups · 516 layers");
   });
 
-  it("B2 counts 79 groups holding 516 layers", () => {
-    const b2 = report.blockers.find((b) => b.ruleId === "groups-instead-of-frames")!;
-    expect(b2.detail).toMatchObject({ groups: SHAPE.groups, layers: SHAPE.groupedLayers });
-    expect(b2.message).toContain("79 groups · 516 layers");
-  });
-
-  it("offers convert-groups only — wrapping a frame as a column is never safe", () => {
+  it("offers convert-groups only", () => {
     expect(report.actions.map((a) => a.id)).toEqual(["convert-groups"]);
-  });
-
-  it("B3 finds no mobile frame and reports the widths that are there", () => {
-    const b3 = report.blockers.find((b) => b.ruleId === "no-mobile-frames")!;
-    expect(b3.detail?.widthsPresent).toBe("1366, 1368");
-    expect(b3.detail?.searchedRange).toBe("320-480");
   });
 });
 
@@ -149,18 +132,6 @@ describe("the fix queue", () => {
       .slice(0, report.batchesFor90Percent)
       .reduce((sum, b) => sum + b.count, 0);
     expect(covered / report.coverage.loose).toBeGreaterThanOrEqual(0.9);
-  });
-});
-
-describe("W1", () => {
-  it("reports a default-name percentage that excludes vectors", () => {
-    const w1 = report.warns.find((w) => w.ruleId === "default-layer-names")!;
-    const percent = w1.detail?.percent as number;
-    // The real file measures ~45%; the fixture is built to the same order of
-    // magnitude rather than to the exact figure.
-    expect(percent).toBeGreaterThan(40);
-    expect(percent).toBeLessThan(55);
-    expect(w1.detail?.excludedVectors).toBeGreaterThan(600);
   });
 });
 

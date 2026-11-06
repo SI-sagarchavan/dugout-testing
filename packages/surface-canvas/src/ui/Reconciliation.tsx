@@ -11,6 +11,7 @@ import { useState } from "react";
 import type { ReconciliationReport } from "../health/reconcile-report.js";
 import { ChevronIcon } from "./icons.js";
 import { send } from "./main.js";
+import { Select } from "./Select.js";
 import type { StudioState } from "./state.js";
 
 const MAX_LISTED = 12;
@@ -44,23 +45,18 @@ export function Reconciliation({ state }: { state: StudioState }): JSX.Element |
 
       {open ? (
         <div style={{ paddingBottom: 12 }}>
-      <label className="row" style={{ marginBottom: 4 }}>
+      <div className="row" style={{ marginBottom: 4 }}>
         <span className="grow t-body">Token set</span>
-        <select
+        <Select
           value={state.themeId}
+          options={state.themes.map((theme) => ({ value: theme.id, label: theme.name }))}
+          onChange={(themeId) => send({ type: "select-theme", themeId })}
           disabled={disabled}
-          onChange={(event) => send({ type: "select-theme", themeId: event.target.value })}
-          aria-label="Token set"
+          label="Token set"
           title="Re-runs reconciliation and re-proposes every batch"
-          style={{ maxWidth: 220 }}
-        >
-          {state.themes.map((theme) => (
-            <option key={theme.id} value={theme.id}>
-              {theme.name}
-            </option>
-          ))}
-        </select>
-      </label>
+          width={220}
+        />
+      </div>
 
       <SourceLine
         localCollections={localCollections}

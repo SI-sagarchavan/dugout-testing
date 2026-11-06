@@ -35,7 +35,7 @@ export function FixQueue({
 }: {
   state: StudioState;
   dispatch: (action: PanelAction) => void;
-  /** Autofix and the heatmap, drawn on the caption line. */
+  /** Autofix, drawn on the caption line. */
   toolbar: ReactNode;
   onReviewImages: () => void;
 }): JSX.Element | null {
@@ -61,7 +61,7 @@ export function FixQueue({
   const share = report.coverage.loose > 0 ? Math.round((covered / report.coverage.loose) * 100) : 0;
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 8 }} aria-label="Fix queue">
+    <section style={{ display: "flex", flexDirection: "column", gap: 10 }} aria-label="Fix queue">
       <div className="fs-line1" style={{ justifyContent: "space-between" }}>
         <p className="t-mono" style={{ color: "var(--ink-muted)" }}>
           {report.batches.length > 0
@@ -73,7 +73,7 @@ export function FixQueue({
         </div>
       </div>
 
-      <ul style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <ul style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {rows.map((row) => (
           <li key={row.id} style={{ display: "flex", flexDirection: "column" }}>
             {row.kind === "receipt" ? (

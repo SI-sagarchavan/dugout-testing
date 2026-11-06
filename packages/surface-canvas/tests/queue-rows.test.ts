@@ -63,8 +63,7 @@ function reportMessage(
     type: "report",
     report: override,
     reconciliation: reconciliationReport(snapshot),
-    activity: [],
-    scope,
+      scope,
     nodeCount: 7,
   };
 }

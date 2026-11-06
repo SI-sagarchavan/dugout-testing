@@ -9,14 +9,16 @@
  */
 import type { AssetPlacement, TargetMatch, TargetOption } from "./assets.js";
 import type { Annotation, AnnotationKind, AssetBinding, AssetFit } from "./ir/schema.js";
-import type { ActivityActor, ActivityEntry } from "./health/activity.js";
+import type { Person } from "./health/person.js";
 import type { LintReport } from "./health/types.js";
 import type { ReconciliationReport } from "./health/reconcile-report.js";
 import type { TenantsView } from "./auth/tenants.js";
 import type { HandoffBatch } from "./handoffs.js";
 import type { ThemeChoice } from "./themes.js";
 
-export type { ActivityActor, ActivityEntry, TenantsView };
+export type { Person, TenantsView };
+
+export type UiTheme = "light" | "dark";
 
 export type PanelState = "expanded" | "collapsed";
 
@@ -38,6 +40,8 @@ export const PANEL_SIZES: Record<PanelState, { width: number; height: number }> 
 };
 
 export const CLIENT_STORAGE_KEY = "fanos-studio.panel-state";
+/** The panel's own look: "light" or "dark". Absent means follow Figma. */
+export const CLIENT_STORAGE_UI_THEME_KEY = "fanos-studio.ui-theme";
 export const CLIENT_STORAGE_THEME_KEY = "fanos-studio.theme-id";
 /** Origin Surface Studio is listening on. Must be on the api allowlist. */
 export const CLIENT_STORAGE_API_ORIGIN_KEY = "fanos-studio.api-origin";
@@ -92,8 +96,9 @@ export type UiMessage =
   | { type: "apply-candidate"; batchId: string; tokenRef: string }
   | { type: "undo-last" }
   | { type: "dismiss-undo" }
-  | { type: "toggle-heatmap"; on: boolean }
   | { type: "set-panel-state"; state: PanelState }
+  /** The panel's light/dark choice, kept across sessions. */
+  | { type: "set-ui-theme"; theme: UiTheme }
   /**
    * An image the designer exported from Figma and dropped in.
    *
@@ -163,11 +168,6 @@ export type UiMessage =
   | { type: "restart-handoff"; batchId: string }
   /** Leave the Handoff tab's progress screen. The run stays in Runs. */
   | { type: "dismiss-send" }
-  /**
-   * Walk the frames and hand back the same files the send would carry, as one
-   * ZIP. The way out when Studio is down.
-   */
-  | { type: "download-zip"; frameIds: string[] }
   /** Is Studio answering? Asked when the Handoff tab opens, and on Retry. */
   | { type: "open-studio" }
   /**
@@ -197,7 +197,9 @@ export interface BootPayload {
   themes: ThemeChoice[];
   themeId: string;
   panelState: PanelState;
-  user: ActivityActor;
+  /** The designer's choice, or null to follow Figma's own theme. */
+  uiTheme: UiTheme | null;
+  user: Person;
 }
 
 export interface AppliedPayload {
@@ -211,7 +213,7 @@ export interface AppliedPayload {
   /** True while the fix is still the top of the undo stack. */
   undoable: boolean;
   /** Who ran this apply. Undo is only this session — never someone else's bind. */
-  user: ActivityActor;
+  user: Person;
 }
 
 export type PluginMessage =
@@ -221,7 +223,6 @@ export type PluginMessage =
       type: "report";
       report: LintReport;
       reconciliation: ReconciliationReport;
-      activity: ActivityEntry[];
       scope: "full" | "incremental";
       nodeCount: number;
     }
@@ -232,7 +233,6 @@ export type PluginMessage =
    * — so the window size and the layout drawn inside it cannot disagree.
    */
   | { type: "panel-state"; state: PanelState }
-  | { type: "heatmap"; on: boolean; nodes: number }
   | {
       type: "selection";
       count: number;
@@ -284,12 +284,6 @@ export type PluginMessage =
    */
   | { type: "preview"; preview: SelectionPreview | null }
   | { type: "tenants"; tenants: TenantsView }
-  /** A ZIP of the walked frames. The UI saves it; nothing else asked for it. */
-  | {
-      type: "zip-ready";
-      name: string;
-      files: Array<{ name: string; data: Uint8Array | string }>;
-    }
   | { type: "error"; message: string };
 
 export interface SelectedFrame {

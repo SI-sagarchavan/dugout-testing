@@ -59,9 +59,9 @@ describe("the pure half of the package", () => {
   });
 
   it("never imports a Figma-aware module", () => {
-    // reconcile.ts, fix.ts, heatmap.ts, traverse.ts, export.ts, main.ts talk to
+    // reconcile.ts, fix.ts, legacy-overlay.ts, traverse.ts, export.ts, main.ts talk to
     // Figma. Nothing pure may reach for them.
-    const forbidden = ["reconcile.js", "fix.js", "heatmap.js", "traverse", "export.js", "main.js"];
+    const forbidden = ["reconcile.js", "fix.js", "legacy-overlay.js", "traverse", "export.js", "main.js"];
     for (const file of pureFiles) {
       if (file.startsWith("src/ui/")) continue; // the panel imports its own main.tsx for send()
       const source = readFileSync(file, "utf8");

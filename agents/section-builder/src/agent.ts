@@ -151,8 +151,11 @@ export const pipeline: Pipeline = {
   description:
     "Runs the whole pass for this Handoff, in order: matches the frame to its screenshot and publishes it, then finds (or builds) the data in Cast and binds it. Takes no arguments. Answers with the one preview and everything still off.",
   async run(call, input) {
-    const { exportId, project } = RunInput.parse(input);
-    const frame = (await call(frameMatch, { exportId, project })) as FrameOutput;
+    const { exportId, handoffId, project } = RunInput.parse(input);
+    const frame = (await call(
+      frameMatch,
+      handoffId ? { handoffId, project } : { exportId, project },
+    )) as FrameOutput;
     const data = (await call(bind, { preview: frame.previewUrl })) as DataOutput;
     return assemble(frame, data);
   },
@@ -169,7 +172,7 @@ export const agent = defineAgent({
   agents: [frameMatch, bind],
   pipeline,
   cli: {
-    flags: { export: "exportId" },
+    flags: { export: "exportId", handoff: "handoffId" },
     present: (req) => {
       const input = req.input as {
         retry?: { stage?: string; attempt: number; of: number; lastFailure: string };

@@ -79,9 +79,18 @@ const PACKAGE_ROOT = findPackageRoot();
 
 let sharedBrowser: Browser | null = null;
 
+/**
+ * The one browser renders share. A browser that closed or crashed is launched again: a long-lived
+ * process (the worker) otherwise fails every render after the first loss, for as long as it runs.
+ */
 async function getBrowser(): Promise<Browser> {
+  if (sharedBrowser && !sharedBrowser.isConnected()) sharedBrowser = null;
   if (!sharedBrowser) {
-    sharedBrowser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch({ headless: true });
+    browser.on("disconnected", () => {
+      if (sharedBrowser === browser) sharedBrowser = null;
+    });
+    sharedBrowser = browser;
   }
   return sharedBrowser;
 }

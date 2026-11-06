@@ -3,11 +3,19 @@
   "type": "object",
   "properties": {
     "hookId": {
-      "type": "string",
-      "description": "The new hook, dugout_…"
+      "description": "The hook that gives the data, found or built: dugout_…. null only when no hook gives any of it and no connector could",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "name": {
+      "description": "The hook's name",
       "type": "string"
+    },
+    "built": {
+      "type": "boolean",
+      "description": "true when you created or changed a hook in this run; false when you found one that fits"
     },
     "input": {
       "type": "object",
@@ -17,7 +25,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "The inputs it ran with"
+      "description": "The inputs it ran with, as a page sends them"
     },
     "covers": {
       "type": "array",
@@ -31,11 +39,11 @@
       "items": {
         "type": "string"
       },
-      "description": "What the design shows that its connectors do not give"
+      "description": "What the design shows that it does not give"
     },
     "why": {
       "type": "string",
-      "description": "Which connector, and what the transform does, in a line or two"
+      "description": "Found: why this hook over the others looked at. Built: which connector, and what the transform does. A line or two"
     },
     "existing": {
       "description": "Only when a hook of dugout's was already there and you built a new one anyway: which, and what it lacks for the need (a field, or the grouping the design reads). Not that its envelope differs: the page binds any shape",
@@ -44,7 +52,7 @@
   },
   "required": [
     "hookId",
-    "name",
+    "built",
     "input",
     "covers",
     "missing",

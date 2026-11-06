@@ -5,6 +5,7 @@ import { buildContext, MEMORY_SHARE } from "./context.ts";
 import type { MemoryStore } from "./store.ts";
 import { createMemoryTools, createSkillTool } from "./tools.ts";
 
+export * from "./answers.ts";
 export * from "./consolidate.ts";
 export * from "./context.ts";
 export * from "./embeddings.ts";

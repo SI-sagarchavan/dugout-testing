@@ -2,7 +2,7 @@ import { defineConfig } from "tsup";
 
 /**
  * Externals are shared across all three entries. `next` is gone — this package
- * no longer knows a framework exists; `apps/web` is the thing that does.
+ * no longer knows a framework exists; a host is the thing that does.
  */
 const external = [
   "react",

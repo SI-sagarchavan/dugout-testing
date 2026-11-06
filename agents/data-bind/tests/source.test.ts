@@ -23,6 +23,9 @@ const plane = () => {
     exportIr: async () => {
       throw new Error("no export");
     },
+    ir: async () => {
+      throw new Error("no IR artifact");
+    },
     dataset: async () => {
       throw new Error("this run names no dataset");
     },
@@ -102,6 +105,8 @@ describe("bind's data from Cast", () => {
     const { mcp, hub } = cast();
     const tools = createBindTools({ dir, plane: () => fake, mcp });
     const run = ctx("run-a");
+    // its "not yet" sends the run back to bind.try: asking again must not end the run
+    expect(tool(tools, "bind.publish").advisoryBlock).toBe(true);
 
     const before = (await tool(tools, "bind.load").run({}, run)) as { data: string };
     expect(before.data).toContain("no data yet");

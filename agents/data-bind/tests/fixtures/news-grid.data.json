@@ -1,0 +1,58 @@
+{
+  "news": {
+    "cards": [
+      {
+        "date": "2026-10-23T08:45:00.560Z",
+        "description": "With great power comes great responsibility Dr Doom is Tony stark ",
+        "id": 10601,
+        "image": "/static-assets/media/200868ec-e809-4921-9bab-ba57e008e13f.jpg",
+        "title": "Demo"
+      },
+      {
+        "date": "2026-06-08T07:17:06.971Z",
+        "description": "Southern Brave’s men’s squad for 2026 looks built for impact.",
+        "id": 4660,
+        "image": "/static-assets/media/d8dc5fe2-a6a2-4347-9341-21749294e806.jpg",
+        "title": "Southern Brave Men Build a Squad With Firepower, Control and Options"
+      },
+      {
+        "date": "2026-06-03T15:41:36.333Z",
+        "description": "Southern Brave’s new era will have a new look, and Castore will help carry it onto the field.",
+        "id": 4676,
+        "image": "/static-assets/media/8a773add-e5a8-4aad-a919-8d4983cd5f5d.png",
+        "title": "Castore Partnership Gives Southern Brave’s New Era Its Performance Edge"
+      },
+      {
+        "date": "2026-06-03T09:41:00.000Z",
+        "description": "Southern Brave’s women’s squad for 2026 has the feel of a group built for both the present and the future.\n\nThere is a strong retained core, world-class overseas quality and a group of younger players ready to make their mark. In The Hundred, where momentum can swing in a handful of balls, that mix gives the Brave options.",
+        "id": 4661,
+        "image": "/static-assets/media/777b8c08-f305-4d6a-a9ca-1681793ff2bb.jpg",
+        "title": "Southern Brave Women Blend Proven Class With the Next Wave"
+      },
+      {
+        "date": "2026-06-02T12:10:12.572Z",
+        "description": "Southern Brave will walk into the 2026 season looking different, and deliberately so.",
+        "id": 4677,
+        "image": "/static-assets/media/8cca1a33-0a8d-4721-93c6-d232c342ccec.jpg",
+        "title": "Southern Brave Unveil Fierce Red and Reliable Blue for a New Chapter."
+      },
+      {
+        "date": "2026-06-02T09:23:56.461Z",
+        "description": "Southern Brave’s women’s team will move into 2026 with a coaching setup that brings together fresh direction and genuine Brave connection.",
+        "id": 4667,
+        "image": "/static-assets/media/8f498215-b0b3-4f89-98dc-1c8f174cb809.jpg",
+        "title": "Batty and Shrubsole Bring Balance to Southern Brave Women’s Next Chapter"
+      }
+    ],
+    "featured": {
+      "date": "2026-10-23T12:13:50.747Z",
+      "description": "This is a demo Post ",
+      "id": 10602,
+      "image": "/static-assets/media/200868ec-e809-4921-9bab-ba57e008e13f.jpg",
+      "title": "Demo  Test CMS "
+    },
+    "items": [],
+    "pages": [],
+    "pagination": null
+  }
+}

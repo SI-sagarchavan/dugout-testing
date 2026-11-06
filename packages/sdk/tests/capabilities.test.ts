@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { approve } from "@dugout/contracts";
 import { createScriptedModel, scriptedModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
@@ -120,9 +121,9 @@ describe("capabilities (ADR 0026)", () => {
     const result = await run({
       tenantId: "club-a",
       input: { topic: "t" },
-      approver: async (req) => {
+      responder: async (req) => {
         asked.push(req.tool);
-        return { approved: true, by: "editor" };
+        return approve("editor");
       },
     });
     expect(result.status).toBe("completed");

@@ -27,8 +27,6 @@
       "description": "Problems still in the published plan, and what the design shows that the data lacks"
     },
     "notes": {
-      "default": [],
-      "description": "One entry for each note the designer left (bind.load lists them): met, or why not",
       "type": "array",
       "items": {
         "type": "object",
@@ -57,7 +55,8 @@
           "detail"
         ],
         "additionalProperties": false
-      }
+      },
+      "description": "One entry for each note the designer left (bind.load lists them): met, or why not. [] when it listed none"
     }
   },
   "required": [

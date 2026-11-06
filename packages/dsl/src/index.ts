@@ -201,3 +201,9 @@ export {
   wrapIn,
 } from "./ops.js";
 export type { Binding, CollapseOptions, RemoveOptions } from "./ops.js";
+
+// The property panel of a node: what a person can edit, from the field descriptors
+export { panelOf, propIssues, propNamesOf } from "./panel.js";
+export type { PanelField, PanelGroup, PanelGroupId } from "./panel.js";
+export { measureOf, measureText, readProp, shownValue, storedValue } from "./panel-values.js";
+export type { PanelControl } from "./panel-values.js";

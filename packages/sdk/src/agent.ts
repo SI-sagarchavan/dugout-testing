@@ -2,8 +2,8 @@ import { join } from "node:path";
 import {
   type AgentDefinition,
   AgentSpec,
-  type ApprovalRequest,
   type EventSink,
+  type InterruptRequest,
   type Message,
   type ModelClient,
   type RunContext,
@@ -12,18 +12,19 @@ import {
   type Tool,
 } from "@dugout/contracts";
 import {
-  type Approver,
   type CompletedRun,
   loadTenants,
   type ModelConfig,
   modelEntry,
   REPO_ROOT,
+  type Responder,
   type RunLocalOptions,
   runLocal,
   type Tenant,
 } from "@dugout/core";
 import { defaultMcpHost, type McpHost } from "@dugout/mcp";
 import {
+  createAnswerMemory,
   type LessonWriter,
   type MemoryStore,
   memoryGroups,
@@ -72,7 +73,7 @@ export interface RunOptions<Input> {
   /** Must already be verified by the host, never taken from the model or the input. */
   tenantId: string;
   input: Input;
-  approver: Approver;
+  responder: Responder;
   runId?: string;
   sinks?: EventSink[];
   /** Runs on this model, a name in the deps' `models`, instead of the one the agent was created with. */
@@ -104,7 +105,7 @@ export interface AgentCli {
   /** Other command-line names for input fields, e.g. `{ fixture: "fixtureId" }`. */
   flags?: Record<string, string>;
   /** The approval request as a reviewer reads it. Defaults to the tool name and its input as JSON. */
-  present?: (req: Pick<ApprovalRequest, "tool" | "input">) => string;
+  present?: (req: Pick<InterruptRequest, "tool" | "input">) => string;
   /** A closing line after the run, e.g. where the result was saved. */
   done?: (result: Pick<AgentResult, "status">, tenantId: string) => string | undefined;
 }
@@ -181,7 +182,7 @@ export type AnyAgent = Omit<Agent, "create"> & {
 /**
  * An agent from its spec, input (and optional output) schema and tools. Memory (skills, house
  * facts, lessons, consolidation), the run log, approvals and saving the run come from the harness;
- * hosts pass the model, the memory store and the approver when they run it.
+ * hosts pass the model, the memory store and the responder when they run it.
  */
 export function defineAgent<Input extends z.ZodType, Options extends object = object>(
   config: AgentConfig<Input, Options>,
@@ -332,8 +333,10 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
           tools: [...tools, ...childToolsFor(opts)],
           client: deps.client,
           models: deps.models,
-          approver: opts.approver,
+          responder: opts.responder,
           context: memory.context,
+          // what people answered before goes into the questions this run asks (ADR 0029)
+          learned: createAnswerMemory(deps.store, opts.tenantId),
           afterRun: async (run) => {
             // The agent's hook can fail (a disk, a missing checkout) and the run's lessons, examples
             // and record must still be written; its failure is reported after, not instead.

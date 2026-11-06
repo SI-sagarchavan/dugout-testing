@@ -2,6 +2,7 @@ import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelRequest } from "@dugout/contracts";
+import { approve, reject, requestChange } from "@dugout/contracts";
 import { createMemorySink, createScriptedModel, scriptedModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
@@ -67,13 +68,18 @@ const build = (script: Parameters<typeof createScriptedModel>[0]) => {
 };
 
 const input = { brief: "A T20 cricket club in Mumbai.", sports: ["cricket"] };
-const approve = async () => ({ approved: true as const, by: "editor" });
+const approves = async () => approve("editor");
 
 describe("sitemap agent", () => {
   it("validates, saves after approval and ends through final", async () => {
     const { run } = build(writerScript());
     const sink = createMemorySink();
-    const result = await run({ tenantId: "demo-cricket", input, approver: approve, sinks: [sink] });
+    const result = await run({
+      tenantId: "demo-cricket",
+      input,
+      responder: approves,
+      sinks: [sink],
+    });
 
     expect(result).toMatchObject({
       status: "completed",
@@ -95,13 +101,13 @@ describe("sitemap agent", () => {
       is_webview: false,
       children: [],
     });
-    const granted = sink.events.filter((e) => e.type === "approval.granted");
+    const granted = sink.events.filter((e) => e.type === "question.answered");
     expect(granted).toHaveLength(1);
   });
 
   it("tells the model what is wrong, so it can fix the menu before saving", async () => {
     const { run, client } = build(writerScript({ badMenuFirst: true }));
-    await run({ tenantId: "demo-cricket", input, approver: approve });
+    await run({ tenantId: "demo-cricket", input, responder: approves });
     const verdict = JSON.parse(client.requests[2]?.messages.at(-1)?.content ?? "{}");
     expect(verdict.valid).toBe(false);
     expect(verdict.issues).toEqual([
@@ -114,7 +120,7 @@ describe("sitemap agent", () => {
     const result = await run({
       tenantId: "demo-cricket",
       input,
-      approver: async () => ({ approved: false, by: "editor", reason: "too many pages" }),
+      responder: async () => reject("editor", "too many pages"),
     });
     expect(result.status).toBe("rejected");
     await expect(stat(join(sitemapsDir, "demo-cricket"))).rejects.toThrow();
@@ -128,9 +134,14 @@ describe("sitemap agent", () => {
       () => ({ toolCalls: [{ name: "final", arguments: sitemap }] }),
     ]);
     const sink = createMemorySink();
-    const result = await run({ tenantId: "demo-cricket", input, approver: approve, sinks: [sink] });
+    const result = await run({
+      tenantId: "demo-cricket",
+      input,
+      responder: approves,
+      sinks: [sink],
+    });
     expect(client.requests[1]?.messages.at(-1)?.content).toContain("is not a page in this sitemap");
-    expect(sink.events.filter((e) => e.type === "approval.requested")).toHaveLength(1);
+    expect(sink.events.filter((e) => e.type === "question.asked")).toHaveLength(1);
     expect(result.status).toBe("completed");
   });
 
@@ -140,7 +151,7 @@ describe("sitemap agent", () => {
       () => ({ toolCalls: [{ name: "final", arguments: broken }] }),
       () => ({ toolCalls: [{ name: "final", arguments: sitemap }] }),
     ]);
-    const result = await run({ tenantId: "demo-cricket", input, approver: approve });
+    const result = await run({ tenantId: "demo-cricket", input, responder: approves });
     expect(client.requests[1]?.messages.at(-1)?.content).toContain("Invalid result");
     expect(result).toMatchObject({
       status: "completed",
@@ -150,12 +161,12 @@ describe("sitemap agent", () => {
 
   it("saving the same sitemap twice changes nothing", async () => {
     const first = build(writerScript());
-    await first.run({ tenantId: "demo-cricket", input, approver: approve });
+    await first.run({ tenantId: "demo-cricket", input, responder: approves });
     const file = join(sitemapsDir, "demo-cricket", "pages.json");
     const before = (await stat(file)).mtimeMs;
     const second = build(writerScript());
     const sink = createMemorySink();
-    await second.run({ tenantId: "demo-cricket", input, approver: approve, sinks: [sink] });
+    await second.run({ tenantId: "demo-cricket", input, responder: approves, sinks: [sink] });
     expect((await stat(file)).mtimeMs).toBe(before);
     const save = sink.events.find(
       (e) => e.type === "tool.completed" && e.data.tool === "sitemap.save",
@@ -164,8 +175,8 @@ describe("sitemap agent", () => {
   });
 
   it("keeps each tenant's sitemap apart", async () => {
-    await build(writerScript()).run({ tenantId: "demo-cricket", input, approver: approve });
-    await build(writerScript()).run({ tenantId: "demo-football", input, approver: approve });
+    await build(writerScript()).run({ tenantId: "demo-cricket", input, responder: approves });
+    await build(writerScript()).run({ tenantId: "demo-football", input, responder: approves });
     for (const tenant of ["demo-cricket", "demo-football"]) {
       await expect(stat(join(sitemapsDir, tenant, "pages.json"))).resolves.toBeDefined();
     }
@@ -173,7 +184,7 @@ describe("sitemap agent", () => {
 
   it("loads the skill and the tenant's house facts into the instructions", async () => {
     const { run, client } = build(writerScript());
-    await run({ tenantId: "demo-football", input, approver: approve });
+    await run({ tenantId: "demo-football", input, responder: approves });
     const system = client.requests[0]?.messages[0]?.content ?? "";
     expect(system).toContain("## Skill: sitemap");
     expect(system).toContain("US soccer fans");
@@ -183,7 +194,7 @@ describe("sitemap agent", () => {
 
   it("offers final with the sitemap schema and the tools in the spec", async () => {
     const { run, client } = build(writerScript());
-    await run({ tenantId: "demo-cricket", input, approver: approve });
+    await run({ tenantId: "demo-cricket", input, responder: approves });
     const tools = (client.requests[0] as ModelRequest).tools?.map((t) => t.name) ?? [];
     expect(tools).toEqual(
       expect.arrayContaining(["pages.catalog", "sitemap.validate", "sitemap.save", "final"]),
@@ -192,7 +203,7 @@ describe("sitemap agent", () => {
 
   it("returns the pages as the backend's tree, under one Home root", async () => {
     const { run } = build(writerScript());
-    const result = await run({ tenantId: "demo-cricket", input, approver: approve });
+    const result = await run({ tenantId: "demo-cricket", input, responder: approves });
     const output = result.status === "completed" ? (result.output as Result) : undefined;
     expect(Result.safeParse(output).success).toBe(true);
     const [home] = output?.pages ?? [];
@@ -220,10 +231,10 @@ describe("sitemap agent", () => {
   it("rejects a brief that is empty or too long", () => {
     const { run } = build(writerScript());
     expect(() =>
-      run({ tenantId: "demo-cricket", input: { brief: " " }, approver: approve }),
+      run({ tenantId: "demo-cricket", input: { brief: " " }, responder: approves }),
     ).toThrow();
     expect(() =>
-      run({ tenantId: "demo-cricket", input: { brief: "x".repeat(4_001) }, approver: approve }),
+      run({ tenantId: "demo-cricket", input: { brief: "x".repeat(4_001) }, responder: approves }),
     ).toThrow();
   });
 });
@@ -247,11 +258,11 @@ describe("changes requested at approval", () => {
     const result = await run({
       tenantId: "demo-cricket",
       input,
-      approver: async (req) => {
+      responder: async (req) => {
         shown.push(req.input as Sitemap);
         return shown.length === 1
-          ? { approved: false, by: "editor", changes: "Change the News path to /stories" }
-          : { approved: true, by: "editor" };
+          ? requestChange("editor", "Change the News path to /stories")
+          : approve("editor");
       },
       sinks: [sink],
     });

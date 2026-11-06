@@ -4,18 +4,18 @@
 
 import { agent as bind } from "@dugout/agent-data-bind";
 import { agent as frameMatch } from "@dugout/agent-frame-match";
-import { agent as hookFinder } from "@dugout/agent-hook-finder";
 import { agent as hookMaker } from "@dugout/agent-hook-maker";
 import { agent as sectionBuilder } from "@dugout/agent-section-builder";
 import { agent as sitemap } from "@dugout/agent-sitemap";
+import { agent as uiEditor } from "@dugout/agent-ui-editor";
 import { liveDeps } from "@dugout/sdk";
 import { Valkey } from "iovalkey";
 import { createValkeyEventLog, createWorker, hostAgents, LOCAL_VALKEY_URL } from "../src/index.ts";
 
-// every agent a worker can run, by id. hook-finder and hook-maker also run inside bind, and
+// every agent a worker can run, by id. hook-maker also runs inside bind, and
 // frame-match and bind inside section-builder, as children: a worker that serves the parent runs them
 // there whether or not it serves them on their own
-const all = [sitemap, frameMatch, bind, hookFinder, hookMaker, sectionBuilder];
+const all = [sitemap, frameMatch, bind, hookMaker, sectionBuilder, uiEditor];
 const only = process.env.AGENTS?.split(",").map((id) => id.trim());
 const unknown = only?.filter((id) => !all.some((a) => a.spec.id === id)) ?? [];
 if (unknown.length) {

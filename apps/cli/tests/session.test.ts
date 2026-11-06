@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agent as sitemap } from "@dugout/agent-sitemap";
 import type { RunEvent } from "@dugout/contracts";
+import { requestChange } from "@dugout/contracts";
 import { createScriptedModel, scriptedModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
@@ -18,7 +19,7 @@ import {
 import { Valkey } from "iovalkey";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { followRun, type Terminal } from "../src/session.ts";
-import { sitemapWriter, writer } from "./fixtures.ts";
+import { askingWriter, sitemapWriter, writer } from "./fixtures.ts";
 
 const pool = createPool(inject("databaseUrl"));
 const valkey = new Valkey(process.env.VALKEY_TEST_URL || "redis://localhost:56379/1");
@@ -28,13 +29,15 @@ const queue = createRunQueue({ pool, events });
 const TENANT = "demo-cricket";
 let runsDir: string;
 
+/** The drafter's script; a test that wants it to ask first swaps in `askingWriter`. */
+let drafterScript = writer;
 const agents: Record<string, AgentEntry> = {
   drafter: {
     input: drafter.input,
     run: (opts) =>
       drafter.create({
         store,
-        client: createScriptedModel(writer()),
+        client: createScriptedModel(drafterScript()),
         models: scriptedModelConfig(),
         runsDir,
         draftsDir: join(runsDir, "drafts"),
@@ -114,8 +117,8 @@ async function eventsUntil(runId: string, done: (events: RunEvent[]) => boolean)
   throw new Error(`run ${runId} did not get there`);
 }
 const approvals = (es: RunEvent[]) =>
-  es.filter((e): e is Extract<RunEvent, { type: "approval.requested" }> => {
-    return e.type === "approval.requested";
+  es.filter((e): e is Extract<RunEvent, { type: "question.asked" }> => {
+    return e.type === "question.asked";
   });
 const contiguous = (es: RunEvent[]) =>
   expect(es.map((e) => e.seq)).toEqual(es.map((_, i) => i + 1));
@@ -134,7 +137,7 @@ describe("the CLI", () => {
     expect(text()).toContain("Looking up the topic.");
     expect(text()).toContain("· topics.get");
     expect(text()).toContain("── Draft for t-101");
-    expect(text()).toContain("· resumed by a worker (approval)");
+    expect(text()).toContain("· resumed by a worker (answered)");
     contiguous(await events.read(runId, 0));
   });
 
@@ -146,7 +149,7 @@ describe("the CLI", () => {
     expect(ending).toMatchObject({ type: "run.completed", data: { status: "completed" } });
     expect(asked).toHaveLength(0);
     expect(text()).toContain("approved without asking");
-    const decided = (await events.read(runId, 0)).find((e) => e.type === "approval.granted");
+    const decided = (await events.read(runId, 0)).find((e) => e.type === "question.answered");
     expect(decided).toMatchObject({ data: { by: "editor (auto)" } });
   });
 
@@ -158,7 +161,7 @@ describe("the CLI", () => {
     expect(asked).toHaveLength(2);
     expect(text()).toContain("skill sitemap (loaded in full)");
     expect(text()).toContain("Readers are T20 cricket followers.");
-    expect(text()).toContain("· sent back for changes: Use /fanzone for the Fan Zone.");
+    expect(text()).toContain("· answered by editor: review change: Use /fanzone for the Fan Zone.");
     expect(ending).toMatchObject({
       type: "run.completed",
       data: {
@@ -183,7 +186,7 @@ describe("the CLI", () => {
   it("attaches to a run already waiting, asking only about the approval still open", async () => {
     const runId = await queue.start(TENANT, "sitemap", brief);
     const [first] = approvals(await eventsUntil(runId, (es) => approvals(es).length === 1));
-    const changes = { approved: false as const, by: "editor", changes: "Use /fanzone." };
+    const changes = requestChange("editor", "Use /fanzone.");
     expect(await queue.decide(TENANT, runId, first?.data.callId ?? "", changes)).toBeDefined();
     await eventsUntil(runId, (es) => approvals(es).length === 2);
 
@@ -234,6 +237,48 @@ describe("the CLI", () => {
     expect(ending).toMatchObject({ type: "run.completed", data: { status: "completed" } });
     expect(asked).toEqual([]);
     expect(seen).toEqual(["This step needs a decision", "approve", "reject", "change"]);
+  });
+
+  it("asks a run's questions one by one and submits the answers together (ADR 0029)", async () => {
+    drafterScript = askingWriter;
+    try {
+      const runId = await queue.start(TENANT, "drafter", { topicId: "t-101" });
+      // tone: option 2; title: Enter takes the proposal; then the save's approval
+      const { terminal, asked, text } = scripted(["2", "", "y"]);
+      const ending = await follow(drafter, runId, terminal);
+
+      expect(ending).toMatchObject({ type: "run.completed", data: { status: "completed" } });
+      expect(asked).toHaveLength(3);
+      expect(text()).toContain("ask has 2 questions");
+      expect(text()).toContain("Which tone should the draft take?");
+      expect(text()).toContain("The brief does not say");
+      const answered = (await events.read(runId, 0)).find((e) => e.type === "question.answered");
+      expect(answered).toMatchObject({
+        data: { by: "editor", answers: { tone: "excited", title: "Season opener" } },
+      });
+      contiguous(await events.read(runId, 0));
+    } finally {
+      drafterScript = writer;
+    }
+  });
+
+  it("answers with the proposals when told not to ask", async () => {
+    drafterScript = askingWriter;
+    try {
+      const runId = await queue.start(TENANT, "drafter", { topicId: "t-101" });
+      const { terminal, asked, text } = scripted([]);
+      const ending = await follow(drafter, runId, terminal, { autoApprove: true });
+
+      expect(ending).toMatchObject({ type: "run.completed" });
+      expect(asked).toHaveLength(0);
+      expect(text()).toContain("answered with the proposals: tone, title");
+      const answered = (await events.read(runId, 0)).find((e) => e.type === "question.answered");
+      expect(answered).toMatchObject({
+        data: { by: "editor (auto)", answers: { tone: "measured", title: "Season opener" } },
+      });
+    } finally {
+      drafterScript = writer;
+    }
   });
 
   it("says when no worker has picked the run up", async () => {

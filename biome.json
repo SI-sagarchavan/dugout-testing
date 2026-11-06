@@ -15,9 +15,7 @@
       "!packages/compile",
       "!packages/renderer",
       "!packages/surface-canvas",
-      "!apps/api",
-      "!apps/surface-studio",
-      "!apps/web"
+      "!apps/api"
     ]
   }
 }

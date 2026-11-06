@@ -42,8 +42,8 @@ export function Readiness({ state }: { state: StudioState }): JSX.Element {
     state.sessionBasePercent === null
       ? 0
       : Math.round((coverage.percent - state.sessionBasePercent) * 10) / 10;
-  const blockers = report?.blockers.length ?? 0;
-  const needsYou = coverage.loose > 0 || blockers > 0;
+  // Loose values make the page less themeable; they never block a Handoff.
+  const needsYou = coverage.loose > 0;
 
   return (
     <section className="fs-card" aria-label="Readiness">

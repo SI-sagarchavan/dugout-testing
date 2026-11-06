@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
-import { AUTO_APPROVED, type ModelClient, type RunEvent } from "@dugout/contracts";
+import {
+  type AskedQuestion,
+  AUTO_APPROVED,
+  type ModelClient,
+  type ReviewAnswer,
+  type RunEvent,
+} from "@dugout/contracts";
 import { createRedactor } from "@dugout/core";
+import type { AnswerWriter, LearnedAnswer } from "./answers.ts";
 import type { MemoryItem, MemoryWriter } from "./store.ts";
 import { PROPOSE_TOOL } from "./tools.ts";
 
@@ -21,7 +28,7 @@ export interface Rejection {
 export type LessonWriter = (rejection: Rejection) => Promise<string>;
 
 export interface ConsolidateOptions {
-  writer: MemoryWriter;
+  writer: MemoryWriter & AnswerWriter;
   tenantId: string;
   agentId: string;
   runId: string;
@@ -35,12 +42,15 @@ export interface ConsolidateOptions {
  *   seen a third time is also proposed as a house fact, for a person to review;
  * - a run that completed with an approved write leaves its last approved input as an example;
  * - a run that ended leaves one run record;
- * - `memory.propose` calls become proposed facts that wait for review.
+ * - `memory.propose` calls become proposed facts that wait for review;
+ * - what a person answered when the run asked (ADR 0029) is learned, to prefill the same question
+ *   next time, and to stop asking it once a person makes the answer standing.
  */
 export async function consolidateRun(opts: ConsolidateOptions): Promise<{
   episodes: MemoryItem[];
   proposals: MemoryItem[];
   run: MemoryItem | undefined;
+  answers: LearnedAnswer[];
 }> {
   const { writer, tenantId, agentId, runId, events } = opts;
   const episodes: MemoryItem[] = [];
@@ -50,6 +60,9 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
   const redactor = createRedactor();
   const redact = (text: string) => redactor.text(text);
   const requested = new Map<string, unknown>();
+  // the questions each pause asked, to learn from the answers people gave them (ADR 0029)
+  const asked = new Map<string, AskedQuestion[]>();
+  const learned: LearnedAnswer[] = [];
   let approved: { tool: string; input: unknown } | undefined;
   const proposed = new Map<string, unknown>();
   const feedback: string[] = [];
@@ -59,11 +72,37 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
     if (event.type === "run.started") input = event.data.input;
     if (event.type === "run.completed") ending = event.data.status;
     if (event.type === "run.failed") ending = `failed (${event.data.reason})`;
-    if (event.type === "approval.requested") requested.set(event.data.callId, event.data.input);
+    if (event.type === "question.asked") asked.set(event.data.callId, event.data.questions);
+    // what a person chose is learned; what a host, the agent or memory answered is not, or the
+    // agent's own proposals would come back as if people had said them
+    if (event.type === "question.answered" && event.data.source === "person") {
+      for (const q of asked.get(event.data.callId) ?? []) {
+        const answer = event.data.answers[q.id];
+        if (q.kind === "review" || answer === undefined) continue;
+        learned.push(
+          await writer.recordAnswer({
+            tenantId,
+            agentId,
+            runId,
+            question: { ...q, question: redact(q.question) },
+            answer: typeof answer === "string" ? redact(answer) : answer,
+          }),
+        );
+      }
+    }
+    // a write waiting for a yes is a pause with a call under review (ADR 0029)
+    if (event.type === "question.asked" && event.data.subject) {
+      requested.set(event.data.callId, event.data.subject.input);
+    }
+    const review =
+      event.type === "question.answered"
+        ? (event.data.answers.review as ReviewAnswer | undefined)
+        : undefined;
     // A decision a host made without asking anyone is not an editor's approval, and the example
     // it would leave is shown to later runs as "past work an editor approved".
     if (
-      event.type === "approval.granted" &&
+      event.type === "question.answered" &&
+      review?.decision === "approve" &&
       !event.data.by.endsWith(AUTO_APPROVED) &&
       requested.has(event.data.callId)
     ) {
@@ -74,9 +113,12 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
     }
     // a change request is feedback on the draft just like a rejection, so it is remembered the
     // same way; the run itself went on
-    if (event.type === "approval.rejected" || event.type === "approval.changes_requested") {
-      const rejected = event.type === "approval.rejected";
-      const reason = rejected ? event.data.reason : event.data.changes;
+    if (
+      event.type === "question.answered" &&
+      (review?.decision === "reject" || review?.decision === "change")
+    ) {
+      const rejected = review.decision === "reject";
+      const reason = review.comment ?? "";
       feedback.push(`${rejected ? "rejected" : "asked for a change"}: "${reason}"`);
       const rejection = { tool: event.data.tool, input: requested.get(event.data.callId), reason };
       const lesson = await opts.lessons?.(rejection).catch(() => undefined);
@@ -157,7 +199,7 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
         ttlDays: EPISODE_TTL_DAYS,
       })
     : undefined;
-  return { episodes, proposals, run };
+  return { episodes, proposals, run, answers: learned };
 }
 
 /**

@@ -2,6 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  approve,
   defineTool,
   type Message,
   type ModelRequest,
@@ -422,6 +423,23 @@ describe("bedrock client", () => {
     expect(JSON.stringify(inputs[2])).not.toContain("cachePoint");
   });
 
+  it("never sends a tool strict that says it is not, so a rich schema cannot overflow the grammar", async () => {
+    const { client, inputs } = fakeRuntime([ended("end_turn")]);
+    const plain = { type: "object", properties: { a: { type: "string" } }, required: ["a"] };
+    await client.complete(
+      request({
+        model: "opus",
+        tools: [
+          { name: "a.one", description: "a", parameters: plain },
+          { name: "ask", description: "ask", parameters: plain, strict: false },
+        ],
+      }),
+    );
+    type Sent = { toolConfig: { tools: Array<{ toolSpec: Record<string, unknown> }> } };
+    const strict = (inputs[0] as Sent).toolConfig.tools.map((t) => t.toolSpec.strict === true);
+    expect(strict).toEqual([true, false]);
+  });
+
   it("keeps tools strict only while their optional parameters stay within Bedrock's limit", async () => {
     const { client, inputs } = fakeRuntime([ended("end_turn")]);
     // ten optional parameters each: two fit in the 24 Bedrock takes, the third would not
@@ -707,7 +725,7 @@ describe("a run on Claude", () => {
       tools: [fixtureGet],
       client: createBedrockClient({ runtime, models }),
       models,
-      approver: async () => ({ approved: true, by: "test" }),
+      responder: async () => approve("test"),
       runsDir: await mkdtemp(join(tmpdir(), "bedrock-run-")),
     });
 

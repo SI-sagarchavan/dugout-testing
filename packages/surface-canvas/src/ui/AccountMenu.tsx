@@ -16,7 +16,7 @@
  */
 import type { JSX } from "react";
 import { useEffect, useId, useRef, useState } from "react";
-import { initialOf } from "../health/activity.js";
+import { initialOf } from "../health/person.js";
 import type { AuthView, TenantsView } from "../protocol.js";
 import { connect } from "./auth.js";
 import { send } from "./main.js";

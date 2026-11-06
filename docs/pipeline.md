@@ -1,6 +1,6 @@
 # The FanOS pipeline
 
-> The apps below (`@fanos/api`, `@fanos/surface-studio`, `@fanos/web`) are stand-ins that retire as Surface
+> The apps below (`@fanos/api`) are stand-ins that retire as Surface
 > Studio moves into the FanXP admin app and the backend takes over the Handoff ([ADR 0027](adr/0027-two-databases.md)).
 > The packages stay: agents use them as libraries. The current end-to-end flow is
 > [architecture/handoff-flow.md](architecture/handoff-flow.md).
@@ -14,9 +14,7 @@ already shipped. That is what lives here today.
 
 | App                                               | What it is                                                                                                                                                                  |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`@fanos/surface-studio`](../apps/surface-studio) | Page board. Runs on `:3001`; the plugin's **Send to Surface Studio** reaches it through the site on `:3000`.                                                                |
 | [`@fanos/api`](../apps/api)                       | Control plane on `:4100`. Artifact store, surface versioning, pipeline runs, fidelity gate. Postgres + Redis.                                                               |
-| [`@fanos/web`](../apps/web)                       | Client-facing site on `:3000` (forwards `/v1/*` and the board to Studio). Next.js 15. Owns routing, data fetching and streaming; renders through the `@fanos/renderer` SDK. |
 
 ## Packages
 
@@ -61,7 +59,7 @@ pnpm build           # build every package and app
 pnpm infra up                 # dugout's Valkey (the job queue, database 1) and Postgres
 pnpm infra up pipeline        # Electric :3010, and the `fanos` database in dugout's Postgres (ADR 0021)
 pnpm db migrate fanos
-pnpm dev             # web :3000 (Studio behind it on :3001), api :4100, and the worker
+pnpm dev             # api :4100 and its worker
 pnpm --filter "@fanos/*" -r test        # every pipeline package's tests
 pnpm --filter "@fanos/*" -r typecheck
 ```
@@ -116,8 +114,8 @@ packages/
       cli.ts               fos-dsl check | types | schema | docs | collapse
     tests/                 244 tests, incl. every acceptance mutation
   renderer/                the SDK — no Next, no framework
-    fixtures/              *.data.json, read by the tests and by apps/web
-    public/                self-hosted fonts + local assets (apps/web symlinks it)
+    fixtures/              *.data.json, read by the tests
+    public/                self-hosted fonts + local assets (Studio serves it at /public)
     src/
       index.ts             the SDK entry: resolvers + components
       harness.ts           `@fanos/renderer/harness` — Playwright, kept off the SDK entry

@@ -9,12 +9,12 @@
  * leaves the same way; this file owns only which tab is showing.
  */
 import type { JSX } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Tab } from "../protocol.js";
 import { needsAttention } from "../handoffs.js";
 import { AccountMenu } from "./AccountMenu.js";
+import { applyUiTheme, ThemeToggle } from "./ThemeToggle.js";
 import { CheckTab, type CheckView } from "./CheckTab.js";
-import { RescanIcon } from "./icons.js";
 import { send } from "./main.js";
 import { HistoryTab } from "./HistoryTab.js";
 import { HandoffTab } from "./HandoffTab.js";
@@ -31,6 +31,11 @@ export function App({
 }): JSX.Element {
   const [tab, setTab] = useState<Tab>("check");
   const [view, setView] = useState<CheckView>("queue");
+
+  // A saved choice wins over the theme Figma set, also while collapsed.
+  useEffect(() => {
+    if (state.uiTheme) applyUiTheme(state.uiTheme);
+  }, [state.uiTheme]);
 
   if (state.panelState === "collapsed") return <Collapsed state={state} />;
 
@@ -61,15 +66,7 @@ export function App({
           </button>
         </div>
         <AccountMenu auth={state.auth} tenants={state.tenants} />
-        <button
-          className="fs-iconbtn"
-          aria-label="Rescan this file"
-          title="Re-check this frame. Doesn’t follow your selection."
-          disabled={state.busy}
-          onClick={() => send({ type: "refresh" })}
-        >
-          <RescanIcon />
-        </button>
+        <ThemeToggle theme={state.uiTheme} dispatch={dispatch} />
       </header>
 
       {stalled ? (
@@ -106,7 +103,7 @@ export function App({
  */
 function Collapsed({ state }: { state: StudioState }): JSX.Element {
   const report = state.report;
-  const blockers = report?.blockers.length ?? 0;
+  const advice = report?.structure.length ?? 0;
 
   const summary = state.error ? (
     <span style={{ color: "var(--attention)" }}>Something went wrong — expand</span>
@@ -116,8 +113,8 @@ function Collapsed({ state }: { state: StudioState }): JSX.Element {
     <>
       <strong>{report.coverage.total === 0 ? "—" : `${report.coverage.percent}%`}</strong>
       <span className="muted"> · </span>
-      <span style={{ color: blockers > 0 ? "var(--attention)" : "var(--ink-muted)" }}>
-        {blockers} {blockers === 1 ? "blocker" : "blockers"}
+      <span style={{ color: "var(--ink-muted)" }}>
+        {advice} {advice === 1 ? "structure note" : "structure notes"}
       </span>
     </>
   ) : (

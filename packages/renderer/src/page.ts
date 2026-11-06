@@ -1,11 +1,10 @@
 /**
  * A stored tree, made ready to render as a page: the one recipe every host follows.
  *
- * Studio's static preview and the Next.js site (`apps/web`) both render a Handoff from the same
- * artifacts: the compiled tree, the theme it compiled against and the surface set. Both need the
- * same CSS, the same asset URLs, the same binding plan applied and the same width, or the two
- * would show different pages for one Handoff. So the work lives here and each host only adds its
- * own document around it (an HTML string, or a Next.js page).
+ * Studio's static preview and its editor render a Handoff from the same artifacts: the compiled
+ * tree, the theme it compiled against and the surface set. Both need the same CSS, the same asset
+ * URLs, the same binding plan applied and the same width, or the two would show different pages for
+ * one Handoff. So the work lives here and each host only adds its own document around it.
  *
  * Server only: theme CSS is emitted here, never in a browser bundle.
  */

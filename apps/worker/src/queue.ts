@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { ApprovalDecision, RunEvent } from "@dugout/contracts";
+import type { Decision, RunEvent } from "@dugout/contracts";
 import { type ForkChange, forkRun, loadModelConfig, modelEntry } from "@dugout/core";
 import { type Pool, withTenant } from "@dugout/db";
 import { readStoredEvents, type ValkeyEventLog } from "./event-log.ts";
 import { appendEnding, cancelledEvent, lastSeq } from "./records.ts";
-import { loadRun, runHistory } from "./run-store.ts";
+import { loadRun, runHistory, writeFork } from "./run-store.ts";
 
 export interface RunRow {
   id: string;
@@ -81,7 +81,7 @@ export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
      * Returns the last `seq` before the decision, to follow the resumed run from. Undefined when the
      * run is not waiting for this call (already decided, another call, another tenant).
      */
-    async decide(tenantId: string, runId: string, callId: string, decision: ApprovalDecision) {
+    async decide(tenantId: string, runId: string, callId: string, decision: Decision) {
       const queued = await withTenant(opts.pool, tenantId, async (db) => {
         // the update checks the waiting call in the same statement, so two decisions can't both win
         const { rowCount } = await db.query(
@@ -141,6 +141,39 @@ export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
     history: (tenantId: string, runId: string) => runHistory(opts.pool, { tenantId, runId }),
 
     /**
+     * Queues a follow-up to run `parentId`: a new run of the same agent that carries on from the
+     * parent's latest save point (its transcript, then `input` as a corrected input). The worker
+     * writes the carried state when it claims the run, so a host that only inserts a row (the
+     * backend) can do the same. The parent must have ended: a follow-up goes between turns.
+     */
+    async continueFrom(
+      tenantId: string,
+      parentId: string,
+      input: unknown,
+      options: { model?: string } = {},
+    ) {
+      const parent = await find(tenantId, parentId);
+      if (!parent) throw new Error(`no run ${parentId} for tenant ${tenantId}`);
+      if (!ENDED.has(parent.status)) throw new Error(`run ${parentId} has not ended`);
+      const runId = randomUUID();
+      await withTenant(opts.pool, tenantId, (db) =>
+        db.query(
+          `insert into runs (id, tenant_id, agent_id, status, input, parent_run_id, model)
+           values ($1, $2, $3, 'queued', $4, $5, $6)`,
+          [
+            runId,
+            tenantId,
+            parent.agent_id,
+            JSON.stringify(input),
+            parentId,
+            options.model ?? parent.model,
+          ],
+        ),
+      );
+      return runId;
+    },
+
+    /**
      * Queues a new run that carries on from save point `from` of run `runId`: the parent's
      * transcript and events up to that point, then the change. The decision on the approval the
      * save point waits for (perhaps the other one), a corrected input, or another model; with no
@@ -177,29 +210,7 @@ export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
             change.model ?? parent.model,
           ],
         );
-        for (const [idx, message] of forked.messages.entries()) {
-          await db.query(
-            "insert into run_messages (run_id, idx, tenant_id, message) values ($1, $2, $3, $4)",
-            [fork, idx, tenantId, JSON.stringify(message)],
-          );
-        }
-        await db.query(
-          `insert into run_events (run_id, seq, tenant_id, type, data, at)
-           select $1, seq, tenant_id, type, data, at from run_events
-           where run_id = $2 and seq <= $3`,
-          [fork, runId, forked.checkpoint.lastSeq],
-        );
-        const checkpoint = JSON.stringify(forked.checkpoint);
-        await db.query(
-          `insert into run_checkpoints (run_id, tenant_id, checkpoint, version)
-           values ($1, $2, $3, 1)`,
-          [fork, tenantId, checkpoint],
-        );
-        await db.query(
-          `insert into run_checkpoint_history (run_id, version, tenant_id, checkpoint)
-           values ($1, 1, $2, $3)`,
-          [fork, tenantId, checkpoint],
-        );
+        await writeFork(db, tenantId, fork, runId, forked);
       });
       return { runId: fork, startSeq: forked.checkpoint.lastSeq };
     },

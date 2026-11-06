@@ -102,7 +102,16 @@ export function unreportedNotes(
 ): string | undefined {
   const reported = new Set((reports ?? []).map((report) => report.id));
   const missing = listed.filter((id) => !reported.has(id));
-  return missing.length === 0
-    ? undefined
-    : `The designer left notes you have not answered: ${missing.join(", ")}. Add one entry to notes for each: addressed with how, not-addressed with why, or not-mine.`;
+  if (missing.length === 0) return undefined;
+  // a model that read "add entries" as already done sends the same call again: say what is missing
+  // and show the shape, so the next call is different from the last
+  const shape = missing
+    .map(
+      (id) =>
+        `{"id":"${id}","status":"<addressed | not-addressed | not-mine>","detail":"<how, or why not>"}`,
+    )
+    .join(",");
+  const had =
+    (reports ?? []).length === 0 ? "Your final call has no notes." : "Your notes miss them.";
+  return `The designer left notes you have not answered: ${missing.join(", ")}. ${had} Call final again with the same values and notes: [${shape}]. addressed: done, and detail says how. not-addressed: not done, and detail says why. not-mine: the note is about where data comes from or what it shows, which the next stage (data-bind) decides.`;
 }

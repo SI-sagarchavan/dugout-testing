@@ -1,6 +1,6 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { defineTool } from "@dugout/contracts";
+import { approve, defineTool } from "@dugout/contracts";
 import {
   createMemoryOutputStore,
   createMemoryRunStore,
@@ -23,7 +23,7 @@ const save = defineTool({
 });
 
 describe("tracing sink", () => {
-  it("records one trace per run with model, tool and approval spans under the run", async () => {
+  it("records one trace per run with model, tool and review spans under the run", async () => {
     const exporter = new InMemorySpanExporter();
     const provider = createTracerProvider(new SimpleSpanProcessor({ exporter }));
     const result = await runLocal({
@@ -50,7 +50,7 @@ describe("tracing sink", () => {
         { content: "done" },
       ]),
       models: scriptedModelConfig(),
-      approver: async () => ({ approved: true, by: "editor" }),
+      responder: async () => approve("editor"),
       runsDir: await mkdtemp(`${tmpdir()}/trace-`),
       outputs: createMemoryOutputStore(),
       sinks: [createTracingSink(provider.getTracer("test"))],
@@ -65,13 +65,7 @@ describe("tracing sink", () => {
     });
     expect(new Set(spans.map((s) => s.spanContext().traceId)).size).toBe(1);
     expect(spans.map((s) => s.name).sort()).toEqual(
-      [
-        "approval draft.save",
-        "model step 1",
-        "model step 2",
-        "run traced",
-        "tool draft.save",
-      ].sort(),
+      ["review draft.save", "model step 1", "model step 2", "run traced", "tool draft.save"].sort(),
     );
     for (const s of spans.filter((s) => s !== root)) {
       expect(s.parentSpanContext?.spanId).toBe(root?.spanContext().spanId);
@@ -82,8 +76,8 @@ describe("tracing sink", () => {
       "gen_ai.usage.input_tokens": 1000,
       "gen_ai.response.model": "nova-micro",
     });
-    expect(spans.find((s) => s.name === "approval draft.save")?.attributes).toMatchObject({
-      "dugout.approver": "editor",
+    expect(spans.find((s) => s.name === "review draft.save")?.attributes).toMatchObject({
+      "dugout.responder": "editor",
     });
   });
 
@@ -117,7 +111,7 @@ describe("tracing sink", () => {
         tools: [save],
         client: createScriptedModel(script),
         models: scriptedModelConfig(),
-        approver: async () => ({ pending: true }),
+        responder: async () => ({ pending: true }),
         runsDir,
         outputs: createMemoryOutputStore(),
         store,
@@ -135,15 +129,15 @@ describe("tracing sink", () => {
     // a new process: a new tracing sink that never saw `run.started`
     const after = new InMemorySpanExporter();
     const second = await invoke(after, [{ content: "done" }], {
-      reason: "approval",
-      decision: { approved: true, by: "editor" },
+      reason: "answered",
+      decision: approve("editor"),
     });
     expect(second.status).toBe("completed");
     const spans = after.getFinishedSpans();
     const root = spans.find((s) => s.name === "run traced (resumed)");
     expect(root?.attributes).toMatchObject({
       "langfuse.session.id": "traced-run",
-      "dugout.resumed_reason": "approval",
+      "dugout.resumed_reason": "answered",
       "dugout.status": "completed",
     });
     expect(spans.map((s) => s.name).sort()).toEqual(

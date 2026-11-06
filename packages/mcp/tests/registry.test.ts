@@ -166,7 +166,7 @@ describe("the registry", () => {
 
   it("is in step with the cast entry this repo ships", () => {
     const shipped = loadRegistry();
-    expect(shipped.get("cast")?.capabilities["hooks.choose"]).toBeDefined();
+    expect(shipped.get("cast")?.capabilities["hooks.author"]).toBeDefined();
     // every tool a capability grants has its effect, and the lock has it
     const lock = readLock("cast");
     for (const capability of Object.values(shipped.get("cast")?.capabilities ?? {})) {

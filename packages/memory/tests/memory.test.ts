@@ -262,13 +262,21 @@ describe("episodes", () => {
           tenantId: a,
           input: { id: "c-1" },
         }),
-        ev(2, "approval.requested", { step: 1, callId: "c1", tool: "draft.save", input: {} }),
-        ev(3, "approval.changes_requested", {
+        ev(2, "question.asked", {
+          step: 1,
+          callId: "c1",
+          tool: "draft.save",
+          questions: [],
+          from: [],
+          subject: { input: {} },
+        }),
+        ev(3, "question.answered", {
           step: 1,
           callId: "c1",
           tool: "draft.save",
           by: "editor",
-          changes: "Shorter title",
+          answers: { review: { decision: "change", comment: "Shorter title" } },
+          source: "person",
         }),
         ev(4, "run.completed", { status: "completed", output: null, usage: {} }),
       ],
@@ -394,18 +402,21 @@ describe("consolidation", () => {
     ({ runId: "r", seq, at: "2026-10-29T00:00:00Z", type, data }) as RunEvent;
 
   const events = [
-    ev(1, "approval.requested", {
+    ev(1, "question.asked", {
       step: 1,
       callId: "c1",
       tool: "draft.save",
-      input: { body: "Bet now on the Lions!" },
+      questions: [],
+      from: [],
+      subject: { input: { body: "Bet now on the Lions!" } },
     }),
-    ev(2, "approval.rejected", {
+    ev(2, "question.answered", {
       step: 1,
       callId: "c1",
       tool: "draft.save",
       by: "editor",
-      reason: "no betting language",
+      answers: { review: { decision: "reject", comment: "no betting language" } },
+      source: "person",
     }),
     ev(3, "tool.started", {
       step: 1,
@@ -513,12 +524,13 @@ describe("consolidation", () => {
       runId,
       events: [
         events[0] as RunEvent,
-        ev(2, "approval.changes_requested", {
+        ev(2, "question.answered", {
           step: 1,
           callId: "c1",
           tool: "draft.save",
           by: "editor",
-          changes: "Put Fixtures before News",
+          answers: { review: { decision: "change", comment: "Put Fixtures before News" } },
+          source: "person",
         }),
       ],
       lessons: async (r) => {
@@ -581,12 +593,13 @@ describe("consolidation", () => {
           input: { contact: "fan@example.com" },
         }),
         ...events.slice(0, 1),
-        ev(3, "approval.rejected", {
+        ev(3, "question.answered", {
           step: 1,
           callId: "c1",
           tool: "draft.save",
           by: "editor",
-          reason: "mail jo@example.org first",
+          answers: { review: { decision: "reject", comment: "mail jo@example.org first" } },
+          source: "person",
         }),
         ev(4, "run.completed", { status: "rejected", output: null, usage: {} }),
       ],
@@ -603,9 +616,23 @@ describe("approved examples", () => {
     ({ runId: "r", seq, at: "2026-11-01T00:00:00Z", type, data }) as RunEvent;
   const input = { fixtureId: "c-101", note: "mail fan@example.com" };
   const call = (callId: string, body: string) =>
-    ev(2, "approval.requested", { step: 1, callId, tool: "draft.save", input: { body } });
+    ev(2, "question.asked", {
+      step: 1,
+      callId,
+      tool: "draft.save",
+      questions: [],
+      from: [],
+      subject: { input: { body } },
+    });
   const granted = (callId: string) =>
-    ev(3, "approval.granted", { step: 1, callId, tool: "draft.save", by: "editor" });
+    ev(3, "question.answered", {
+      step: 1,
+      callId,
+      tool: "draft.save",
+      by: "editor",
+      answers: { review: { decision: "approve" } },
+      source: "person",
+    });
   const started = () =>
     ev(1, "run.started", { agentId: AGENT, agentVersion: 1, tenantId: a, input });
   const completed = ev(9, "run.completed", { status: "completed", output: null, usage: {} });
@@ -657,14 +684,16 @@ describe("approved examples", () => {
     expect(shown).not.toContain("first draft");
   });
 
-  it("stores none for a run an approval nobody made let through", async () => {
+  it("stores none for a run a yes nobody made let through", async () => {
     // `--yes` and the watcher record "<who> (auto)": output no editor looked at is not "past work
     // an editor approved", and would teach later runs to imitate whatever the model produced
-    const auto = ev(3, "approval.granted", {
+    const auto = ev(3, "question.answered", {
       step: 1,
       callId: "c1",
       tool: "draft.save",
       by: `sam${AUTO_APPROVED}`,
+      answers: { review: { decision: "approve" } },
+      source: "auto",
     });
     await consolidate([started(), call("c1", "unreviewed"), auto, completed]);
     expect(await text()).not.toContain("Approved examples");
@@ -675,12 +704,13 @@ describe("approved examples", () => {
   });
 
   it("stores none for a run that was rejected or did not complete", async () => {
-    const rejected = ev(4, "approval.rejected", {
+    const rejected = ev(4, "question.answered", {
       step: 1,
       callId: "c1",
       tool: "draft.save",
       by: "editor",
-      reason: "no",
+      answers: { review: { decision: "reject", comment: "no" } },
+      source: "person",
     });
     await consolidate([
       started(),

@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@dugout/agent-hook-maker": "workspace:^",
-    "@dugout/agent-hook-finder": "workspace:^",
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",
     "@dugout/evals": "workspace:^",

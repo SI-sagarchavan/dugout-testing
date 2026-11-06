@@ -6,6 +6,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelRequest } from "@dugout/contracts";
+import { approve, reject } from "@dugout/contracts";
 import { createScriptedModel, type ScriptedTurn, scriptedModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
@@ -20,7 +21,7 @@ const store = createMemoryStore({ pool, embeddings: createHashEmbeddings() });
 beforeAll(() => seedHouseFacts(store, ["demo-cricket", "demo-football"]));
 
 const lastTool = (req: ModelRequest) => JSON.parse(req.messages.at(-1)?.content ?? "{}");
-const approve = async () => ({ approved: true as const, by: "x" });
+const approves = async () => approve("x");
 
 /** Follows the agent's workflow using whatever the tools return. */
 function script(
@@ -74,13 +75,13 @@ describe("the test agent on the harness", () => {
       () => ({ toolCalls: [{ name: "topics.get", arguments: { topicId: "t-201" } }] }),
       () => ({ content: "Could not find it." }),
     ]);
-    await run({ tenantId: "demo-cricket", input: { topicId: "t-201" }, approver: approve });
+    await run({ tenantId: "demo-cricket", input: { topicId: "t-201" }, responder: approves });
     expect(client.requests[1]?.messages.at(-1)?.content).toBe("Error: no topic t-201");
   });
 
   it("stores a long tool output and sends a reference to it", async () => {
     const { run, client } = draft(script("t-101"));
-    await run({ tenantId: "demo-cricket", input: { topicId: "t-101" }, approver: approve });
+    await run({ tenantId: "demo-cricket", input: { topicId: "t-101" }, responder: approves });
     const history = lastTool(client.requests[2] as ModelRequest);
     expect(history.ref).toMatch(/^out-\d+$/);
     expect(history.preview).toContain('"name":"Season opener"');
@@ -89,7 +90,7 @@ describe("the test agent on the harness", () => {
   it("saving the same draft twice changes nothing", async () => {
     for (let i = 0; i < 2; i++) {
       const { run, client } = draft(script("t-102"));
-      await run({ tenantId: "demo-cricket", input: { topicId: "t-102" }, approver: approve });
+      await run({ tenantId: "demo-cricket", input: { topicId: "t-102" }, responder: approves });
       expect(JSON.parse(client.requests[3]?.messages.at(-1)?.content ?? "{}").unchanged).toBe(
         i === 1,
       );
@@ -100,7 +101,7 @@ describe("the test agent on the harness", () => {
     const requests = [];
     for (const topicId of ["t-101", "t-102"]) {
       const { run, client } = draft(script(topicId));
-      await run({ tenantId: "demo-cricket", input: { topicId }, approver: approve });
+      await run({ tenantId: "demo-cricket", input: { topicId }, responder: approves });
       requests.push(client.requests[0]);
     }
     // recalled memory depends on the input, so it can't be in the cached prefix
@@ -120,20 +121,24 @@ describe("the test agent on the harness", () => {
     const rejected = await first.run({
       tenantId,
       input: { topicId: "t-103" },
-      approver: async () => ({ approved: false, by: "editor", reason }),
+      responder: async () => reject("editor", reason),
     });
     expect(rejected.status).toBe("rejected");
     expect(rejected.afterRunError).toBeUndefined();
 
     const second = draft(script("t-103"));
-    await second.run({ tenantId, input: { topicId: "t-103" }, approver: approve });
+    await second.run({ tenantId, input: { topicId: "t-103" }, responder: approves });
     // a lesson is recalled memory: in the first user message with the input, never in the system prompt
     expect(second.client.requests[0]?.messages[0]?.content).not.toContain(lesson);
     expect(second.client.requests[0]?.messages[1]?.content).toContain(lesson);
     expect(second.client.requests[0]?.messages[1]?.content).toContain('{"topicId":"t-103"}');
 
     const other = draft(script("t-203"));
-    await other.run({ tenantId: "demo-football", input: { topicId: "t-203" }, approver: approve });
+    await other.run({
+      tenantId: "demo-football",
+      input: { topicId: "t-203" },
+      responder: approves,
+    });
     expect(other.client.requests[0]?.messages[0]?.content).not.toContain(suffix);
     expect(other.client.requests[0]?.messages[1]?.content).not.toContain(suffix);
 

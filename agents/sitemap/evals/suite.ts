@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { ModelClient, RunEvent } from "@dugout/contracts";
+import { approve, requestChange } from "@dugout/contracts";
 import {
-  type Approver,
   createBedrockClient,
   createMemorySink,
   createScriptedModel,
   loadModelConfig,
   type ModelConfig,
+  type Responder,
   scriptedModelConfig,
 } from "@dugout/core";
 import {
@@ -93,12 +94,12 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
     // every sitemap shown for approval; with `revise`, the first is sent back for the change
     const shown: Sitemap[] = [];
     // the editor approves into a throwaway folder, so `final` and the save both get exercised
-    const approver: Approver = async (req) => {
+    const responder: Responder = async (req) => {
       shown.push(sitemapOf(req));
       if (c.revise && shown.length === 1) {
-        return { approved: false, by: "eval", changes: c.revise.request };
+        return requestChange("eval", c.revise.request);
       }
-      return { approved: true, by: "eval" };
+      return approve("eval");
     };
     const sink = createMemorySink();
     const run = agent.create({
@@ -114,7 +115,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<Sitemap
     const result = await run({
       tenantId: tenant,
       input: { brief: c.brief, ...(c.sports ? { sports: c.sports } : {}) },
-      approver,
+      responder,
       sinks: [sink],
     });
     const events = sink.events;

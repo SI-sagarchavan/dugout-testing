@@ -272,7 +272,7 @@ function toolSpecs(tools: ToolDefinition[], strictTools: boolean): Tool[] {
   let budget = STRICT_OPTIONAL_LIMIT;
   return tools.map((t) => {
     const parameters = typedSchema(t.parameters);
-    let strict = strictTools ? strictSchema(parameters) : undefined;
+    let strict = strictTools && t.strict !== false ? strictSchema(parameters) : undefined;
     if (strict) {
       const cost = optionalParameters(strict);
       if (cost > budget) strict = undefined;

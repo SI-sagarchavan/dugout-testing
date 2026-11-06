@@ -6,6 +6,7 @@
  * rather than importing it). `tests/layout.test.ts` holds the two to the same answers.
  */
 
+import type { Answers, AskedQuestion } from "@dugout/contracts";
 import { z } from "zod";
 
 export const CarouselConfig = z
@@ -161,18 +162,185 @@ function effectOf(effect: unknown): string {
   return typeof kind === "string" && kind !== "slide" ? `${kind} effect` : "";
 }
 
-/** The approval card for frame.layout: what the frame showed, what is asked, what is proposed. */
-export function questionCard(report: LayoutReport | undefined, proposed: LayoutChoice): string[] {
-  const lines = [`Layout of "${report?.name ?? proposed.src}" [${proposed.src}]`];
-  if (report) {
-    lines.push(`The frame shows: ${report.evidence.join("; ")}.`);
-    if (report.ask.length > 0) lines.push("It cannot show:", ...report.ask.map((q) => `  - ${q}`));
+/** The kinds a container can be, as a person picks one. */
+const KIND_OPTIONS: Array<{ value: LayoutKind; label: string; description: string }> = [
+  { value: "carousel", label: "A carousel", description: "Slides that move, with arrows or dots" },
+  { value: "row", label: "A fixed row", description: "The items as drawn, no moving" },
+  { value: "list", label: "A list", description: "The items stacked, as many as the data has" },
+  { value: "grid", label: "A grid", description: "Columns and rows of items" },
+  { value: "tabs", label: "Tabs", description: "One group of items on show at a time" },
+];
+
+/** The "(proposed: ...)" a layout's own question ends with, taken off it. */
+function splitProposed(ask: string): { text: string; proposed: string } {
+  const m = /^(.*?)\s*\(proposed:\s*(.*)\)\s*$/s.exec(ask);
+  return m ? { text: m[1] ?? ask, proposed: m[2] ?? "" } : { text: ask, proposed: "" };
+}
+
+/**
+ * What a person is asked about one container (ADR 0029), written from what the frame showed, so a
+ * run stops with questions that fit this frame: what it is when the frame leaves that open, then
+ * for a carousel how many items it holds, whether it moves on its own, whether it loops, and a
+ * platform config to apply when there is one. Each has the frame's own proposal. Nothing when the
+ * frame leaves nothing open.
+ */
+export function layoutQuestions(report: LayoutReport, proposed: LayoutChoice): AskedQuestion[] {
+  if (report.ask.length === 0 && report.confidence === "certain") return [];
+  const shows = `The frame shows: ${report.evidence.join("; ")}.`;
+  const out: AskedQuestion[] = [];
+  if (report.confidence !== "certain") {
+    out.push({
+      id: "kind",
+      question: `What is "${report.name}"?`,
+      why: shows,
+      kind: "choice",
+      options: KIND_OPTIONS.filter((o) => o.value === proposed.kind || o.value !== "tabs"),
+      allowOther: false,
+      proposed: [report.kind],
+    });
   }
-  lines.push(`Proposed: ${describeChoice(proposed)}.`);
-  lines.push(
-    'Approve to apply it. To change it, request a change in plain words ("a carousel, autoplay every 5 seconds, loop" or "keep it a fixed row").',
-  );
-  return lines;
+  if (proposed.kind === "carousel") {
+    const c = proposed.config;
+    const shown = /^(\d+) /.exec(report.evidence[0] ?? "")?.[1];
+    out.push(
+      {
+        id: "items",
+        question: `How many items does "${report.name}" hold in all?`,
+        why: `${shown ? `The frame shows ${shown}. ` : ""}A carousel repeats for every item the data gives; a number fixes it.`,
+        kind: "choice",
+        options: [
+          {
+            value: "data",
+            label: "Whatever the data holds",
+            description: "Repeats for every item",
+          },
+        ],
+        allowOther: true,
+        proposed: [c.pages ? String(c.pages) : "data"],
+      },
+      {
+        id: "autoplay",
+        question: `Should "${report.name}" move on its own, and how long on each item?`,
+        why: "The frame is one still: it cannot show whether it moves.",
+        kind: "choice",
+        options: [
+          {
+            value: "off",
+            label: "No autoplay",
+            description: "Moves when someone presses an arrow or swipes",
+          },
+          { value: "3000", label: "Every 3 seconds", description: "" },
+          { value: "5000", label: "Every 5 seconds", description: "" },
+          { value: "8000", label: "Every 8 seconds", description: "" },
+        ],
+        allowOther: true,
+        proposed: [c.autoplay ? String(c.autoplay.delayMs) : "off"],
+      },
+      {
+        id: "loop",
+        question: `After the last item, should "${report.name}" wrap around to the first?`,
+        why: "The frame cannot show what is after the last item.",
+        kind: "confirm",
+        options: [],
+        allowOther: false,
+        proposed: [c.loop ? "yes" : "no"],
+      },
+      {
+        id: "platform",
+        question: "Is there a platform carousel config to apply?",
+        why: "A config (slides_per_view, nav_arrows, nav_indicator ...) sets how it behaves; code applies it with the design first. Skip when there is none.",
+        kind: "text",
+        options: [],
+        allowOther: false,
+        proposed: [],
+      },
+    );
+    return out;
+  }
+  // a container that is not a carousel: the compiler's own open questions, with its proposals
+  for (const [n, ask] of report.ask.entries()) {
+    const { text, proposed: guess } = splitProposed(ask);
+    out.push({
+      id: `ask_${n + 1}`,
+      question: text,
+      why: shows,
+      kind: "text",
+      options: [],
+      allowOther: false,
+      proposed: guess ? [guess] : [],
+    });
+  }
+  return out;
+}
+
+/** What a person said, read as a delay in milliseconds: "4s", "every 4 seconds", 4500. */
+function delayOf(said: string): number | undefined {
+  const m = /(\d+(?:\.\d+)?)\s*(ms|millisecond\w*|s|sec\w*)?/i.exec(said);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  const seconds = /^(s|sec)/i.test(m[2] ?? "") || (!m[2] && n < 100);
+  const ms = Math.round(seconds ? n * 1000 : n);
+  return ms > 0 ? ms : undefined;
+}
+
+/**
+ * The model's proposal with the person's answers put in it: the kind they chose, autoplay, loop,
+ * a page count, and a platform config. What they left out stays as proposed. `notes` says what
+ * could not be read, and `said` what they wrote about a container the answers do not map onto.
+ */
+export function applyLayoutAnswers(
+  proposed: LayoutChoice,
+  answers: Answers,
+): { choice: LayoutChoice; platform?: Record<string, unknown>; notes: string[]; said: string[] } {
+  const notes: string[] = [];
+  const said = Object.entries(answers)
+    .filter(([id, a]) => id.startsWith("ask_") && typeof a === "string" && a.trim())
+    .map(([id, a]) => `${id}: ${a}`);
+  const kind = answers.kind;
+  if (typeof kind === "string" && kind !== proposed.kind) {
+    if (kind === "row" || kind === "list")
+      return { choice: { src: proposed.src, kind }, notes, said };
+    notes.push(
+      `${kind} needs its own settings (columns, tabs): the proposal is kept as a ${proposed.kind}`,
+    );
+  }
+  if (proposed.kind !== "carousel") return { choice: proposed, notes, said };
+
+  const config = { ...proposed.config };
+  const autoplay = answers.autoplay;
+  if (typeof autoplay === "string") {
+    if (autoplay === "off") config.autoplay = false;
+    else {
+      const ms = delayOf(autoplay);
+      if (ms) config.autoplay = { delayMs: ms };
+      else notes.push(`autoplay "${autoplay}" was not a time: left as proposed`);
+    }
+  }
+  if (typeof answers.loop === "boolean") config.loop = answers.loop;
+  const items = answers.items;
+  if (typeof items === "string" && items !== "data") {
+    const n = Number.parseInt(items, 10);
+    if (Number.isInteger(n) && n > 0) config.pages = n;
+    else notes.push(`items "${items}" was not a number: it holds whatever the data holds`);
+  }
+  let platform: Record<string, unknown> | undefined;
+  const given = answers.platform;
+  if (typeof given === "string" && given.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(given);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        platform = parsed as Record<string, unknown>;
+      } else notes.push("the platform config was not a JSON object: not applied");
+    } catch {
+      notes.push("the platform config was not JSON: not applied");
+    }
+  }
+  return {
+    choice: { ...proposed, config },
+    ...(platform ? { platform } : {}),
+    notes,
+    said,
+  };
 }
 
 type CarouselChoice = Extract<LayoutChoice, { kind: "carousel" }>;

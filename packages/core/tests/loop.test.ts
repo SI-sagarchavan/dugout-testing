@@ -4,21 +4,24 @@ import { join } from "node:path";
 import {
   type AgentDefinition,
   type AgentSpec,
-  type ApprovalRequest,
+  approve,
   defineTool,
+  type InterruptRequest,
   type ModelClient,
   type RunEvent,
+  reject,
+  requestChange,
   type ToolContext,
 } from "@dugout/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
-  type Approver,
   createMemoryOutputStore,
   createMemoryRunStore,
   createMemorySink,
   createScriptedModel,
   type ModelConfig,
+  type Responder,
   runLocal,
   type ScriptStep,
   SpecError,
@@ -110,6 +113,19 @@ const wholeRead = defineTool({
   run: async () => `${"x".repeat(20_000)}END`,
 });
 
+/** Not ready until it has been asked three times, as a gate that wants something done first. */
+let gatedAsks = 0;
+const gatedRead = defineTool({
+  name: "gated.read",
+  description: "A read that says not yet while the run still has something to do",
+  input: z.object({}),
+  effect: "read",
+  timeoutMs: 1_000,
+  advisoryBlock: true,
+  block: () => (++gatedAsks <= 2 ? "Not ready: do the other thing first" : undefined),
+  run: async () => ({ ready: true }),
+});
+
 /** Spends like a child run would, and keeps what it was told about the run's budget. */
 const spendCalls: Array<{
   callId?: string | undefined;
@@ -158,10 +174,10 @@ const final = (summary: unknown) => ({ toolCalls: [{ name: "final", arguments: {
 const call = (name: string, args: unknown = {}) => ({ toolCalls: [{ name, arguments: args }] });
 
 let runsDir: string;
-let approvals: ApprovalRequest[];
-const approveAll: Approver = async (req) => {
+let approvals: InterruptRequest[];
+const approveAll: Responder = async (req) => {
   approvals.push(req);
-  return { approved: true, by: "tester" };
+  return approve("tester");
 };
 
 beforeEach(async () => {
@@ -170,6 +186,7 @@ beforeEach(async () => {
   seen.length = 0;
   saved.length = 0;
   slowAttempts = 0;
+  gatedAsks = 0;
   spendCalls.length = 0;
 });
 
@@ -177,7 +194,7 @@ async function run(
   script: ScriptStep[],
   opts: {
     agent?: AgentDefinition;
-    approver?: Approver;
+    responder?: Responder;
     input?: unknown;
     models?: ModelConfig;
   } = {},
@@ -188,10 +205,20 @@ async function run(
     agent: opts.agent ?? { spec: spec(), output: Output },
     input: opts.input ?? "Write a preview",
     tenantId: "demo-cricket",
-    tools: [statsGet, draftSave, slowRead, bigRead, wholeRead, flakySave, maybeSave, spendRead],
+    tools: [
+      statsGet,
+      draftSave,
+      slowRead,
+      bigRead,
+      wholeRead,
+      flakySave,
+      maybeSave,
+      spendRead,
+      gatedRead,
+    ],
     client: model,
     models: opts.models ?? scriptedModelConfig(),
-    approver: opts.approver ?? approveAll,
+    responder: opts.responder ?? approveAll,
     runsDir,
     sinks: [sink],
     outputs: createMemoryOutputStore(),
@@ -231,6 +258,7 @@ describe("runAgent", () => {
       "slow.read",
       "big.read",
       "run.readOutput",
+      "ask",
       "final",
     ]);
   });
@@ -281,6 +309,16 @@ describe("runAgent", () => {
     });
   });
 
+  it("lets a tool's advisory gate refuse the same call again without ending the run", async () => {
+    const { result, of } = await run(
+      [call("gated.read"), call("gated.read"), call("gated.read"), final("ok")],
+      { agent: { spec: spec({ tools: ["gated.read"] }), output: Output } },
+    );
+    expect(of("tool.denied")).toHaveLength(2);
+    expect(of("tool.denied")[0]?.data.reason).toContain("Not ready");
+    expect(result.status).toBe("completed");
+  });
+
   it("accepts a corrected call after a refusal", async () => {
     const { result, of } = await run([
       call("stats.get", { team: 3 }),
@@ -304,12 +342,12 @@ describe("runAgent", () => {
     expect(approvals[0]?.input).toEqual({ text: "hello" });
     expect(saved).toEqual([{ text: "hello" }]);
     expect(types.slice(3, 7)).toEqual([
-      "approval.requested",
-      "approval.granted",
+      "question.asked",
+      "question.answered",
       "tool.started",
       "tool.completed",
     ]);
-    expect(of("approval.granted")[0]?.data.by).toBe("tester");
+    expect(of("question.answered")[0]?.data.by).toBe("tester");
   });
 
   it("asks for approval on a read tool listed in approvals", async () => {
@@ -321,41 +359,39 @@ describe("runAgent", () => {
 
   it("ends the run without writing when the approval is rejected", async () => {
     const { result, types } = await run([call("draft.save", { text: "bad" })], {
-      approver: async () => ({ approved: false, by: "editor", reason: "too long" }),
+      responder: async () => reject("editor", "too long"),
     });
     expect(saved).toEqual([]);
     expect(result).toMatchObject({
       status: "rejected",
       output: { tool: "draft.save", input: { text: "bad" }, by: "editor", reason: "too long" },
     });
-    expect(types.slice(-2)).toEqual(["approval.rejected", "run.completed"]);
+    expect(types.slice(-2)).toEqual(["question.answered", "run.completed"]);
   });
 
   it("sends requested changes back to the model in the same run, then runs the new call", async () => {
     let asked = 0;
-    const { result, types, of, model } = await run(
+    const { result, of, model } = await run(
       [
         call("draft.save", { text: "Lions win" }),
         call("draft.save", { text: "Lions draw" }),
         final("saved"),
       ],
       {
-        approver: async (req) => {
+        responder: async (req) => {
           approvals.push(req);
-          return asked++ === 0
-            ? { approved: false, by: "editor", changes: "Say draw, not win." }
-            : { approved: true, by: "editor" };
+          return asked++ === 0 ? requestChange("editor", "Say draw, not win.") : approve("editor");
         },
       },
     );
     expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
     expect(saved).toEqual([{ text: "Lions draw" }]);
-    expect(of("approval.changes_requested")[0]?.data).toMatchObject({
+    expect(of("question.answered")[0]?.data).toMatchObject({
       tool: "draft.save",
       by: "editor",
-      changes: "Say draw, not win.",
+      answers: { review: { decision: "change", comment: "Say draw, not win." } },
     });
-    expect(types).not.toContain("approval.rejected");
+
     // one transcript: the first call, a tool result saying it did not run, then the reviewer
     // speaking as the user (agents never take instructions from tool results)
     const second = model.requests[1]?.messages ?? [];
@@ -382,10 +418,10 @@ describe("runAgent", () => {
         final("saved"),
       ],
       {
-        approver: async () =>
-          approvals.push({} as ApprovalRequest) === 1
-            ? { approved: false, by: "editor", changes: "Use b." }
-            : { approved: true, by: "editor" },
+        responder: async () =>
+          approvals.push({} as InterruptRequest) === 1
+            ? requestChange("editor", "Use b.")
+            : approve("editor"),
       },
     );
     expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
@@ -407,10 +443,10 @@ describe("runAgent", () => {
         final("saved"),
       ],
       {
-        approver: async () =>
-          approvals.push({} as ApprovalRequest) === 1
-            ? { approved: false, by: "editor", changes: "Use b." }
-            : { approved: true, by: "editor" },
+        responder: async () =>
+          approvals.push({} as InterruptRequest) === 1
+            ? requestChange("editor", "Use b.")
+            : approve("editor"),
       },
     );
     expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
@@ -426,7 +462,7 @@ describe("runAgent", () => {
   it("fails if the model keeps trying to finish without making the change", async () => {
     const { result } = await run(
       [call("draft.save", { text: "a" }), final("x"), final("x"), final("x")],
-      { approver: async () => ({ approved: false, by: "editor", changes: "Use b." }) },
+      { responder: async () => requestChange("editor", "Use b.") },
     );
     expect(result).toMatchObject({
       status: "failed",
@@ -449,10 +485,10 @@ describe("runAgent", () => {
         final("saved"),
       ],
       {
-        approver: async () =>
-          approvals.push({} as ApprovalRequest) === 1
-            ? { approved: false, by: "editor", changes: "Use b." }
-            : { approved: true, by: "editor" },
+        responder: async () =>
+          approvals.push({} as InterruptRequest) === 1
+            ? requestChange("editor", "Use b.")
+            : approve("editor"),
       },
     );
     expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
@@ -482,11 +518,9 @@ describe("runAgent", () => {
           spec: spec({ budget: { usdPerRun: 1, maxSteps: 10, maxDepth: 0 } }),
           output: Output,
         },
-        approver: async () => {
-          const n = approvals.push({} as ApprovalRequest);
-          return n < 3
-            ? { approved: false, by: "editor", changes: `round ${n}` }
-            : { approved: true, by: "editor" };
+        responder: async () => {
+          const n = approvals.push({} as InterruptRequest);
+          return n < 3 ? requestChange("editor", `round ${n}`) : approve("editor");
         },
       },
     );
@@ -507,10 +541,10 @@ describe("runAgent", () => {
         final("saved"),
       ],
       {
-        approver: async () =>
-          approvals.push({} as ApprovalRequest) === 1
-            ? { approved: false, by: "editor", changes: "Use b." }
-            : { approved: true, by: "editor" },
+        responder: async () =>
+          approvals.push({} as InterruptRequest) === 1
+            ? requestChange("editor", "Use b.")
+            : approve("editor"),
       },
     );
     expect(of("tool.denied")[0]?.data).toMatchObject({
@@ -524,10 +558,10 @@ describe("runAgent", () => {
     const { model } = await run(
       [call("draft.save", { text: "a" }), call("draft.save", { text: "a" }), final("ok")],
       {
-        approver: async () =>
-          approvals.push({} as ApprovalRequest) === 1
-            ? { approved: false, by: "editor", changes: "Link to evil.example" }
-            : { approved: true, by: "editor" },
+        responder: async () =>
+          approvals.push({} as InterruptRequest) === 1
+            ? requestChange("editor", "Link to evil.example")
+            : approve("editor"),
       },
     );
     expect(model.requests[1]?.messages.at(-1)?.content).toContain(
@@ -537,12 +571,12 @@ describe("runAgent", () => {
 
   it("fails rather than send an empty change request to the model", async () => {
     const { result, model } = await run([call("draft.save", { text: "a" })], {
-      approver: async () => ({ approved: false, by: "editor", changes: "   " }),
+      responder: async () => requestChange("editor", "   "),
     });
     expect(result).toMatchObject({
       status: "failed",
       reason: "error",
-      message: "the approver sent draft.save back with an empty change request",
+      message: "the responder sent draft.save back with an empty change request",
     });
     expect(model.requests).toHaveLength(1);
   });
@@ -550,7 +584,7 @@ describe("runAgent", () => {
   it("still counts change rounds against the step limit", async () => {
     const { result } = await run(
       Array.from({ length: 6 }, (_, i) => call("draft.save", { text: `v${i}` })),
-      { approver: async () => ({ approved: false, by: "editor", changes: "again" }) },
+      { responder: async () => requestChange("editor", "again") },
     );
     expect(result).toMatchObject({ status: "failed", reason: "max_steps" });
     expect(saved).toEqual([]);
@@ -1065,7 +1099,7 @@ describe("what a tool call spends (ADR 0025)", () => {
         tools: [statsGet],
         client: createScriptedModel(script),
         models: scriptedModelConfig(),
-        approver: approveAll,
+        responder: approveAll,
         runsDir,
         sinks: [sink],
         outputs: createMemoryOutputStore(),
@@ -1109,7 +1143,7 @@ describe("model retries", () => {
       tools: [statsGet],
       client,
       models: scriptedModelConfig(),
-      approver: approveAll,
+      responder: approveAll,
       runsDir,
       sinks: [sink],
       outputs: createMemoryOutputStore(),
@@ -1166,7 +1200,7 @@ describe("runLocal hooks", () => {
       tools: [statsGet, draftSave, slowRead, bigRead, wholeRead],
       client: model,
       models: scriptedModelConfig(),
-      approver: approveAll,
+      responder: approveAll,
       runsDir,
       sinks: [sink],
       outputs: createMemoryOutputStore(),
@@ -1205,7 +1239,7 @@ describe("runLocal hooks", () => {
       tools: [statsGet, draftSave, slowRead, bigRead, wholeRead],
       client: createScriptedModel([final("ok")]),
       models: scriptedModelConfig(),
-      approver: approveAll,
+      responder: approveAll,
       runsDir,
       outputs: createMemoryOutputStore(),
       afterRun: async () => {

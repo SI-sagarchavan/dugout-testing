@@ -7,7 +7,7 @@ import {
   type SavePoint,
 } from "@dugout/contracts";
 import { RunInterrupted, savePoint } from "@dugout/core";
-import { type Pool, withTenant } from "@dugout/db";
+import { type Client, type Pool, withTenant } from "@dugout/db";
 
 /** A run's latest save point, or the one `version` names, with its transcript up to then. */
 export const loadRun = (pool: Pool, { tenantId, runId }: RunContext, version?: number) =>
@@ -26,6 +26,51 @@ export const loadRun = (pool: Pool, { tenantId, runId }: RunContext, version?: n
     );
     return { checkpoint, messages: messages.rows.map((r) => r.message) };
   });
+
+/** The newest save point's version of a run, or undefined when it has none. */
+export const latestVersion = (pool: Pool, { tenantId, runId }: RunContext) =>
+  withTenant(pool, tenantId, async (db): Promise<number | undefined> => {
+    const { rows } = await db.query<{ version: number | null }>(
+      "select max(version) as version from run_checkpoint_history where run_id = $1",
+      [runId],
+    );
+    return rows[0]?.version ?? undefined;
+  });
+
+/**
+ * Writes a fork's state (ADR 0016): the parent's transcript up to the save point, the parent's
+ * events up to its `lastSeq`, and the fork's first save point. The fork's `runs` row must exist.
+ */
+export async function writeFork(
+  db: Pick<Client, "query">,
+  tenantId: string,
+  forkId: string,
+  parentId: string,
+  forked: SavedRun,
+): Promise<void> {
+  for (const [idx, message] of forked.messages.entries()) {
+    await db.query(
+      "insert into run_messages (run_id, idx, tenant_id, message) values ($1, $2, $3, $4)",
+      [forkId, idx, tenantId, JSON.stringify(message)],
+    );
+  }
+  await db.query(
+    `insert into run_events (run_id, seq, tenant_id, type, data, at)
+     select $1, seq, tenant_id, type, data, at from run_events
+     where run_id = $2 and seq <= $3`,
+    [forkId, parentId, forked.checkpoint.lastSeq],
+  );
+  const checkpoint = JSON.stringify(forked.checkpoint);
+  await db.query(
+    `insert into run_checkpoints (run_id, tenant_id, checkpoint, version) values ($1, $2, $3, 1)`,
+    [forkId, tenantId, checkpoint],
+  );
+  await db.query(
+    `insert into run_checkpoint_history (run_id, version, tenant_id, checkpoint)
+     values ($1, 1, $2, $3)`,
+    [forkId, tenantId, checkpoint],
+  );
+}
 
 /** Every save point of a run still kept, oldest first. */
 export const runHistory = (pool: Pool, { tenantId, runId }: RunContext) =>

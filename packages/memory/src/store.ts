@@ -1,4 +1,5 @@
 import { type Client, type Pool, toVector, withTenant } from "@dugout/db";
+import { type AnswerReader, type AnswerWriter, createAnswerStore } from "./answers.ts";
 import type { EmbeddingClient } from "./embeddings.ts";
 
 export type MemoryKind = "episodic" | "semantic";
@@ -110,7 +111,8 @@ export interface MemoryWriter {
   deleteBySourceRun(tenantId: string, runId: string): Promise<number>;
 }
 
-export type MemoryStore = MemoryReader & MemoryWriter;
+/** Facts, episodes and what people answered (ADR 0029): the one store a run reads and writes. */
+export type MemoryStore = MemoryReader & MemoryWriter & AnswerReader & AnswerWriter;
 
 export const COLUMNS = `id, tenant_id, agent_id, kind, key, episode_type, version, content, status,
   confidence, strength, source_run_id, reviewed_by, created_at, last_seen_at, expires_at,
@@ -246,6 +248,7 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
   };
 
   return {
+    ...createAnswerStore({ pool, embeddings }),
     activeFacts: (tenantId, groups = []) =>
       tx(tenantId, async (db) => {
         const { rows } = await db.query(

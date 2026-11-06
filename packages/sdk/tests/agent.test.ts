@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defineTool, type RunEvent } from "@dugout/contracts";
+import { approve, defineTool, type RunEvent } from "@dugout/contracts";
 import {
   createBedrockClient,
   createMemorySink,
@@ -115,7 +115,7 @@ describe("defineAgent", () => {
     const result = await run({
       tenantId: tenant,
       input: { topic: "the opener" },
-      approver: async () => ({ approved: true, by: "editor" }),
+      responder: async () => approve("editor"),
       sinks: [sink],
     });
 
@@ -126,7 +126,7 @@ describe("defineAgent", () => {
     // every fact of the tenant
     expect(system).toContain("Titles use sentence case.");
     expect(system).toContain("Notes: name the topic in the title.");
-    expect(sink.events.map((e) => e.type)).toContain("approval.granted");
+    expect(sink.events.map((e) => e.type)).toContain("question.answered");
     // the host's tracing sink sees the same run
     expect(traced.map((e) => e.seq)).toEqual(sink.events.map((e) => e.seq));
   });
@@ -148,7 +148,7 @@ describe("defineAgent", () => {
     const result = await run({
       tenantId: own,
       input: { topic: "the opener" },
-      approver: async () => ({ approved: true, by: "editor" }),
+      responder: async () => approve("editor"),
       sinks: [],
     });
     // the failure is reported, not swallowed...
@@ -179,7 +179,7 @@ describe("defineAgent", () => {
     const result = await run({
       tenantId: tenant,
       input: { topic: "the opener" },
-      approver: async () => ({ approved: true, by: "editor" }),
+      responder: async () => approve("editor"),
     });
 
     expect(result.status).toBe("completed");
@@ -218,7 +218,7 @@ describe("defineAgent", () => {
     await run({
       tenantId: tenant,
       input: { topic: "the meet", sports: ["swimming"] },
-      approver: async () => ({ approved: true, by: "editor" }),
+      responder: async () => approve("editor"),
     });
     expect(asked).toContainEqual([tenant, ["swimming"]]);
   });
@@ -260,7 +260,7 @@ describe("defineAgent", () => {
       const result = await agent.create(deps)({
         tenantId: tenant,
         input: { topic: "the opener" },
-        approver: async () => ({ approved: true, by: "editor" }),
+        responder: async () => approve("editor"),
       });
       expect(result.status).toBe("completed");
     }
@@ -296,7 +296,7 @@ describe("defineAgent", () => {
     await run({
       tenantId: tenant,
       input: { topic: "the opener" },
-      approver: async () => ({ approved: true, by: "editor" }),
+      responder: async () => approve("editor"),
     });
     expect(client.requests.map((r) => r.model)).toEqual(["haiku", "haiku"]);
     expect(() =>
@@ -324,7 +324,7 @@ describe("defineAgent", () => {
       run({
         tenantId: tenant,
         input: { topic: "" },
-        approver: async () => ({ approved: true, by: "x" }),
+        responder: async () => approve("x"),
       }),
     ).toThrow();
   });

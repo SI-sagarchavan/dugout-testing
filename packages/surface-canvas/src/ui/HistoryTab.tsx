@@ -20,7 +20,7 @@ import {
   sortBatches,
   type HandoffBatch,
 } from "../handoffs.js";
-import { ArchiveIcon, ChevronIcon, ExternalIcon, RetryIcon } from "./icons.js";
+import { ChevronIcon, ExternalIcon, RetryIcon } from "./icons.js";
 import { send } from "./main.js";
 import type { StudioState } from "./state.js";
 
@@ -168,17 +168,6 @@ function BatchCard({ batch, busy }: { batch: HandoffBatch; busy: boolean }): JSX
           >
             <RetryIcon />
             Re-send
-          </button>
-          <button
-            className="fs-btn"
-            style={{ flex: 1 }}
-            disabled={busy}
-            onClick={() =>
-              send({ type: "download-zip", frameIds: batch.frames.map((frame) => frame.frameId) })
-            }
-          >
-            <ArchiveIcon />
-            Download ZIP
           </button>
         </div>
       ) : null}

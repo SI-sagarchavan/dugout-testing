@@ -117,7 +117,7 @@ describe("computeCoverage", () => {
 describe("buildBatches", () => {
   const finding = (over: Partial<Finding> = {}): Finding => ({
     ruleId: "unbound-fill",
-    severity: "fixable",
+    group: "tokens",
     nodeId: "n1",
     nodeName: "Layer",
     nodeType: "FRAME",

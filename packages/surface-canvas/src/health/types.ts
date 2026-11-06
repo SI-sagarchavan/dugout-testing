@@ -14,7 +14,20 @@ import type { Breakpoint, Rgb, TypeValue } from "@fanos/tokens";
 import type { FrameIRDocument, IRNodeType } from "../ir/schema.js";
 import type { SizingReport } from "./sizing.js";
 
-export type Severity = "blocker" | "fixable" | "warn";
+/**
+ * What a rule is about, which is also what happens when it fires.
+ *
+ *   structure  how the frame is built (groups with no layout, text that cannot
+ *              grow). Advice about the design: the compiler reads it, and no
+ *              fix is ever applied unattended.
+ *   tokens     whether a value follows a theme. A bound value compiles to a
+ *              token and re-themes per club; a loose one compiles to the
+ *              number it was drawn with.
+ *
+ * Neither group blocks a Handoff. A rule that fired on every frame the
+ * pipeline already builds and publishes would be a wall, not a check.
+ */
+export type RuleGroup = "structure" | "tokens";
 
 /**
  * The unit of coverage. Every slot in a page is either bound to a token/style
@@ -29,12 +42,12 @@ export type SlotKind =
   | "text"
   | "effect";
 
-/** Page-level rules (blockers, the naming warn) report once, not per slot. */
+/** Page-level (structure) rules report once, not per slot. */
 export type FindingScope = SlotKind | "page";
 
 export interface Finding {
   ruleId: string;
-  severity: Severity;
+  group: RuleGroup;
   /** Empty string for page-level findings that belong to no single node. */
   nodeId: string;
   nodeName: string;
@@ -54,7 +67,7 @@ export interface Finding {
   message: string;
   /**
    * True when this finding occupies a coverage slot — i.e. it is one of the
-   * loose values in the denominator. Blockers and warns do not.
+   * loose values in the denominator. Structure findings do not.
    */
   occupiesSlot: boolean;
   /** Aggregate numbers for page-level findings, rendered into the UI as-is. */
@@ -345,8 +358,6 @@ export interface LintOptions {
   /** px window for a numeric near-match. */
   numberNearWithin: number;
   maxCandidates: number;
-  /** Mobile-frame detection window for B3. */
-  mobileWidthRange: [number, number];
 }
 
 export const DEFAULT_LINT_OPTIONS: LintOptions = {
@@ -355,7 +366,6 @@ export const DEFAULT_LINT_OPTIONS: LintOptions = {
   colorNearThreshold: 13,
   numberNearWithin: 2,
   maxCandidates: 3,
-  mobileWidthRange: [320, 480],
 };
 
 export interface LintContext {
@@ -384,10 +394,10 @@ export interface LintReport {
   coverage: CoverageStatsLike;
   /** Hug / fill / fixed, plus text that will clip when copy is bound. */
   sizing: SizingReport;
-  blockers: Finding[];
-  warns: Finding[];
+  /** How the frame is built. Advice; see {@link RuleGroup}. */
+  structure: Finding[];
   batches: Batch[];
-  /** Blocker fixes that can run from the panel — wrap, convert groups. */
+  /** Structure fixes that can run from the panel — convert groups. */
   actions: StructuralAction[];
   fixableFindings: number;
   /** How many batches it takes to reach 90% of the loose values. */
@@ -449,7 +459,7 @@ export interface Rule {
   id: string;
   /** Short code the panel shows, e.g. `F4`. */
   code: string;
-  severity: Severity;
+  group: RuleGroup;
   /** The downstream capability that breaks without this rule. */
   protects: string;
   check(ir: FrameIRDocument, ctx: LintContext): Finding[];

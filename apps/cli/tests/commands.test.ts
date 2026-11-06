@@ -138,7 +138,7 @@ describe("commands", () => {
     ]) {
       expect(help).toContain(name);
     }
-    expect(help).toContain("memory <review|promote>");
+    expect(help).toContain("memory <review|promote|answers>");
     expect(help).toContain("y, n, or the change");
   });
 

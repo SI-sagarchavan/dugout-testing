@@ -2,6 +2,13 @@ import { z } from "zod";
 import { type RunEvent, RunUsage } from "./events.ts";
 import type { Message, ToolCall } from "./messages.ts";
 import type { ModelTurn, StepUsage, ToolDefinition } from "./model.ts";
+import {
+  type Answers,
+  AskedQuestion,
+  type Decision,
+  reviewQuestion,
+  Subject,
+} from "./questions.ts";
 import type { ToolOutcome } from "./tools.ts";
 
 /** Verified identity for one run. Built by the caller (CLI now, API later), never by the model. */
@@ -47,26 +54,28 @@ export interface ToolStepRequest {
   input: unknown;
   /** What the run has left of its budget, in budget dollars. A child run gets no more. */
   usdLeft?: number;
+  /** The answers this call stopped the run for, when it runs again with them (ADR 0029). */
+  answered?: { by: string; answers: Answers };
 }
 
-export interface ApprovalRequest {
+/**
+ * A run stopping for a person (ADR 0029): the questions to answer, the runs they came from, and the
+ * call they are about when it is a write waiting for a yes.
+ */
+export interface InterruptRequest {
   step: number;
   call: ToolCall;
   tool: string;
   input: unknown;
+  questions: AskedQuestion[];
+  /** The runs the questions came from, nearest first: empty when this run asked them. */
+  from: string[];
+  /** Set when the pause is a write waiting for a yes: one `review` question, and this call. */
+  subject?: Subject;
 }
 
-/**
- * `reason` rejects the call and ends the run. `changes` sends the reviewer's request back to the
- * model in the same run, which keeps its transcript and calls the tool again.
- */
-export type ApprovalDecision =
-  | { approved: true; by: string }
-  | { approved: false; by: string; reason: string }
-  | { approved: false; by: string; changes: string };
-
 /** No decision yet: the run saves its state and ends, and the decision resumes it later. */
-export interface ApprovalPending {
+export interface InterruptPending {
   pending: true;
 }
 
@@ -76,8 +85,8 @@ export const SavedAfter = z.enum([
   "model", // a model turn
   "call", // a call about to run
   "tool", // a call's result, or why it didn't run
-  "waiting", // an approval asked for
-  "decision", // a reviewer's decision
+  "waiting", // a pause for a person: questions, or a write waiting for a yes
+  "decision", // a person's answers
   "end", // the run's last save
   "fork", // a fork's copy of its parent's save point
 ]);
@@ -87,6 +96,18 @@ export type SavedAfter = z.infer<typeof SavedAfter>;
  * Where a run is, saved after every change so a later invocation (after an approval, or after a
  * crash) carries on from here. The transcript is saved beside it, append-only.
  */
+/** A `waiting` saved before questions existed was a write waiting for a yes. */
+function upgradeWaiting(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || "questions" in value) return value;
+  const old = value as { tool?: string; input?: unknown };
+  return {
+    ...value,
+    questions: [reviewQuestion(old.tool ?? "this call")],
+    from: [],
+    subject: { input: old.input },
+  };
+}
+
 export const RunCheckpoint = z.object({
   version: z.literal(1),
   agentId: z.string(),
@@ -131,9 +152,25 @@ export const RunCheckpoint = z.object({
       cutOffReason: z.string().optional(),
     })
     .optional(),
-  /** The approval the run is waiting for. */
+  /**
+   * What the run is stopped for: the questions a person answers (ADR 0029). A checkpoint saved
+   * while a write waited for a yes, before questions existed, is read as the review it was.
+   */
   waiting: z
-    .object({ step: z.number(), callId: z.string(), tool: z.string(), input: z.unknown() })
+    .preprocess(
+      upgradeWaiting,
+      z.object({
+        step: z.number(),
+        callId: z.string(),
+        tool: z.string(),
+        input: z.unknown(),
+        questions: z.array(AskedQuestion),
+        /** The runs the questions came from, nearest first: empty when this run asked them. */
+        from: z.array(z.string()),
+        /** Set for a write waiting for a yes: the call under review. */
+        subject: Subject.optional(),
+      }),
+    )
     .optional(),
   /** Unset on checkpoints saved before save points were kept. */
   savedAfter: SavedAfter.optional(),
@@ -199,12 +236,12 @@ export interface RunStore {
 
 /**
  * Everything the loop does that touches the outside world. In-process it calls functions directly;
- * under Temporal each method becomes an activity (model, tool) or a signal wait (approval).
+ * under Temporal each method becomes an activity (model, tool) or a signal wait (a person's answers).
  */
 export interface Steps {
   model(req: ModelStepRequest): Promise<ModelStep>;
   tool(req: ToolStepRequest): Promise<ToolOutcome>;
-  approval(req: ApprovalRequest): Promise<ApprovalDecision | ApprovalPending>;
+  interrupt(req: InterruptRequest): Promise<Decision | InterruptPending>;
   /** Saves the run's state; without it the run cannot outlive this invocation. */
   checkpoint?(checkpoint: RunCheckpoint, appended: Message[]): Promise<void>;
 }

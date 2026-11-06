@@ -20,6 +20,26 @@ const watch = process.argv.includes("--watch");
 const dev = watch || process.argv.includes("--dev");
 
 const UI_PLACEHOLDER = "/* __UI_BUNDLE__ */";
+const FONTS_PLACEHOLDER = "/* __FONTS__ */";
+
+/**
+ * The panel's mono face, inlined as base64 woff2: Figma accepts one self-contained
+ * UI file and the plugin's network access is limited to the backend, so a font
+ * cannot be fetched. Variable font, latin subset, SIL OFL (licence beside it). The
+ * sans face is Inter, which Figma ships.
+ */
+async function fontFaces() {
+  const face = async (family, file) => {
+    const bytes = await readFile(resolve(root, "src/ui/fonts", file));
+    return (
+      `@font-face { font-family: "${family}"; font-style: normal; font-weight: 200 800; font-display: block; ` +
+      `src: url(data:font/woff2;base64,${bytes.toString("base64")}) format("woff2"); }`
+    );
+  };
+  return [
+    await face("JetBrains Mono", "jetbrains-mono-latin-wght-normal.woff2"),
+  ].join("\n");
+}
 
 /**
  * `@fanos/tokens` ships as a single bundled ESM file, and one module in it
@@ -78,6 +98,10 @@ const inlineUiPlugin = {
       if (!shell.includes(UI_PLACEHOLDER)) {
         throw new Error(`src/ui/ui.html is missing the ${UI_PLACEHOLDER} marker`);
       }
+      if (!shell.includes(FONTS_PLACEHOLDER)) {
+        throw new Error(`src/ui/ui.html is missing the ${FONTS_PLACEHOLDER} marker`);
+      }
+      const fonts = await fontFaces();
       await mkdir(dist, { recursive: true });
       // Function replacer: a string replacer treats `$&` / `$`` / `$'` in the
       // bundle as replacement patterns. Minified React contains `$&` (regex
@@ -85,7 +109,7 @@ const inlineUiPlugin = {
       // syntax-error script — blank plugin iframe.
       await writeFile(
         resolve(dist, "ui.html"),
-        shell.replace(UI_PLACEHOLDER, () => js),
+        shell.replace(FONTS_PLACEHOLDER, () => fonts).replace(UI_PLACEHOLDER, () => js),
       );
       console.log("  dist/ui.html");
     });

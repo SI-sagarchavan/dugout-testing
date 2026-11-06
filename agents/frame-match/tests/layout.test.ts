@@ -9,6 +9,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { type Answers, AwaitingAnswers } from "@dugout/contracts";
 import { REPO_ROOT, toolDefinition } from "@dugout/core";
 import { describe, expect, it } from "vitest";
 import type { ControlPlane } from "../src/control-plane.ts";
@@ -18,7 +19,6 @@ import {
   LayoutChoice,
   type LayoutIntent,
   type PlatformRead,
-  questionCard,
   withPlatform,
 } from "../src/layout.ts";
 import { createMatchTools, type Engine } from "../src/tools.ts";
@@ -173,12 +173,13 @@ function setup(intents: LayoutIntent[], score: (overrides: Overrides) => Measure
   return { engine, plane, builds };
 }
 
-const ctx = (runId: string) =>
+const ctx = (runId: string, answered?: { by: string; answers: Answers }) =>
   ({
     tenantId: "t",
     runId,
     signal: new AbortController().signal,
     input: { exportId: "6f1d2c1e-7a3b-4c7e-9a10-000000000001", project: "default" },
+    ...(answered ? { answered } : {}),
   }) as const;
 
 async function tools(
@@ -198,16 +199,27 @@ async function tools(
     list.find((tool) => tool.name === name) as unknown as {
       run(input: unknown, c: ReturnType<typeof ctx>): Promise<Record<string, unknown>>;
       resolve(input: unknown, c: ReturnType<typeof ctx>): Record<string, unknown>;
+      effect: string;
       block(input: unknown, c: ReturnType<typeof ctx>): string | undefined;
       input: { parse(v: unknown): unknown };
     };
-  /** What frame.layout runs with: the card resolve builds around the model's choice. */
-  const decide = async (choice: unknown, runId: string) => {
+  /** frame.layout once a person has answered: with `answers`, applied to the choice as proposed. */
+  const decide = async (choice: unknown, runId: string, answers: Answers = {}) => {
     const tool = named("frame.layout");
-    const parsed = tool.input.parse({ choice });
-    return tool.run(tool.resolve(parsed, ctx(runId)), ctx(runId));
+    return tool.run(tool.input.parse({ choice }), ctx(runId, { by: "sagar", answers }));
   };
-  return { named, decide, builds };
+  /** What frame.layout asks, with nobody to answer yet. */
+  const asking = async (choice: unknown, runId: string) => {
+    const tool = named("frame.layout");
+    try {
+      await tool.run(tool.input.parse({ choice }), ctx(runId));
+    } catch (err) {
+      if (err instanceof AwaitingAnswers) return err.questions;
+      throw err;
+    }
+    return undefined;
+  };
+  return { named, decide, asking, builds };
 }
 
 type Reported = {
@@ -257,17 +269,80 @@ describe("frame.load", () => {
 });
 
 describe("frame.layout", () => {
-  it("shows the reviewer what the frame showed, what it cannot, and the proposal", async () => {
-    const { named } = await tools([videos]);
+  it("stops the run with questions written from what the frame showed, each with its proposal", async () => {
+    const { named, asking } = await tools([fixtures]);
     await named("frame.load").run({}, ctx("q1"));
-    const { card } = named("frame.layout").resolve({ choice: videos.choice }, ctx("q1")) as {
-      card: string[];
-    };
-    expect(card[0]).toBe('Layout of "Videos" [35:4813]');
-    expect(card.join("\n")).toContain("all 4 fit inside");
-    expect(card.join("\n")).toContain("fixed row of 4, or a carousel");
-    expect(card.join("\n")).toContain("Proposed: a fixed row, as drawn.");
-    expect(card.at(-1)).toContain("request a change in plain words");
+    expect(named("frame.layout").effect).toBe("read");
+    const questions = await asking(fixtures.choice, "q1");
+    expect(questions?.map((q) => q.id)).toEqual(["items", "autoplay", "loop", "platform"]);
+    const by = (id: string) => questions?.find((q) => q.id === id);
+    expect(by("items")).toMatchObject({ kind: "choice", allowOther: true, proposed: ["data"] });
+    expect(by("autoplay")).toMatchObject({ kind: "choice", proposed: ["off"] });
+    expect(by("autoplay")?.options.map((o) => o.value)).toEqual(["off", "3000", "5000", "8000"]);
+    expect(by("loop")).toMatchObject({ kind: "confirm", proposed: ["no"] });
+    // the platform question is one a person may skip: it proposes nothing
+    expect(by("platform")).toMatchObject({ kind: "text", proposed: [] });
+    // every question carries the frame's own evidence, not a generic prompt
+    expect(by("loop")?.question).toContain(fixtures.name);
+    expect(by("items")?.why).toContain("The frame shows");
+  });
+
+  it("asks what the frame leaves open about a row: what it is, with the frame's evidence", async () => {
+    const { named, asking } = await tools([videos]);
+    await named("frame.load").run({}, ctx("q1b"));
+    const questions = await asking(videos.choice, "q1b");
+    // the frame is not sure what it is, so that is the first question, with the compiler's guess
+    expect(questions?.[0]).toMatchObject({ id: "kind", kind: "choice", proposed: ["row"] });
+    expect(questions?.[0]?.why).toContain("all 4 fit inside");
+    expect(questions?.[1]).toMatchObject({ id: "ask_1", kind: "text" });
+    expect(questions?.[1]?.question).toContain("fixed row of 4, or a carousel");
+  });
+
+  it("asks nothing, and applies the proposal, for a layout already decided", async () => {
+    const { named, decide, asking } = await tools([videos]);
+    await named("frame.load").run({}, ctx("q1c"));
+    await decide(videos.choice, "q1c");
+    expect(await asking(videos.choice, "q1c")).toBeUndefined();
+  });
+
+  it("puts each answer into the proposal: autoplay, loop, a page count, and what it could not read", async () => {
+    const { named, decide, builds } = await tools([fixtures]);
+    await named("frame.load").run({}, ctx("q1d"));
+    const result = await decide(fixtures.choice, "q1d", {
+      autoplay: "every 4 seconds",
+      loop: true,
+      items: "12",
+    });
+    expect(result).toMatchObject({ kept: true, applied: true });
+    expect(builds.at(-1)?.layouts.find((l) => l.src === fixtures.src)).toMatchObject({
+      kind: "carousel",
+      config: { autoplay: { delayMs: 4000 }, loop: true, pages: 12 },
+    });
+    // words that are not a time leave the proposal, and the call says so
+    const second = await tools([fixtures]);
+    await second.named("frame.load").run({}, ctx("q1e"));
+    const unclear = await second.decide(fixtures.choice, "q1e", {
+      autoplay: "sometimes",
+      items: "lots",
+    });
+    expect((unclear.answers as string[]).join("\n")).toContain(
+      'autoplay "sometimes" was not a time',
+    );
+    expect((unclear.answers as string[]).join("\n")).toContain('items "lots" was not a number');
+  });
+
+  it("lets a person turn a carousel into a row, and keeps what it cannot make from words", async () => {
+    const { named, decide, builds } = await tools([fixtures]);
+    await named("frame.load").run({}, ctx("q1f"));
+    await decide(fixtures.choice, "q1f", { kind: "row" });
+    expect(builds.at(-1)?.layouts.find((l) => l.src === fixtures.src)).toEqual({
+      src: fixtures.src,
+      kind: "row",
+    });
+    const grid = await tools([fixtures]);
+    await grid.named("frame.load").run({}, ctx("q1g"));
+    const result = await grid.decide(fixtures.choice, "q1g", { kind: "grid" });
+    expect((result.answers as string[]).join("\n")).toContain("grid needs its own settings");
   });
 
   it("applies the answer: a row that should scroll becomes a carousel that autoplays", async () => {
@@ -352,16 +427,8 @@ describe("the choice, as a person reads it", () => {
       describeChoice({ src: "x", kind: "tabs", config: { options: ["A", "B"], active: 1 } }),
     ).toBe('tabs "A", "B", "B" selected');
   });
-
-  it("still makes a card without a detected layout", () => {
-    expect(questionCard(undefined, { src: "x", kind: "row" })[0]).toBe('Layout of "x" [x]');
-  });
 });
 
-/**
- * The pipeline's schema (zod 3, `@fanos/dsl`) and this one (zod 4) must agree, or a choice a
- * person approves here is one lowering rejects. Read from the built `dist`, as the agent does.
- */
 describe("the choice schema", () => {
   it("accepts and rejects what @fanos/dsl's does", async () => {
     const dsl = (await import(
@@ -483,21 +550,24 @@ describe("a platform carousel config", () => {
     }
   });
 
-  it("shows the reviewer what the config sets before it is applied", async () => {
-    const { named } = await tools([fixtures]);
+  it("is applied from the JSON a person gave as their answer, and reports what it sets", async () => {
+    const { named, decide, asking, builds } = await tools([fixtures]);
     await named("frame.load").run({}, ctx("pc"));
-    const tool = named("frame.layout");
-    const parsed = tool.input.parse({
-      choice: { ...proposal, config: { ...proposal.config, platform: PLATFORM } },
-    });
-    const { card } = tool.resolve(parsed, ctx("pc")) as { card: string[] };
-    const text = card.join("\n");
-    expect(text).toContain(
-      "From the platform config: autoplay every 3s; no loop; arrows (center, nearby); fraction indicator at the bottom; linear autoplay progress.",
-    );
+    expect((await asking(fixtures.choice, "pc"))?.some((q) => q.id === "platform")).toBe(true);
+    const result = await decide(fixtures.choice, "pc", { platform: JSON.stringify(PLATFORM) });
+    const text = (result.platformSets as string[]).join("\n");
+    expect(text).toContain("From the platform config: autoplay every 3s; no loop;");
     expect(text).toContain(
       "Left to the frame, which shows them: slides_per_view, centered_slides, space_between, direction.",
     );
+    expect(builds.at(-1)?.layouts.find((l) => l.src === fixtures.src)).toMatchObject({
+      config: { autoplay: { delayMs: 3000 } },
+    });
+    // JSON that is not JSON is said, and nothing is applied from it
+    const bad = await tools([fixtures]);
+    await bad.named("frame.load").run({}, ctx("pd"));
+    const notJson = await bad.decide(fixtures.choice, "pd", { platform: "slides_per_view: 1" });
+    expect((notJson.answers as string[]).join("\n")).toContain("the platform config was not JSON");
   });
 
   it("is refused for anything but a carousel", async () => {

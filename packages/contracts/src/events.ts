@@ -1,12 +1,15 @@
 import { z } from "zod";
 import { AssistantMessage } from "./messages.ts";
 import { StepUsage, TokenUsage } from "./model.ts";
+import { Answers, AskedQuestion, Subject } from "./questions.ts";
 
 /**
- * What a host adds to the `by` of an approval it granted without asking anyone (`--yes`, a watcher
+ * What a host adds to the `by` of an answer it gave without asking anyone (`--yes`, a watcher
  * publishing unattended). A decision nobody made must not be remembered as one an editor did.
  */
 export const AUTO_APPROVED = " (auto)";
+/** The `by` of an answer the harness gave from what a person approved before (ADR 0029). */
+export const FROM_MEMORY = "memory";
 
 export const RunUsage = TokenUsage.extend({
   costUsd: z.number(),
@@ -46,7 +49,7 @@ export const RunEvent = z.discriminatedUnion("type", [
       agentVersion: z.number(),
       tenantId: z.string(),
       step: z.number(),
-      reason: z.enum(["approval", "recovery", "fork"]),
+      reason: z.enum(["answered", "recovery", "fork"]),
       // set when a fork carries on from its parent's save point
       forkedFrom: z.object({ runId: z.string(), version: z.number() }).optional(),
     }),
@@ -103,14 +106,40 @@ export const RunEvent = z.discriminatedUnion("type", [
   ),
   event(
     "tool.denied",
-    z.object({ ...call, stage: z.enum(["registry", "spec", "policy"]), reason: z.string() }),
+    z.object({
+      ...call,
+      stage: z.enum(["registry", "spec", "policy"]),
+      reason: z.string(),
+      // the tool's own gate said "not yet" (`Tool.advisoryBlock`): guidance, not a failure
+      advisory: z.boolean().optional(),
+    }),
   ),
   // The model's `final` was turned down and it goes on: the reason it was given, on the record.
   event("final.refused", z.object({ step: z.number(), callId: z.string(), reason: z.string() })),
-  event("approval.requested", z.object({ ...call, input: z.unknown() })),
-  event("approval.granted", z.object({ ...call, by: z.string() })),
-  event("approval.rejected", z.object({ ...call, by: z.string(), reason: z.string() })),
-  event("approval.changes_requested", z.object({ ...call, by: z.string(), changes: z.string() })),
+  // The run stops for a person (ADR 0029): the model's `ask`, a tool's own questions, a child run's
+  // passed up (`from`: the runs they came from, nearest first), or a write waiting for a yes, which
+  // is one question of kind `review` and carries the call it is about (`subject`).
+  event(
+    "question.asked",
+    z.object({
+      ...call,
+      questions: z.array(AskedQuestion),
+      from: z.array(z.string()),
+      subject: Subject.optional(),
+    }),
+  ),
+  // The person answered, or someone did for them. `source`: `person`, they chose; `agent`, they let
+  // the agent decide (its proposals were used); `auto`, a host that answers without asking
+  // (`--yes`); `memory`, the harness, from an answer a person made standing.
+  event(
+    "question.answered",
+    z.object({
+      ...call,
+      by: z.string(),
+      answers: Answers,
+      source: z.enum(["person", "agent", "auto", "memory"]),
+    }),
+  ),
   event(
     "run.completed",
     z.object({

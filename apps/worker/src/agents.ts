@@ -1,12 +1,12 @@
-import type { ApprovalDecision, EventSink, RunEvent, RunStore } from "@dugout/contracts";
-import type { Approver, RunResult } from "@dugout/core";
+import type { Decision, EventSink, RunEvent, RunStore } from "@dugout/contracts";
+import type { Responder, RunResult } from "@dugout/core";
 import type { AgentDeps, AnyAgent, ChildRuns } from "@dugout/sdk";
 import type { z } from "zod";
 
 /** How a run is carried on from its saved state. */
 export interface ResumeOptions {
-  reason: "approval" | "recovery";
-  decision?: ApprovalDecision;
+  reason: "answered" | "recovery";
+  decision?: Decision;
   /** The last `seq` the event log already has. */
   startSeq: number;
   /** The run's earlier events, for memory consolidation at the end. */
@@ -20,7 +20,7 @@ export interface AgentEntry {
   run(opts: {
     tenantId: string;
     input: never;
-    approver: Approver;
+    responder: Responder;
     runId: string;
     sinks: EventSink[];
     store: RunStore;

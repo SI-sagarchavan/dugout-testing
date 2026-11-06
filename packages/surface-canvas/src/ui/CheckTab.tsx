@@ -12,7 +12,7 @@ import type { Tab } from "../protocol.js";
 import { Autofix } from "./Autofix.js";
 import { framesToHandoff, handoffLabel } from "./frames.js";
 import { FixQueue } from "./FixQueue.js";
-import { HeatmapIcon, HandoffIcon } from "./icons.js";
+import { HandoffIcon } from "./icons.js";
 import { ImagesView } from "./Images.js";
 import { NotesView } from "./Notes.js";
 import { send } from "./main.js";
@@ -111,22 +111,7 @@ export function CheckTab({
               state={state}
               dispatch={dispatch}
               onReviewImages={() => setView("images")}
-              toolbar={
-                <>
-                  <button
-                    className={state.heatmapOn ? "fs-iconbtn is-on" : "fs-iconbtn"}
-                    style={{ width: 26, height: 26 }}
-                    aria-pressed={state.heatmapOn}
-                    aria-label="Heatmap"
-                    disabled={!report}
-                    onClick={() => send({ type: "toggle-heatmap", on: !state.heatmapOn })}
-                    title="Tints every layer on canvas: green bound, red loose, amber inside a blocker"
-                  >
-                    <HeatmapIcon />
-                  </button>
-                  <Autofix state={state} />
-                </>
-              }
+              toolbar={<Autofix state={state} />}
             />
             <PinnedText state={state} />
             <div className="fs-card is-list" style={{ marginTop: "auto" }}>

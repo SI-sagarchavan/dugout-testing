@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { AgentSpec, ApprovalRequest } from "@dugout/contracts";
+import type { AgentSpec, InterruptRequest } from "@dugout/contracts";
 import { REPO_ROOT } from "@dugout/core";
 import { defineAgent } from "@dugout/sdk";
 import { z } from "zod";
@@ -82,7 +82,7 @@ export const agent = defineAgent({
 });
 
 /** The sitemap a `sitemap.save` approval request carries. */
-export function sitemapOf(req: Pick<ApprovalRequest, "input">): Sitemap {
+export function sitemapOf(req: Pick<InterruptRequest, "input">): Sitemap {
   return req.input as Sitemap;
 }
 

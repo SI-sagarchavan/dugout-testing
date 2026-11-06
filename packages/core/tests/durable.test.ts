@@ -3,24 +3,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type AgentSpec,
-  type ApprovalDecision,
-  type ApprovalRequest,
+  approve,
+  type Decision,
   defineTool,
+  type InterruptRequest,
   type Message,
   type RunCheckpoint,
   type RunEvent,
   type RunStore,
+  reject,
+  requestChange,
 } from "@dugout/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
-  type Approver,
   correctedInput,
   createMemoryOutputStore,
   createMemoryRunStore,
   createMemorySink,
   createScriptedModel,
   forkRun,
+  type Responder,
   RunInterrupted,
   runLocal,
   type ScriptStep,
@@ -82,7 +85,7 @@ async function invoke(opts: {
   runId: string;
   store: RunStore;
   script: ScriptStep[];
-  approver: Approver;
+  responder: Responder;
   resume?: Parameters<typeof runLocal>[0]["resume"];
   version?: number;
 }) {
@@ -96,7 +99,7 @@ async function invoke(opts: {
     tools: [draftSave, emailSend],
     client: model,
     models: scriptedModelConfig(),
-    approver: opts.approver,
+    responder: opts.responder,
     runsDir,
     sinks: [sink],
     outputs: createMemoryOutputStore(),
@@ -106,22 +109,22 @@ async function invoke(opts: {
   return { result, events: sink.events, model };
 }
 
-const later: Approver = async () => ({ pending: true });
-const approve: Approver = async () => ({ approved: true, by: "editor" });
-const decided = (decision: ApprovalDecision) => ({ reason: "approval" as const, decision });
+const later: Responder = async () => ({ pending: true });
+const approves: Responder = async () => approve("editor");
+const decided = (decision: Decision) => ({ reason: "answered" as const, decision });
 const transcript = (store: ReturnType<typeof createMemoryRunStore>, runId: string) =>
   store.runs.get(`demo-cricket/${runId}`)?.messages ?? [];
 const seqs = (events: RunEvent[]) => events.map((e) => e.seq);
 
 describe("working memory saved between invocations", () => {
   it("stops at an approval and resumes to the same end as a run that waited in place", async () => {
-    // the reference: one invocation, the approver answers at once
+    // the reference: one invocation, the responder answers at once
     const inPlace = createMemoryRunStore();
     await invoke({
       runId: "in-place",
       store: inPlace,
       script: [call("draft.save", { text: "a" }), final("saved")],
-      approver: approve,
+      responder: approves,
     });
     written.length = 0;
 
@@ -130,16 +133,16 @@ describe("working memory saved between invocations", () => {
       runId: "r1",
       store,
       script: [call("draft.save", { text: "a" })],
-      approver: later,
+      responder: later,
     });
     expect(first.result).toMatchObject({
       status: "waiting",
-      approval: { tool: "draft.save", input: { text: "a" } },
+      waiting: { tool: "draft.save", input: { text: "a" } },
     });
     expect(written).toEqual([]);
     const waiting = store.runs.get("demo-cricket/r1")?.points.at(-1)?.checkpoint as RunCheckpoint;
     expect(waiting.waiting?.callId).toBe(
-      first.result.status === "waiting" && first.result.approval.callId,
+      first.result.status === "waiting" && first.result.waiting.callId,
     );
     expect(waiting.lastSeq).toBe(first.events.at(-1)?.seq);
 
@@ -148,8 +151,8 @@ describe("working memory saved between invocations", () => {
       runId: "r1",
       store,
       script: [final("saved")],
-      approver: approve,
-      resume: decided({ approved: true, by: "editor" }),
+      responder: approves,
+      resume: decided(approve("editor")),
     });
     expect(second.result).toMatchObject({ status: "completed", output: { summary: "saved" } });
     expect(written).toEqual(["draft:a"]);
@@ -161,9 +164,9 @@ describe("working memory saved between invocations", () => {
     expect(seqs(all)).toEqual(all.map((_, i) => i + 1));
     expect(second.events[0]).toMatchObject({
       type: "run.resumed",
-      data: { agentId: "durable-agent", step: 1, reason: "approval" },
+      data: { agentId: "durable-agent", step: 1, reason: "answered" },
     });
-    expect(second.events.map((e) => e.type)).toContain("approval.granted");
+    expect(second.events.map((e) => e.type)).toContain("question.answered");
     // the model was not asked again for the turn it had already taken
     expect(second.model.requests).toHaveLength(1);
   });
@@ -174,16 +177,16 @@ describe("working memory saved between invocations", () => {
       runId: "r2",
       store,
       script: [call("draft.save", { text: "a" })],
-      approver: later,
+      responder: later,
     });
     const second = await invoke({
       runId: "r2",
       store,
       script: [call("draft.save", { text: "b" })],
-      approver: later,
-      resume: decided({ approved: false, by: "editor", changes: "Use b." }),
+      responder: later,
+      resume: decided(requestChange("editor", "Use b.")),
     });
-    expect(second.result).toMatchObject({ status: "waiting", approval: { input: { text: "b" } } });
+    expect(second.result).toMatchObject({ status: "waiting", waiting: { input: { text: "b" } } });
     const sentBack = second.model.requests[0]?.messages ?? [];
     expect(sentBack.at(-1)).toMatchObject({ role: "user" });
     expect(sentBack.at(-1)?.content).toContain('"Use b."');
@@ -194,8 +197,8 @@ describe("working memory saved between invocations", () => {
       runId: "r2",
       store,
       script: [final("saved")],
-      approver: approve,
-      resume: decided({ approved: true, by: "editor" }),
+      responder: approves,
+      resume: decided(approve("editor")),
     });
     expect(third.result).toMatchObject({ status: "completed" });
     expect(written).toEqual(["draft:b"]);
@@ -207,14 +210,14 @@ describe("working memory saved between invocations", () => {
       runId: "r3",
       store,
       script: [call("draft.save", { text: "a" })],
-      approver: later,
+      responder: later,
     });
     const second = await invoke({
       runId: "r3",
       store,
       script: [],
-      approver: approve,
-      resume: decided({ approved: false, by: "editor", reason: "no" }),
+      responder: approves,
+      resume: decided(reject("editor", "no")),
     });
     expect(second.result).toMatchObject({ status: "rejected", output: { reason: "no" } });
     expect(written).toEqual([]);
@@ -228,14 +231,14 @@ describe("working memory saved between invocations", () => {
       tools: [draftSave, emailSend],
       client: createScriptedModel([call("draft.save", { text: "a" })]),
       models: scriptedModelConfig(),
-      approver: later,
+      responder: later,
       runsDir,
       outputs: createMemoryOutputStore(),
     });
     expect(result).toMatchObject({
       status: "failed",
       reason: "error",
-      message: "an approver can only answer later when the run has a store to resume from",
+      message: "a responder can only answer later when the run has a store to resume from",
     });
   });
 
@@ -245,15 +248,15 @@ describe("working memory saved between invocations", () => {
       runId: "r4",
       store,
       script: [call("draft.save", { text: "a" })],
-      approver: later,
+      responder: later,
     });
     await expect(
       invoke({
         runId: "r4",
         store,
         script: [final("x")],
-        approver: approve,
-        resume: decided({ approved: true, by: "editor" }),
+        responder: approves,
+        resume: decided(approve("editor")),
         version: 2,
       }),
     ).rejects.toThrow("durable-agent v2 cannot resume a run saved by durable-agent v1");
@@ -283,13 +286,13 @@ describe("save points and forks", () => {
       runId: "r1",
       store,
       script: [call("draft.save", { text: "a" }), final("saved")],
-      approver: approve,
+      responder: approves,
     });
     const history = await store.history(ctx("r1"));
     expect(history.map((p) => [p.version, p.step, p.savedAfter])).toEqual([
       [1, 0, "start"],
       [2, 1, "model"],
-      // asked for the approval, even though the approver answers at once
+      // asked for the approval, even though the responder answers at once
       [3, 1, "waiting"],
       [4, 1, "decision"],
       [5, 1, "call"],
@@ -311,23 +314,23 @@ describe("save points and forks", () => {
       runId: "parent",
       store,
       script: [call("draft.save", { text: "a" })],
-      approver: later,
+      responder: later,
     });
     const history = await store.history(ctx("parent"));
     const waiting = history.findLast((p) => p.waiting) as (typeof history)[number];
     const before = structuredClone(store.runs.get("demo-cricket/parent"));
 
     await fork(store, "parent", waiting.version, "fork", {
-      decision: { approved: false, by: "editor", reason: "not this one" },
+      decision: reject("editor", "not this one"),
     });
     const forked = await invoke({
       runId: "fork",
       store,
       script: [],
-      approver: later,
+      responder: later,
       resume: {
-        reason: "approval",
-        decision: { approved: false, by: "editor", reason: "not this one" },
+        reason: "answered",
+        decision: reject("editor", "not this one"),
       },
     });
     expect(forked.result).toMatchObject({ status: "rejected", output: { reason: "not this one" } });
@@ -343,8 +346,8 @@ describe("save points and forks", () => {
       runId: "parent",
       store,
       script: [final("saved")],
-      approver: later,
-      resume: decided({ approved: true, by: "editor" }),
+      responder: later,
+      resume: decided(approve("editor")),
     });
     expect(parent.result).toMatchObject({ status: "completed", output: { summary: "saved" } });
     expect(written).toEqual(["draft:a"]);
@@ -358,7 +361,7 @@ describe("save points and forks", () => {
       runId: "parent",
       store,
       script: [call("draft.save", { text: "a" }), final("saved")],
-      approver: approve,
+      responder: approves,
     });
     // the save point before the second model turn: the first turn answered in full
     const history = await store.history(ctx("parent"));
@@ -369,7 +372,7 @@ describe("save points and forks", () => {
       runId: "fork",
       store,
       script: [final("saved again")],
-      approver: approve,
+      responder: approves,
       resume: { reason: "recovery" },
     });
     expect(forked.result).toMatchObject({
@@ -387,7 +390,7 @@ describe("save points and forks", () => {
       runId: "parent",
       store,
       script: [call("draft.save", { text: "a" })],
-      approver: later,
+      responder: later,
     });
     const forked = await fork(store, "parent", 1, "fork", { input: { brief: "two drafts" } });
     expect(forked.messages.at(-1)).toEqual({
@@ -401,9 +404,9 @@ describe("save points and forks", () => {
     await expect(fork(store, "parent", midTurn.version, "f2", { input: "x" })).rejects.toThrow(
       "in the middle of a turn",
     );
-    await expect(
-      fork(store, "parent", 1, "f3", { decision: { approved: true, by: "editor" } }),
-    ).rejects.toThrow("waits for no approval");
+    await expect(fork(store, "parent", 1, "f3", { decision: approve("editor") })).rejects.toThrow(
+      "waits for no one",
+    );
   });
 });
 
@@ -441,7 +444,7 @@ describe("picking a run up after a crash", () => {
             throw new RunInterrupted("process died");
           },
         ],
-        approver: approve,
+        responder: approves,
       }),
     ).rejects.toThrow(RunInterrupted);
 
@@ -449,7 +452,7 @@ describe("picking a run up after a crash", () => {
       runId: "c5",
       store,
       script: [refusedCall],
-      approver: approve,
+      responder: approves,
       resume: recover(100),
     });
     expect(second.result).toMatchObject({
@@ -480,7 +483,7 @@ describe("picking a run up after a crash", () => {
         tools: [failing],
         client: createScriptedModel(script),
         models: scriptedModelConfig(),
-        approver: approve,
+        responder: approves,
         runsDir,
         outputs: createMemoryOutputStore(),
         store,
@@ -504,10 +507,10 @@ describe("picking a run up after a crash", () => {
   });
 
   it("does not ask the reviewer again for a call approved before the crash", async () => {
-    const asked: ApprovalRequest[] = [];
-    const approver: Approver = async (req) => {
+    const asked: InterruptRequest[] = [];
+    const responder: Responder = async (req) => {
       asked.push(req);
-      return { approved: true, by: "editor" };
+      return approve("editor");
     };
     // dies when about to run the approved tool
     const { store } = crashingStore((cp) => (cp.turn?.started.length ?? 0) > 0);
@@ -515,7 +518,7 @@ describe("picking a run up after a crash", () => {
       runId: "c1",
       store,
       script: [call("draft.save", { text: "a" })],
-      approver,
+      responder,
     });
     await expect(first).rejects.toThrow(RunInterrupted);
     expect(written).toEqual([]);
@@ -524,7 +527,7 @@ describe("picking a run up after a crash", () => {
       runId: "c1",
       store,
       script: [final("saved")],
-      approver,
+      responder,
       resume: recover(100),
     });
     expect(second.result).toMatchObject({ status: "completed" });
@@ -545,7 +548,7 @@ describe("picking a run up after a crash", () => {
         runId: "c2",
         store,
         script: [call("draft.save", { text: "a" })],
-        approver: approve,
+        responder: approves,
       }),
     ).rejects.toThrow(RunInterrupted);
     expect(written).toEqual(["draft:a"]);
@@ -554,7 +557,7 @@ describe("picking a run up after a crash", () => {
       runId: "c2",
       store,
       script: [final("saved")],
-      approver: approve,
+      responder: approves,
       resume: recover(100),
     });
     expect(second.result).toMatchObject({ status: "completed" });
@@ -568,7 +571,7 @@ describe("picking a run up after a crash", () => {
         runId: "c3",
         store,
         script: [call("email.send", { to: "fan@x" })],
-        approver: approve,
+        responder: approves,
       }),
     ).rejects.toThrow(RunInterrupted);
     expect(written).toEqual(["email:fan@x"]);
@@ -577,7 +580,7 @@ describe("picking a run up after a crash", () => {
       runId: "c3",
       store,
       script: [final("checked")],
-      approver: approve,
+      responder: approves,
       resume: recover(100),
     });
     expect(second.result).toMatchObject({ status: "completed" });
@@ -595,7 +598,7 @@ describe("picking a run up after a crash", () => {
         runId: "c4",
         store,
         script: [call("draft.save", { text: "a" })],
-        approver: approve,
+        responder: approves,
       }),
     ).rejects.toThrow(RunInterrupted);
 
@@ -603,7 +606,7 @@ describe("picking a run up after a crash", () => {
       runId: "c4",
       store,
       script: [call("draft.save", { text: "a" }), final("saved")],
-      approver: approve,
+      responder: approves,
       resume: recover(100),
     });
     expect(second.result).toMatchObject({ status: "completed", usage: { steps: 2 } });

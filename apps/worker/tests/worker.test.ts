@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelClient, RunCheckpoint, RunEvent } from "@dugout/contracts";
+import { approve, reject } from "@dugout/contracts";
 import {
   correctedInput,
   createScriptedModel,
@@ -123,13 +124,9 @@ const insertRun = (runId: string, leaseOwner: string) =>
 const contiguous = (es: RunEvent[]) =>
   expect(es.map((e) => e.seq)).toEqual(es.map((_, i) => i + 1));
 const waitingCall = (es: RunEvent[]) =>
-  (
-    es.findLast((e) => e.type === "approval.requested") as Extract<
-      RunEvent,
-      { type: "approval.requested" }
-    >
-  ).data.callId;
-const approve = { approved: true as const, by: "editor" };
+  (es.findLast((e) => e.type === "question.asked") as Extract<RunEvent, { type: "question.asked" }>)
+    .data.callId;
+const approved = approve("editor");
 
 describe("workers", () => {
   it("queue a run on the model, at the effort, it was asked to use", async () => {
@@ -147,18 +144,18 @@ describe("workers", () => {
     const runId = await queue.start(TENANT, "drafter", INPUT);
     expect(await runRow(runId)).toMatchObject({ status: "queued", lease_owner: null });
     expect(await first.poll()).toEqual([runId]);
-    await eventsUntil(runId, lastType("approval.requested"));
+    await eventsUntil(runId, lastType("question.asked"));
     await first.idle();
     // nothing in memory holds the run now: it is saved and waiting
     expect(await runRow(runId)).toMatchObject({ status: "waiting", lease_until: null });
 
     const callId = waitingCall(await events.read(runId, 0));
-    expect(await queue.decide("demo-football", runId, callId, approve)).toBeUndefined();
-    expect(await queue.decide(TENANT, runId, "call_other", approve)).toBeUndefined();
+    expect(await queue.decide("demo-football", runId, callId, approved)).toBeUndefined();
+    expect(await queue.decide(TENANT, runId, "call_other", approved)).toBeUndefined();
     const lastSeen = (await events.read(runId, 0)).at(-1)?.seq;
-    expect(await queue.decide(TENANT, runId, callId, approve)).toBe(lastSeen);
-    expect(await queue.decide(TENANT, runId, callId, approve)).toBeUndefined();
-    expect(await runRow(runId)).toMatchObject({ status: "queued", decision: approve });
+    expect(await queue.decide(TENANT, runId, callId, approved)).toBe(lastSeen);
+    expect(await queue.decide(TENANT, runId, callId, approved)).toBeUndefined();
+    expect(await runRow(runId)).toMatchObject({ status: "queued", decision: approved });
 
     const second = workerWith(writerModel);
     expect(await second.poll()).toEqual([runId]);
@@ -167,7 +164,7 @@ describe("workers", () => {
     contiguous(all);
     expect(all.at(-1)).toMatchObject({ type: "run.completed", data: { status: "completed" } });
     expect(all.find((e) => e.type === "run.resumed")).toMatchObject({
-      data: { reason: "approval", step: 3 },
+      data: { reason: "answered", step: 3 },
     });
     // the first save after the decision took it off the run
     expect(await runRow(runId)).toMatchObject({ status: "completed", decision: null });
@@ -206,12 +203,12 @@ describe("workers", () => {
     expect(await second.poll()).not.toContain(runId);
     await sleep(leaseMs + 100);
     expect(await second.poll()).toContain(runId);
-    const resumed = await eventsUntil(runId, lastType("approval.requested"));
+    const resumed = await eventsUntil(runId, lastType("question.asked"));
     expect(resumed.find((e) => e.type === "run.resumed")).toMatchObject({
       data: { reason: "recovery", step: 2 },
     });
 
-    expect(await queue.decide(TENANT, runId, waitingCall(resumed), approve)).toBeDefined();
+    expect(await queue.decide(TENANT, runId, waitingCall(resumed), approved)).toBeDefined();
     await second.poll();
     await second.idle();
     const all = await events.read(runId, 0);
@@ -248,11 +245,11 @@ describe("workers", () => {
     recovered = true;
     await sleep(leaseMs + 100);
     expect(await first.poll()).toContain(runId);
-    const resumed = await eventsUntil(runId, lastType("approval.requested"));
+    const resumed = await eventsUntil(runId, lastType("question.asked"));
     expect(resumed.find((e) => e.type === "run.resumed")).toMatchObject({
       data: { reason: "recovery" },
     });
-    expect(await queue.decide(TENANT, runId, waitingCall(resumed), approve)).toBeDefined();
+    expect(await queue.decide(TENANT, runId, waitingCall(resumed), approved)).toBeDefined();
     await first.poll();
     await first.idle();
     const all = await events.read(runId, 0);
@@ -287,7 +284,7 @@ describe("workers", () => {
 
     const second = workerWith(writerModel);
     expect(await second.poll()).toEqual([runId]);
-    const resumed = await eventsUntil(runId, lastType("approval.requested"));
+    const resumed = await eventsUntil(runId, lastType("question.asked"));
     contiguous(resumed);
     expect(resumed.find((e) => e.type === "run.resumed")).toMatchObject({
       data: { reason: "recovery" },
@@ -305,7 +302,7 @@ describe("workers", () => {
     const b = workerWith(writerModel);
     const claims = (await Promise.all([a.poll(), b.poll()])).flat();
     expect(claims).toEqual([runId]);
-    await eventsUntil(runId, lastType("approval.requested"));
+    await eventsUntil(runId, lastType("question.asked"));
     await Promise.all([a.idle(), b.idle()]);
   });
 
@@ -446,10 +443,10 @@ describe("cancelling a run", () => {
   it("ends a run waiting for an approval at once, and a later decision finds nothing", async () => {
     const runId = await queue.start(TENANT, "drafter", INPUT);
     await workerWith(writerModel).poll();
-    const waiting = await eventsUntil(runId, lastType("approval.requested"));
+    const waiting = await eventsUntil(runId, lastType("question.asked"));
     expect(await queue.cancel(TENANT, runId, "editor")).toBe("waiting");
     contiguous(await eventsUntil(runId, lastType("run.cancelled")));
-    expect(await queue.decide(TENANT, runId, waitingCall(waiting), approve)).toBeUndefined();
+    expect(await queue.decide(TENANT, runId, waitingCall(waiting), approved)).toBeUndefined();
     expect(await runRow(runId)).toMatchObject({ status: "cancelled" });
   });
 
@@ -476,7 +473,7 @@ describe("cancelling a run", () => {
 
     const all = await eventsUntil(runId, lastType("run.cancelled"));
     contiguous(all);
-    expect(all.some((e) => e.type === "approval.requested")).toBe(false);
+    expect(all.some((e) => e.type === "question.asked")).toBe(false);
     expect(all.filter((e) => e.type === "run.cancelled")).toHaveLength(1);
     expect(await runRow(runId)).toMatchObject({ status: "cancelled", lease_owner: null });
   });
@@ -507,11 +504,11 @@ describe("cancelling a run whose worker then died", () => {
 });
 
 describe("save points and forks", () => {
-  const reject = { approved: false as const, by: "editor", reason: "not this one" };
+  const rejected = reject("editor", "not this one");
   /** Runs `runId` until it waits for its approval, and returns its events. */
   const untilWaiting = async (worker: ReturnType<typeof workerWith>, runId: string) => {
     await worker.poll();
-    const es = await eventsUntil(runId, lastType("approval.requested"));
+    const es = await eventsUntil(runId, lastType("question.asked"));
     await worker.idle();
     return es;
   };
@@ -540,7 +537,7 @@ describe("save points and forks", () => {
     });
 
     const { runId: forkId, startSeq } = await queue.fork(TENANT, runId, waiting.version, {
-      decision: reject,
+      decision: rejected,
     });
     expect(await queue.find(TENANT, forkId)).toMatchObject({
       status: "queued",
@@ -554,7 +551,7 @@ describe("save points and forks", () => {
     const upTo = (rows: Awaited<ReturnType<typeof stored>>) =>
       rows.filter((e) => e.seq <= startSeq);
     expect(upTo(await stored(forkId))).toEqual(upTo(await stored(runId)));
-    expect(upTo(await stored(forkId)).at(-1)?.type).toBe("approval.requested");
+    expect(upTo(await stored(forkId)).at(-1)?.type).toBe("question.asked");
     expect(forkEvents[0]).toMatchObject({
       seq: startSeq + 1,
       type: "run.resumed",
@@ -565,7 +562,7 @@ describe("save points and forks", () => {
     expect(await runRow(runId)).toMatchObject({ status: "waiting" });
     expect(await queue.history(TENANT, runId)).toEqual(history);
 
-    await queue.decide(TENANT, runId, waitingCall(parentEvents), approve);
+    await queue.decide(TENANT, runId, waitingCall(parentEvents), approved);
     await worker.poll();
     await eventsUntil(runId, lastType("run.completed"));
     await worker.idle();
@@ -593,7 +590,7 @@ describe("save points and forks", () => {
     sent.length = 0;
     const onHaiku = await queue.fork(TENANT, runId, firstTurn?.version ?? 0, { model: "haiku" });
     await worker.poll();
-    await eventsUntil(onHaiku.runId, lastType("approval.requested"));
+    await eventsUntil(onHaiku.runId, lastType("question.asked"));
     await worker.idle();
     expect(sent.length).toBeGreaterThan(0);
     expect(new Set(sent)).toEqual(new Set(["haiku"]));
@@ -616,6 +613,65 @@ describe("save points and forks", () => {
     );
     await expect(queue.fork(TENANT, runId, 999)).rejects.toThrow("has no save point 999");
     await expect(queue.fork("demo-football", runId, 1)).rejects.toThrow("has no save point 1");
+  });
+
+  it("a follow-up queued by a host carries on from the parent's last save point, with the new input", async () => {
+    const worker = workerWith(writerModel);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
+    const parentEvents = await untilWaiting(worker, runId);
+    // a follow-up goes between turns: not while the parent waits
+    await expect(queue.continueFrom(TENANT, runId, { topicId: "t-102" })).rejects.toThrow(
+      "has not ended",
+    );
+    await queue.decide(TENANT, runId, waitingCall(parentEvents), approved);
+    await worker.poll();
+    await eventsUntil(runId, lastType("run.completed"));
+    await worker.idle();
+
+    const lastVersion = (await queue.history(TENANT, runId)).at(-1)?.version as number;
+    const followId = await queue.continueFrom(TENANT, runId, { topicId: "t-102" });
+    expect(await queue.find(TENANT, followId)).toMatchObject({
+      status: "queued",
+      parent_run_id: runId,
+    });
+    expect(await worker.poll()).toEqual([followId]);
+    const events = await eventsUntil(followId, (es) =>
+      ["run.completed", "question.asked"].includes(es.at(-1)?.type ?? ""),
+    );
+    await worker.idle();
+
+    expect(events.find((e) => e.type === "run.resumed")).toMatchObject({
+      data: { reason: "fork", forkedFrom: { runId, version: lastVersion } },
+    });
+    const { rows } = await withTenant(pool, TENANT, (db) =>
+      db.query<{ message: { role: string; content: string } }>(
+        "select message from run_messages where run_id = $1 order by idx",
+        [followId],
+      ),
+    );
+    const parentCount = (
+      await withTenant(pool, TENANT, (db) =>
+        db.query("select 1 from run_messages where run_id = $1", [runId]),
+      )
+    ).rowCount as number;
+    // the parent's whole transcript, then the new input, then the follow-up's own turns
+    expect(rows[parentCount]?.message.content).toBe(correctedInput({ topicId: "t-102" }));
+  });
+
+  it("gives up a follow-up whose parent has no save point", async () => {
+    const worker = workerWith(writerModel);
+    const bare = await queue.start(TENANT, "drafter", INPUT); // queued, never run: no save point
+    const orphan = randomUUID();
+    await withTenant(pool, TENANT, (db) =>
+      db.query(
+        `insert into runs (id, tenant_id, agent_id, status, input, parent_run_id)
+         values ($1, $2, 'drafter', 'queued', $3, $4)`,
+        [orphan, TENANT, JSON.stringify(INPUT), bare],
+      ),
+    );
+    await worker.poll();
+    await worker.idle();
+    expect(await queue.find(TENANT, orphan)).toMatchObject({ status: "failed" });
   });
 
   it("prunes save points past their time, but never a run's latest", async () => {

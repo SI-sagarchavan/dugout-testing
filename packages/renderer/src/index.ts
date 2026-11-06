@@ -5,7 +5,7 @@
  * Every component is a Server Component. No "use client".
  *
  * This entry is framework-free on purpose: it imports React and nothing from
- * Next, so `apps/web` is one consumer rather than the only possible one. The
+ * Next, so a host (Surface Studio) is one consumer rather than the only possible one. The
  * Playwright screenshot/diff harness deliberately does NOT live here — it is
  * behind `@fanos/renderer/harness`, so a client-facing app that imports this
  * entry never pulls a browser automation stack into its dependency graph.
@@ -36,7 +36,7 @@ export { Divider } from "./components/Divider.js";
 // Fonts
 export { FONT_FACE_CSS, REQUIRED_FONTS } from "./fonts.js";
 
-// A stored tree made ready to render as a page (Studio's preview, apps/web)
+// A stored tree made ready to render as a page (Studio's preview)
 export { DEFAULT_PAGE_WIDTH, preparePage } from "./page.js";
 export type { PageSource, PreparedPage } from "./page.js";
 
