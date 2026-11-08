@@ -6,6 +6,7 @@ import {
   defineTool,
   type ModelClient,
   type ModelRequest,
+  NeedsSetup,
   type RunCheckpoint,
   type RunContext,
   type RunEvent,
@@ -22,7 +23,12 @@ import {
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import type { McpHost } from "@dugout/mcp";
-import { createHashEmbeddings, createMemoryStore } from "@dugout/memory";
+import {
+  createHashEmbeddings,
+  createMemoryStore,
+  type ThreadNote,
+  type ThreadNotes,
+} from "@dugout/memory";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { z } from "zod";
 import { type AnyAgent, agentToolName, childRunId, defineAgent } from "../src/index.ts";
@@ -44,7 +50,9 @@ const PARENT = "You are the lead.";
 /** What the researcher's lookup tool saw, so a test can check the tenant it ran under. */
 const looked: Array<{ tenantId: string; runId: string; depth?: number | undefined }> = [];
 
-const researcher = (extra: { write?: boolean; agents?: AnyAgent[]; maxDepth?: number } = {}) =>
+const researcher = (
+  extra: { write?: boolean; agents?: AnyAgent[]; maxDepth?: number; signIn?: boolean } = {},
+) =>
   defineAgent({
     spec: {
       id: "researcher",
@@ -52,7 +60,11 @@ const researcher = (extra: { write?: boolean; agents?: AnyAgent[]; maxDepth?: nu
       owner: "test",
       description: "Finds the answer to one question.",
       instructions: CHILD,
-      tools: ["facts.lookup", ...(extra.write ? ["facts.save"] : [])],
+      tools: [
+        "facts.lookup",
+        ...(extra.write ? ["facts.save"] : []),
+        ...(extra.signIn ? ["facts.remote"] : []),
+      ],
       skills: [],
       onDemandSkills: [],
       model: "nova-lite",
@@ -83,6 +95,16 @@ const researcher = (extra: { write?: boolean; agents?: AnyAgent[]; maxDepth?: nu
         effect: "write",
         timeoutMs: 1_000,
         run: async () => ({ saved: true }),
+      }),
+      defineTool({
+        name: "facts.remote",
+        description: "Reads a fact from a server the tenant has not signed in to.",
+        input: z.object({}),
+        effect: "read",
+        timeoutMs: 1_000,
+        run: async () => {
+          throw new NeedsSetup("no grant for tenant club-a on cast");
+        },
       }),
     ],
   });
@@ -159,6 +181,68 @@ const askThenSum = (): Record<string, ScriptStep[]> => ({
   ],
 });
 
+describe("threads (ADR 0031)", () => {
+  /** One thread every run is in, its notes kept in memory. */
+  const fakeThreads = (earlier: ThreadNote[]) => {
+    const notes = [...earlier];
+    const asked: string[] = [];
+    const threads: ThreadNotes = {
+      threadOf: async (_tenant, runId) => {
+        asked.push(runId);
+        return "thread-1";
+      },
+      add: async (_tenant, _thread, note) => void notes.push(note),
+      list: async () => [...notes],
+    };
+    return { threads, notes, asked };
+  };
+
+  it("starts a run a host started with what earlier runs in its thread did, and leaves its own note; a child reads and writes none", async () => {
+    const client = routed(askThenSum());
+    const earlier: ThreadNote = {
+      runId: "earlier",
+      agentId: "section-builder",
+      status: "completed",
+      at: "2026-11-07T09:00:00.000Z",
+      did: "Built the section and published it.",
+      made: { previewUrl: "http://p/preview/default/t1" },
+      decided: ["Is it a carousel? → carousel (Asha)"],
+      open: ["data: no field for the count"],
+      children: [],
+    };
+    const { threads, notes, asked } = fakeThreads([earlier]);
+    const result = await lead(researcher()).create({ ...deps(client), threads })({
+      tenantId: "club-a",
+      input: { topic: "the opener" },
+      responder: never,
+      runId: "parent-t",
+    });
+    expect(result).toMatchObject({ status: "completed" });
+
+    const firstUser = (who: string) =>
+      String(
+        client.requests
+          .find((r) => String(r.messages[0]?.content).startsWith(who))
+          ?.messages.find((m) => m.role === "user")?.content,
+      );
+    // the run's first message: the thread, then its input
+    expect(firstUser(PARENT)).toContain("## This thread so far");
+    expect(firstUser(PARENT)).toContain("previewUrl: http://p/preview/default/t1");
+    expect(firstUser(PARENT)).toContain("carousel (Asha)");
+    // the child's window is its own
+    expect(firstUser(CHILD)).not.toContain("This thread so far");
+    expect(asked).toEqual(["parent-t", "parent-t"]);
+
+    // one note, the run's, naming the child it ran
+    expect(notes.map((n) => n.runId)).toEqual(["earlier", "parent-t"]);
+    expect(notes[1]).toMatchObject({
+      agentId: "lead",
+      status: "completed",
+      children: [{ agentId: "researcher", status: "completed" }],
+    });
+  });
+});
+
 describe("subagents (ADR 0025)", () => {
   it("names the tool after the agent, and a child's run id after the call", () => {
     expect(agentToolName("hook-maker")).toBe("agent.hookMaker");
@@ -192,12 +276,24 @@ describe("subagents (ADR 0025)", () => {
     });
     // the child ran under the parent's tenant, one level down
     expect(looked).toEqual([{ tenantId: "club-a", runId: childId, depth: 1 }]);
-    // its own events, in its own run, saying who started it
+    // its events are in the parent's stream, one stream per invocation, each saying it is the
+    // child's and who started it
     const started = sink.events.find(
       (e): e is Extract<RunEvent, { type: "run.started" }> =>
-        e.type === "run.started" && e.runId === childId,
+        e.type === "run.started" && e.child?.runId === childId,
     );
+    expect(started?.runId).toBe("parent-1");
+    expect(started?.child).toEqual({
+      runId: childId,
+      agentId: "researcher",
+      parentRunId: "parent-1",
+      callId: "call_1_0",
+    });
     expect(started?.data.parent).toEqual({ runId: "parent-1", callId: "call_1_0" });
+    expect(new Set(sink.events.map((e) => e.runId))).toEqual(new Set(["parent-1"]));
+    // in order: the parent's seq counts its children's events
+    const seqs = sink.events.map((e) => e.seq);
+    expect(seqs).toEqual(seqs.map((_, i) => i + 1));
   });
 
   it("runs the child on its own spec's model, or on the one the host named for the run", async () => {
@@ -441,10 +537,11 @@ describe("subagents (ADR 0025)", () => {
       r.messages.some((m) => m.role === "tool" && m.content.includes('"answer":"carousel"')),
     );
     expect(innerRead).toBeDefined();
-    const answeredAt = sink.events
-      .filter((e) => e.type === "question.answered")
-      .map((e) => e.runId);
-    expect(answeredAt).toEqual(["ask-top", middleId, innerId]);
+    const answered = sink.events.filter((e) => e.type === "question.answered");
+    // one stream: the grandchild's events came up through the child, keeping their own source
+    expect(answered.map((e) => e.runId)).toEqual(["ask-top", "ask-top", "ask-top"]);
+    expect(answered.map((e) => e.child?.runId ?? e.runId)).toEqual(["ask-top", middleId, innerId]);
+    expect(answered[2]?.child?.parentRunId).toBe(middleId);
   });
 
   it("refuses to load an agent that calls agents with no depth for one", () => {
@@ -480,7 +577,7 @@ describe("subagents (ADR 0025)", () => {
     const granted = sink.events.filter(
       (e): e is Extract<RunEvent, { type: "question.answered" }> => e.type === "question.answered",
     );
-    expect(granted.map((e) => [e.runId, e.data.tool, e.data.by])).toEqual([
+    expect(granted.map((e) => [e.child?.runId ?? e.runId, e.data.tool, e.data.by])).toEqual([
       ["parent-w", "agent.researcher", "editor"],
       [
         // a child that writes is named after its agent, not the call: it runs once per run
@@ -656,8 +753,8 @@ describe("subagents (ADR 0025)", () => {
     });
     // each try is a child of its own: the first keeps its id, the next is named for its number
     const started = sink.events
-      .filter((e) => e.type === "run.started" && e.runId !== "parent-retry")
-      .map((e) => e.runId);
+      .filter((e) => e.type === "run.started" && e.child)
+      .map((e) => e.child?.runId);
     expect(started).toEqual([
       childRunId("parent-retry", "once:researcher"),
       childRunId("parent-retry", "once:researcher:2"),
@@ -706,6 +803,38 @@ describe("subagents (ADR 0025)", () => {
       .flatMap((r) => r.messages)
       .find((m) => m.role === "tool" && String(m.content).includes("Try 3 of 3"));
     expect(String(third?.content)).toContain("a person has to look");
+  });
+
+  it("ends at a child that needs setup, saying what to set up, with no second try", async () => {
+    const client = routed({
+      [PARENT]: [
+        call("Save it"),
+        call("Save it again"),
+        { toolCalls: [{ name: "final", arguments: { summary: "x" } }] },
+      ],
+      [CHILD]: [{ toolCalls: [{ name: "facts.remote", arguments: {} }] }],
+    });
+    const asked: string[] = [];
+    const result = await lead(researcher({ write: true, signIn: true })).create(deps(client))({
+      tenantId: "club-a",
+      input: { topic: "t" },
+      responder: async (req) => {
+        asked.push(req.tool);
+        return approve("editor");
+      },
+      runId: "parent-setup",
+      store: createMemoryRunStore(),
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "error",
+      message: "needs setup: no grant for tenant club-a on cast",
+    });
+    // one approval, one child, and the parent's model never had a turn after it
+    expect(asked).toEqual(["agent.researcher"]);
+    expect(
+      client.requests.filter((r) => String(r.messages[0]?.content).startsWith(PARENT)),
+    ).toHaveLength(1);
   });
 
   describe("a pipeline: agents run in a fixed order, in code", () => {

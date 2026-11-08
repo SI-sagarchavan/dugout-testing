@@ -3,12 +3,15 @@
 //   [--accent '#hex'] [--surface '#hex'] [--page '#hex'] [--ink '#hex'] [--on-accent '#hex']
 // The tenant's section library, by words, a picture, or both; with --shared, other tenants'
 // shared sections too. The tenant's own come with their picture; another tenant's with its
-// skeleton, written as an SVG in the colours given (neutral greys by default).
+// skeleton, written as an SVG in the tenant's approved palette (`library.palette`, proposed from
+// its own designs; `pnpm agent library palette`), any colour given as a flag over it, neutral
+// greys until one is approved.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadEnv, loadTenants } from "@dugout/core";
-import { skeletonSvg } from "../src/index.ts";
+import { createMemoryStore, loadEmbeddings } from "@dugout/memory";
+import { approvedPalette, NEUTRAL_PALETTE, shapeWords, skeletonSvg } from "../src/index.ts";
 import { openLibrary, paletteFrom } from "./common.ts";
 
 loadEnv();
@@ -37,7 +40,14 @@ if (!values.tenant || (!text && !values.image)) {
 }
 const tenant = loadTenants().require(values.tenant);
 const { pool, library, cropDir } = openLibrary();
-const palette = paletteFrom({ ...values, onAccent: values["on-accent"] });
+const approved = await approvedPalette(
+  createMemoryStore({ pool, embeddings: loadEmbeddings() }),
+  tenant.id,
+);
+const palette = paletteFrom(
+  { ...values, onAccent: values["on-accent"] },
+  approved ?? NEUTRAL_PALETTE,
+);
 const skeletonDir = join(cropDir, "skeletons", tenant.id);
 
 const results = await library.search(tenant.id, {
@@ -58,6 +68,7 @@ for (const [i, s] of results.entries()) {
   );
   if (s.caption) console.log(`   ${s.caption}`);
   if (s.tags.length) console.log(`   tags: ${s.tags.join(", ")}`);
+  if (s.dataShape) console.log(`   ${shapeWords(s.dataShape)}`);
   console.log(`   structure: ${s.summary}`);
   if (s.own && s.cropKey) {
     console.log(`   picture: ${join(cropDir, s.cropKey)} (${s.cropWidth}×${s.cropHeight})`);
@@ -65,7 +76,7 @@ for (const [i, s] of results.entries()) {
     await mkdir(skeletonDir, { recursive: true });
     const path = join(skeletonDir, `${s.id}.svg`);
     await writeFile(path, skeletonSvg(s.skeleton, palette));
-    console.log(`   skeleton: ${path}`);
+    console.log(`   skeleton: ${path}${approved ? "" : " (neutral colours: no approved palette)"}`);
   }
 }
 await pool.end();

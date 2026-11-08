@@ -1,0 +1,754 @@
+<title>Surface Studio Live Streams</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a field guide. Sticky contents rail on the left, one reading column, "in our code" and ticket callouts set off from the prose. */
+:root {
+  --bg: #f6f8fa;
+  --surface: #ffffff;
+  --fg: #16202b;
+  --muted: #566476;
+  --line: #d9e0e8;
+  --accent: #0a5fb8;
+  --accent-soft: #e3eefb;
+  --code-bg: #eef2f6;
+  --warn: #9a5b00;
+  --warn-soft: #fbf0dc;
+  --good: #1f7a4d;
+  --good-soft: #e1f3ea;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151c; --surface: #161e27; --fg: #e3e9f0; --muted: #98a6b6; --line: #2a3644;
+    --accent: #6fb0ff; --accent-soft: #15283d; --code-bg: #1c2632;
+    --warn: #f0b562; --warn-soft: #2e2414; --good: #6fd3a0; --good-soft: #132a20;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151c; --surface: #161e27; --fg: #e3e9f0; --muted: #98a6b6; --line: #2a3644;
+  --accent: #6fb0ff; --accent-soft: #15283d; --code-bg: #1c2632;
+  --warn: #f0b562; --warn-soft: #2e2414; --good: #6fd3a0; --good-soft: #132a20;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.65 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px;
+}
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px;
+}
+code, pre, .mono { font-family: var(--mono); font-size: 0.88em; }
+:not(pre) > code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+pre { background: var(--code-bg); padding: 14px 16px; border-radius: 6px; overflow-x: auto; line-height: 1.5; margin: 0; }
+pre.mermaid { background: var(--surface); border: 1px solid var(--line); text-align: center; }
+
+.shell { max-width: 1160px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; }
+@media (max-width: 900px) { .shell { grid-template-columns: minmax(0, 1fr); gap: 0; } }
+
+header.top { max-width: 1160px; margin: 0 auto; padding-block: 48px 32px; border-bottom: 1px solid var(--line); margin-bottom: 32px; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+h1 { font: 700 clamp(2rem, 4.5vw, 3.1rem)/1.08 var(--display); letter-spacing: -0.02em; margin: 12px 0 16px; text-wrap: balance; }
+.lede { font-size: 1.12rem; color: var(--muted); max-width: 66ch; margin: 0; }
+.wire { font: 500 13px/1.5 var(--mono); color: var(--accent); margin-top: 20px; white-space: pre; overflow-x: auto; }
+
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 14px; }
+nav.toc ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 2px; counter-reset: toc; }
+nav.toc li { counter-increment: toc; }
+nav.toc a { display: grid; grid-template-columns: 26px 1fr; padding: 5px 8px; border-radius: 5px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(toc, decimal-leading-zero); font: 500 11px/1.9 var(--mono); color: var(--muted); opacity: 0.7; }
+nav.toc a:hover { background: var(--accent-soft); color: var(--fg); }
+nav.toc .label { font: 500 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px 8px; }
+@media (max-width: 900px) {
+  nav.toc { position: static; margin-bottom: 32px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+}
+
+main { min-width: 0; }
+section { padding-block: 8px 40px; border-bottom: 1px solid var(--line); margin-bottom: 40px; scroll-margin-top: 24px; }
+section:last-of-type { border-bottom: 0; }
+h2 { font: 700 clamp(1.5rem, 3vw, 1.95rem)/1.2 var(--display); letter-spacing: -0.01em; margin: 0 0 8px; text-wrap: balance; }
+h2 .n { font: 500 0.55em/1 var(--mono); color: var(--accent); vertical-align: middle; margin-right: 10px; letter-spacing: 0.04em; }
+h3 { font: 600 1.12rem/1.35 var(--body); margin: 32px 0 6px; scroll-margin-top: 24px; }
+h3 .term { font-family: var(--mono); font-weight: 500; font-size: 0.95em; }
+p, ul, ol { max-width: 68ch; }
+p { margin: 0 0 12px; }
+ul, ol { padding-left: 1.2em; margin: 0 0 12px; }
+li { margin-bottom: 4px; }
+.sub { color: var(--muted); margin-bottom: 20px; }
+
+.ours, .watch {
+  max-width: 68ch; margin: 14px 0 18px; padding: 12px 16px; border-radius: 6px; font-size: 15px;
+  display: grid; gap: 4px;
+}
+.ours { background: var(--accent-soft); border-left: 3px solid var(--accent); }
+.watch { background: var(--warn-soft); border-left: 3px solid var(--warn); }
+.ours > .k, .watch > .k { font: 500 11px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.ours > .k { color: var(--accent); }
+.watch > .k { color: var(--warn); }
+.ours p, .watch p { margin: 0; }
+.ticket { display: inline-block; font: 500 12px/1 var(--mono); padding: 4px 7px; border-radius: 4px; background: var(--surface); border: 1px solid var(--line); color: var(--fg); white-space: nowrap; }
+
+.table-wrap { overflow-x: auto; margin: 16px 0 20px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 620px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 12px/1.3 var(--body); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: var(--code-bg); }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+
+.lab { margin: 20px 0 24px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.lab-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.lab-head strong { font: 600 15px/1.3 var(--body); }
+.lab-head span { font-size: 13px; color: var(--muted); }
+.lab-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 720px) { .lab-body { grid-template-columns: minmax(0, 1fr); } }
+.lab-body > div { padding: 14px 16px; min-width: 0; }
+.lab-body > div + div { border-left: 1px solid var(--line); }
+@media (max-width: 720px) { .lab-body > div + div { border-left: 0; border-top: 1px solid var(--line); } }
+.lab label { display: block; font: 500 11px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+textarea {
+  width: 100%; min-height: 250px; resize: vertical; font: 13px/1.5 var(--mono);
+  background: var(--code-bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+}
+.events { display: grid; gap: 8px; }
+.ev { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 12.5px/1.45 var(--mono); background: var(--bg); min-width: 0; }
+.ev .row { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 4px; }
+.ev .tag { color: var(--accent); font-weight: 500; }
+.ev .id { color: var(--muted); }
+.ev .data { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
+.ev.comment { border-style: dashed; color: var(--muted); }
+.ev.comment .data { color: var(--muted); }
+.lab .foot { font-size: 13px; color: var(--muted); padding: 10px 16px; border-top: 1px solid var(--line); }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { font: 500 13px/1 var(--body); padding: 8px 12px; border: 0; background: var(--surface); color: var(--muted); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--surface); }
+.btn { font: 500 13px/1 var(--body); padding: 8px 12px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 6px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.chart { padding: 8px 12px 4px; }
+.chart svg { display: block; width: 100%; height: auto; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 4px 16px 14px; font-size: 13.5px; color: var(--muted); }
+.stats b { font: 600 15px/1 var(--mono); color: var(--fg); font-variant-numeric: tabular-nums; }
+
+dl.glossary { display: grid; grid-template-columns: minmax(140px, 220px) minmax(0, 1fr); gap: 0; margin: 16px 0 0; max-width: 860px; border-top: 1px solid var(--line); }
+dl.glossary dt, dl.glossary dd { padding: 9px 0; border-bottom: 1px solid var(--line); margin: 0; }
+dl.glossary dt { font-weight: 600; padding-right: 16px; }
+dl.glossary dd { color: var(--muted); font-size: 15px; }
+dl.glossary dd a { white-space: nowrap; }
+@media (max-width: 560px) {
+  dl.glossary { grid-template-columns: minmax(0, 1fr); }
+  dl.glossary dt { border-bottom: 0; padding-bottom: 0; }
+}
+.twocol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0; max-width: 860px; }
+@media (max-width: 720px) { .twocol { grid-template-columns: minmax(0, 1fr); } }
+.twocol > div { border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; background: var(--surface); min-width: 0; }
+.twocol h4 { margin: 0 0 6px; font: 600 14px/1.3 var(--body); }
+.twocol p, .twocol ul { font-size: 14.5px; margin: 0; }
+</style>
+
+<header class="top">
+  <div class="eyebrow">Field guide · Dugout × Surface Studio</div>
+  <h1>Surface Studio Live Streams</h1>
+  <p class="lede">Every term from the SSE review, explained from the ground up and tied to the place it lives in our backend and Studio code. Read it in order the first time; afterwards the glossary at the end gets you back to any one term.</p>
+  <div class="wire" aria-hidden="true">id: 1731052800123-0
+event: run.event
+data: {"runId":"r_9f2","seq":42,"type":"token","data":{"text":"Hello"}}
+</div>
+</header>
+
+<div class="shell">
+  <nav class="toc" aria-label="Contents">
+    <p class="label">Contents</p>
+    <ol>
+      <li><a href="#journey">An event's journey</a></li>
+      <li><a href="#push">Ways to push</a></li>
+      <li><a href="#wire">The wire format</a></li>
+      <li><a href="#client-api">EventSource and fetch</a></li>
+      <li><a href="#resume">Resuming without loss</a></li>
+      <li><a href="#alive">Keeping it alive</a></li>
+      <li><a href="#log">The log: Valkey Streams</a></li>
+      <li><a href="#node">The Node side</a></li>
+      <li><a href="#load">Under load</a></li>
+      <li><a href="#order">Ordering and state</a></li>
+      <li><a href="#browser">In the browser</a></li>
+      <li><a href="#lifecycle">Lifecycle and security</a></li>
+      <li><a href="#glossary">Glossary</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+<section id="journey">
+  <h2><span class="n">01</span>An event's journey</h2>
+  <p class="sub">Before the terms, the path. Everything later in this guide is about one hop of this picture.</p>
+  <pre class="mermaid">
+flowchart LR
+  W["dugout worker<br/>(runs the agent)"] -- "XADD 0-seq" --> RS[("Valkey<br/>run:&lt;id&gt;:events")]
+  W -- "XADD * (MAXLEN ~)" --> FS[("Valkey<br/>tenant:&lt;client&gt;:feed")]
+  FS -- "XREAD BLOCK" --> BF["backend followFeed<br/>GET /surface/stream"]
+  RS -- "XRANGE / XREAD" --> BR["backend followRunEvents<br/>GET /surface/runs/:id/events"]
+  BF -- "SSE frames" --> HUB["Studio feed hub<br/>createFeedHub"]
+  BR -- "SSE (history=1)" --> FRL["followRunLive"]
+  HUB --> SYNC["useFeedSync<br/>→ TanStack cache"]
+  HUB --> FRL
+  FRL --> URS["useRunStream<br/>→ run thread UI"]
+  </pre>
+  <ol>
+    <li>The dugout worker runs an agent. Every event it emits (a token, a tool call, a question, the run ending) gets a <code>seq</code>, a number that goes up by one for each event of that run. The worker writes the event twice: to the run's own stream in Valkey, and to the client's feed, a second stream that holds every run's events for that client.</li>
+    <li>The backend (Fastify) keeps an HTTP response open per Studio tab and copies what appears in Valkey onto it, as Server-Sent Events.</li>
+    <li>The Studio reads that response as it arrives, parses the frames, and hands each event to whoever listens: the query cache and the run view on screen.</li>
+  </ol>
+  <div class="ours"><span class="k">In our code</span><p>Worker: <code>apps/worker/src/event-log.ts</code> (dugout). Backend: <code>src/services/surface-run/stream.ts</code>, <code>feed.ts</code>, <code>src/controllers/surface-run/index.ts</code>. Studio: <code>apps/surface-studio/src/entities/surface/api/</code> and <code>queries/</code>.</p></div>
+</section>
+
+<section id="push">
+  <h2><span class="n">02</span>Ways to push from a server</h2>
+  <p class="sub">HTTP was built for the browser to ask and the server to answer. "Push" means the server sends something nobody asked for at that moment. There are four common ways to do it.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Technique</th><th>How it works</th><th>Direction</th><th>Good for</th></tr></thead>
+    <tbody>
+      <tr><td><b>Polling</b></td><td>The browser asks every N seconds: "anything new?"</td><td>Client asks</td><td>Rare changes; simplest. Wastes requests and adds up to N seconds of delay.</td></tr>
+      <tr><td><b>Long polling</b></td><td>The browser asks; the server holds the request open until something happens, answers, and the browser asks again.</td><td>Client asks, server delays</td><td>Old browsers and proxies. One request per message.</td></tr>
+      <tr><td><b>Server-Sent Events (SSE)</b></td><td>One ordinary HTTP response that never finishes. The server writes text frames into it as things happen.</td><td>Server → client only</td><td>Feeds, progress, logs, LLM tokens. Plain HTTP, so proxies, auth and load balancers all just work.</td></tr>
+      <tr><td><b>WebSocket</b></td><td>An HTTP request upgrades to a separate two-way protocol over the same TCP connection.</td><td>Both ways</td><td>Chat, collaborative editing, games: when the client sends often too.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The Studio only needs to receive. It sends rarely (answers, comments, cancel), and those go as normal <code>POST</code> requests. That makes SSE the standard choice here: it is just HTTP, reconnecting and resuming are part of the standard, and nothing extra has to run on the servers. Most LLM APIs stream tokens the same way, the Anthropic and OpenAI APIs included.</p>
+  <p><b>WebTransport</b> is a newer option built on HTTP/3. You'll see it mentioned, but it isn't needed here.</p>
+</section>
+
+<section id="wire">
+  <h2><span class="n">03</span>The SSE wire format</h2>
+  <p class="sub">SSE is a tiny text protocol. The response has <code>Content-Type: text/event-stream</code>, and the body is a series of <b>frames</b> (the spec calls them events).</p>
+
+  <h3 id="frame">Frames, fields and the blank line</h3>
+  <p>A frame is a group of lines, ended by an empty line. Each line is <code>field: value</code>. Only four fields mean anything:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Field</th><th>Meaning</th><th>Example from our backend</th></tr></thead>
+    <tbody>
+      <tr><td><code>data</code></td><td>The payload. Several <code>data:</code> lines in one frame are joined with a newline. A frame with no data is not delivered.</td><td><code>data: {"runId":"r1","seq":7,…}</code></td></tr>
+      <tr><td><code>event</code></td><td>The frame's name, so one stream can carry several kinds of message. Without it the name is <code>message</code>.</td><td><code>event: run.updated</code></td></tr>
+      <tr><td><code>id</code></td><td>The frame's position. The client remembers the last one it saw and sends it back when it reconnects. See <a href="#resume">Resuming</a>.</td><td><code>id: 42</code> (per-run) or <code>id: 1731052800123-0</code> (feed)</td></tr>
+      <tr><td><code>retry</code></td><td>How long a browser's <code>EventSource</code> waits before reconnecting, in milliseconds.</td><td><code>retry: 2000</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>A line that starts with a colon is a <b>comment</b>. It carries nothing but still sends bytes over the wire, which is exactly what a heartbeat needs: <code>: heartbeat</code>.</p>
+  <div class="ours"><span class="k">In our code</span><p>The backend builds frames by hand: <code>frame()</code> writes <code>id: &lt;seq&gt;\ndata: &lt;json&gt;\n\n</code>, the feed writes <code>id</code>, <code>event</code> and <code>data</code>, and the heartbeat writes <code>: heartbeat\n\n</code> every 15 s. The Studio parses frames in <code>api/sse.ts</code> (<code>createSseParser</code>).</p></div>
+
+  <h3 id="chunks">Frames don't arrive in one piece</h3>
+  <p>TCP delivers bytes, not frames. One network read may hold half a frame, three frames, or a frame split in the middle of a multi-byte UTF-8 character. So a parser keeps a buffer: it adds each chunk, cuts off every complete frame (everything up to a blank line), and keeps the unfinished rest for the next chunk. <code>TextDecoder.decode(bytes, { stream: true })</code> handles the split characters: it holds back an incomplete character until the next chunk completes it.</p>
+
+  <div class="lab" id="parser-lab">
+    <div class="lab-head"><strong>Try it: an SSE parser</strong><span>Edit the raw stream on the left; the parsed frames appear on the right.</span></div>
+    <div class="lab-body">
+      <div>
+        <label for="raw">Raw response body</label>
+        <textarea id="raw" spellcheck="false"></textarea>
+      </div>
+      <div>
+        <label>What the client gets</label>
+        <div class="events" id="parsed" aria-live="polite"></div>
+      </div>
+    </div>
+    <div class="foot">Try deleting a blank line (two frames merge), adding a second <code>data:</code> line (joined with a newline), or removing the final blank line (the last frame waits in the buffer).</div>
+  </div>
+</section>
+
+<section id="client-api">
+  <h2><span class="n">04</span>EventSource, and why we use fetch</h2>
+  <h3 id="eventsource"><span class="term">EventSource</span>: the browser's built-in client</h3>
+  <p>Browsers ship an SSE client: <code>new EventSource(url)</code>. It parses frames, fires one DOM event per frame, reconnects on its own after <code>retry</code> milliseconds, and sends the last <code>id</code> it saw as the <code>Last-Event-ID</code> header. It's convenient, but it has hard limits:</p>
+  <ul>
+    <li>It can only send a <code>GET</code>.</li>
+    <li>It can't set headers. Cookies are the only way to authenticate.</li>
+    <li>Its reconnect policy is fixed: no backoff, no jitter, and it gives up for good on any non-200 response.</li>
+  </ul>
+  <h3 id="fetch-stream">Streaming with <span class="term">fetch</span></h3>
+  <p>The other way: call <code>fetch()</code> and read <code>response.body</code>, a <b>ReadableStream</b>. <code>reader.read()</code> resolves each time a chunk arrives. You parse the frames yourself and write your own reconnect loop. In return you choose the headers, the method and the retry policy. Microsoft's <code>@microsoft/fetch-event-source</code> library packages this pattern; many teams write their own, as we did.</p>
+  <div class="ours"><span class="k">In our code</span><p>Our routes authenticate with an <code>Authorization: Bearer</code> header and a <code>client</code> header, which <code>EventSource</code> can't send. So <code>http-transport.ts</code> opens both streams through axios with <code>adapter: 'fetch'</code> and <code>responseType: 'stream'</code>. That also reuses the client's refresh-on-401 interceptor. <code>feed.ts</code> and <code>follow-run.ts</code> read the chunks, call the parser and run the reconnect loop. This is the industry-standard choice for header-based auth.</p></div>
+  <div class="watch"><span class="k">Side effect</span><p>The backend's <code>retry: 2000</code> line is read only by <code>EventSource</code>, so for the Studio it does nothing. It's harmless, but it can suggest the wrong thing to a reader. <span class="ticket">ticket 08</span></p></div>
+</section>
+
+<section id="resume">
+  <h2><span class="n">05</span>Resuming without losing or repeating events</h2>
+  <p class="sub">Connections drop: wifi changes, laptops sleep, servers are deployed. What matters is what happens next.</p>
+
+  <h3 id="last-event-id">Event IDs and <span class="term">Last-Event-ID</span></h3>
+  <p>If every frame carries an <code>id</code>, the client can say on reconnect "the last thing I got was 41", and the server sends 42 onwards. For this the server needs a <b>log</b>: a record of recent events it can read from any point. A plain broadcast like Redis Pub/Sub can't do it; a stream can (<a href="#log">section 07</a>).</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant S as Studio
+  participant B as Backend
+  participant V as Valkey stream
+  B->>S: id: 40 · data …
+  B->>S: id: 41 · data …
+  Note over S,B: connection drops
+  S->>B: GET /events  (Last-Event-ID: 41)
+  B->>V: XRANGE (0-41 … +
+  V-->>B: 42, 43
+  B->>S: id: 42 · data …
+  B->>S: id: 43 · data …
+  </pre>
+
+  <h3 id="cursor">The cursor, and why it must only move forward</h3>
+  <p>The "last id seen" is a <b>cursor</b>: a bookmark in the log. A cursor has to be <b>monotonic</b>, meaning it only ever moves forward. If a frame with an older id arrives after newer ones and the client saves it, the next reconnect starts too early and replays events it already has.</p>
+  <div class="watch"><span class="k">Found in review</span><p>The feed sends <code>run.updated</code> up to 800 ms after the event that caused it, but with that event's (older) id, and the Studio saves every id it sees. The fix: only log entries (<code>run.event</code>) carry an id, and the client only moves its cursor forward. <span class="ticket">ticket 02</span></p></div>
+
+  <h3 id="delivery">At-least-once delivery and deduplication</h3>
+  <p>Messaging systems promise one of three things:</p>
+  <ul>
+    <li><b>At most once:</b> it may be lost, never repeated.</li>
+    <li><b>At least once:</b> never lost, sometimes repeated.</li>
+    <li><b>Exactly once:</b> hard to achieve over a network.</li>
+  </ul>
+  <p>The practical goal is at least once, with a receiver that ignores repeats. Such a receiver is called an <b>idempotent consumer</b>: processing a message twice has the same effect as processing it once. Together they behave like exactly once.</p>
+  <div class="ours"><span class="k">In our code</span><p>Every event has a per-run <code>seq</code>. <code>followRunLive</code>'s <code>deliver()</code> drops any event with <code>seq &lt;= after</code>, and the backend's <code>followRunEvents</code> does the same in <code>send()</code>. That's textbook deduplication by sequence number.</p></div>
+
+  <h3 id="gap">Gaps: when the log no longer reaches back far enough</h3>
+  <p>A log can't grow without limit, so it is <b>trimmed</b>: old entries are deleted. If a client resumes from an id that has already been trimmed, the server can only send what is left. The events in between are a <b>gap</b>, and nothing reports an error. A robust client detects or assumes a gap after a reconnect and reloads from a source that is complete.</p>
+  <div class="watch"><span class="k">Found in review</span><p>The client feed is trimmed to about 20,000 entries, and every token is an entry. After a long drop, the followed run can miss events, <code>run.completed</code> among them. The per-run stream has no gaps, so <code>followRunLive</code> should read it again after each reconnect. <span class="ticket">ticket 03</span></p></div>
+</section>
+
+<section id="alive">
+  <h2><span class="n">06</span>Keeping a long connection alive</h2>
+  <p class="sub">An SSE response may stay open for hours, and everything between browser and server was built for requests that finish in seconds.</p>
+
+  <h3 id="idle-timeout">Idle timeouts</h3>
+  <p>Load balancers and proxies close a connection that has sent nothing for a while, to free resources. AWS's Application Load Balancer defaults to 60 s, and nginx's <code>proxy_read_timeout</code> is also 60 s. A run that thinks for two minutes without emitting anything would be cut off.</p>
+
+  <h3 id="heartbeat">Heartbeats</h3>
+  <p>The fix is to send something small at regular intervals, well inside the shortest timeout. In SSE that's a comment line, which every client ignores.</p>
+  <div class="ours"><span class="k">In our code</span><p><code>HEARTBEAT_MS = 15_000</code> in <code>config.ts</code>; the controllers write <code>: heartbeat</code> on a <code>setInterval</code>.</p></div>
+
+  <h3 id="half-open">Half-open connections and the stall watchdog</h3>
+  <p>Sometimes a connection dies without either side being told: a laptop sleeps, a NAT router drops its table entry, a cable is pulled. TCP has no traffic to notice it with, so the browser waits on <code>reader.read()</code> for ever. This is a <b>half-open</b> connection. The client-side answer is a <b>watchdog</b>: a timer that says "if nothing at all, not even a heartbeat, arrived for N seconds, the connection is dead; drop it and reconnect". N must be comfortably more than the heartbeat interval.</p>
+  <div class="ours"><span class="k">In our code</span><p><code>DEFAULT_STALL_MS = 45_000</code> in <code>feed.ts</code> and <code>follow-run.ts</code>: three missed heartbeats. A <code>setInterval</code> checks <code>lastActivity</code> and calls <code>reader.cancel()</code>. Good practice.</p></div>
+
+  <h3 id="buffering">Proxy buffering and compression</h3>
+  <p>A proxy may <b>buffer</b> a response: collect it and pass it on in large blocks, or only when it ends. For SSE that means events arrive minutes late or not at all. Compression does the same, since gzip waits for enough bytes to compress. Three headers prevent it:</p>
+  <ul>
+    <li><code>Cache-Control: no-cache, no-transform</code>: don't cache it, and don't rewrite it (<code>no-transform</code> rules out compression by intermediaries).</li>
+    <li><code>X-Accel-Buffering: no</code>: nginx's switch for "don't buffer this response".</li>
+    <li><code>Content-Type: text/event-stream</code>: many proxies and CDNs recognise it and stream it through.</li>
+  </ul>
+  <div class="ours"><span class="k">In our code</span><p><code>SSE_HEADERS</code> in the controller sets all three. Taking the response over with <code>reply.hijack()</code> also keeps Fastify's own compression out of the way.</p></div>
+
+  <h3 id="http2">The six-connection limit, and HTTP/2</h3>
+  <p>On HTTP/1.1, each open SSE response takes up one TCP connection, and browsers allow about <b>six connections per host</b>, shared by every tab. Six tabs with one stream each and the seventh tab's API calls queue behind them. HTTP/2 <b>multiplexes</b>: many requests share one TCP connection as separate streams (typically up to 100), so the limit mostly goes away.</p>
+  <div class="ours"><span class="k">In our code</span><p>This is why the Studio keeps <b>one</b> feed connection (<code>GET /surface/stream</code>) for everything, with named events, instead of a stream per screen. Whether a second per-run stream is cheap depends on the load balancer speaking HTTP/2 to browsers. <span class="ticket">ticket 12</span></p></div>
+</section>
+
+<section id="log">
+  <h2><span class="n">07</span>The log behind the stream: Valkey Streams</h2>
+  <p class="sub">Valkey is an open-source fork of Redis and speaks the same commands. A <b>stream</b> is one of its data types: an append-only log of entries, each with an id and a few fields.</p>
+
+  <h3 id="stream-ids">Entry ids: <span class="term">&lt;ms&gt;-&lt;n&gt;</span></h3>
+  <p>An id is two numbers: <code>1731052800123-0</code> means "the first entry added in millisecond 1731052800123". Ids only grow. You can let Valkey choose (<code>*</code>) or give one yourself, as long as it's larger than the last.</p>
+  <div class="ours"><span class="k">In our code</span><p>The run stream gives its own ids, <code>0-&lt;seq&gt;</code>, so the Valkey id and the event's <code>seq</code> are the same number, and "after seq 41" becomes "after <code>0-41</code>" with no lookup. The feed lets Valkey choose (<code>*</code>), because it mixes many runs. That's why the feed's SSE ids look like <code>1731052800123-0</code> and the per-run ones are plain numbers. Comparing two feed ids means comparing both parts as numbers; the strings won't do (<span class="ticket">ticket 02</span>).</p></div>
+
+  <h3 id="commands">The commands we use</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Command</th><th>What it does</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td><code>XADD key id field value…</code></td><td>Append an entry.</td><td>Worker; <code>appendEvent</code>, <code>publish</code></td></tr>
+      <tr><td><code>XADD key MAXLEN ~ 20000 * …</code></td><td>Append and trim to about 20,000 entries. The <code>~</code> makes the trim approximate: Valkey removes whole internal blocks, which is much cheaper, so the length stays a little above the limit.</td><td>Feed (<code>xaddFeed</code>)</td></tr>
+      <tr><td><code>XRANGE key (0-41 +</code></td><td>Read everything after an id. <code>(</code> excludes the id itself and <code>+</code> means "to the newest".</td><td><code>readBacklog</code></td></tr>
+      <tr><td><code>XREVRANGE key + - COUNT 1</code></td><td>The newest entry: where "now" is.</td><td><code>feedHead</code>, <code>newestSeq</code></td></tr>
+      <tr><td><code>XREAD BLOCK 2000 STREAMS key id</code></td><td>Wait up to 2 s for entries after an id; return as soon as one arrives, or nothing at the timeout. This is how the backend waits without polling.</td><td><code>readFeed</code>, <code>readTail</code></td></tr>
+      <tr><td><code>EXPIRE key 604800</code></td><td>Delete the whole stream in 7 days.</td><td>After a run ends</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="blocking-conn">Why a blocking read needs its own connection</h3>
+  <p>A Redis or Valkey connection handles one command at a time. While <code>XREAD BLOCK</code> waits, that connection can't do anything else, so every waiting reader needs a connection of its own. ioredis's <code>duplicate()</code> opens one with the same settings.</p>
+  <div class="watch"><span class="k">Found in review</span><p>Each open SSE response opens its own duplicate connection, so connections grow with the number of tabs. The usual pattern is <b>one reader per process</b> that shares what it reads in memory with every local response: <b>fan-out</b>. <span class="ticket">ticket 11</span></p></div>
+
+  <h3 id="pubsub">Streams vs Pub/Sub</h3>
+  <p>Valkey also has Pub/Sub (<code>PUBLISH</code>/<code>SUBSCRIBE</code>): a message goes to whoever is listening at that moment and is then gone. It's simpler and faster, but there's no history, so no resume. Streams keep the history. That's why <code>Last-Event-ID</code> can work at all.</p>
+</section>
+
+<section id="node">
+  <h2><span class="n">08</span>The Node and Fastify side</h2>
+
+  <h3 id="hijack"><span class="term">reply.hijack()</span></h3>
+  <p>Fastify normally owns the response: you return a value, and Fastify serialises it, runs its hooks and ends the response. For a stream that never ends, the handler tells Fastify "I'll handle the raw Node response myself" (<code>reply.hijack()</code>) and then writes to <code>reply.raw</code> directly. After that, Fastify's <code>onSend</code> hooks don't run, which is why our <code>startSse</code> copies the CORS headers by hand first.</p>
+
+  <h3 id="backpressure">Backpressure: <span class="term">write()</span>, <span class="term">drain</span> and <span class="term">writableLength</span></h3>
+  <p>A socket can send only so fast; the client's network sets the pace. When you <code>write()</code> faster than that, Node keeps the extra in memory. <code>write()</code> returns <code>false</code> once that buffer is past a threshold (the <i>high-water mark</i>, about 16 KB), meaning "slow down"; the <code>'drain'</code> event later says "the buffer emptied, go on". <code>writableLength</code> is how many bytes are waiting right now. Respecting this signal is called handling <b>backpressure</b>.</p>
+  <p>If you ignore it, nothing fails. The buffer just grows: a slow client on a busy stream makes the server hold megabytes, then hundreds of megabytes.</p>
+  <div class="twocol">
+    <div><h4>Option 1: wait</h4><p>Stop reading the source until <code>'drain'</code>. Right for file copies, where the source can wait.</p></div>
+    <div><h4>Option 2: drop the slow client</h4><p>Past a limit, close the connection. The client reconnects with <code>Last-Event-ID</code> and the log replays what it missed. Right for live feeds backed by a log, as ours is.</p></div>
+  </div>
+  <div class="watch"><span class="k">Found in review</span><p>Our controllers ignore <code>write()</code>'s return value. The plan: cap the buffer at 1 MB, then destroy the connection. <span class="ticket">ticket 05</span></p></div>
+</section>
+
+<section id="load">
+  <h2><span class="n">09</span>Behaviour under load</h2>
+
+  <h3 id="fanout">Fan-out</h3>
+  <p><b>Fan-out</b> is one message going to many receivers. The question is where the copying happens. If each receiver does its own reading and its own work, the cost grows with the number of receivers. If one reader does the work once and hands copies to everyone, the cost stays flat.</p>
+
+  <h3 id="herd">Thundering herd</h3>
+  <p>A <b>thundering herd</b> is many waiters woken by the same event, all rushing at the same resource. In our feed, when a run's state changes, every open connection for that client calls <code>getRun</code> and <code>threadOfRun</code> at the same instant: ten tabs, ten identical database reads. <span class="ticket">ticket 11</span></p>
+
+  <h3 id="hol">Head-of-line blocking</h3>
+  <p>In a queue processed in order, a slow item at the front holds up everything behind it. In <code>followFeed</code>, the read loop awaits <code>refreshRun</code> before it handles the next entry. A slow query on one run therefore delays the tokens of every other run on that connection.</p>
+
+  <h3 id="backoff">Reconnection storms, backoff and jitter</h3>
+  <p>When a backend task restarts, every client connected to it notices at the same moment. If they all retry after 1 s, then 2 s, then 3 s, they arrive in synchronised waves (a <b>reconnection storm</b>), and each wave can knock over the servers that are left.</p>
+  <ul>
+    <li><b>Exponential backoff</b> doubles the wait after each failure (1 s, 2 s, 4 s, 8 s…, up to a cap), so a struggling server gets room quickly.</li>
+    <li><b>Jitter</b> randomises the wait so clients spread out instead of arriving together. The best-known variant is <b>full jitter</b>: wait a random time between 0 and the exponential ceiling. It comes from an AWS Architecture Blog article, "Exponential Backoff and Jitter".</li>
+  </ul>
+
+  <div class="lab" id="storm-lab">
+    <div class="lab-head"><strong>Try it: 300 tabs lose the server at t = 0</strong><span>Each bar counts the reconnect attempts in that half-second. The server comes back at t = 3 s.</span></div>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Retry policy">
+        <button type="button" data-policy="linear" aria-pressed="true">Linear (today)</button>
+        <button type="button" data-policy="jitter" aria-pressed="false">Exponential + full jitter</button>
+      </div>
+      <button type="button" class="btn" id="reroll">Run again</button>
+    </div>
+    <div class="chart" id="storm-chart"></div>
+    <div class="stats" id="storm-stats"></div>
+  </div>
+  <div class="ours"><span class="k">In our code</span><p><code>feed.ts</code> waits <code>1000 × failures</code> ms (up to 15 s), and <code>follow-run.ts</code> does the same up to 10 s: linear, with no jitter. <span class="ticket">ticket 06</span></p></div>
+</section>
+
+<section id="order">
+  <h2><span class="n">10</span>Ordering and state</h2>
+
+  <h3 id="snapshot">Snapshots vs deltas</h3>
+  <p>A stream can carry <b>deltas</b> ("token 'Hel' added", "step 3 finished"), which the client applies one after another, or <b>snapshots</b> ("here is the whole run as it is now"), which the client puts in place of what it has. Deltas are small but have to arrive complete and in order. Snapshots are larger, but they repair themselves: a missed one is fixed by the next. Our feed sends both: <code>run.event</code> is a delta, and <code>run.updated</code>, <code>thread.updated</code> and <code>comments.updated</code> are snapshots.</p>
+
+  <h3 id="race">Race conditions and last-write-wins</h3>
+  <p>A <b>race condition</b> is when the result depends on which of two concurrent operations finishes first. With snapshots, the client keeps whichever arrives last (<b>last-write-wins</b>). That's only correct if "last to arrive" is also "most recent", which isn't guaranteed when two reads run at once:</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant F as followFeed
+  participant DB as Postgres
+  participant S as Studio cache
+  Note over F: step event → 800 ms timer
+  F->>DB: (timer) getRun — slow
+  Note over F: run.completed arrives
+  F->>DB: getRun — fast
+  DB-->>F: status: completed
+  F->>S: run.updated {completed}
+  DB-->>F: status: running (old read)
+  F->>S: run.updated {running}  ✗ stays wrong
+  </pre>
+  <p>There are two standard fixes:</p>
+  <ul>
+    <li><b>Serialise per key:</b> run one run's reads one after another, so the last one started is the last one sent.</li>
+    <li><b>Version the snapshots</b> (an <code>updatedAt</code> or the run's last <code>seq</code>): the client ignores a snapshot older than the one it holds. This is also called <b>optimistic concurrency</b>.</li>
+  </ul>
+  <div class="watch"><span class="k">Found in review</span><p>This race is in <code>feed.ts</code>. The ticket serialises the reads per run. <span class="ticket">ticket 01</span></p></div>
+
+  <h3 id="throttle">Throttle vs debounce</h3>
+  <p>Both limit how often something runs when events come in bursts:</p>
+  <ul>
+    <li><b>Debounce</b> waits until the burst has been quiet for N ms, then runs once. It suits a search box.</li>
+    <li><b>Throttle</b> runs at most once every N ms, however long the burst lasts.</li>
+  </ul>
+  <p>Our feed throttles. The first event of a burst starts an 800 ms timer, events during that time are covered by it, and when it fires the run is read once. A run that streams steps continuously is refreshed about once a second, not never (a debounce would never fire) and not on every event.</p>
+</section>
+
+<section id="browser">
+  <h2><span class="n">11</span>In the browser</h2>
+
+  <h3 id="push-invalidate">Push into the query cache</h3>
+  <p>TanStack Query caches server data under keys and re-renders the screens that use a key when its value changes. A live feed can feed it two ways:</p>
+  <div class="twocol">
+    <div><h4><code>setQueryData</code></h4><p>"Here is the new value." It is written straight into the cache, with no request. Used for the snapshots: <code>run.updated</code>, <code>thread.updated</code>, <code>comments.updated</code>, <code>setup.updated</code>.</p></div>
+    <div><h4><code>invalidateQueries</code></h4><p>"What you have may be stale." Screens that are showing the data refetch it. Used once after each reconnect, since anything may have been missed.</p></div>
+  </div>
+  <div class="ours"><span class="k">In our code</span><p><code>queries/use-feed-sync.ts</code>, mounted once in <code>studio-layout.tsx</code>. Pushing snapshots, then invalidating everything once after a reconnect, is exactly what TanStack's docs recommend for WebSocket and SSE data.</p></div>
+
+  <h3 id="raf">Batching with <span class="term">requestAnimationFrame</span></h3>
+  <p>The browser paints about 60 times a second. <code>requestAnimationFrame(cb)</code> runs <code>cb</code> just before the next paint. If 200 tokens arrive within one frame, re-rendering React for each one is 199 wasted renders. Collecting them and applying the batch once per frame keeps the page smooth.</p>
+  <div class="ours"><span class="k">In our code</span><p><code>use-run-stream.ts</code> pushes each event into <code>pending</code> and schedules <code>flush</code> with <code>nextFrame</code>. One thing to know: browsers pause animation frames in hidden tabs, so events pile up while a tab is in the background and are applied in one go when it's shown again. That's fine at our volumes.</p></div>
+
+  <h3 id="visibility">Page visibility and online events</h3>
+  <p>Browsers throttle timers in background tabs, and a sleeping laptop has no network. Two events say when things are back:</p>
+  <ul>
+    <li><code>document</code>'s <code>visibilitychange</code> (with <code>document.visibilityState === 'visible'</code>).</li>
+    <li><code>window</code>'s <code>online</code>.</li>
+  </ul>
+  <p>A good live client listens to both and reconnects at once, instead of waiting out a backoff timer that was set while the network was gone.</p>
+  <div class="watch"><span class="k">Found in review</span><p>Once our feed is <code>failed</code> (say, a 401 after the laptop slept), it never tries again, and no screen shows that it stopped. <span class="ticket">ticket 07</span></p></div>
+
+  <h3 id="soft-parse">Validating each event</h3>
+  <p>Every frame's JSON is checked with Zod (<code>WireEventSchema.safeParse</code>). <code>safeParse</code> returns success or failure instead of throwing, so one bad frame is skipped instead of breaking the stream. The Studio's "soft parse" goes one step further: on a mismatch it logs and uses the raw value. Parsing every token has a CPU cost; it's small, but it grows with ticket 12's question of how many tokens each tab receives.</p>
+  <div class="watch"><span class="k">Found in review</span><p><code>follow-run-live.ts</code> calls <code>JSON.parse</code> without a guard, so one malformed frame retries the whole history read. <span class="ticket">ticket 09</span></p></div>
+</section>
+
+<section id="lifecycle">
+  <h2><span class="n">12</span>Lifecycle and security</h2>
+
+  <h3 id="shutdown">Graceful shutdown</h3>
+  <p>On a deploy, ECS sends the old task <code>SIGTERM</code> ("please stop"), waits <code>stopTimeout</code> (30 s), then sends <code>SIGKILL</code> (stopped at once). A <b>graceful shutdown</b> uses that window to stop taking new requests, let the current ones finish (<b>draining</b>), flush logs and telemetry, and exit cleanly.</p>
+  <p>Long streams break draining, because they never finish on their own. So a server should end them on purpose at the start of shutdown. The client sees a normal close and reconnects, to a new task. In Fastify the place for that is a <code>preClose</code> hook, which runs before Fastify waits for in-flight requests.</p>
+  <div class="watch"><span class="k">Found in review</span><p>Nothing ends our SSE streams on shutdown, so <code>closeApp()</code> probably waits until the 25 s hard exit. <span class="ticket">ticket 04</span></p></div>
+
+  <h3 id="auth-once">Authentication happens once</h3>
+  <p>An HTTP request is authenticated when it starts. An SSE response is one request that lasts for hours. If the person's access is removed, or their token expires, the stream carries on regardless. The common remedy is a <b>maximum connection age</b>: close each stream after, say, 20 minutes, with a little randomness. The client reconnects, which re-checks the token and permissions, and long-lived connections move onto newly started tasks too.</p>
+  <div class="ours"><span class="k">Plan</span><p>Close after 20 minutes ± 10 %, writing nothing, so the client reconnects as it would after any clean close. <span class="ticket">ticket 10</span></p></div>
+
+  <h3 id="leak">Not leaking internals in errors</h3>
+  <p>Error text from a database or cache can contain host names, key names or SQL. Sending it to a browser tells an attacker about your internals for nothing. The standard practice is a generic code to the client and the full error in the server log.</p>
+  <div class="watch"><span class="k">Found in review</span><p><code>event: stream-error</code> sends <code>error.message</code> to the browser. <span class="ticket">ticket 08</span></p></div>
+</section>
+
+<section id="glossary">
+  <h2><span class="n">13</span>Glossary</h2>
+  <p class="sub">Every term above, alphabetically, each with a one-line reminder and a link back.</p>
+  <dl class="glossary">
+    <dt>At-least-once</dt><dd>Never lost, possibly repeated; pair it with deduplication. <a href="#delivery">§05</a></dd>
+    <dt>Backoff, exponential</dt><dd>Double the wait after each failure, up to a cap. <a href="#backoff">§09</a></dd>
+    <dt>Backpressure</dt><dd>A slow receiver's signal to slow down; in Node, <code>write()</code> returning false. <a href="#backpressure">§08</a></dd>
+    <dt>Buffering (proxy)</dt><dd>A proxy holding a response back; turned off with <code>X-Accel-Buffering: no</code>. <a href="#buffering">§06</a></dd>
+    <dt>Comment line</dt><dd>An SSE line starting with <code>:</code>; carries nothing; used for heartbeats. <a href="#frame">§03</a></dd>
+    <dt>Cursor</dt><dd>The bookmark of the last entry seen; must only move forward. <a href="#cursor">§05</a></dd>
+    <dt>Debounce</dt><dd>Run once after a burst goes quiet. <a href="#throttle">§10</a></dd>
+    <dt>Deduplication</dt><dd>Dropping repeats, ours by <code>seq</code>. <a href="#delivery">§05</a></dd>
+    <dt>Delta</dt><dd>A change to apply in order. <a href="#snapshot">§10</a></dd>
+    <dt>Draining</dt><dd>Letting in-flight requests finish before a server stops. <a href="#shutdown">§12</a></dd>
+    <dt>EventSource</dt><dd>The browser's built-in SSE client; no headers, GET only. <a href="#eventsource">§04</a></dd>
+    <dt>Fan-out</dt><dd>One message to many receivers; best done once, then copied. <a href="#fanout">§09</a></dd>
+    <dt>Frame</dt><dd>One SSE message: field lines ended by a blank line. <a href="#frame">§03</a></dd>
+    <dt>Full jitter</dt><dd>Wait a random time from 0 to the backoff ceiling. <a href="#backoff">§09</a></dd>
+    <dt>Gap</dt><dd>Events lost because the log was trimmed past the resume point. <a href="#gap">§05</a></dd>
+    <dt>Graceful shutdown</dt><dd>Stop taking work, finish what's open, exit cleanly. <a href="#shutdown">§12</a></dd>
+    <dt>Half-open connection</dt><dd>Dead on one side, still open on the other. <a href="#half-open">§06</a></dd>
+    <dt>Head-of-line blocking</dt><dd>One slow item holding up the queue behind it. <a href="#hol">§09</a></dd>
+    <dt>Heartbeat</dt><dd>Regular small traffic that keeps proxies from closing the connection. <a href="#heartbeat">§06</a></dd>
+    <dt>Hijack</dt><dd>Fastify handing the raw response over to your code. <a href="#hijack">§08</a></dd>
+    <dt>HTTP/2 multiplexing</dt><dd>Many streams over one TCP connection. <a href="#http2">§06</a></dd>
+    <dt>Idempotent consumer</dt><dd>A receiver for which processing twice equals processing once. <a href="#delivery">§05</a></dd>
+    <dt>Idle timeout</dt><dd>A proxy closing silent connections, often after 60 s. <a href="#idle-timeout">§06</a></dd>
+    <dt>Last-Event-ID</dt><dd>The header a client sends on reconnect: "resume after this". <a href="#last-event-id">§05</a></dd>
+    <dt>Last-write-wins</dt><dd>Keep whichever value arrived last. <a href="#race">§10</a></dd>
+    <dt>Long polling</dt><dd>A request the server holds open until there's news. <a href="#push">§02</a></dd>
+    <dt>Max connection age</dt><dd>Closing streams on a schedule so auth is re-checked. <a href="#auth-once">§12</a></dd>
+    <dt>MAXLEN ~</dt><dd>Approximate stream trimming in Valkey. <a href="#commands">§07</a></dd>
+    <dt>Monotonic</dt><dd>Only ever increasing. <a href="#cursor">§05</a></dd>
+    <dt>preClose hook</dt><dd>The Fastify hook that runs before in-flight requests are waited on. <a href="#shutdown">§12</a></dd>
+    <dt>Pub/Sub</dt><dd>Broadcast with no history; can't resume. <a href="#pubsub">§07</a></dd>
+    <dt>Race condition</dt><dd>The result depends on which concurrent operation finishes first. <a href="#race">§10</a></dd>
+    <dt>ReadableStream</dt><dd>A <code>fetch</code> response body you can read chunk by chunk. <a href="#fetch-stream">§04</a></dd>
+    <dt>Reconnection storm</dt><dd>Clients retrying in synchronised waves. <a href="#backoff">§09</a></dd>
+    <dt>requestAnimationFrame</dt><dd>Run once before the next paint; used to batch renders. <a href="#raf">§11</a></dd>
+    <dt>retry field</dt><dd>EventSource's reconnect delay; ignored by fetch clients. <a href="#eventsource">§04</a></dd>
+    <dt>seq</dt><dd>A run's event counter; doubles as the run stream's Valkey id. <a href="#stream-ids">§07</a></dd>
+    <dt>Serialise per key</dt><dd>One operation at a time for each key, so the order holds. <a href="#race">§10</a></dd>
+    <dt>setQueryData / invalidateQueries</dt><dd>Write the cache directly / mark it stale and refetch. <a href="#push-invalidate">§11</a></dd>
+    <dt>Snapshot</dt><dd>The whole current value, replacing what the client has. <a href="#snapshot">§10</a></dd>
+    <dt>SSE</dt><dd>Server-Sent Events: a never-ending HTTP response of text frames. <a href="#push">§02</a></dd>
+    <dt>Stall watchdog</dt><dd>A client timer that drops a silent connection. <a href="#half-open">§06</a></dd>
+    <dt>Stream (Valkey)</dt><dd>An append-only log with ordered ids. <a href="#log">§07</a></dd>
+    <dt>Thundering herd</dt><dd>Many waiters woken at once, all hitting the same resource. <a href="#herd">§09</a></dd>
+    <dt>Throttle</dt><dd>Run at most once per interval. <a href="#throttle">§10</a></dd>
+    <dt>Trimming</dt><dd>Deleting a log's oldest entries. <a href="#gap">§05</a></dd>
+    <dt>Versioning (snapshots)</dt><dd>Tagging snapshots so older ones can be ignored. <a href="#race">§10</a></dd>
+    <dt>WebSocket</dt><dd>A two-way protocol upgraded from HTTP. <a href="#push">§02</a></dd>
+    <dt>XREAD BLOCK</dt><dd>Wait for new stream entries; occupies its connection. <a href="#blocking-conn">§07</a></dd>
+  </dl>
+</section>
+
+  </main>
+</div>
+
+<script>
+(function () {
+  // ---------- SSE parser lab ----------
+  var sample = [
+    'retry: 2000',
+    '',
+    'event: ready',
+    'data: {"after":"1731052800120-0"}',
+    '',
+    ': heartbeat',
+    '',
+    'id: 1731052800123-0',
+    'event: run.event',
+    'data: {"runId":"r_9f2","seq":41,"type":"token","data":{"text":"Hel"}}',
+    '',
+    'id: 1731052800124-0',
+    'event: run.event',
+    'data: {"runId":"r_9f2","seq":42,"type":"token","data":{"text":"lo"}}',
+    '',
+    'event: run.updated',
+    'data: {"id":"r_9f2",',
+    'data:  "status":"running"}',
+    '',
+    'id: 1731052800130-0',
+    'event: run.event',
+    'data: {"runId":"r_9f2","seq":43,"type":"run.completed"}'
+  ].join('\n');
+
+  // Follows the spec closely (the Studio's parser in api/sse.ts behaves the same on these inputs).
+  function parse(text) {
+    var normalized = text.replace(/\r\n?/g, '\n');
+    var blocks = normalized.split(/\n\n/);
+    var pending = blocks.pop();
+    var out = [];
+    blocks.forEach(function (block) {
+      var event = 'message', id, data = [], comments = [], retry;
+      block.split('\n').forEach(function (line) {
+        if (line === '') return;
+        if (line.charAt(0) === ':') { comments.push(line.slice(1).trim()); return; }
+        var i = line.indexOf(':');
+        var field = i === -1 ? line : line.slice(0, i);
+        var value = i === -1 ? '' : line.slice(i + 1).replace(/^ /, '');
+        if (field === 'event') event = value;
+        else if (field === 'id') id = value;
+        else if (field === 'data') data.push(value);
+        else if (field === 'retry') retry = value;
+      });
+      if (data.length) out.push({ kind: 'event', event: event, id: id, data: data.join('\n') });
+      else if (comments.length) out.push({ kind: 'comment', data: comments.join('\n') });
+      else if (retry !== undefined) out.push({ kind: 'retry', data: 'retry = ' + retry + ' ms (EventSource only)' });
+    });
+    return { events: out, pending: pending };
+  }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  var raw = document.getElementById('raw');
+  var parsed = document.getElementById('parsed');
+  function render() {
+    var r = parse(raw.value);
+    parsed.textContent = '';
+    r.events.forEach(function (e) {
+      var card = el('div', 'ev' + (e.kind !== 'event' ? ' comment' : ''));
+      var row = el('div', 'row');
+      if (e.kind === 'event') {
+        row.appendChild(el('span', 'tag', 'event: ' + e.event));
+        row.appendChild(el('span', 'id', e.id !== undefined ? 'id: ' + e.id : 'no id: cursor unchanged'));
+      } else {
+        row.appendChild(el('span', 'tag', e.kind === 'comment' ? 'comment (ignored)' : 'retry field'));
+      }
+      card.appendChild(row);
+      var body = e.data;
+      if (e.kind === 'event') { try { body = JSON.stringify(JSON.parse(e.data), null, 1); } catch (_) {} }
+      card.appendChild(el('div', 'data', body));
+      parsed.appendChild(card);
+    });
+    if (r.pending && r.pending.trim()) {
+      var wait = el('div', 'ev comment');
+      wait.appendChild(el('div', 'row')).appendChild(el('span', 'tag', 'in the buffer, waiting for a blank line'));
+      wait.appendChild(el('div', 'data', r.pending));
+      parsed.appendChild(wait);
+    }
+    if (!parsed.childNodes.length) parsed.appendChild(el('div', 'ev comment', 'Nothing complete yet.'));
+  }
+  raw.value = sample;
+  raw.addEventListener('input', render);
+  render();
+
+  // ---------- Reconnection storm lab ----------
+  var N = 300, BACK_AT = 3, HORIZON = 20, BIN = 0.5;
+  var policy = 'linear';
+  var chart = document.getElementById('storm-chart');
+  var stats = document.getElementById('storm-stats');
+
+  function simulate(kind) {
+    var attempts = [], connectedAt = [];
+    for (var c = 0; c < N; c++) {
+      // each tab notices the drop at a slightly different moment (the watchdog or the socket close)
+      var t = Math.random() * 0.05, failures = 0;
+      for (;;) {
+        failures += 1;
+        var delay = kind === 'linear'
+          ? Math.min(1 * failures, 15)
+          : Math.max(0.25, Math.random() * Math.min(15, 1 * Math.pow(2, failures - 1)));
+        t += delay;
+        if (t > HORIZON) break;
+        attempts.push(t);
+        if (t >= BACK_AT) { connectedAt.push(t); break; }
+      }
+    }
+    return { attempts: attempts, connectedAt: connectedAt };
+  }
+
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function draw() {
+    var r = simulate(policy);
+    var bins = Math.ceil(HORIZON / BIN);
+    var counts = new Array(bins).fill(0);
+    r.attempts.forEach(function (t) { var i = Math.floor(t / BIN); if (i < bins) counts[i]++; });
+    var peak = Math.max.apply(null, counts);
+    var yMax = Math.max(50, Math.ceil(N / 50) * 50);
+    var W = 720, H = 260, L = 44, R = 12, T = 14, B = 34;
+    var pw = W - L - R, ph = H - T - B, bw = pw / bins;
+    var fg = css('--fg'), muted = css('--muted'), line = css('--line'), accent = css('--accent'), warn = css('--warn');
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Reconnect attempts per half second, ' + (policy === 'linear' ? 'linear backoff' : 'exponential backoff with full jitter') + '. Peak ' + peak + '.">';
+    for (var g = 0; g <= yMax; g += yMax / 4) {
+      var y = T + ph - (g / yMax) * ph;
+      s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '" stroke="' + line + '" stroke-width="1"/>';
+      s += '<text x="' + (L - 6) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" font-family="IBM Plex Mono, monospace" fill="' + muted + '">' + g + '</text>';
+    }
+    var backX = L + (BACK_AT / HORIZON) * pw;
+    s += '<rect x="' + L + '" y="' + T + '" width="' + (backX - L) + '" height="' + ph + '" fill="' + warn + '" opacity="0.08"/>';
+    counts.forEach(function (c, i) {
+      var h = (Math.min(c, yMax) / yMax) * ph;
+      s += '<rect x="' + (L + i * bw + 1) + '" y="' + (T + ph - h) + '" width="' + Math.max(1, bw - 2) + '" height="' + h + '" fill="' + accent + '" rx="1.5"/>';
+    });
+    s += '<line x1="' + backX + '" x2="' + backX + '" y1="' + T + '" y2="' + (T + ph) + '" stroke="' + warn + '" stroke-width="1.5" stroke-dasharray="4 3"/>';
+    s += '<text x="' + (backX + 6) + '" y="' + (T + 12) + '" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="' + warn + '">server back</text>';
+    for (var x = 0; x <= HORIZON; x += 2) {
+      var px = L + (x / HORIZON) * pw;
+      s += '<text x="' + px + '" y="' + (H - B + 16) + '" text-anchor="middle" font-size="11" font-family="IBM Plex Mono, monospace" fill="' + muted + '">' + x + 's</text>';
+    }
+    s += '<text x="' + (L + pw / 2) + '" y="' + (H - 4) + '" text-anchor="middle" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="' + fg + '">seconds after the drop</text>';
+    s += '</svg>';
+    chart.innerHTML = s;
+    var wasted = r.attempts.filter(function (t) { return t < BACK_AT; }).length;
+    var sorted = r.connectedAt.slice().sort(function (a, b) { return a - b; });
+    var p95 = sorted.length ? sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)] : 0;
+    stats.innerHTML =
+      '<span>Peak in one half-second <b>' + peak + '</b></span>' +
+      '<span>Attempts while the server was down <b>' + wasted + '</b></span>' +
+      '<span>95% of tabs back by <b>' + p95.toFixed(1) + ' s</b></span>';
+  }
+
+  document.querySelectorAll('#storm-lab [data-policy]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      policy = b.getAttribute('data-policy');
+      document.querySelectorAll('#storm-lab [data-policy]').forEach(function (o) {
+        o.setAttribute('aria-pressed', String(o === b));
+      });
+      draw();
+    });
+  });
+  document.getElementById('reroll').addEventListener('click', draw);
+  draw();
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', draw);
+  }
+  new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+})();
+</script>

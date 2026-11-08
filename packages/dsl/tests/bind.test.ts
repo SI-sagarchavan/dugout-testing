@@ -308,3 +308,273 @@ describe("applyBindingPlan — variants of one component", () => {
     expect(drift.map((d) => d.src)).toEqual(["s:gone"]);
   });
 });
+
+/**
+ * A row of stats with a rule between each, `stat | stat | stat`. Folding the stats used to leave
+ * the rules behind as siblings of the Repeater, all after the items: the rules drew on the right.
+ */
+describe("applyBindingPlan — what lies between the items", () => {
+  const n = (id: string, parent: string | null, idx: number, type: string, props: Record<string, unknown> = {}): FlatNode => ({
+    id,
+    src: `s:${id}`,
+    parent,
+    idx,
+    type,
+    props,
+  });
+  const stat = (i: number, at: number) => [
+    n(`stat${i}`, "row", at, "Stack", { align: "center" }),
+    n(`label${i}`, `stat${i}`, 0, "Text", { content: `LABEL ${i}`, style: "type.body" }),
+    n(`value${i}`, `stat${i}`, 1, "Text", { content: `${i}0`, style: "type.body" }),
+  ];
+  const rule = (id: string, at: number, props: Record<string, unknown> = { orientation: "vertical" }) =>
+    n(id, "row", at, "Divider", props);
+  const spacer = (id: string, at: number, w: number) =>
+    n(id, "row", at, "Box", { size: { w: { raw: w, _unbound: true }, h: { raw: 1, _unbound: true } } });
+  /** The row, its stats at 0, 1, 2 with each gap's nodes between them. */
+  const row = (gaps: FlatNode[][]) => {
+    const nodes: FlatNode[] = [n("row", null, 0, "Stack", { direction: "row" })];
+    let at = 0;
+    for (let i = 1; i <= 3; i++) {
+      nodes.push(...stat(i, at++));
+      for (const node of gaps[i - 1] ?? []) nodes.push({ ...node, idx: at++ });
+    }
+    return tinyTree(nodes);
+  };
+  const plan: BindingPlan = {
+    collapse: [
+      {
+        over: "p.stats",
+        as: "s",
+        members: ["s:stat1", "s:stat2", "s:stat3"],
+        shape: "varies",
+        fields: [
+          { src: "s:label1", prop: "content", path: "label" },
+          { src: "s:value1", prop: "content", path: "value" },
+        ],
+      },
+    ],
+  };
+  const kids = (tree: FlatTree, id: string) =>
+    tree.nodes.filter((node) => node.parent === id).sort((a, b) => a.idx - b.idx).map((node) => node.id);
+  const repeaterOf = (tree: FlatTree) => tree.nodes.find((node) => node.id === "stat1__repeat");
+
+  it("keeps one rule as the Repeater's separator and drops the others", () => {
+    const { tree, drift, collapsed } = applyBindingPlan(row([[rule("rule1", 0)], [rule("rule2", 0)]]), plan);
+    expect(drift).toEqual([]);
+    expect(collapsed).toBe(1);
+    expect(kids(tree, "row")).toEqual(["stat1__repeat"]);
+    expect(kids(tree, "stat1__repeat")).toEqual(["stat1", "rule1"]);
+    expect(repeaterOf(tree)?.props.separator).toEqual(["rule1"]);
+    expect((repeaterOf(tree)?.props._meta as { collapsedFrom: string[] }).collapsedFrom).toContain("s:rule2");
+    expect(() => reify(tree)).not.toThrow();
+  });
+
+  it("takes a gap of several things, in order: a spacer, a rule, a spacer", () => {
+    const gap = (i: number) => [spacer(`a${i}`, 0, 8), rule(`r${i}`, 0), spacer(`b${i}`, 0, 8)];
+    const { tree, drift } = applyBindingPlan(row([gap(1), gap(2)]), plan);
+    expect(drift).toEqual([]);
+    expect(repeaterOf(tree)?.props.separator).toEqual(["a1", "r1", "b1"]);
+    expect(kids(tree, "row")).toEqual(["stat1__repeat"]);
+  });
+
+  it("reads gaps drawn a pixel apart as the same thing", () => {
+    const { tree } = applyBindingPlan(row([[spacer("a1", 0, 16)], [spacer("a2", 0, 17)]]), plan);
+    expect(repeaterOf(tree)?.props.separator).toEqual(["a1"]);
+  });
+
+  it("says so when the gaps hold different things, instead of drawing them after every item", () => {
+    const { tree, drift } = applyBindingPlan(
+      row([[rule("rule1", 0)], [rule("dot", 0, { orientation: "horizontal" })]]),
+      plan,
+    );
+    expect(repeaterOf(tree)?.props.separator).toBeUndefined();
+    expect(drift.map((d) => [d.reason, d.src])).toEqual([
+      ["stranded", "s:rule1"],
+      ["stranded", "s:dot"],
+    ]);
+  });
+
+  it("says so when only some gaps hold something", () => {
+    const { drift } = applyBindingPlan(row([[rule("rule1", 0)], []]), plan);
+    expect(drift.map((d) => d.reason)).toEqual(["stranded"]);
+  });
+
+  it("takes no separator when the members sit side by side", () => {
+    const { tree, drift } = applyBindingPlan(row([[], []]), plan);
+    expect(repeaterOf(tree)?.props.separator).toBeUndefined();
+    expect(drift).toEqual([]);
+  });
+});
+
+/**
+ * Looks by place: what sets an item apart is where it sits, so the rule holds for any number of
+ * items. Folding drew the template's look on every item: the last row grew a rule, or every row
+ * lost it.
+ */
+describe("applyBindingPlan — looks by place", () => {
+  const n = (id: string, parent: string | null, idx: number, type: string, props: Record<string, unknown> = {}): FlatNode => ({
+    id,
+    src: `s:${id}`,
+    parent,
+    idx,
+    type,
+    props,
+  });
+  const list = (looks: Array<Record<string, unknown>>, extra: (i: number) => FlatNode[] = () => []) =>
+    tinyTree([
+      n("list", null, 0, "Stack", {}),
+      ...looks.flatMap((look, i) => [
+        n(`row${i}`, "list", i, "Stack", look),
+        n(`name${i}`, `row${i}`, 0, "Text", { content: `Name ${i}`, style: "type.body" }),
+        ...extra(i),
+      ]),
+    ]);
+  const plan = (count: number, template = 0): BindingPlan => ({
+    collapse: [
+      {
+        over: "rows",
+        as: "r",
+        shape: "varies",
+        members: [template, ...Array.from({ length: count }, (_, i) => i).filter((i) => i !== template)].map(
+          (i) => `s:row${i}`,
+        ),
+        fields: [{ src: `s:name${template}`, prop: "content", path: "name" }],
+      },
+    ],
+  });
+  const ruled = { surface: "surface.row_ruled" };
+  const plain = {};
+  const at = (tree: FlatTree, id: string) => tree.nodes.find((node) => node.id === id)?.props.at;
+
+  it("a rule on every row but the last: the last loses it", () => {
+    const { tree, drift } = applyBindingPlan(list([ruled, ruled, ruled, plain]), plan(4));
+    expect(drift).toEqual([]);
+    expect(at(tree, "row0")).toEqual({ last: { surface: null } });
+  });
+
+  it("a rule on every row but the first, the first the template: the first loses it", () => {
+    const { tree } = applyBindingPlan(list([plain, ruled, ruled, ruled]), plan(4));
+    expect(at(tree, "row0")).toEqual({ middle: { surface: "surface.row_ruled" }, last: { surface: "surface.row_ruled" } });
+  });
+
+  it("reads places from the design's order, whichever member the plan made the template", () => {
+    const { tree } = applyBindingPlan(list([ruled, ruled, ruled, plain]), plan(4, 1));
+    expect(at(tree, "row1")).toEqual({ last: { surface: null } });
+  });
+
+  it("stripes every other row", () => {
+    const tint = { surface: "surface.row_tint" };
+    const { tree } = applyBindingPlan(list([plain, tint, plain, tint]), plan(4));
+    expect(at(tree, "row0")).toEqual({ odd: { surface: "surface.row_tint" } });
+  });
+
+  it("hides a node the last item does not have", () => {
+    const rule = (i: number) => (i < 3 ? [n(`rule${i}`, `row${i}`, 1, "Divider", { orientation: "horizontal" })] : []);
+    const { tree } = applyBindingPlan(list([plain, plain, plain, plain], rule), plan(4));
+    expect(at(tree, "rule0")).toEqual({ last: { hidden: true } });
+  });
+
+  it("adopts a node the template lacks and the others have, hidden where the design has none", () => {
+    const rule = (i: number) => (i > 0 ? [n(`lead${i}`, `row${i}`, 1, "Divider", { orientation: "horizontal" })] : []);
+    const { tree, drift } = applyBindingPlan(list([plain, plain, plain, plain], rule), plan(4));
+    expect(drift).toEqual([]);
+    const adopted = tree.nodes.find((node) => node.id === "lead1");
+    expect(adopted?.parent).toBe("row0");
+    expect(adopted?.props.at).toEqual({ first: { hidden: true } });
+    expect(() => reify(tree)).not.toThrow();
+  });
+
+  it("leaves a look no place explains as the template draws it", () => {
+    const hot = { surface: "surface.row_hot" };
+    const { tree } = applyBindingPlan(list([plain, hot, plain, plain, hot]), plan(5));
+    expect(at(tree, "row0")).toBeUndefined();
+  });
+
+  it("leaves looks a person's actions change (states) to the states", () => {
+    const tab = (look: Record<string, unknown>) => ({ ...look, states: { active: { surface: "surface.tab_on" } } });
+    const { tree } = applyBindingPlan(list([tab(ruled), tab(plain), tab(plain)]), plan(3));
+    expect(at(tree, "row0")).toBeUndefined();
+  });
+
+  it("does not guess from two items", () => {
+    const { tree } = applyBindingPlan(list([ruled, plain]), plan(2));
+    expect(at(tree, "row0")).toBeUndefined();
+  });
+});
+
+describe("applyBindingPlan — a picture the data gives", () => {
+  const tree = () =>
+    tinyTree([
+      { id: "card", src: "s:card", parent: null, idx: 0, type: "Stack", props: {} },
+      { id: "photo", src: "s:photo", parent: "card", idx: 0, type: "Image", props: { src: "data:image/png;base64,AAAA", alt: "", fit: "fill" } },
+      { id: "plate", src: "s:plate", parent: "card", idx: 1, type: "Image", props: { src: "data:image/png;base64,BBBB", alt: "", fit: "fill" } },
+    ]);
+
+  it("covers its box instead of stretching to it, and a stand-in left as designed keeps fill", () => {
+    const { tree: bound } = applyBindingPlan(tree(), { bind: [{ src: "s:photo", prop: "src", path: "player.photo" }] });
+    expect(bound.nodes.find((n) => n.id === "photo")?.props.fit).toBe("cover");
+    expect(bound.nodes.find((n) => n.id === "plate")?.props.fit).toBe("fill");
+  });
+});
+
+/**
+ * A list drawn without auto-layout: rows placed by hand in an Overlay. Folded as they were, every
+ * item took the template's offset and they drew on top of one another.
+ */
+describe("applyBindingPlan — items placed by hand", () => {
+  const raw = (n: number) => ({ raw: n, _unbound: true });
+  const row = (i: number, block: number, inline = 16): FlatNode[] => [
+    {
+      id: `row${i}`,
+      src: `s:row${i}`,
+      parent: "panel",
+      idx: i,
+      type: "Stack",
+      props: { size: { w: raw(200), h: raw(40) }, place: { anchor: "top-start", offset: { block: raw(block), inline: raw(inline) } } },
+    },
+    { id: `name${i}`, src: `s:name${i}`, parent: `row${i}`, idx: 0, type: "Text", props: { content: `Name ${i}`, style: "type.body" } },
+  ];
+  const panel = (rows: FlatNode[][]) =>
+    tinyTree([{ id: "panel", src: "s:panel", parent: null, idx: 0, type: "Overlay", props: {} }, ...rows.flat()]);
+  const plan = (count: number): BindingPlan => ({
+    collapse: [
+      {
+        over: "rows",
+        as: "r",
+        shape: "varies",
+        members: Array.from({ length: count }, (_, i) => `s:row${i}`),
+        fields: [{ src: "s:name0", prop: "content", path: "name" }],
+      },
+    ],
+  });
+
+  it("flows rows at even steps into a column, the step its gap, placed where the first was", () => {
+    const { tree, drift, collapsed } = applyBindingPlan(panel([row(0, 100), row(1, 152), row(2, 204)]), plan(3));
+    expect(drift).toEqual([]);
+    expect(collapsed).toBe(1);
+    const flow = tree.nodes.find((n) => n.id === "row0__flow");
+    expect(flow?.type).toBe("Stack");
+    expect(flow?.props).toMatchObject({ direction: "column", gap: raw(12), place: { offset: { block: raw(100), inline: raw(16) } } });
+    expect(tree.nodes.find((n) => n.id === "row0__repeat")?.parent).toBe("row0__flow");
+    expect(tree.nodes.find((n) => n.id === "row0")?.props.place).toBeUndefined();
+    expect(() => reify(tree)).not.toThrow();
+  });
+
+  it("flows cards side by side into a row", () => {
+    const { tree } = applyBindingPlan(panel([row(0, 10, 0), row(1, 10, 216), row(2, 10, 432)]), plan(3));
+    expect(tree.nodes.find((n) => n.id === "row0__flow")?.props).toMatchObject({ direction: "row", gap: raw(16) });
+  });
+
+  it("does not fold items at uneven steps, and says why", () => {
+    const { collapsed, drift } = applyBindingPlan(panel([row(0, 100), row(1, 152), row(2, 240)]), plan(3));
+    expect(collapsed).toBe(0);
+    expect(drift.map((d) => d.reason)).toEqual(["stacked"]);
+  });
+
+  it("does not fold items scattered off any line", () => {
+    const { collapsed, drift } = applyBindingPlan(panel([row(0, 100, 0), row(1, 152, 90), row(2, 204, 10)]), plan(3));
+    expect(collapsed).toBe(0);
+    expect(drift[0]?.message).toMatch(/not in one line/);
+  });
+});

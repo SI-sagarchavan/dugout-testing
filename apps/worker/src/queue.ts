@@ -17,12 +17,14 @@ export interface RunRow {
   parent_version: number | null;
   /** The model it runs on instead of its spec's. */
   model: string | null;
+  /** The thread it is in (migration 019): the top level a person sees. */
+  thread_id: string;
   created_at: Date;
   updated_at: Date;
 }
 
 const COLUMNS =
-  "id, agent_id, status, input, result, parent_run_id, parent_version, model, created_at, updated_at";
+  "id, agent_id, status, input, result, parent_run_id, parent_version, model, thread_id, created_at, updated_at";
 
 const ENDED = new Set<RunRow["status"]>(["completed", "rejected", "failed", "cancelled"]);
 
@@ -56,25 +58,43 @@ export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
     /**
      * Queues a run; a worker starts it. The input must already be checked against the agent's
      * schema. `model` is a name in the model list, with an effort as `name@effort`, run in place of
-     * the spec's.
+     * the spec's. `threadId` puts it in a thread of the tenant's; without one it is in the thread of
+     * the run that published the preview it works on, or starts a thread (the `runs_thread`
+     * trigger).
      */
     async start(
       tenantId: string,
       agentId: string,
       input: unknown,
-      options: { model?: string } = {},
+      options: { model?: string; threadId?: string } = {},
     ) {
       if (options.model) modelEntry(loadModelConfig(), options.model);
       const runId = randomUUID();
-      await withTenant(opts.pool, tenantId, (db) =>
-        db.query(
-          `insert into runs (id, tenant_id, agent_id, status, input, model)
-           values ($1, $2, $3, 'queued', $4, $5)`,
-          [runId, tenantId, agentId, input, options.model ?? null],
-        ),
-      );
+      await withTenant(opts.pool, tenantId, async (db) => {
+        if (options.threadId) {
+          const { rowCount } = await db.query("select 1 from threads where id = $1", [
+            options.threadId,
+          ]);
+          if (!rowCount) throw new Error(`no thread ${options.threadId} for tenant ${tenantId}`);
+        }
+        await db.query(
+          `insert into runs (id, tenant_id, agent_id, status, input, model, thread_id)
+           values ($1, $2, $3, 'queued', $4, $5, $6)`,
+          [runId, tenantId, agentId, input, options.model ?? null, options.threadId ?? null],
+        );
+      });
       return runId;
     },
+
+    /** The thread's runs, oldest first: its invocations and their children. */
+    thread: (tenantId: string, threadId: string) =>
+      withTenant(opts.pool, tenantId, async (db) => {
+        const { rows } = await db.query<RunRow & { parent_call_id: string | null }>(
+          `select ${COLUMNS}, parent_call_id from runs where thread_id = $1 order by created_at`,
+          [threadId],
+        );
+        return rows;
+      }),
 
     /**
      * Queues the run again with the decision on the approval it waits for; a worker resumes it.

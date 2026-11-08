@@ -1,6 +1,7 @@
 import type { z } from "zod";
-import type { RunUsage } from "./events.ts";
+import type { RunEvent, RunUsage } from "./events.ts";
 import type { Answers } from "./questions.ts";
+import type { Situation } from "./runtime.ts";
 
 /** Built from the run's verified context, never from model output. */
 export interface ToolContext {
@@ -22,6 +23,18 @@ export interface ToolContext {
    * runs again now that they came (ADR 0029). A child run waiting on them resumes with them.
    */
   readonly answered?: { readonly by: string; readonly answers: Answers };
+  /**
+   * Writes a child run's event to this run's stream, as the next of its events (ADR 0025): a
+   * child started by this call is part of this run's invocation, not a stream of its own.
+   */
+  relay?(event: RunEvent): Promise<void>;
+  /** What the run works on so far (ADR 0033): a child run started by this call inherits it. */
+  readonly situation?: Situation;
+  /**
+   * Says what the run works on, from what the tool loaded (ADR 0033): the section by its tree's
+   * structural signature. A person's answers to the run's section questions are about it.
+   */
+  situate?(situation: Situation): void;
 }
 
 export interface Tool<I = unknown, O = unknown, R = I> {
@@ -68,6 +81,33 @@ export function defineTool<I, O, R = I>(tool: Tool<I, O, R>): Tool<I, O, R> {
 /** `usage` is what the call spent besides the run's own model turns: a child run's. */
 export type ToolOutcome = ({ ok: true; content: string } | { ok: false; error: string }) & {
   usage?: RunUsage;
+  /** The tool cannot go on until a person sets this up (`NeedsSetup`): the run ends. */
+  setup?: string;
+  /** What the run works on, when the call said (`ToolContext.situate`). */
+  situation?: Situation;
 };
 
 export type DenialStage = "registry" | "spec" | "policy";
+
+/** What a run that stopped for setup says, first: how a parent knows not to try it again. */
+export const NEEDS_SETUP = "needs setup:";
+
+/**
+ * A tool cannot go on until a person sets something up: a sign-in to a server, a key, a config.
+ * Trying again changes nothing, so the run ends at once, failed with `needs setup: <what>`, and a
+ * parent that started it does not try it again: it ends the same way, so the person who started the
+ * whole run reads what to set up rather than three failures of the same thing.
+ */
+export class NeedsSetup extends Error {
+  readonly setup: string;
+  constructor(setup: string) {
+    super(setup);
+    this.name = "NeedsSetup";
+    this.setup = setup;
+  }
+}
+
+/** A `NeedsSetup`, from this realm or another copy of this package. */
+export const isNeedsSetup = (err: unknown): err is NeedsSetup =>
+  err instanceof NeedsSetup ||
+  (err instanceof Error && err.name === "NeedsSetup" && "setup" in err);

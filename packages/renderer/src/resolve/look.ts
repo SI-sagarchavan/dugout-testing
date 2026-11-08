@@ -114,7 +114,10 @@ export function stateRules(tree: FlatTree, scope: string): string {
         const merged = transformCss({ ...((props.transform as Transform | undefined) ?? {}), ...look.transform });
         decls.push(`transform: ${merged ?? "none"}`);
       }
-      const self = `${root} [data-fos-id="${CSS_ESCAPE(node.id)}"]${stateCondition(state)}`;
+      // A Checkbox's focus is on the real input inside it, so its box's focus look reads it from there.
+      const condition =
+        state === "focus" && node.type === "Checkbox" ? ":has(> input:focus-visible)" : stateCondition(state);
+      const self = `${root} [data-fos-id="${CSS_ESCAPE(node.id)}"]${condition}`;
       if (decls.length > 0) rules.push(`${self} { ${decls.map((d) => `${d} !important`).join("; ")}; }`);
       const tone = token(look.tone, "color.");
       if (tone) {

@@ -12,9 +12,9 @@ already shipped. That is what lives here today.
 
 ## Apps
 
-| App                                               | What it is                                                                                                                                                                  |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`@fanos/api`](../apps/api)                       | Control plane on `:4100`. Artifact store, surface versioning, pipeline runs, fidelity gate. Postgres + Redis.                                                               |
+| App                         | What it is                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| [`@fanos/api`](../apps/api) | Control plane on `:4100`. Artifact store, surface versioning, pipeline runs, fidelity gate. Postgres + Redis. |
 
 ## Packages
 

@@ -19,6 +19,7 @@ import { LAYOUT_PROP_NAMES, REPEATER_FORBIDDEN_PROPS } from "./universal.js";
 import { walkProps } from "./walk.js";
 import { zodOfFields, type FieldType } from "./field.js";
 import { checkBindings, checkPipes } from "./contract.js";
+import { PAGE_KEY_RE, selectOf } from "./page.js";
 
 export const ISSUE_CODES = [
   "S1", // reify failed: cycle, orphan, multi-root, idx gap
@@ -37,6 +38,7 @@ export const ISSUE_CODES = [
   "S14", // two Repeaters over one source draw overlapping slices (warning)
   "S15", // Carousel options Swiper cannot combine, or a moving carousel nobody can pause
   "S16", // controlFor names no Carousel, or a carousel has two of one control part
+  "S17", // a page choice sets one value twice, starts twice, or has one option; a field's key is not one name or is written twice
   "T1", // token ref does not resolve
   "T2", // Text.style is not a TypeToken
   "T3", // Resp<> wrapper around a TypeToken
@@ -410,6 +412,41 @@ export function validate(tree: FlatTree, options: ValidateOptions): ValidationRe
       }
       if (control.part === "counter" && node.type !== "Text") {
         add({ code: "S16", severity: "error", nodeId: node.id, path: "controlFor.part", message: `a counter is a Text; "${node.id}" is a ${node.type}` });
+      }
+    }
+
+    // --- S17 -------------------------------------------------------------
+    // One choice is its options in this tree: each value once, and one place the page starts.
+    const rawKey = (node.props["select"] as { key?: unknown } | undefined)?.key;
+    if (typeof rawKey === "string" && !PAGE_KEY_RE.test(rawKey)) {
+      add({ code: "S17", severity: "error", nodeId: node.id, path: "select.key", message: `"${rawKey}" is read as _page.${rawKey}: a key is one name, letters, digits and _` });
+    }
+    const select = selectOf(node);
+    if (select) {
+      const siblings = tree.nodes.filter((n) => n.id !== node.id && selectOf(n)?.key === select.key);
+      if (siblings.some((n) => selectOf(n)!.value === select.value)) {
+        add({ code: "S17", severity: "error", nodeId: node.id, path: "select.value", message: `two options of "${select.key}" set it to "${select.value}": pressing either does the same` });
+      }
+      if (select.initial && siblings.some((n) => selectOf(n)!.initial && tree.nodes.indexOf(n) < tree.nodes.indexOf(node))) {
+        add({ code: "S17", severity: "error", nodeId: node.id, path: "select.initial", message: `"${select.key}" already starts at another option: one option is initial` });
+      }
+      if (siblings.length === 0) {
+        add({ code: "S17", severity: "warning", nodeId: node.id, path: "select", message: `"${select.key}" has one option, so there is nothing to choose` });
+      }
+    }
+
+    // A field (Input, Checkbox) writes its key as a choice does: one name, and one writer per tree.
+    if (node.type === "Input" || node.type === "Checkbox") {
+      const fieldKey = node.props["key"];
+      if (typeof fieldKey === "string" && !PAGE_KEY_RE.test(fieldKey)) {
+        add({ code: "S17", severity: "error", nodeId: node.id, path: "key", message: `"${fieldKey}" is read as _page.${fieldKey}: a key is one name, letters, digits and _` });
+      } else if (typeof fieldKey === "string") {
+        const writers = tree.nodes.filter(
+          (n) => n.id !== node.id && (((n.type === "Input" || n.type === "Checkbox") && n.props["key"] === fieldKey) || selectOf(n)?.key === fieldKey),
+        );
+        if (writers.some((n) => tree.nodes.indexOf(n) < tree.nodes.indexOf(node))) {
+          add({ code: "S17", severity: "error", nodeId: node.id, path: "key", message: `"${fieldKey}" is already written by "${writers[0]!.id}": each field has a key of its own` });
+        }
       }
     }
 

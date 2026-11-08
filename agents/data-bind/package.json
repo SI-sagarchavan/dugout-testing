@@ -14,6 +14,7 @@
     "@dugout/agent-hook-maker": "workspace:^",
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",
+    "@dugout/db": "workspace:*",
     "@dugout/evals": "workspace:^",
     "@dugout/mcp": "workspace:^",
     "@dugout/memory": "workspace:^",

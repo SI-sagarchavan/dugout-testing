@@ -234,7 +234,7 @@ const KINDS: Record<DefectKind, string[]> = {
 const tools = await loadToolchain();
 const plane = createControlPlane("default");
 const see = (png: Buffer, prompt: string, signal?: AbortSignal) =>
-  describeImage({ png, prompt, model: "sonnet", ...(signal ? { signal } : {}) });
+  describeImage({ png, prompt, model: "opus", ...(signal ? { signal } : {}) });
 let visionCalls = 0;
 const counted: typeof see = (png, prompt, signal) => {
   visionCalls += 1;

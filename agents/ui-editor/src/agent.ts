@@ -27,7 +27,7 @@ export const spec: AgentSpec = {
   tools: ["ui.load", "ui.node", "ui.try", "ui.publish"],
   skills: ["ui-editor"],
   onDemandSkills: [],
-  model: "sonnet",
+  model: "haiku",
   memory: { read: ["procedural"], write: [] },
   budget: { usdPerRun: 1, maxSteps: 20, maxDepth: 0 },
   approvals: ["effect:write"],
@@ -92,6 +92,17 @@ export function listedCommentIds(messages: Message[]): string[] {
 }
 
 /** The ids and the count are ui.publish's: the host writes them over whatever the model sent. */
+/** What a run did, for its thread's note (ADR 0031): each comment and what became of it. */
+export function threadNote(_input: unknown, output: unknown): string | undefined {
+  const parsed = Output.safeParse(output);
+  if (!parsed.success) return undefined;
+  const o = parsed.data;
+  const each = o.comments.map(
+    (c) => `${c.status === "addressed" ? "done" : "not done"}: ${c.detail}`,
+  );
+  return `Applied ${o.edits} edit${o.edits === 1 ? "" : "s"} for ${o.comments.length} comment${o.comments.length === 1 ? "" : "s"} and published the edited preview. ${each.join("; ")}`;
+}
+
 export function completeFinal(output: unknown, run: { messages: Message[] }): unknown {
   const published = publishedIn(run.messages);
   if (!published || typeof output !== "object" || output === null) return output;
@@ -123,6 +134,7 @@ export const agent = defineAgent({
   output: Output,
   verifyFinal,
   completeFinal,
+  threadNote,
   dir: join(import.meta.dirname, ".."),
   tools: (opts: {
     editDir?: string;

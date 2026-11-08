@@ -18,7 +18,7 @@ export const spec: AgentSpec = {
     `1. Find. List your hooks (cast.listHooks) and pick the ones whose name or description is about what the need describes. Describe the best one or two: their inputs, and the fields their output has. Run the best with the transform applied (${RUN} with applyTransform true), with only the inputs the need asks for (how many items the design shows, say). Its answer shows the output's shape with example values: check every thing the need lists against it. If it lacks most of the need, run the next best. Run at most three hooks.`,
     "2. Decide. A hook fits when its output has the fields the need asks for, grouped the way the design reads them. Judge it by its fields and grouping, never by its envelope (`data`, a page key, `meta`: the page binds any shape), so never build another to change that. What no connector has (a ticket link, a countdown with no start time) is no reason to build: it goes in missing.",
     "   - A hook fits: it is finished. Call final with it and built false. Create, change and publish nothing.",
-    "   - None fits, and a connector could give the need, or the best hook lacks a field a connector could give: build it, from step 3. When some hook gave part of the need, ask the person first (ask), once: what it gives, what it lacks and which connector would give the rest, with the choices to build a fuller hook or to use it as it is, proposing the build. Use what they answer. When no hook gave any of it, build without asking.",
+    "   - None fits, and a connector could give the need, or the best hook lacks a field a connector could give: build it, from step 3. When some hook gave part of the need, ask the person first (ask), once, with the id hook_choice: what it gives, what it lacks and which connector would give the rest, with the choices to build a fuller hook or to use it as it is, proposing the build. When the need says a person already chose a hook for this section, start from that hook. Use what they answer. When no hook gave any of it, build without asking.",
     "   - None fits and no connector could give it: call final with hookId null, built false, everything in missing, and why.",
     "3. Read the connectors (cast.listApis, then describe the ones whose name, path and inputs say they could give it; cast.fetchSample shows what one really answers, at most two samples) and pick the one whose answer has what the need asks for. Prefer one a published hook already calls: its inputs are known to work.",
     "4. Its fixed values (client, series, team ids) are in a hook that already calls it: describe that hook and copy what it passes. Never change it.",
@@ -34,10 +34,18 @@ export const spec: AgentSpec = {
   requires: ["hooks.author"],
   skills: ["hook-maker"],
   onDemandSkills: [],
-  model: "sonnet",
+  model: "haiku",
   memory: { read: ["procedural"], write: [] },
   budget: { usdPerRun: 1, maxSteps: 36, maxDepth: 0 },
   approvals: ["effect:write"],
+  // the one question it asks (ADR 0033): a person's answer is a decision on the section the parent
+  // run works on, proposed the next time it is asked there
+  questions: {
+    hook_choice: {
+      scope: "section",
+      about: "use the hook that gave part of the need as it is, or build a fuller one",
+    },
+  },
 };
 
 export const RunInput = z.object({

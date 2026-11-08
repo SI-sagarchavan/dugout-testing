@@ -124,14 +124,19 @@ against the parent's type (S6, S7).
 Logical `start`/`end` throughout, never `left`/`right`. ICC will need RTL and
 retrofitting direction into a shipped vocabulary is miserable.
 
-## Parts 4 & 5 — 18 node types
+## Parts 4 & 5 — 20 node types
 
 **Structural (8)** — Box, Stack, Grid, Section, Overlay, Carousel, Repeater,
 Custom.
-**Leaves (10)** — Text, RichText, Image, Icon, Button, Link, Tag, Divider,
-Countdown, Tabs.
+**Leaves (12)** — Text, RichText, Image, Icon, Button, Link, Tag, Divider,
+Countdown, Tabs, Input, Checkbox.
 
 A few shapes worth the ink:
+
+- **Input and Checkbox write the page.** What is typed, and whether the box is
+  ticked ("true"/"false"), is the page's under the node's `key`, read as
+  `_page.<key>` in any section's `when`, like a choice (`page.ts`). Both are real
+  form controls drawn in the design's look; `key` is also the form name.
 
 - **Repeater is a FRAGMENT, not a container.** It emits n children into its
   parent's layout and has no `surface`, `space`, `size` or `place` of its own.

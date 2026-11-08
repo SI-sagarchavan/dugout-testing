@@ -132,6 +132,35 @@ export async function describeImage(opts: {
   return text;
 }
 
+/** One question in words, one reply. No tools, nothing enters an agent transcript. */
+export async function describeText(opts: {
+  prompt: string;
+  model?: string;
+  models?: ModelConfig;
+  signal?: AbortSignal;
+  runtime?: BedrockRuntime;
+}): Promise<string> {
+  const models = opts.models ?? loadModelConfig();
+  const name = opts.model ?? "haiku";
+  const model = modelEntry(models, name);
+  const runtime = opts.runtime ?? new BedrockRuntimeClient({ region: await bedrockRegion() });
+  const output = (await runtime.send(
+    new ConverseCommand({
+      modelId: model.id,
+      messages: [{ role: "user", content: [{ text: opts.prompt }] }],
+      inferenceConfig: { maxTokens: SEE_MAX_TOKENS },
+      ...(model.effort ? { outputConfig: { effort: model.effort } } : {}),
+    }),
+    opts.signal ? { abortSignal: opts.signal } : undefined,
+  )) as { output?: { message?: { content?: Array<{ text?: string }> } } };
+  const text = (output.output?.message?.content ?? [])
+    .map((block) => block.text ?? "")
+    .join("")
+    .trim();
+  if (!text) throw new Error(`${name} returned no answer`);
+  return text;
+}
+
 function toRequest(req: ModelRequest, model: ModelEntry): ConverseStreamCommandInput {
   // the model list only holds ids of a known family
   const family = modelFamily(model.id) as ModelFamily;

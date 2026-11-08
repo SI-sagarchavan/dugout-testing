@@ -379,3 +379,80 @@ describe("answers checked against their questions", () => {
     ).toBeUndefined();
   });
 });
+
+describe("what a question is about (ADR 0033)", () => {
+  const opened = defineTool({
+    name: "frame.open",
+    description: "Opens the frame",
+    input: z.object({}),
+    effect: "read",
+    timeoutMs: 1_000,
+    async run(_input, ctx) {
+      ctx.situate?.({ section: "sig-1", name: "Frame 1" });
+      return { opened: true };
+    },
+  });
+  const declaring = spec({
+    tools: ["frame.open"],
+    questions: { content: { scope: "section", about: "what the cards show" } },
+  });
+  const start = (opts: {
+    runId: string;
+    store: RunStore;
+    script: ScriptStep[];
+    situation?: { section: string };
+  }) => {
+    const sink = createMemorySink();
+    const model = createScriptedModel(opts.script);
+    return runLocal({
+      agent: { spec: declaring, output: Output },
+      input: "Bind the cards",
+      tenantId: "demo-cricket",
+      runId: opts.runId,
+      tools: [opened],
+      client: model,
+      models: scriptedModelConfig(),
+      responder: later,
+      runsDir,
+      sinks: [sink],
+      outputs: createMemoryOutputStore(),
+      store: opts.store,
+      ...(opts.situation ? { situation: opts.situation } : {}),
+    }).then((result) => ({ result, events: sink.events, model }));
+  };
+
+  it("says a declared question's agent, scope and the section a tool situated the run on; others as they are", async () => {
+    const store = createMemoryRunStore();
+    const { result, events, model } = await start({
+      runId: "s1",
+      store,
+      script: [call("frame.open"), ask(contentType, count)],
+    });
+    expect(result.status).toBe("waiting");
+    const questions = events.find((e) => e.type === "question.asked")?.data.questions ?? [];
+    expect(questions[0]?.about).toEqual({
+      agent: "asking-agent",
+      scope: "section",
+      section: "sig-1",
+      name: "Frame 1",
+    });
+    expect(questions[1]?.about).toBeUndefined();
+    // kept with the run, so a resumed run still knows its section
+    const saved = store.runs.get("demo-cricket/s1")?.points.at(-1)?.checkpoint as RunCheckpoint;
+    expect(saved.situation).toEqual({ section: "sig-1", name: "Frame 1" });
+    // and `ask` lists the declared ids
+    const askTool = model.requests[0]?.tools.find((t) => t.name === "ask");
+    expect(askTool?.description).toContain("content (what the cards show)");
+  });
+
+  it("starts a child on its parent's section", async () => {
+    const { events } = await start({
+      runId: "s2",
+      store: createMemoryRunStore(),
+      script: [ask(contentType)],
+      situation: { section: "sig-parent" },
+    });
+    const questions = events.find((e) => e.type === "question.asked")?.data.questions ?? [];
+    expect(questions[0]?.about?.section).toBe("sig-parent");
+  });
+});

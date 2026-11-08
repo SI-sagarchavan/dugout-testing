@@ -4,6 +4,8 @@ import { pathToFileURL } from "node:url";
 import { REPO_ROOT } from "@dugout/core";
 import type { LayoutChoice, LayoutIntent, PlatformRead } from "./layout.ts";
 
+/** How deep a section is signed: the section library's `SECTION_SIGNATURE_DEPTH`, kept alike. */
+export const SECTION_SIGNATURE_DEPTH = 64;
 export interface Box {
   id: string;
   x: number;
@@ -49,6 +51,13 @@ export interface IrNode {
   children?: IrNode[];
 }
 
+/** A choice a tree writes to its page: `_page.<key>`, one of `options`, starting at `initial`. */
+export interface PageChoice {
+  key: string;
+  options: Array<{ value: string; label?: string }>;
+  initial: string;
+}
+
 export interface IrDoc {
   rootNodeId: string;
   root: IrNode;
@@ -92,6 +101,11 @@ export interface PngImage {
 
 export interface Toolchain {
   parseIr(json: unknown): IrDoc;
+  /**
+   * A section's structural signature (ADR 0033): the IR root's, as the section library signs one, so
+   * a decision a person makes on it is about the library's row for it.
+   */
+  sign?(root: IrNode): string;
   parseTheme(json: unknown): unknown;
   parseSurfaces(json: unknown): unknown;
   compile(doc: IrDoc, options: { theme: unknown; icons?: Record<string, string> }): Compiled;
@@ -103,6 +117,8 @@ export interface Toolchain {
   validate(tree: Tree, theme: unknown, surfaces: unknown): { errors: Issue[]; warnings: Issue[] };
   /** What each container of the frame is: a carousel, a list, tabs (`@fanos/compile`). */
   detectLayout(doc: IrDoc): LayoutIntent[];
+  /** The page choices a tree writes: its tabs' keys and options (`@fanos/dsl` `pageChoices`). */
+  pageChoices(tree: Tree): PageChoice[];
   /** A platform carousel config read into Carousel props (`@fanos/dsl` `fromPlatformCarousel`). */
   fromPlatformCarousel(json: unknown, options: { colors?: ReadonlySet<string> }): PlatformRead;
   /** Decided layouts applied to the compiled tree. */
@@ -150,13 +166,15 @@ async function load(): Promise<Toolchain> {
       "compile/dist/index.js",
     );
   const conformer = await from<{ conform: Toolchain["conform"] }>("conform/dist/index.js");
-  const ir = await from<{ parseFrameIRDocument(json: unknown): IrDoc }>(
-    "surface-canvas/dist/ir/index.js",
-  );
+  const ir = await from<{
+    parseFrameIRDocument(json: unknown): IrDoc;
+    computeStructuralSignature(node: unknown, depthLimit?: number): string;
+  }>("surface-canvas/dist/ir/index.js");
   const dsl = await from<{
     flatTreeSchema: { parse(tree: unknown): unknown };
     validate(tree: unknown, options: { registry: unknown }): { errors: Issue[]; warnings: Issue[] };
     fromPlatformCarousel: Toolchain["fromPlatformCarousel"];
+    pageChoices(tree: unknown): Array<PageChoice & { options: Array<{ node?: string }> }>;
   }>("dsl/dist/index.js");
   const tokens = await from<{
     parseThemeJson(json: unknown): unknown[];
@@ -193,6 +211,7 @@ async function load(): Promise<Toolchain> {
   };
   return {
     parseIr: (json) => ir.parseFrameIRDocument(json),
+    sign: (root) => ir.computeStructuralSignature(root, SECTION_SIGNATURE_DEPTH),
     parseTheme: (json) => {
       const [theme] = tokens.parseThemeJson(json);
       if (!theme) throw new Error("the token set holds no themes");
@@ -203,6 +222,13 @@ async function load(): Promise<Toolchain> {
     detectLayout: compiler.detectLayout,
     lowerLayout: compiler.lowerLayout,
     fromPlatformCarousel: dsl.fromPlatformCarousel,
+    // what is stored and shown: each option's value and label, not the node it is drawn as
+    pageChoices: (tree) =>
+      dsl.pageChoices(tree).map((c) => ({
+        key: c.key,
+        initial: c.initial,
+        options: c.options.map((o) => ({ value: o.value, ...(o.label ? { label: o.label } : {}) })),
+      })),
     conform: conformer.conform,
     validate: (tree, theme, surfaces) =>
       dsl.validate(dsl.flatTreeSchema.parse(tree), {

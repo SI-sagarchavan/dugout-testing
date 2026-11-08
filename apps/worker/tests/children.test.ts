@@ -11,7 +11,13 @@ import { childRunId, defineAgent } from "@dugout/sdk";
 import { Valkey } from "iovalkey";
 import { afterAll, describe, expect, inject, it } from "vitest";
 import { z } from "zod";
-import { createRunQueue, createValkeyEventLog, createWorker, hostAgents } from "../src/index.ts";
+import {
+  createRunQueue,
+  createValkeyEventLog,
+  createWorker,
+  hostAgents,
+  readStoredEvents,
+} from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
 const valkey = new Valkey(process.env.VALKEY_TEST_URL || "redis://localhost:56379/1");
@@ -129,10 +135,13 @@ describe("child runs in the worker (ADR 0025)", () => {
     });
     const runId = await queue.start(TENANT, "summariser", { topic: `t-${randomUUID()}` });
     await worker.poll();
-    const parentEvents = await until(runId, (es) => es.at(-1)?.type === "run.completed");
+    const parentEvents = await until(
+      runId,
+      (es) => es.at(-1)?.type === "run.completed" && !es.at(-1)?.child,
+    );
     await worker.idle();
 
-    const done = parentEvents.find((e) => e.type === "tool.completed");
+    const done = parentEvents.find((e) => e.type === "tool.completed" && !e.child);
     const childId = childRunId(runId, "call_1_0");
     expect(done).toMatchObject({ data: { tool: "agent.looker", ok: true } });
     expect(
@@ -145,7 +154,9 @@ describe("child runs in the worker (ADR 0025)", () => {
     const rows = await withTenant(pool, TENANT, async (db) => {
       const { rows } = await db.query(
         `select id, agent_id, status, parent_run_id, parent_call_id, result -> 'output' as output,
-           (select count(*)::int from run_events e where e.run_id = r.id) as events,
+           (select count(*)::int from run_events e where e.run_id = r.id) as own_events,
+           (select count(*)::int from run_events e
+              where e.run_id = r.parent_run_id and e.child ->> 'runId' = r.id) as events,
            (select count(*)::int from run_checkpoint_history h where h.run_id = r.id) as saves
          from runs r where id = $1`,
         [childId],
@@ -161,10 +172,25 @@ describe("child runs in the worker (ADR 0025)", () => {
         output: { answer: "Friday" },
       }),
     ]);
+    // one stream per invocation: the child's events are in the parent's record and live stream,
+    // tagged as the child's, in the parent's seq; its ending ended the child, not the stream
+    expect(rows[0].own_events).toBe(0);
     expect(rows[0].events).toBeGreaterThan(3);
     expect(rows[0].saves).toBeGreaterThan(3);
-    // its own live stream, which a host can attach to
-    expect((await events.read(childId, 0)).at(-1)?.type).toBe("run.completed");
+    expect(await events.read(childId, 0)).toEqual([]);
+    const fromChild = parentEvents.filter((e) => e.child?.runId === childId);
+    expect(fromChild.at(-1)).toMatchObject({
+      runId,
+      type: "run.completed",
+      child: { runId: childId, agentId: "looker", parentRunId: runId, callId: "call_1_0" },
+    });
+    expect(parentEvents.map((e) => e.seq)).toEqual(parentEvents.map((_, i) => i + 1));
+    expect(await readStoredEvents(pool, TENANT, runId, 0)).toContainEqual(
+      expect.objectContaining({
+        type: "run.started",
+        child: expect.objectContaining({ runId: childId }),
+      }),
+    );
 
     // a child left running with its lease run out is still never claimed on its own
     await withTenant(pool, TENANT, (db) =>

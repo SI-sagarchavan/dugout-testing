@@ -120,7 +120,13 @@ import { z } from "zod";
  * ("this strip swipes", "the badge is a live score"), not a re-description of the
  * layout, which Figma already holds. Absent or empty on older documents.
  */
-export const IR_VERSION = "1.11.0" as const;
+/**
+ * 1.12.0 — adds `stroke.sides`: the weight of each side when they differ. A row's rule drawn as a
+ * bottom-only stroke, or a stat's right-only one, read as Figma's mixed `strokeWeight`, and the IR
+ * took the top side's weight: 0, a border on no side. Absent when every side is the same, and on
+ * older documents, where `weight` is the whole story.
+ */
+export const IR_VERSION = "1.12.0" as const;
 export const IR_VERSIONS = [
   "1.1.0",
   "1.2.0",
@@ -133,6 +139,7 @@ export const IR_VERSIONS = [
   "1.9.0",
   "1.10.0",
   "1.11.0",
+  "1.12.0",
 ] as const;
 
 /**
@@ -399,7 +406,15 @@ export const strokeSchema = z.object({
   styleId: z.string().optional(),
   styleRef: z.string().optional(),
   raw: z.string().optional(),
+  /** The heaviest side's weight; with `sides`, what a reader that knows no sides draws on all four. */
   weight: z.number(),
+  /**
+   * Each side's weight, when they differ (1.12.0+): `{ top: 0, right: 1, bottom: 0, left: 0 }` is
+   * a rule on the right only. Absent when all four are `weight`.
+   */
+  sides: z
+    .object({ top: z.number(), right: z.number(), bottom: z.number(), left: z.number() })
+    .optional(),
   unbound: z.boolean(),
 });
 export type Stroke = z.infer<typeof strokeSchema>;

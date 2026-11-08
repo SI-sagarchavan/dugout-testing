@@ -61,10 +61,50 @@ export const Question = z.object({
 });
 export type Question = z.infer<typeof Question>;
 
+/**
+ * A question an agent says it asks (`AgentSpec.questions`, ADR 0033), by its id. What a person
+ * answers to it is learned: an answer about one section is a decision on that section (episodic),
+ * an answer true for the club is a fact (semantic). A question whose id is not declared is asked
+ * all the same, and nothing is learned from it.
+ */
+export const DeclaredQuestion = z.object({
+  /** `section`: the answer holds for the section the run works on; `tenant`: for the club. */
+  scope: z.enum(["tenant", "section"]),
+  /**
+   * The house fact the answer becomes (`media.player-photo`): proposed at once for a tenant
+   * question, and for a section question once three sections were given the same answer.
+   */
+  fact: z.string().optional(),
+  /** What it settles, in a few words: what the model reads in `ask`'s description. */
+  about: z.string().min(1),
+});
+export type DeclaredQuestion = z.infer<typeof DeclaredQuestion>;
+
+/**
+ * What a declared question is about, put on it by the run that asked (ADR 0033): its agent, how far
+ * the answer holds, and the section the run works on. It travels with the question to the run a
+ * person answers, so the answer is learned the same wherever it is answered.
+ */
+export const QuestionAbout = z.object({
+  agent: z.string(),
+  scope: DeclaredQuestion.shape.scope,
+  fact: z.string().optional(),
+  /** The structural signature of the section the run works on, when it knows one. */
+  section: z.string().optional(),
+  /** The section's name, for people. */
+  name: z.string().optional(),
+});
+export type QuestionAbout = z.infer<typeof QuestionAbout>;
+
 /** What the harness found in memory about a question: a person has answered it this way before. */
 export const Learned = z.object({
   times: z.number().int().positive().describe("How many earlier runs a person answered it so"),
   lastAt: z.string().describe("When, ISO 8601"),
+  /**
+   * Where the proposal came from (ADR 0033): a decision a person made on this section, or a house
+   * fact. Absent from hosts that predate it.
+   */
+  from: z.enum(["decision", "fact"]).optional(),
 });
 export type Learned = z.infer<typeof Learned>;
 
@@ -75,6 +115,7 @@ export type Learned = z.infer<typeof Learned>;
 export const AskedQuestion = Question.extend({
   kind: z.enum([...QUESTION_KINDS, "review"]),
   learned: Learned.optional(),
+  about: QuestionAbout.optional(),
 });
 export type AskedQuestion = z.infer<typeof AskedQuestion>;
 

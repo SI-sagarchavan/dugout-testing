@@ -5,11 +5,18 @@
 
 import type { AssetContext } from "@fanos/tokens";
 import type { ClockRef } from "@fanos/renderer/client";
+import type { PageState } from "@fanos/dsl";
 import type { DataBag } from "./resolve/data.js";
 
 export interface RenderConfig {
   /** Binding data for `{path}` interpolation. */
   data?: DataBag;
+  /**
+   * Where the page's choices start (`_page`): a host that draws several sections gives each the
+   * same, from `pageDefaults` over all of them, so a section that reads a choice another writes
+   * draws it at its start. A tree's own options start at the one drawn selected without it.
+   */
+  page?: PageState;
   /** Asset CDN resolution. Local dev: LOCAL_ASSET_CONTEXT. */
   assets?: AssetContext;
   /** Theme slug for data-fos-theme when CSS is scoped by attr. */
@@ -46,4 +53,6 @@ export interface NodeRenderContext extends RenderConfig {
   overlayChild?: boolean;
   /** The clocks in scope, by the name they are read by: what ticks in the browser. */
   clocks?: Record<string, ClockRef>;
+  /** Where the item being drawn sits in the nearest Repeater: what a node's `at` reads. */
+  place?: { index: number; count: number };
 }

@@ -20,8 +20,9 @@
  * One DSL per device: values are plain, for the frame's own width.
  */
 
-import type {
-  CarouselConfig,
+import {
+  confidenceOf,
+  type CarouselConfig,
   Confidence,
   LayoutChoice,
   LayoutChrome,
@@ -95,14 +96,19 @@ function detectContainer(
 ): LayoutIntent | undefined {
   if (isArt(container)) return undefined;
   const items = collectionOf(container);
-  if (!items) return undefined;
+  if (!items) return segmentedControl(root, container, parents);
   const arranged = arrangement(items.map(box));
   if (!arranged) return undefined;
 
   const clip = clipBoxOf(root, container, parents);
   const first = box(items[0]!);
   const evidence: string[] = [];
-  const base = { src: container.id, name: container.name, items: items.map((i) => i.id) };
+  const base = {
+    src: container.id,
+    name: container.name,
+    items: items.map((i) => i.id),
+    context: contextOf(container, items, clip, parents),
+  };
 
   if (arranged.kind === "grid") {
     if (items.length < MIN_ITEMS) return undefined;
@@ -112,7 +118,7 @@ function detectContainer(
       kind: "grid",
       config: { columns: arranged.columns, rows: arranged.rows },
     };
-    return { ...base, kind: "grid", confidence: "likely", evidence, ask: [], choice, chrome: {} };
+    return { ...base, kind: "grid", confidence: "likely", score: 0.7, evidence, ask: [], choice, chrome: {} };
   }
 
   if (arranged.kind === "column") {
@@ -124,6 +130,7 @@ function detectContainer(
       ...base,
       kind: "list",
       confidence: below > 0 ? "certain" : "likely",
+      score: below > 0 ? 0.9 : 0.7,
       evidence,
       ask: [],
       choice: { src: container.id, kind: "list" },
@@ -139,8 +146,12 @@ function detectContainer(
   const cutAfter = cut > 0 ? items.filter((i) => right(box(i)) > right(clip) + TOL).length : 0;
   const chrome = controlsNear(container, items, parents);
   const dots = chrome.pagination ? dotsOf(findById(root, chrome.pagination)!) : undefined;
+  // Each kind of evidence has a weight; they add up to a score for "this is a carousel". What the
+  // frame shows (a card cut off, a designed arrow, dots) is enough alone; the rest only adds up.
   const carouselEvidence: string[] = [];
+  let strong = 0;
   if (cutBefore + cutAfter > 0) {
+    strong += 0.9;
     carouselEvidence.push(
       cutBefore > 0 && cutAfter > 0
         ? `items cut off by both edges of "${nameOfClip(root, container, parents)}"`
@@ -148,74 +159,177 @@ function detectContainer(
     );
   }
   if (chrome.prev || chrome.next) {
+    strong += 0.9;
     const parts = [chrome.prev && "previous", chrome.next && "next"].filter(Boolean).join(" and ");
     carouselEvidence.push(`a designed ${parts} arrow`);
     if (byPosition(chrome, root)) carouselEvidence.push("the arrows' names point the other way to their order: read by position");
   }
-  if (dots) carouselEvidence.push(`${dots.count} pagination dots, page ${dots.active + 1} drawn active`);
+  if (dots) {
+    strong += 0.9;
+    carouselEvidence.push(`${dots.count} pagination dots, page ${dots.active + 1} drawn active`);
+  }
 
   if (carouselEvidence.length > 0) {
-    return carousel(base, container, items, clip, chrome, dots, [
-      `${items.length} matching items in one row`,
-      ...carouselEvidence,
-    ]);
+    return carousel(
+      base,
+      container,
+      items,
+      clip,
+      chrome,
+      dots,
+      [`${items.length} matching items in one row`, ...carouselEvidence],
+      Math.min(1, strong),
+    );
+  }
+
+  // Two labels are tabs only as one control (a segmented toggle): apart, they are two buttons.
+  if (items.length >= MIN_ITEMS || touching(items) || namedTabs(container, items)) {
+    const tabs = tabsIntent(base, container, items, [`${items.length} matching items in one row`]);
+    if (tabs) return tabs;
   }
 
   if (items.length < MIN_ITEMS) return undefined;
   evidence.push(`${items.length} matching items in one row`);
 
-  const tabs = tabsOf(container, items);
-  if (tabs) {
-    evidence.push(
-      `each item is one label, and only "${tabs.options[tabs.active]}" is drawn differently: the selected tab`,
-    );
-    const named = /\btabs?\b/i.test(container.name) || items.every((i) => /\btabs?\b/i.test(i.name));
-    if (named) evidence.push("the layers are named as tabs");
-    return {
-      ...base,
-      kind: "tabs",
-      confidence: named ? "certain" : "likely",
-      evidence,
-      ask: [],
-      choice: { src: container.id, kind: "tabs", config: tabs },
-      chrome: {},
-    };
-  }
-
   if (/\b(menu|nav|navigation)\b/i.test(container.name)) {
     evidence.push("named as navigation");
-    return { ...base, kind: "row", confidence: "likely", evidence, ask: [], choice: { src: container.id, kind: "row" }, chrome: {} };
+    return { ...base, kind: "row", confidence: "likely", score: 0.75, evidence, ask: [], choice: { src: container.id, kind: "row" }, chrome: {} };
   }
 
-  // Cards that fill the row with nothing past the edge: a fixed row, or a carousel that only
-  // starts to move when there are more. The frame cannot tell; a person can.
-  const cards = first.w >= CARD.w && first.h >= CARD.h;
-  if (cards) {
-    evidence.push(`all ${items.length} fit inside "${nameOfClip(root, container, parents)}"; no arrows or dots`);
-    return {
-      ...base,
-      kind: "row",
-      confidence: "unsure",
-      alternative: "carousel",
-      evidence,
-      ask: [
-        `Is "${container.name}" a fixed row of ${items.length}, or a carousel that scrolls when there are more than ${items.length}? (proposed: a fixed row)`,
-      ],
-      choice: { src: container.id, kind: "row" },
-      chrome: {},
-    };
+  // Nothing is cut off and nothing is drawn to move it: the weaker signs add up. A static frame
+  // of a carousel looks like this, and so does a fixed row, so the score is rarely high.
+  const weak = weakCarouselSignals(root, container, items, clip, parents);
+  const c = Math.max(0, Math.min(1, weak.score));
+  if (c < CAROUSEL_DOUBT) {
+    evidence.push(...weak.against, `all ${items.length} fit inside "${nameOfClip(root, container, parents)}"`);
+    return { ...base, kind: "row", confidence: "likely", score: round2(1 - c), evidence, ask: [], choice: { src: container.id, kind: "row" }, chrome: {} };
   }
-  return { ...base, kind: "row", confidence: "likely", evidence, ask: [], choice: { src: container.id, kind: "row" }, chrome: {} };
+  evidence.push(...weak.for, `all ${items.length} fit inside "${nameOfClip(root, container, parents)}"; no arrows or dots`, ...weak.against);
+  const asCarousel = carousel(base, container, items, clip, chrome, dots, [...evidence], c);
+  const row: LayoutChoice = { src: container.id, kind: "row" };
+  if (c >= 0.6) {
+    return { ...asCarousel, score: round2(c), confidence: confidenceOf(c, true), alternative: "row", alternativeChoice: row, alternativeAsk: [] };
+  }
+  return {
+    ...base,
+    kind: "row",
+    confidence: confidenceOf(1 - c, true),
+    score: round2(1 - c),
+    alternative: "carousel",
+    alternativeChoice: asCarousel.choice,
+    alternativeAsk: asCarousel.ask,
+    evidence,
+    ask: [
+      `Is "${container.name}" a fixed row of ${items.length}, or a carousel that scrolls when there are more than ${items.length}? (proposed: a fixed row)`,
+    ],
+    choice: row,
+    chrome: {},
+  };
+}
+
+/** Below this carousel score a row is a row: nothing about it asks to move. */
+const CAROUSEL_DOUBT = 0.35;
+const round2 = (v: number) => Math.round(v * 100) / 100;
+
+/** Layer names that mean "this scrolls", on the container or the layer holding it. */
+const SLIDER_NAME = /(slider|carou?sel|swiper|slides?\b|scroller|scrollable|\brail\b|\bstrip\b)/i;
+
+/**
+ * The signs of a carousel in a row whose items all fit: each adds its weight, a sign against takes
+ * it off. None is proof; together they say how likely a designer meant a slider.
+ */
+function weakCarouselSignals(
+  root: FrameIRNode,
+  container: FrameIRNode,
+  items: FrameIRNode[],
+  clip: Box,
+  parents: Map<string, FrameIRNode | null>,
+): { score: number; for: string[]; against: string[] } {
+  const up: string[] = [];
+  const down: string[] = [];
+  let score = 0;
+  const first = box(items[0]!);
+  const fills = items.every((i) => i.layout.sizing.w === "fill");
+  const parent = parents.get(container.id);
+  if (SLIDER_NAME.test(container.name) || (parent && SLIDER_NAME.test(parent.name))) {
+    score += 0.5;
+    up.push(`a layer is named as a slider ("${SLIDER_NAME.test(container.name) ? container.name : parent!.name}")`);
+  }
+  const cards = first.w >= CARD.w && first.h >= CARD.h;
+  if (!fills && cards && items.length >= 4) {
+    score += items.length >= 6 ? 0.35 : 0.25;
+    up.push(`${items.length} items, each at a fixed width: a row that long is usually paged`);
+  }
+  if (cards) {
+    score += 0.15;
+    up.push("the items are cards, not chips");
+  }
+  const extent = Math.max(...items.map((i) => right(box(i)))) - Math.min(...items.map((i) => box(i).x));
+  if (extent >= clip.w * 0.9) {
+    score += 0.15;
+    up.push("the row runs edge to edge of what clips it");
+  }
+  if (container.clipsContent) score += 0.05;
+  if (fills) {
+    score -= 0.3;
+    down.push("the items share the row's width: a fixed row, not slides");
+  }
+  if (items.length === 3) {
+    score -= 0.1;
+    down.push("three items fit a row without moving");
+  }
+  void root;
+  return { score, for: up, against: down };
+}
+
+/** The container's surroundings in plain lines, for whoever has to judge what it is. */
+function contextOf(
+  container: FrameIRNode,
+  items: FrameIRNode[],
+  clip: Box,
+  parents: Map<string, FrameIRNode | null>,
+): string[] {
+  const first = box(items[0]!);
+  const gaps = items.slice(1).map((it, i) => round1(box(it).x - right(box(items[i]!))));
+  const path: string[] = [];
+  for (let cursor = parents.get(container.id) ?? null; cursor && path.length < 3; cursor = parents.get(cursor.id) ?? null) {
+    path.push(cursor.name);
+  }
+  const lines = [
+    `layer "${container.name}"${path.length > 0 ? ` inside ${path.map((n) => `"${n}"`).join(" in ")}` : ""}`,
+    `${items.length} items of ${Math.round(first.w)}x${Math.round(first.h)}px, sized ${items.every((i) => i.layout.sizing.w === "fill") ? "to share the row" : "at their own width"}, gaps ${[...new Set(gaps)].join("/") || "none"}px`,
+    `clipped to ${Math.round(clip.w)}px wide${container.clipsContent ? " by this layer" : ""}`,
+  ];
+  const labels = items.slice(0, 3).map((it) =>
+    textsOf(it)
+      .slice(0, 5)
+      .map((t) => t.text!.characters.trim().replace(/\s+/g, " "))
+      .filter(Boolean)
+      .join(" | "),
+  );
+  if (labels.some(Boolean)) lines.push(`first items read: ${labels.map((l) => `[${l.slice(0, 80)}]`).join(" ")}`);
+  // the nearest words above the row: a heading, a "view all" link
+  const near = parents.get(container.id);
+  if (near) {
+    const words = (near.children ?? [])
+      .filter((s) => s.id !== container.id && s.text !== undefined)
+      .map((s) => s.text!.characters.trim())
+      .filter(Boolean)
+      .slice(0, 4);
+    if (words.length > 0) lines.push(`beside it: ${words.map((w) => `"${w.slice(0, 40)}"`).join(", ")}`);
+  }
+  return lines;
 }
 
 function carousel(
-  base: { src: string; name: string; items: string[] },
+  base: { src: string; name: string; items: string[]; context: string[] },
   container: FrameIRNode,
   items: FrameIRNode[],
   clip: Box,
   chrome: LayoutChrome,
   dots: { count: number; active: number } | undefined,
   evidence: string[],
+  score: number,
 ): LayoutIntent {
   const first = box(items[0]!);
   const gap = items.length > 1 ? box(items[1]!).x - right(first) : 0;
@@ -251,7 +365,8 @@ function carousel(
   return {
     ...base,
     kind: "carousel",
-    confidence: "certain",
+    confidence: confidenceOf(score, false),
+    score: round2(score),
     evidence,
     ask,
     choice: { src: base.src, kind: "carousel", config },
@@ -497,13 +612,78 @@ function tabsOf(container: FrameIRNode, items: FrameIRNode[]): { options: string
   const counts = new Map<string, number>();
   for (const look of looks) counts.set(look, (counts.get(look) ?? 0) + 1);
   if (counts.size !== 2) return undefined;
-  const odd = [...counts.entries()].find(([, c]) => c === 1);
-  if (!odd) return undefined;
+  let active = looks.findIndex((look) => counts.get(look) === 1);
+  if (items.length === 2) {
+    // Each of two is the odd one out: the selected one is the one with a background of its own.
+    const filled = items.flatMap((item, i) => (item.fill ? [i] : []));
+    if (filled.length !== 1) return undefined;
+    active = filled[0]!;
+  }
+  if (active < 0) return undefined;
   void container;
+  return { options: labels.map((l) => l[0]!.text!.characters.trim()), active };
+}
+
+type IntentBase = Pick<LayoutIntent, "src" | "name" | "items" | "context">;
+
+function tabsIntent(
+  base: IntentBase,
+  container: FrameIRNode,
+  items: FrameIRNode[],
+  evidence: string[],
+): LayoutIntent | undefined {
+  const tabs = tabsOf(container, items);
+  if (!tabs) return undefined;
+  evidence.push(
+    `each item is one label, and only "${tabs.options[tabs.active]}" is drawn differently: the selected tab`,
+  );
+  const named = namedTabs(container, items);
+  if (named) evidence.push("the layers are named as tabs");
   return {
-    options: labels.map((l) => l[0]!.text!.characters.trim()),
-    active: looks.indexOf(odd[0]),
+    ...base,
+    kind: "tabs",
+    confidence: named ? "certain" : "likely",
+    score: named ? 0.9 : 0.7,
+    evidence,
+    ask: [],
+    choice: { src: container.id, kind: "tabs", config: tabs },
+    chrome: {},
   };
+}
+
+function namedTabs(container: FrameIRNode, items: FrameIRNode[]): boolean {
+  return /\btabs?\b/i.test(container.name) || items.every((i) => /\btabs?\b/i.test(i.name));
+}
+
+/** Side by side with no gap between them: one control in parts, not separate buttons. */
+function touching(items: FrameIRNode[]): boolean {
+  const boxes = items.map(box).sort((a, b) => a.x - b.x);
+  return boxes.every((b, i) => i === 0 || Math.abs(b.x - right(boxes[i - 1]!)) <= TOL);
+}
+
+/**
+ * A segmented toggle (WOMEN | MEN): two or more labels side by side, touching, one drawn as
+ * selected. The selected segment often carries a fill or a stray mark the others lack, so its
+ * shape differs and `collectionOf` does not see one repeated item: its parts are read here.
+ */
+function segmentedControl(
+  root: FrameIRNode,
+  container: FrameIRNode,
+  parents: Map<string, FrameIRNode | null>,
+): LayoutIntent | undefined {
+  const items = (container.children ?? []).filter(
+    (c) => !isArt(c) && !isRule(c) && c.layout.positioning !== "absolute",
+  );
+  if (items.length < 2 || items.length !== (container.children ?? []).length) return undefined;
+  if (arrangement(items.map(box))?.kind !== "row" || !touching(items)) return undefined;
+  const clip = clipBoxOf(root, container, parents);
+  const base = {
+    src: container.id,
+    name: container.name,
+    items: items.map((i) => i.id),
+    context: contextOf(container, items, clip, parents),
+  };
+  return tabsIntent(base, container, items, [`${items.length} labels side by side as one control`]);
 }
 
 /** For a person reading the intents: one line each. */

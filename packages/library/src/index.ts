@@ -4,11 +4,13 @@
  */
 export * from "./caption.ts";
 export * from "./crops.ts";
+export * from "./data-shape.ts";
 export * from "./embeddings.ts";
 export * from "./fanos.ts";
 export * from "./image.ts";
 export * from "./indexer.ts";
 export * from "./ir.ts";
+export * from "./palette.ts";
 export * from "./previews.ts";
 export * from "./sections.ts";
 export * from "./skeleton.ts";

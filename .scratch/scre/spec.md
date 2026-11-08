@@ -25,17 +25,17 @@ stay until a person decides otherwise (ticket 06 is on hold).
 - **Tenant theme, no theme input.** A token ref names the variable `genCssFromJson` (`@sikit/utils`)
   already declares (`packages/scre/src/tokens.ts`):
 
-  | ref | tenant CSS |
-  |---|---|
-  | `color.x` | `var(--x-hex)`; with an alpha `hsl(var(--x) / a)` (the tenant's `--x` is an HSL triple) |
-  | `space.x` | `var(--spacing_x)` |
-  | `radius.x` | `var(--radius_x)` |
-  | `opacity.x` | `var(--opacity_x)` |
-  | `gradient.x` | `var(--gradient_x_gradient)` |
-  | `type.x` | our class `.fos-type-x` from `--x-font-size`, `-font-family`, `-font-weight`, `-line-height`, `-letter-spacing` |
-  | `shadow.x` | `--fos-shadow-x`, read from the tenant's `.x { box-shadow }` class (it has no variable) |
-  | `duration.*`, `easing.*` | the built-in scale, inline (no theme carries motion) |
-  | `surface.*`, `asset.*` | the section's own surface set, written as `.fos-surface-*` in tenant names |
+  | ref                      | tenant CSS                                                                                                      |
+  | ------------------------ | --------------------------------------------------------------------------------------------------------------- |
+  | `color.x`                | `var(--x-hex)`; with an alpha `hsl(var(--x) / a)` (the tenant's `--x` is an HSL triple)                         |
+  | `space.x`                | `var(--spacing_x)`                                                                                              |
+  | `radius.x`               | `var(--radius_x)`                                                                                               |
+  | `opacity.x`              | `var(--opacity_x)`                                                                                              |
+  | `gradient.x`             | `var(--gradient_x_gradient)`                                                                                    |
+  | `type.x`                 | our class `.fos-type-x` from `--x-font-size`, `-font-family`, `-font-weight`, `-line-height`, `-letter-spacing` |
+  | `shadow.x`               | `--fos-shadow-x`, read from the tenant's `.x { box-shadow }` class (it has no variable)                         |
+  | `duration.*`, `easing.*` | the built-in scale, inline (no theme carries motion)                                                            |
+  | `surface.*`, `asset.*`   | the section's own surface set, written as `.fos-surface-*` in tenant names                                      |
 
   `prepareSection({ tree, surfaces, plan, tenantCss })` returns the section CSS and `missing`: every ref
   the tenant does not declare, which hosts show instead of drawing nothing quietly.
@@ -74,11 +74,11 @@ stay until a person decides otherwise (ticket 06 is on hold).
 
 Nothing is committed. Three repos, each on its own branch:
 
-| Repo | Branch | What |
-|---|---|---|
-| fanxp-web-renderer, worktree `../fanxp-web-renderer-sdui` | `feat/scre` (from `development` `4e90fb96`) | new `packages/scre`; `pnpm-lock.yaml` |
-| wnm-fanxp-backend-surface-auth | `feat/surface-runs-host` | `GET /surface/runs/:id/section` and `/section/live`: `src/services/surface-section/`, `src/interfaces/surface-section.ts`, two handlers in `controllers/surface-run`, routes in `routes/surface-run`, errors `SURF_28`–`SURF_30`, `'surface-section'` in `types/index.ts` `tracingModule`, `FANOS_API_URL`/`FANOS_API_KEY` in `.env.example`, `tests/services/surface-section.test.ts` |
-| wnm-fanxp-frontend | `feat/surface-live-queue` | Studio: `features/queue/ui/section-canvas.tsx`, `entities/surface/queries/use-section-query.ts`, `use-tenant-theme.ts`, transport/API/mock/schema additions, `queue-page.tsx`; `apps/fanxp/vite.config.ts` and Studio's `vite.config.ts`/`vitest.config.ts` allow the linked package's folder |
+| Repo                                                      | Branch                                      | What                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| fanxp-web-renderer, worktree `../fanxp-web-renderer-sdui` | `feat/scre` (from `development` `4e90fb96`) | new `packages/scre`; `pnpm-lock.yaml`                                                                                                                                                                                                                                                                                                                                                  |
+| wnm-fanxp-backend-surface-auth                            | `feat/surface-runs-host`                    | `GET /surface/runs/:id/section` and `/section/live`: `src/services/surface-section/`, `src/interfaces/surface-section.ts`, two handlers in `controllers/surface-run`, routes in `routes/surface-run`, errors `SURF_28`–`SURF_30`, `'surface-section'` in `types/index.ts` `tracingModule`, `FANOS_API_URL`/`FANOS_API_KEY` in `.env.example`, `tests/services/surface-section.test.ts` |
+| wnm-fanxp-frontend                                        | `feat/surface-live-queue`                   | Studio: `features/queue/ui/section-canvas.tsx`, `entities/surface/queries/use-section-query.ts`, `use-tenant-theme.ts`, transport/API/mock/schema additions, `queue-page.tsx`; `apps/fanxp/vite.config.ts` and Studio's `vite.config.ts`/`vitest.config.ts` allow the linked package's folder                                                                                          |
 
 The backend and frontend branches already carried other uncommitted work: review those diffs by file.
 
@@ -148,15 +148,15 @@ Goal: a person sees a run's section in Studio, adds it to a page from there, and
 it in place, as a placeholder that opens Studio. Pages do not draw it yet, and nothing that draws a page
 today changes.
 
-| # | Ticket | Repo | State |
-|---|---|---|---|
-| 09 | `09-rename-to-scre.md`: `@sikit/sdui-renderer` becomes `@sikit/scre` | renderer, frontend, backend | done |
-| 10 | `10-surface-section-template-column.md`: content type `Surface Section` and the `surface_dsl` column, carried like `css` | backend | done, not migrated |
-| 11 | `11-add-to-page.md`: `POST /surface/runs/:id/section/add-to-page`, the pinned DSL as a template on a page | backend | done |
-| 12 | `12-page-builder-placeholder.md`: the placeholder card and "Preview in Surface Studio" | frontend (fanxp) | done |
-| 13 | `13-studio-add-to-page.md`: Add to page on the canvas, with a page picker | frontend (Studio) | done |
-| 14 | `14-page-renderer-passes-over.md`: `@sikit/renderer` skips `surface_section` safely | renderer | done |
-| 15 | `15-studio-preview-room.md`: the preview in the centre, every Send a thread at the right (Execution, Plan, Data, …), Focus, zoom | frontend (Studio) | done |
+| #   | Ticket                                                                                                                           | Repo                        | State              |
+| --- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------ |
+| 09  | `09-rename-to-scre.md`: `@sikit/sdui-renderer` becomes `@sikit/scre`                                                             | renderer, frontend, backend | done               |
+| 10  | `10-surface-section-template-column.md`: content type `Surface Section` and the `surface_dsl` column, carried like `css`         | backend                     | done, not migrated |
+| 11  | `11-add-to-page.md`: `POST /surface/runs/:id/section/add-to-page`, the pinned DSL as a template on a page                        | backend                     | done               |
+| 12  | `12-page-builder-placeholder.md`: the placeholder card and "Preview in Surface Studio"                                           | frontend (fanxp)            | done               |
+| 13  | `13-studio-add-to-page.md`: Add to page on the canvas, with a page picker                                                        | frontend (Studio)           | done               |
+| 14  | `14-page-renderer-passes-over.md`: `@sikit/renderer` skips `surface_section` safely                                              | renderer                    | done               |
+| 15  | `15-studio-preview-room.md`: the preview in the centre, every Send a thread at the right (Execution, Plan, Data, …), Focus, zoom | frontend (Studio)           | done               |
 
 Nothing is committed, and nothing has been tried end to end: the migration has not run (the backend's
 database looks like the shared dev one), and no one has pressed Add to page in a signed-in Studio. That

@@ -114,6 +114,7 @@ export function parseCliArgs(agent: Pick<AnyAgent, "input" | "cli">, argv: strin
     model: { type: "string" },
     effort: { type: "string" },
     yes: { type: "boolean" },
+    thread: { type: "string" },
   };
   for (const [name, flag] of flags) {
     options[name] =
@@ -136,6 +137,8 @@ export function parseCliArgs(agent: Pick<AnyAgent, "input" | "cli">, argv: strin
     model: text(values.model),
     effort: text(values.effort),
     yes: values.yes === true,
+    /** The thread the run joins (ADR 0031); left out, it starts one. */
+    thread: text(values.thread),
   };
 }
 

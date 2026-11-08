@@ -88,6 +88,72 @@
         "additionalProperties": false
       },
       "description": "One entry for each note the designer left (frame.load lists them): met, or why not. [] when it listed none"
+    },
+    "content": {
+      "description": "Whether anything on the section is data: none means there is nothing to bind",
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "enum": [
+            "none",
+            "some",
+            "unsure"
+          ],
+          "description": "none: nothing on it is data, so nothing is bound; some: it shows data; unsure: the signs do not say"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What says so, each one sign"
+        }
+      },
+      "required": [
+        "data",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "choices": {
+      "description": "What the section's tabs write to its page (_page.<key>), for other sections to read",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "initial": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "options",
+          "initial"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

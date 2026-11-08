@@ -29,7 +29,7 @@ export interface RequiredSurface {
 function fingerprint(s: Surface): string {
   return JSON.stringify({
     layers: (s.layers ?? []).map((l) => [l.type, "ref" in l ? l.ref : null]),
-    borders: (s.borders ?? []).map((b) => [b.width, b.color, b.radius ?? null]),
+    borders: (s.borders ?? []).map((b) => [b.width, b.color, b.radius ?? null, b.sides ?? null]),
     radius: s.radius ?? null,
     shadow: s.shadow ?? null,
   });
@@ -52,7 +52,12 @@ export function specOf(theme: NormalizedTheme, n: FrameIRNode): Surface | undefi
     const radius = canonicalRef(theme, n.radius?.tokenRef, "radius");
     if (color) {
       spec.borders = [
-        { width: n.stroke.weight, color, ...(radius && radius !== "radius.none" ? { radius } : {}) },
+        {
+          width: n.stroke.weight,
+          color,
+          ...(radius && radius !== "radius.none" ? { radius } : {}),
+          ...(n.stroke.sides ? { sides: logicalSides(n.stroke.sides) } : {}),
+        },
       ];
     }
   }
@@ -76,6 +81,20 @@ export function specOf(theme: NormalizedTheme, n: FrameIRNode): Surface | undefi
     spec.radius === undefined &&
     spec.shadow === undefined;
   return empty ? undefined : spec;
+}
+
+/**
+ * Figma's sides as the DSL's logical ones, the sides that have a stroke only. A design is drawn
+ * left to right, so its right is the end: a stat's rule on its right stays after it in any
+ * direction.
+ */
+function logicalSides(sides: { top: number; right: number; bottom: number; left: number }) {
+  const out: { top?: number; end?: number; bottom?: number; start?: number } = {};
+  if (sides.top > 0) out.top = sides.top;
+  if (sides.right > 0) out.end = sides.right;
+  if (sides.bottom > 0) out.bottom = sides.bottom;
+  if (sides.left > 0) out.start = sides.left;
+  return out;
 }
 
 /**

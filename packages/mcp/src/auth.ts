@@ -1,6 +1,13 @@
+import { NeedsSetup } from "@dugout/contracts";
 import type { Grant, TokenStore } from "./tokens.ts";
 
-export class McpAuthError extends Error {}
+/** No sign-in for this tenant, or no key: a person sets it up, and nothing else will do. */
+export class McpAuthError extends NeedsSetup {
+  constructor(message: string) {
+    super(message);
+    this.name = "NeedsSetup";
+  }
+}
 
 type Fetch = typeof fetch;
 
@@ -129,4 +136,19 @@ export function authFetch(tenantId: string, opts: AuthOptions): Fetch {
     }
     return response;
   }) as Fetch;
+}
+
+/**
+ * The setup failure behind an error, when there is one: the transport wraps what its fetch threw,
+ * and a sign-in that is missing must still read as one, however deep it is.
+ */
+export function setupFailure(err: unknown): McpAuthError | undefined {
+  for (let at: unknown = err, depth = 0; at && depth < 5; depth++) {
+    if (at instanceof McpAuthError) return at;
+    const message = at instanceof Error ? at.message : String(at);
+    if (/no grant for tenant|no token for |no grants file/.test(message))
+      return new McpAuthError(message);
+    at = (at as { cause?: unknown }).cause;
+  }
+  return undefined;
 }

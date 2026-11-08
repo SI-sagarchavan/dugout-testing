@@ -3,12 +3,20 @@
 // pnpm agent memory review --shared — approve or reject proposed shared memory (ADR 0014), shown beside
 // the tenant items it was promoted from. Check it names no tenant before approving: every tenant
 // of its scope will read it. Runs as the admin role, the only one that writes shared memory.
+// A fact proposed from what people answered (ADR 0033) shows its answer too: (e)dit changes its
+// sentence and its answer before approving (a photo URL a person gave, made a pattern with {id}).
 import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { loadEnv, loadTenants } from "@dugout/core";
 import { adminDatabaseUrl, createPool } from "@dugout/db";
-import { createMemoryStore, createSharedMemory, groupLabel, loadEmbeddings } from "../src/index.ts";
+import {
+  answerText,
+  createMemoryStore,
+  createSharedMemory,
+  groupLabel,
+  loadEmbeddings,
+} from "../src/index.ts";
 
 loadEnv();
 const { values } = parseArgs({
@@ -21,11 +29,29 @@ if (!values.tenant && !values.shared) {
 const reviewer = userInfo().username;
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 // input that ends (a closed pipe, Ctrl-D) stops the review instead of crashing it
-const ask = async () => {
+const ask = async (edit = false) => {
   try {
-    return (await rl.question("  (a)pprove, (r)eject, (s)kip, (q)uit? ")).trim().toLowerCase();
+    return (await rl.question(`  (a)pprove, (r)eject, ${edit ? "(e)dit, " : ""}(s)kip, (q)uit? `))
+      .trim()
+      .toLowerCase();
   } catch {
     return "q";
+  }
+};
+const line = async (prompt: string) => {
+  try {
+    return (await rl.question(prompt)).trim();
+  } catch {
+    return "";
+  }
+};
+/** What a person typed as an answer: JSON when it reads as JSON (true, 3, ["a"]), else the text. */
+const typed = (text: string, was: unknown): unknown => {
+  if (typeof was === "string") return text;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
 };
 
@@ -62,7 +88,24 @@ if (values.shared) {
     console.log("  every agent of this tenant will read it");
     if (current) console.log(`  now:      ${current.content}`);
     console.log(`  proposed: ${p.content}`);
-    const answer = await ask();
+    const valued = p.value !== null && p.value !== undefined;
+    if (valued) {
+      console.log(
+        `  answers:  ${answerText(p.value)}   (a run's question is proposed this, or answered with it once approved)`,
+      );
+      if (p.sources.length) console.log(`  from ${p.sources.length} decisions on as many sections`);
+    }
+    let answer = await ask(valued);
+    if (answer === "e" && valued) {
+      const content = await line("  sentence (Enter keeps it): ");
+      const value = await line("  answer (Enter keeps it): ");
+      const revised = await store.reviseProposal(tenant.id, p.id, {
+        ...(content ? { content } : {}),
+        ...(value ? { value: typed(value, p.value) } : {}),
+      });
+      console.log(`  now proposed: ${revised.content}  →  ${answerText(revised.value)}`);
+      answer = await ask();
+    }
     if (answer === "q") break;
     if (answer === "a") await store.activateFact(tenant.id, p.id, reviewer);
     else if (answer === "r") await store.rejectProposal(tenant.id, p.id, reviewer);

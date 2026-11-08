@@ -228,6 +228,34 @@ describe("surfaces", () => {
     expect(rule).toContain("background-repeat: repeat, no-repeat;");
   });
 
+  /**
+   * A rule on some sides only: a stat's on its end, a row's underneath. Drawn as the shorthand it
+   * was the whole box ruled; a second one as a ring went all the way round.
+   */
+  it("draws a border on its own sides only, each at its width", () => {
+    const { css } = emitCss(makeTheme(), {
+      surfaces: makeSurfaces({
+        stat: { borders: [{ width: 1, color: "color.core_neu_00", sides: { end: 1 } }] },
+        row: {
+          borders: [
+            { width: 2, color: "color.core_neu_00", sides: { top: 1, bottom: 2 } },
+            { width: 1, color: "color.core_neu_00", sides: { start: 1 } },
+          ],
+        },
+      }),
+    });
+    const rule = (name: string) => {
+      const from = css.indexOf(`.fos-surface-${name}`);
+      return css.slice(from, css.indexOf("}", from));
+    };
+    expect(rule("stat")).toContain("border: 0 solid");
+    expect(rule("stat")).toContain("border-inline-end-width: 1px;");
+    expect(rule("stat")).not.toContain("border-block");
+    expect(rule("row")).toContain("border-block-start-width: 1px;");
+    expect(rule("row")).toContain("border-block-end-width: 2px;");
+    expect(rule("row")).toMatch(/box-shadow: inset 1px 0 0 0 [^,;]+;/);
+  });
+
   it("omits position: relative when nothing needs a containing block", () => {
     const { css } = emitCss(makeTheme(), {
       surfaces: makeSurfaces({ plain: { radius: "radius.xl", shadow: "shadow.md" } }),

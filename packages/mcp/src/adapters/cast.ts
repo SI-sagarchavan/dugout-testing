@@ -11,6 +11,7 @@
  *   - `hookOutput`    a hook's live output for code. Goes when the page fetches the published hook
  *                     by its `workflowId` at render time.
  */
+import { isNeedsSetup } from "@dugout/contracts";
 import type { ServerAdapter, ServerCall } from "../adapter.ts";
 import type { ToolResult } from "../hub.ts";
 
@@ -75,6 +76,8 @@ async function readOnlyHook(args: Record<string, unknown>, call: ServerCall) {
   try {
     hook = await describeHook(call, hookId);
   } catch (err) {
+    // no sign-in is not this hook's problem: the whole run waits on a person
+    if (isNeedsSetup(err)) throw err;
     return `${hookId} cannot be described: ${(err as Error).message}`;
   }
   const unsafe = unsafeToRun(hook);

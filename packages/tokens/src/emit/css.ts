@@ -267,6 +267,40 @@ function borderShorthand(border: SurfaceBorder): string {
   return `${formatPx(border.width)} ${border.style ?? "solid"} ${colorAt(border.color, border.opacity)}`;
 }
 
+/** The CSS logical property of each side a border may be drawn on. */
+const BORDER_SIDES = {
+  top: "border-block-start",
+  end: "border-inline-end",
+  bottom: "border-block-end",
+  start: "border-inline-start",
+} as const;
+
+/** A border as declarations: the shorthand on all four sides, or each side it has its own width on. */
+function borderDeclarations(border: SurfaceBorder): string[] {
+  if (!border.sides) return [`border: ${borderShorthand(border)};`];
+  const colour = colorAt(border.color, border.opacity);
+  return [
+    `border: 0 ${border.style ?? "solid"} ${colour};`,
+    ...Object.entries(BORDER_SIDES).flatMap(([side, property]) => {
+      const width = border.sides?.[side as keyof typeof BORDER_SIDES];
+      return width ? [`${property}-width: ${formatPx(width)};`] : [];
+    }),
+  ];
+}
+
+/** A second border as an inset ring: on all four sides, or a shadow per side it is drawn on. */
+function borderRings(border: SurfaceBorder): string[] {
+  const colour = colorAt(border.color, border.opacity);
+  if (!border.sides) return [`inset 0 0 0 ${formatPx(border.width)} ${colour}`];
+  const { top, end, bottom, start } = border.sides;
+  return [
+    ...(top ? [`inset 0 ${formatPx(top)} 0 0 ${colour}`] : []),
+    ...(bottom ? [`inset 0 -${formatPx(bottom)} 0 0 ${colour}`] : []),
+    ...(start ? [`inset ${formatPx(start)} 0 0 0 ${colour}`] : []),
+    ...(end ? [`inset -${formatPx(end)} 0 0 0 ${colour}`] : []),
+  ];
+}
+
 function emitSurface(
   theme: NormalizedTheme,
   name: string,
@@ -319,11 +353,11 @@ function emitSurface(
   }
 
   const first = flatBorders[0];
-  if (first) body.push(`border: ${borderShorthand(first)};`);
+  if (first) body.push(...borderDeclarations(first));
 
   // A second flat border has nowhere to go as `border`, so it becomes an inset
   // ring — exact, and it composes with the shadow in the same declaration.
-  const rings = flatBorders.slice(1).map((b) => `inset 0 0 0 ${formatPx(b.width)} ${colorAt(b.color, b.opacity)}`);
+  const rings = flatBorders.slice(1).flatMap(borderRings);
   const shadows = [...(surface.shadow ? [cssVar(surface.shadow)] : []), ...rings];
   if (shadows.length > 0) body.push(`box-shadow: ${shadows.join(", ")};`);
 
@@ -336,7 +370,7 @@ function emitSurface(
       "position: absolute;",
       `inset: ${formatPx(insetBorder.inset ?? 0)};`,
       "pointer-events: none;",
-      `border: ${borderShorthand(insetBorder)};`,
+      ...borderDeclarations(insetBorder),
       ...(insetBorder.radius ? [`border-radius: ${cssVar(insetBorder.radius)};`] : []),
     ];
     lines.push("", `${selector}::before {`, ...beforeBody.map((l) => INDENT + l), "}");

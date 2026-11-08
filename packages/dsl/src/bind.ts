@@ -24,10 +24,13 @@
  * PURE. No filesystem, no process, no clock.
  */
 
-import type { FlatNode, FlatTree } from "./flat.js";
+import { childrenOf, type FlatNode, type FlatTree } from "./flat.js";
 import { allFields, nodeSpec } from "./nodes/index.js";
 import { proposeCollapse } from "./collapse.js";
-import { applyCollapse, moveNode, replaceNode, setProp, TreeOpError } from "./ops.js";
+import { applyCollapse, moveNode, removeNode, replaceNode, setProp, TreeOpError } from "./ops.js";
+import { flowPlacedRun } from "./flow.js";
+import { positionalLooks } from "./positional.js";
+import { stableJson } from "./subtree-signature.js";
 import { hasRef, type Predicate } from "./binding.js";
 
 export interface PlanBinding {
@@ -105,7 +108,13 @@ export interface BindingPlan {
   note?: string;
 }
 
-export type DriftReason = "missing" | "wrong-type" | "not-a-run" | "ambiguous";
+export type DriftReason =
+  | "missing"
+  | "wrong-type"
+  | "not-a-run"
+  | "ambiguous"
+  | "stranded"
+  | "stacked";
 
 export interface Drift {
   reason: DriftReason;
@@ -236,6 +245,23 @@ export function applyBindingPlan(tree: FlatTree, plan: BindingPlan): BindResult 
     }
 
     /**
+     * Items placed by hand in an Overlay (a list drawn without auto-layout) would all draw at the
+     * template's offset once folded: in a line at even steps they flow in a Stack instead, and
+     * otherwise they are not folded.
+     */
+    let parentId = proposal.parentId;
+    const flowed = flowPlacedRun(next, parentId, memberIds);
+    if (flowed && "reason" in flowed) {
+      drift.push({ reason: "stacked", src: group.members[0] ?? "", message: `${group.over}: ${flowed.reason}` });
+      continue;
+    }
+    if (flowed) {
+      next = flowed.tree;
+      parentId = flowed.parentId;
+    }
+    // what the design drew between the members, before they are folded and it is left behind
+    const between = separatorsBetween(next, parentId, memberIds);
+    /**
      * A member can be a variant of the template: a whole card drawn in another state. It stays, to
      * be moved beside the template, instead of being removed with the other members.
      */
@@ -243,11 +269,22 @@ export function applyBindingPlan(tree: FlatTree, plan: BindingPlan): BindResult 
     const folded = (members as FlatNode[])
       .filter((m) => m.id === templateNode.id || !variantRoots.has(m.src))
       .map((m) => m.id);
+    /**
+     * Looks that depend on where an item sits (the rule every row but the last has), read off the
+     * members while they are all here. A carousel's slides are left: what sets one apart is the
+     * slide on show, which its states say.
+     */
+    const parentType = next.nodes.find((n) => n.id === parentId)?.type;
+    const placed =
+      parentType === "Carousel" ? undefined : positionalLooks(next, folded, templateNode.id);
 
     try {
+      for (const a of placed?.adopt ?? []) {
+        next = moveNode(next, a.id, a.parent, Math.min(a.idx, childrenOf(next, a.parent).length));
+      }
       next = applyCollapse(
         next,
-        { parentId: proposal.parentId, memberIds: folded, templateId: templateNode.id },
+        { parentId, memberIds: folded, templateId: templateNode.id },
         {
           over: group.over,
           as: group.as,
@@ -297,6 +334,19 @@ export function applyBindingPlan(tree: FlatTree, plan: BindingPlan): BindResult 
           }
         }
       }
+      for (const [id, at] of placed?.looks ?? []) {
+        if (next.nodes.some((n) => n.id === id)) next = setProp(next, id, "at", at);
+      }
+      next = withSeparator(next, `${templateNode.id}__repeat`, between.keep, between.drop);
+      for (const id of between.stranded) {
+        const node = next.nodes.find((n) => n.id === id);
+        if (!node) continue;
+        drift.push({
+          reason: "stranded",
+          src: node.src,
+          message: `${node.src} (${node.type}) sits between the ${group.over} items in the design, and the gaps between them do not all hold the same thing, so it is no separator: folded, it draws after every item. Hide it with a when, or fold it into the items if it belongs to one`,
+        });
+      }
     } catch (err) {
       // A rejected op is the plan disagreeing with the tree, which is drift by
       // another name — never a reason to hand back a half-applied tree.
@@ -329,7 +379,112 @@ export function applyBindingPlan(tree: FlatTree, plan: BindingPlan): BindResult 
     next = setProp(next, node.id, entry.prop, entry.value);
   }
 
+  /**
+   * A picture the data gives is drawn to cover its box. A stand-in for the design's picture (a
+   * plate cut to the box) is `fill`, which is exact for it and stretches anything else: a player's
+   * photo of another shape came out squashed. Its src bound to data, it covers instead.
+   */
+  for (const node of next.nodes) {
+    if (node.type === "Image" && node.props.fit === "fill" && hasRef(node.props.src)) {
+      next = setProp(next, node.id, "fit", "cover");
+    }
+  }
+
   return { tree: next, bound, collapsed, drift };
+}
+
+/** What lies between the members of a run, and what folding them does with it. */
+interface Between {
+  /** One gap's nodes, in order: the Repeater's separator, drawn between every two items. */
+  keep: string[];
+  /** The other gaps' nodes, the same things again: removed. */
+  drop: string[];
+  /** Nodes between members that no separator stands for: left behind, drawn after every item. */
+  stranded: string[];
+}
+
+/**
+ * A node's shape, loosely: types and looks, not sizes or words. Two spacers of 16 and 17 px, or a
+ * rule drawn 1 px longer in one gap, are the same thing drawn again; a rule and a dot are not.
+ */
+function looseShape(tree: FlatTree, id: string): string {
+  const LOOSE = new Set(["size", "place", "_meta", "content", "alt", "src", "href", "label", "testId"]);
+  const node = tree.nodes.find((n) => n.id === id);
+  if (!node) return "";
+  const props = Object.fromEntries(Object.entries(node.props).filter(([k]) => !LOOSE.has(k)));
+  return `${node.type}${stableJson(props)}[${childrenOf(tree, id)
+    .map((c) => looseShape(tree, c.id))
+    .join(",")}]`;
+}
+
+/**
+ * What the design drew between the members: the rule between three stats (`stat | stat | stat`),
+ * a spacer and a rule, a chevron between crumbs. Folding the members leaves it behind as siblings
+ * of the Repeater, all after the items, so when every gap holds the same things in the same order
+ * the first gap's become the Repeater's `separator` and the rest go. When the gaps differ, or
+ * some are empty, no separator stands for them: they are stranded, and said so.
+ */
+function separatorsBetween(tree: FlatTree, parentId: string, memberIds: readonly string[]): Between {
+  const none: Between = { keep: [], drop: [], stranded: [] };
+  if (memberIds.length < 2) return none;
+  const kids = childrenOf(tree, parentId);
+  const at = memberIds.map((id) => kids.findIndex((k) => k.id === id)).sort((a, b) => a - b);
+  if (at.some((i) => i < 0)) return none;
+  const gaps: FlatNode[][] = [];
+  for (let n = 1; n < at.length; n++) gaps.push(kids.slice((at[n - 1] ?? 0) + 1, at[n]));
+  const all = gaps.flat().map((node) => node.id);
+  if (all.length === 0) return none;
+  const shape = (gap: FlatNode[]) => gap.map((node) => looseShape(tree, node.id)).join("|");
+  const first = gaps[0] ?? [];
+  const same = first.length > 0 && gaps.every((gap) => shape(gap) === shape(first));
+  if (!same) return { ...none, stranded: all };
+  return {
+    keep: first.map((node) => node.id),
+    drop: gaps.slice(1).flatMap((gap) => gap.map((node) => node.id)),
+    stranded: [],
+  };
+}
+
+/**
+ * `keep` become the Repeater's separator, its children drawn in order between two items; `drop`
+ * are removed. Their Figma ids join `_meta.collapsedFrom`, so the design does not lose them.
+ */
+function withSeparator(
+  tree: FlatTree,
+  repeaterId: string,
+  keep: readonly string[],
+  drop: readonly string[],
+): FlatTree {
+  const repeater = tree.nodes.find((n) => n.id === repeaterId);
+  if (!repeater || keep.length === 0) return tree;
+  const gone: string[] = [];
+  let next = tree;
+  for (const id of drop) {
+    if (!next.nodes.some((n) => n.id === id)) continue;
+    const under = new Set([id]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const n of next.nodes) {
+        if (n.parent !== null && under.has(n.parent) && !under.has(n.id)) {
+          under.add(n.id);
+          grew = true;
+        }
+      }
+    }
+    gone.push(...next.nodes.filter((n) => under.has(n.id)).map((n) => n.src));
+    next = removeNode(next, id, { cascade: true });
+  }
+  const kept = keep.filter((id) => next.nodes.some((n) => n.id === id));
+  for (const id of kept) next = moveNode(next, id, repeaterId, childrenOf(next, repeaterId).length);
+  next = setProp(next, repeaterId, "separator", kept);
+  if (gone.length > 0) {
+    const meta = (repeater.props._meta ?? {}) as { collapsedFrom?: string[] };
+    next = setProp(next, repeaterId, "_meta", {
+      ...meta,
+      collapsedFrom: [...(meta.collapsedFrom ?? []), ...gone],
+    });
+  }
+  return next;
 }
 
 /** The Figma ids of tree nodes, for a message a plan's author can act on. */

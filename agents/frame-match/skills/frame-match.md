@@ -8,6 +8,8 @@ A finding is a node that paints the pixels that differ. It gives:
 - `design` and `render`: the commonest colour among those pixels, in the screenshot and in the render.
 - `conform`: where the render landed against the IR box. `notes`: what the compiler said about this node.
 
+`examineBeforePublish`, in every result that has it, names the findings `frame.publish` waits on. Read each with `frame.node`, all in one turn, before you call `frame.publish`: it is refused while any is unread. Reading one is enough; a difference with no cause (a crop, glyph edges) is said in `remaining`.
+
 `surfaces` adds up the same pixels by surface. Start there: a surface many nodes share, with a large total, is usually one wrong token, and the biggest single fix available. Then work from the largest `mismatch` in `findings`. What a finding usually means:
 
 | What you see                                                                                           | What it usually is                                                                                                          | What to do                                                                                                                                                                                                                                                                                 |
@@ -63,10 +65,12 @@ A finding is a node that paints the pixels that differ. It gives:
 
 A frame is one picture, but a container in it may be more than it shows: a row of cards cut off by its edge is a carousel. `frame.load` lists `layouts`, one per container of repeated items, with the evidence the frame gave (a card cut off by the clip, designed arrows, dots, one tab drawn selected), how sure it is, and a proposed `choice`.
 
+- Each layout has a `score` (0 to 1): the detector's confidence in its `kind`, summed from weighted evidence. At 0.8 or more it is applied. Below that, with another kind that also fits, code asks a model to judge it from the container's context (names, sizes, gaps, the first items' words) before you see it; a verdict at 0.75 or more settles it (the evidence says so), otherwise the layout stays `unsure` and goes to a person.
 - A carousel the frame shows (`confidence: certain`) is applied already. Its first paint is the frame, so the match does not move. If lowering would have moved it, the layout carries a `note` and stays as compiled; report that in `compilerFindings`.
 - A layout with `ask` has questions only a person can answer: is a row that fits a fixed row or a carousel, how many items, autoplay, loop. Call `frame.layout` once for each, with `choice` exactly as proposed. Do not answer the questions yourself, and do not change the proposal before anyone has seen it.
 - `frame.layout` stops the run and asks a person, in questions written from the frame's own evidence: what it is (when the frame leaves that open), how many items it holds, whether it moves on its own and how long on each item, whether it loops, and a platform carousel config to apply if there is one. Each has the frame's proposal ready. The person answers them together; the call then runs again with their answers put into your proposal, and its result says what was applied and what could not be read. You do not translate their words, and you do not call it again for the same container.
 - `frame.publish` is refused while a layout with questions has not been asked.
+- `frame.load`'s `before` lists what a person decided about this section in earlier runs (how many items, autoplay, loop). `frame.layout`'s questions are proposed those answers already: still call it for each layout with `ask`, and do not change its proposal to something else.
 - Tabs and grids are recorded but not lowered yet: the frame stays as compiled, and the result says so.
 
 ## Cast data

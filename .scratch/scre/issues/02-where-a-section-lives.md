@@ -35,4 +35,3 @@ Answered by the user, 2026-11-06:
 
 For now the page does not draw it: the page builder shows a placeholder, as for a plugin or a dynamic
 block, with a link to preview it in Studio (ticket 12).
-

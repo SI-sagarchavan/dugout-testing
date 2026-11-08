@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { RunHook } from "./hooks.ts";
 import type { Message } from "./messages.ts";
+import { DeclaredQuestion } from "./questions.ts";
 import type { RunContext } from "./runtime.ts";
 
 export const MemoryScope = z.enum(["episodic", "semantic", "procedural"]);
@@ -38,6 +39,11 @@ export const AgentSpec = z.object({
     maxDepth: z.number().int().nonnegative(),
   }),
   approvals: z.array(z.string()), // tool names, or "effect:write"
+  /**
+   * The questions the agent asks, by id (ADR 0033): the model's through `ask` and a tool's through
+   * `AwaitingAnswers`. A person's answer to one is learned, for the section or for the club.
+   */
+  questions: z.record(z.string(), DeclaredQuestion).optional(),
 });
 export type AgentSpec = z.infer<typeof AgentSpec>;
 

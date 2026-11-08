@@ -61,7 +61,9 @@ export const NEUTRAL_PALETTE: SkeletonPalette = {
 const MAX_SHAPES = 800;
 const ICON_PX = 48;
 /** Brand paints, by the token's name. */
-const ACCENT_TOKEN = /primary|brand|accent|secondary|\bsec\b|highlight|tertiary/i;
+const ACCENT_TOKEN = /primary|brand|accent|secondary|\bprim\b|\bsec\b|highlight|tertiary/i;
+/** Neutral paints, by the token's name. */
+const NEUTRAL_TOKEN = /\b(main|neu|neutral|base|grey|gray|white)\b/i;
 
 export function skeletonOf(section: IrNode): Skeleton {
   const origin = section.geometry.bbox;
@@ -129,9 +131,13 @@ export function skeletonOf(section: IrNode): Skeleton {
   return { w: round(origin.w), h: round(origin.h), shapes };
 }
 
-/** A paint's role: a brand token, or a raw colour saturated or dark enough to be one. */
+/**
+ * A paint's role: a brand token, or a raw colour saturated or dark enough to be one. A token whose
+ * name says neither is read by its colour when the paint has one.
+ */
 export function roleOf(paint: Paint): SkeletonRole {
-  if (paint.tokenRef) return ACCENT_TOKEN.test(paint.tokenRef) ? "accent" : "surface";
+  if (paint.tokenRef && ACCENT_TOKEN.test(paint.tokenRef)) return "accent";
+  if (paint.tokenRef && (NEUTRAL_TOKEN.test(paint.tokenRef) || !paint.raw)) return "surface";
   const rgb = /^#?([0-9a-f]{6})/i.exec(paint.raw ?? "")?.[1];
   if (!rgb) return "surface";
   const [r, g, b] = [0, 2, 4].map((i) => Number.parseInt(rgb.slice(i, i + 2), 16) / 255) as [

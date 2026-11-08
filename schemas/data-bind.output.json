@@ -57,6 +57,10 @@
         "additionalProperties": false
       },
       "description": "One entry for each note the designer left (bind.load lists them): met, or why not. [] when it listed none"
+    },
+    "static": {
+      "description": "Nothing on the frame is data, so nothing was bound (bind.static)",
+      "type": "boolean"
     }
   },
   "required": [

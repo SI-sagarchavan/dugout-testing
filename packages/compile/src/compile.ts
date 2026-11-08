@@ -64,6 +64,7 @@ import {
 } from "./props.js";
 import { cleanup, type CleanupOptions } from "./cleanup.js";
 import { primitivesFromNames } from "./primitives.js";
+import { detectFields, fieldKey, inputKind, type FieldMap } from "./fields.js";
 import { SurfaceResolver, specOf, type RequiredSurface } from "./surfaces.js";
 
 export interface CompileOptions {
@@ -140,7 +141,8 @@ export interface CompileNote {
     | "unmapped-component"
     | "unsupported-type"
     | "crop-dropped"
-    | "zero-props";
+    | "zero-props"
+    | "form-field";
   irId: string;
   nodeId?: string;
   message: string;
@@ -175,6 +177,10 @@ interface Ctx {
   readonly ids: IdAllocator;
   readonly surfaces: SurfaceResolver;
   readonly primitives: PrimitiveMap;
+  /** The form fields the frame draws: a checkbox's box, a text field's placeholder (`fields.ts`). */
+  readonly fields: FieldMap;
+  /** The page keys the fields written so far took, so each is its own. */
+  readonly fieldKeys: Set<string>;
   /** Layer-name slug -> registry glyph name. See the `Icon` case in `emit`. */
   readonly icons: Readonly<Record<string, string>>;
   /** Components seen that the primitive map does not name, for one note each. */
@@ -207,6 +213,8 @@ export function compile(doc: FrameIRDocument, options: CompileOptions): CompileR
     // The document's own names first, so the common case needs no configuration;
     // an explicit entry wins, because it is the one someone typed on purpose.
     primitives: { ...primitivesFromNames(doc), ...(options.primitives ?? {}) },
+    fields: new Map(),
+    fieldKeys: new Set(),
     icons: options.icons ?? {},
     unmapped: new Map(),
     assetsByTarget,
@@ -218,6 +226,8 @@ export function compile(doc: FrameIRDocument, options: CompileOptions): CompileR
     irNodes: 0,
   };
 
+  // Read once the primitives are known: a field's box may be a declared `atom_input`.
+  (ctx as { fields: FieldMap }).fields = detectFields(doc, ctx.primitives);
   emit(ctx, doc.root, null, 0, true, undefined);
 
   /**
@@ -369,7 +379,14 @@ function emit(
 
   const iconGroup = !isRoot && isIconGroup(node);
 
-  const declared: DslType = iconGroup ? "Icon" : classify(node, ctx.primitives);
+  /**
+   * A form field the frame draws is one whatever its shape says: a checkbox's box was a glyph, a
+   * field's placeholder a Text. A box declared `atom_input` keeps its own shape; its placeholder
+   * is the Input, so the button in the field stays a Button.
+   */
+  const field = ctx.fields.get(node.id);
+  const classified: DslType = field ? field.type : iconGroup ? "Icon" : classify(node, ctx.primitives);
+  const declared: DslType = classified === "Input" && !field ? classify(node) : classified;
 
   /**
    * A declared primitive has to survive derivation, or it is not one.
@@ -419,7 +436,7 @@ function emit(
   // An Icon is painted by `tone`, never by a surface: its vector child looks
   // like a fill plate (it covers the frame), and folding it painted the
   // ticket glyph as a solid white square behind itself.
-  if (type !== "Button" && type !== "Icon") applyPaint(ctx, node, props, id);
+  if (type !== "Button" && type !== "Icon" && type !== "Input") applyPaint(ctx, node, props, id);
 
   // --- layout ------------------------------------------------------------
   if (type === "Stack") Object.assign(props, stack(ctx.theme, node.layout, node));
@@ -446,7 +463,9 @@ function emit(
   // A Button's padding comes from the frame that actually carries its box,
   // which is usually the master INSIDE the instance — see `button()`.
   const sp =
-    type === "Divider" || type === "Button" ? undefined : space(ctx.theme, fittedLayout(node));
+    type === "Divider" || type === "Button" || type === "Input" || type === "Checkbox"
+      ? undefined
+      : space(ctx.theme, fittedLayout(node));
   if (sp) props.space = sp;
 
   const band = isRoot && isBand(node);
@@ -633,6 +652,12 @@ function emit(
     case "Button":
       Object.assign(props, buttonProps);
       break;
+    case "Input":
+      if (!inputProps(ctx, node, props, id)) return false;
+      break;
+    case "Checkbox":
+      checkboxProps(ctx, node, props, id);
+      break;
     case "Text": {
       const t = text(ctx.theme, node);
       if (!t) {
@@ -799,7 +824,9 @@ function emit(
     type === "Image" ||
     type === "Icon" ||
     type === "Divider" ||
-    type === "Button";
+    type === "Button" ||
+    type === "Input" ||
+    type === "Checkbox";
   if (leaf) {
     // Everything below a leaf is how Figma drew it, not separate content.
     const below = countIr(node) - 1;
@@ -971,6 +998,96 @@ function applyPaint(
 export type { Raw };
 
 /** Whether any layer of `n` is text: content, as against paint. */
+/** Its own page key: the field's words say which, and a second of one kind is `_2`. */
+function takeFieldKey(ctx: Ctx, words: string | undefined, type: "Input" | "Checkbox"): string {
+  const base = fieldKey(words, type);
+  let key = base;
+  for (let n = 2; ctx.fieldKeys.has(key); n += 1) key = `${base}_${n}`;
+  ctx.fieldKeys.add(key);
+  return key;
+}
+
+/**
+ * A text field, drawn as its placeholder: the words become the placeholder, their colour its
+ * colour, and the box spans the field's height and the width typing has, up to the button in the
+ * field. That box is bigger than the words', which C2 is right to see, so it says why.
+ */
+function inputProps(ctx: Ctx, node: FrameIRNode, props: Record<string, unknown>, id: string): boolean {
+  const plan = ctx.fields.get(node.id);
+  const t = text(ctx.theme, node);
+  if (!t || plan?.type !== "Input") return false;
+  const words = node.text?.characters.replace(/\s+/g, " ").trim() ?? "";
+  props.key = takeFieldKey(ctx, words, "Input");
+  Object.assign(props, inputKind(words));
+  props.placeholder = words;
+  props.style = t.style;
+  if (t.tone) {
+    props.placeholderTone = t.tone;
+    // What is typed reads as text, not as a placeholder: the same colour at its high emphasis.
+    const high = t.tone.replace(/_(disable|disabled|low|medium|placeholder)$/, "_high");
+    props.tone = high !== t.tone && ctx.theme.color.light.has(high.slice("color.".length)) ? high : t.tone;
+  }
+
+  const own = node.geometry.bbox;
+  const field = plan.plate.geometry.bbox;
+  const placed = props.place as { anchor?: string; offset?: { block?: Raw; inline?: Raw } } | undefined;
+  if (placed) {
+    // From the words' top to the field's: the input is as tall as the field.
+    const block = ((placed.offset?.block as { raw?: number } | undefined)?.raw ?? 0) - (own.y - field.y);
+    const offset = { ...(placed.offset ?? {}) };
+    if (Math.abs(block) > 0.001) offset.block = raw(Math.round(block * 100) / 100);
+    else delete offset.block;
+    props.place = { anchor: placed.anchor ?? "top-start", ...(Object.keys(offset).length > 0 ? { offset } : {}) };
+    props.size = { w: raw(plan.width), h: raw(field.h) };
+  } else {
+    props.size = { ...((props.size as Record<string, unknown> | undefined) ?? {}), h: "auto" };
+  }
+  props._meta = {
+    ...((props._meta as Record<string, unknown> | undefined) ?? {}),
+    deviations: [
+      {
+        check: "C2",
+        reason:
+          `a text field drawn as its placeholder: the input spans the field's ${Math.round(field.h)}px ` +
+          `height and the width typing has, where the words were ${Math.round(own.w)}x${Math.round(own.h)}`,
+        max: 1,
+      },
+    ],
+  };
+  ctx.notes.push({
+    kind: "form-field",
+    irId: node.id,
+    nodeId: id,
+    message: `"${words}" is the placeholder of a text field, so it is an Input writing _page.${String(props.key)}`,
+  });
+  return true;
+}
+
+/** A checkbox, drawn as its box: its paint is the box's, its tick the mark's colour and width. */
+function checkboxProps(ctx: Ctx, node: FrameIRNode, props: Record<string, unknown>, id: string): void {
+  const plan = ctx.fields.get(node.id);
+  const label = plan?.type === "Checkbox" ? plan.label : undefined;
+  props.key = takeFieldKey(ctx, label, "Checkbox");
+  if (label) props.label = label;
+  const mark = plan?.type === "Checkbox" ? plan.mark : undefined;
+  if (mark) {
+    // A drawn tick: the box is drawn ticked, and starts so.
+    props.checked = true;
+    // A tick is an open path: what is seen is its stroke, and its fill is only the box's colour again.
+    const tone = canonicalRef(ctx.theme, mark.stroke?.tokenRef ?? mark.fill?.tokenRef, "color");
+    if (tone) props.mark = tone;
+    props.markSize = Math.round(layoutBox(mark).w * 10) / 10;
+  }
+  ctx.notes.push({
+    kind: "form-field",
+    irId: node.id,
+    nodeId: id,
+    message:
+      `a ${Math.round(layoutBox(node).w)}px box beside "${(label ?? "").slice(0, 40)}" is a checkbox, writing ` +
+      `_page.${String(props.key)}${mark ? ", drawn ticked" : ""}`,
+  });
+}
+
 function holdsText(n: FrameIRNode): boolean {
   return n.text !== undefined || (n.children ?? []).some(holdsText);
 }

@@ -18,6 +18,20 @@ export const RunUsage = TokenUsage.extend({
 });
 export type RunUsage = z.infer<typeof RunUsage>;
 
+/**
+ * Where an event of a child run came from. A child's events are written to the stream of the run
+ * a host started, one stream per invocation (ADR 0025): `runId` and `seq` are that run's, and
+ * this says which child, at any depth, did it. `parentRunId` is the run whose call started the
+ * child, so a host can draw the tree. A child's `run.completed` ends the child, never the stream.
+ */
+export const ChildRef = z.object({
+  runId: z.string(),
+  agentId: z.string(),
+  parentRunId: z.string(),
+  callId: z.string(),
+});
+export type ChildRef = z.infer<typeof ChildRef>;
+
 const event = <T extends string, D extends z.ZodType>(type: T, data: D) =>
   z.object({
     runId: z.string(),
@@ -25,6 +39,7 @@ const event = <T extends string, D extends z.ZodType>(type: T, data: D) =>
     at: z.string(),
     type: z.literal(type),
     data,
+    child: ChildRef.optional(),
   });
 
 const call = { step: z.number(), callId: z.string(), tool: z.string() };
@@ -67,6 +82,21 @@ export const RunEvent = z.discriminatedUnion("type", [
           text: z.string().optional(),
         }),
       ),
+    }),
+  ),
+  event(
+    "context.compacted",
+    z.object({
+      /** The step the smaller request is for. */
+      step: z.number(),
+      tokensBefore: z.number(),
+      tokensAfter: z.number(),
+      /** Older tool results replaced by a reference. */
+      elided: z.number(),
+      /** Transcript messages replaced by a summary. */
+      summarized: z.number(),
+      /** The model that wrote the summary, when there was one. */
+      summarizer: z.string().optional(),
     }),
   ),
   event("token", z.object({ step: z.number(), text: z.string() })),

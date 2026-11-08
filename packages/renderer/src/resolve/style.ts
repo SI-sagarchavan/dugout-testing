@@ -102,6 +102,12 @@ const JUSTIFY_MAP: Record<string, string> = {
 };
 
 /**
+ * Set by the renderer on an option (`select`) that is the page's choice when it is drawn. Not a
+ * prop of the tree: what the page has chosen is the page's, never the tree's.
+ */
+export const PAGE_SELECTED = "__fosSelected";
+
+/**
  * Resolve universal + layout props on a node into className / style / dataAttrs.
  *
  * `props` is the node's props bag as stored on the flat tree. Node-specific
@@ -150,6 +156,20 @@ export function resolveNode(
       dataAttrs.tabIndex = "0";
       dataAttrs["aria-label"] = control.part === "next" ? "Next" : "Previous";
     }
+  }
+
+  // --- one option of a page choice ------------------------------------------
+  // A tab stays as drawn. These say which choice it sets, and whether it is the chosen one now, so
+  // its `active` or `inactive` look shows; the browser moves them (`PageChoices`).
+  const select = props.select as { key?: unknown; value?: unknown } | undefined;
+  if (select && typeof select.key === "string" && typeof select.value === "string") {
+    const on = props[PAGE_SELECTED] === true;
+    dataAttrs["data-fos-select"] = select.key;
+    dataAttrs["data-fos-value"] = select.value;
+    dataAttrs["data-fos-state"] = on ? "active" : "inactive";
+    dataAttrs.role = "tab";
+    dataAttrs["aria-selected"] = String(on);
+    dataAttrs.tabIndex = on ? "0" : "-1";
   }
 
   // --- clip ---------------------------------------------------------------

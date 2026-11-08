@@ -203,6 +203,65 @@ describe("the tools", () => {
     expect(out.outline[0]).toBe("row (Stack)");
   });
 
+  it("keeps a picture out of the model's context, and out of the way of an edit", async () => {
+    const picture = `data:image/png;base64,${"A".repeat(500_000)}`;
+    const withPicture: Tree = {
+      ...tree,
+      nodes: [
+        ...tree.nodes,
+        {
+          id: "logo",
+          parent: "row",
+          idx: 2,
+          type: "Image",
+          src: "1:4",
+          props: { src: picture, alt: "Club" },
+        },
+      ],
+    };
+    const uploads: Tree[] = [];
+    const tools = createEditTools({
+      dir: await mkdtemp(join(tmpdir(), "ui-editor-")),
+      plane: () => ({
+        json: async () => structuredClone(withPicture),
+        upload: async (_k, json) => {
+          uploads.push(json as Tree);
+          return "tree-2";
+        },
+      }),
+      comments: () => ({
+        open: async () => [
+          comment({
+            nodeId: "logo",
+            context: { draft: { changed: ["src"], was: { src: picture } } },
+          }),
+        ],
+        sent: async () => {},
+      }),
+    });
+    const c = await ctx();
+    const loaded = await toolOf(tools, "ui.load").run({}, c);
+    expect(JSON.stringify(loaded).length).toBeLessThan(16_000);
+    expect(loaded.comments[0].element.props.src).toBe("<picture png, 488 KB>");
+    expect(
+      JSON.stringify(await toolOf(tools, "ui.node").run({ id: "logo" }, c)).length,
+    ).toBeLessThan(16_000);
+
+    // the handle is not a value to write back
+    const bad = await toolOf(tools, "ui.try").run(
+      { edits: [set("logo", "src", "<picture png, 488 KB>")] },
+      c,
+    );
+    expect(bad.problems[0]).toMatch(/stands for a picture/);
+
+    // another prop is edited and the picture stays as it was
+    const tried = await toolOf(tools, "ui.try").run({ edits: [set("logo", "alt", "Crest")] }, c);
+    expect(tried.problems).toEqual([]);
+    await toolOf(tools, "ui.publish").run({}, c);
+    const logo = uploads[0]?.nodes.find((n) => n.id === "logo");
+    expect(logo?.props).toEqual({ src: picture, alt: "Crest" });
+  });
+
   it("ui.try then ui.publish stores the edited tree, marks the comments sent, and links the new tree", async () => {
     const h = harness();
     const c = await ctx();

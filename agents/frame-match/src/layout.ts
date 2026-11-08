@@ -87,12 +87,112 @@ export interface LayoutIntent {
   name: string;
   kind: LayoutKind;
   confidence: Confidence;
+  /** Confidence in `kind`, 0 to 1 (`@fanos/dsl` `LAYOUT_THRESHOLDS`). */
+  score?: number;
+  /** The container's surroundings in plain lines: what a judge reads. */
+  context?: string[];
   items: string[];
   evidence: string[];
   ask: string[];
   choice: LayoutChoice;
   chrome: { prev?: string; next?: string; pagination?: string };
   alternative?: LayoutKind;
+  alternativeChoice?: LayoutChoice;
+  alternativeAsk?: string[];
+}
+
+/** At or above this a layout is applied without asking anyone. */
+export const APPLY_SCORE = 0.8;
+/** A model's verdict counts when it is at least this sure; below it a person is asked. */
+export const ACCEPT_SCORE = 0.75;
+
+/** Asks a model one question in words (`describeText`), replaceable in a test. */
+export type LayoutJudge = (prompt: string, signal?: AbortSignal) => Promise<string>;
+
+/** Whether the detector's score leaves a model something to settle. */
+export const needsJudge = (i: LayoutIntent) =>
+  (i.score ?? 1) < APPLY_SCORE && Boolean(i.alternative && i.alternativeChoice);
+
+/** The question a model judges a doubtful container by: only what the frame and its names say. */
+export function judgePrompt(i: LayoutIntent): string {
+  const pick = [i.kind, i.alternative].filter(Boolean).join(" or ");
+  return [
+    "A designer's Figma frame is a still picture; a slider looks like a row of cards. Decide what this container is meant to be on the web.",
+    `Candidates: ${pick}. A carousel is a row of slides that moves (arrows, swipe, dots) and holds more items than it shows; a row is a fixed set that never moves.`,
+    "",
+    `Container: "${i.name}" (score ${i.score ?? "?"} for ${i.kind}).`,
+    "What the frame showed:",
+    ...i.evidence.map((e) => `- ${e}`),
+    "Its surroundings:",
+    ...(i.context ?? []).map((c) => `- ${c}`),
+    "",
+    "Things that usually mean a carousel: a team or player roster, a news or video rail, items at a fixed width with a gap, a heading with a 'view all' link, more items than a row comfortably holds. A fixed row is a short set of equal-width items such as three feature blocks, stats or logos.",
+    'Answer with one JSON object and nothing else: {"kind":"' +
+      [i.kind, i.alternative].filter(Boolean).join('"|"') +
+      '","confidence":0.0-1.0,"reason":"one short sentence"}',
+  ].join("\n");
+}
+
+export interface Verdict {
+  kind: LayoutKind;
+  confidence: number;
+  reason: string;
+}
+
+/** The model's answer, or undefined when it is not the JSON asked for. */
+export function readVerdict(text: string): Verdict | undefined {
+  const m = /\{[\s\S]*\}/.exec(text);
+  if (!m) return undefined;
+  try {
+    const v = JSON.parse(m[0]) as Record<string, unknown>;
+    const kind = v.kind;
+    const confidence = Number(v.confidence);
+    if (typeof kind !== "string" || !Number.isFinite(confidence)) return undefined;
+    if (!["carousel", "row", "list", "grid", "tabs"].includes(kind)) return undefined;
+    return {
+      kind: kind as LayoutKind,
+      confidence: Math.min(1, Math.max(0, confidence)),
+      reason: typeof v.reason === "string" ? v.reason : "",
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The intent with a model's verdict in it. A verdict for the kind or its alternative that is sure
+ * enough (`ACCEPT_SCORE`) settles it: that kind, that score, no question left to a person about
+ * what it is. Anything else leaves the detector's answer, and a person is asked as before.
+ */
+export function applyVerdict(i: LayoutIntent, v: Verdict | undefined): LayoutIntent {
+  if (!v) return i;
+  const line = `a model judged it ${v.kind} (${v.confidence.toFixed(2)})${v.reason ? `: ${v.reason}` : ""}`;
+  const evidence = [...i.evidence, line];
+  const settled = v.confidence >= ACCEPT_SCORE;
+  if (!settled) return { ...i, evidence };
+  if (v.kind === i.kind) {
+    return {
+      ...i,
+      evidence,
+      score: v.confidence,
+      confidence: "certain",
+      ask: i.kind === "row" ? [] : i.ask,
+    };
+  }
+  if (v.kind === i.alternative && i.alternativeChoice) {
+    // the questions that fit the new kind: a carousel's are written when it is asked, a row has none
+    const { alternative: _a, alternativeChoice: _c, alternativeAsk: _k, ...rest } = i;
+    return {
+      ...rest,
+      kind: v.kind,
+      choice: i.alternativeChoice,
+      score: v.confidence,
+      confidence: "certain",
+      evidence,
+      ask: i.alternativeAsk ?? [],
+    };
+  }
+  return { ...i, evidence };
 }
 
 /** What a run tells the model and the reviewer about one container. */
@@ -101,6 +201,8 @@ export interface LayoutReport {
   name: string;
   kind: LayoutKind;
   confidence: Confidence;
+  /** Confidence in `kind`, 0 to 1. */
+  score?: number;
   evidence: string[];
   /** Questions the frame cannot answer. Empty: nothing to ask. */
   ask: string[];

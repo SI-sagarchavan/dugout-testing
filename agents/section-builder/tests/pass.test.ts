@@ -63,6 +63,69 @@ describe("section-builder", () => {
     });
   });
 
+  it("hands over a section with no data on it as frame-match published it, with no bind", async () => {
+    const header = {
+      ...frame,
+      content: { data: "none" as const, evidence: ['"THE BRAVE SQUAD" is a heading or label'] },
+      choices: [
+        {
+          key: "women_men",
+          options: [
+            { value: "women", label: "WOMEN" },
+            { value: "men", label: "MEN" },
+          ],
+          initial: "men",
+        },
+      ],
+    };
+    const ran: string[] = [];
+    const answer = await pipeline.run(
+      async (child) => {
+        ran.push(child.spec.id);
+        return header;
+      },
+      { exportId: EXPORT, project: "default" },
+    );
+    expect(ran).toEqual(["frame-match"]);
+    expect(answer).toMatchObject({
+      previewUrl: frame.previewUrl,
+      planArtifactId: "",
+      dataArtifactId: "",
+      data: "none",
+      dataWhy: ['"THE BRAVE SQUAD" is a heading or label'],
+      bound: 0,
+      choices: header.choices,
+    });
+  });
+
+  it("runs bind when frame-match was unsure, and says so when bind found nothing to bind", async () => {
+    const unsure = {
+      ...frame,
+      content: { data: "unsure" as const, evidence: ["a picture 320×240px"] },
+    };
+    const answer = await pipeline.run(
+      async (child) =>
+        child.spec.id === "frame-match"
+          ? unsure
+          : {
+              ...data,
+              static: true,
+              previewUrl: frame.previewUrl,
+              planArtifactId: "",
+              dataArtifactId: "",
+              bound: 0,
+              collapsed: 0,
+              remaining: [],
+            },
+      { exportId: EXPORT, project: "default" },
+    );
+    expect(answer).toMatchObject({
+      data: "none",
+      dataWhy: ["the binding stage found nothing on it to bind"],
+      previewUrl: frame.previewUrl,
+    });
+  });
+
   it("does not run bind when frame-match failed", async () => {
     const ran: string[] = [];
     await expect(

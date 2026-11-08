@@ -317,7 +317,7 @@ export function shapeOf(data: unknown, maxLines = 150): string[] {
 
 export interface DryRun {
   /** How many items each Repeater drew, by its template's Figma id. */
-  repeats: Array<{ template: string; over: string; items: number }>;
+  repeats: Array<{ template: string; over: string; items: number; most: number }>;
   /** Props whose refs did not resolve, per node, with the item they failed on. */
   unresolved: Array<{
     src: string;
@@ -333,10 +333,16 @@ export interface DryRun {
   samples: Array<{ src: string; prop: string; values: string[] }>;
   /** Texts the design writes in capitals that the data does not, with no `textCase` set. */
   capitals: Array<{ src: string; design: string; shows: string }>;
+  /** Short texts the design breaks over lines on purpose that the data draws on one. */
+  breaks: Array<{ src: string; design: string; shows: string }>;
   /** Pictures bound to a value no browser can load: a path with no domain. */
   relative: Array<{ src: string; shows: string; times: number }>;
-  /** The first absolute URL each picture was bound to, whole: what a reachability probe asks. */
-  pictures: Array<{ src: string; url: string }>;
+  /**
+   * The first absolute URL each picture was bound to, whole, and the first few items' (`urls`):
+   * what a reachability probe asks. Several items' URLs show a site that answers every id with its
+   * stand-in.
+   */
+  pictures: Array<{ src: string; url: string; urls: string[] }>;
   /** Unbound texts with figures in them, drawn the same in every item of a list: placeholders. */
   repeated: Array<{ src: string; copy: string; times: number }>;
 }
@@ -384,14 +390,15 @@ export function dryRun(
     }
   }
   const capitals = new Map<string, DryRun["capitals"][number]>();
+  const breaks = new Map<string, DryRun["breaks"][number]>();
   const repeated = new Map<string, DryRun["repeated"][number]>();
   const root = tree.nodes.find((n) => n.parent === null);
-  const repeats = new Map<string, { over: string; items: number }>();
+  const repeats = new Map<string, { over: string; items: number; most: number }>();
   const unresolved = new Map<string, DryRun["unresolved"][number]>();
   const variants = new Map<string, DryRun["variants"][number]>();
   const samples = new Map<string, DryRun["samples"][number]>();
   const relative = new Map<string, DryRun["relative"][number]>();
-  const pictures = new Map<string, string>();
+  const pictures = new Map<string, string[]>();
 
   const props = (node: TreeNode, scope: unknown, item: string) => {
     for (const [prop, value] of Object.entries(node.props)) {
@@ -412,6 +419,19 @@ export function dryRun(
       ) {
         capitals.set(node.src, { src: node.src, design: placeholder, shows: clip(drawn, 40) });
       }
+      // a heading the designer broke by hand ("Ben\nMcKinney"): a paragraph wraps, it is not broken
+      if (
+        prop === "content" &&
+        placeholder !== undefined &&
+        placeholder.includes("\n") &&
+        placeholder.length <= 60 &&
+        placeholder.split("\n").length <= 3 &&
+        drawn !== "" &&
+        !drawn.includes("\n") &&
+        !breaks.has(node.src)
+      ) {
+        breaks.set(node.src, { src: node.src, design: placeholder, shows: clip(drawn, 40) });
+      }
       if (missing.length) {
         const u = unresolved.get(key) ?? {
           src: node.src,
@@ -430,8 +450,11 @@ export function dryRun(
           r.times += 1;
           relative.set(key, r);
         }
-        if (prop === "src" && /^https?:\/\//i.test(drawn) && !pictures.has(node.src))
-          pictures.set(node.src, drawn);
+        if (prop === "src" && /^https?:\/\//i.test(drawn)) {
+          const urls = pictures.get(node.src) ?? [];
+          if (urls.length < 3 && !urls.includes(drawn)) urls.push(drawn);
+          pictures.set(node.src, urls);
+        }
         const s = samples.get(key) ?? { src: node.src, prop, values: [] };
         if (s.values.length < 4 && !s.values.includes(drawn)) s.values.push(clip(drawn, 60));
         samples.set(key, s);
@@ -467,11 +490,16 @@ export function dryRun(
       const over = String(node.props.over ?? "");
       const as = String(node.props.as ?? "item");
       const list = dsl.lookup(scope, over);
-      const children = kids.get(node.id) ?? [];
+      // what it draws between items (`separator`) is no item's: not one of its shapes
+      const between = new Set(
+        Array.isArray(node.props.separator) ? (node.props.separator as string[]) : [],
+      );
+      const children = (kids.get(node.id) ?? []).filter((c) => !between.has(c.id));
       const template = children[0]?.src ?? node.src;
       const items = Array.isArray(list) ? sliceOf(list, node.props) : [];
-      const r = repeats.get(template) ?? { over, items: 0 };
+      const r = repeats.get(template) ?? { over, items: 0, most: 0 };
       r.items += items.length;
+      r.most = Math.max(r.most, items.length);
       repeats.set(template, r);
       if (!Array.isArray(list)) {
         const key = `${node.src}|over`;
@@ -532,8 +560,9 @@ export function dryRun(
     variants: [...variants.values()],
     samples: [...samples.values()],
     relative: [...relative.values()],
-    pictures: [...pictures].map(([src, url]) => ({ src, url })),
+    pictures: [...pictures].map(([src, urls]) => ({ src, url: urls[0] ?? "", urls })),
     capitals: [...capitals.values()],
+    breaks: [...breaks.values()],
     repeated: [...repeated.values()].filter((r) => r.times > 1),
   };
 }
@@ -547,7 +576,12 @@ const LOOK = ["tone", "style", "surface", "textCase", "variant"] as const;
  * item like the first, so these looks would be lost. Only members of the template's skeleton are
  * compared: one built differently is another shape (a variant), not the same thing restyled.
  */
-export function lostLooks(tree: Tree, members: string[]): string[] {
+export function lostLooks(
+  tree: Tree,
+  members: string[],
+  /** Template nodes (by Figma id) whose looks by place the fold keeps (`at`): not lost. */
+  kept: ReadonlySet<string> = new Set(),
+): string[] {
   const kids = childrenOf(tree);
   const sk = skeletons(tree);
   const bySrc = new Map(tree.nodes.map((node) => [node.src, node]));
@@ -555,7 +589,7 @@ export function lostLooks(tree: Tree, members: string[]): string[] {
   if (!template) return [];
   const found: string[] = [];
   const compare = (a: TreeNode, b: TreeNode) => {
-    for (const prop of LOOK) {
+    for (const prop of kept.has(a.src) ? [] : LOOK) {
       const x = JSON.stringify(a.props[prop]);
       const y = JSON.stringify(b.props[prop]);
       if (x !== y) found.push(`${b.src} ${prop} ${y ?? "none"} where ${a.src} has ${x ?? "none"}`);
@@ -574,6 +608,210 @@ export function lostLooks(tree: Tree, members: string[]): string[] {
     if (member && sk.get(member.id) === sk.get(template.id)) compare(template, member);
   }
   return found;
+}
+
+export interface OwnPicture {
+  /** The picture's node in each member, the first member's first: the place it is in a card. */
+  srcs: string[];
+  alt: string;
+  /** How many different pictures the design gives that place across the members. */
+  distinct: number;
+}
+
+/** What a picture shows: an Image's file, an Icon's glyph (a crest drawn as a vector is an Icon). */
+const pictureOf = (node: TreeNode) =>
+  node.type === "Image"
+    ? String(node.props.src ?? "")
+    : node.type === "Icon"
+      ? String(node.props.name ?? "")
+      : undefined;
+
+/**
+ * Each node of a member by its place in the member: an instance's layer id with the member's own
+ * prefix taken off (`I35:10531;10111:12374` is `10111:12374` in `35:10531`), so card 2's photo is
+ * found where card 1's is, whatever badge or icon one card has and the other lacks. A node that is
+ * not part of the instance is placed by its path of child positions.
+ */
+function placesOf(member: TreeNode, kids: Map<string, TreeNode[]>): Map<string, TreeNode> {
+  const prefix = `I${member.src};`;
+  const out = new Map<string, TreeNode>();
+  const walk = (node: TreeNode, path: string) => {
+    const key = node.src.startsWith(prefix) ? node.src.slice(prefix.length) : path;
+    if (!out.has(key)) out.set(key, node);
+    for (const [i, child] of (kids.get(node.id) ?? []).entries()) walk(child, `${path}/${i}`);
+  };
+  for (const [i, child] of (kids.get(member.id) ?? []).entries()) walk(child, `/${i}`);
+  return out;
+}
+
+/** The parts one member has that the other lacks, outermost only: a badge is one, not its text too. */
+function outermostDifferences(a: Map<string, TreeNode>, b: Map<string, TreeNode>): number {
+  const only = (x: Map<string, TreeNode>, y: Map<string, TreeNode>) => {
+    const missing = [...x.keys()].filter((key) => !y.has(key));
+    const srcOf = new Map([...x].map(([key, node]) => [node.id, key]));
+    const ids = new Set(missing.map((key) => x.get(key)?.id));
+    // a part inside another missing part is that part
+    return missing.filter((key) => {
+      const node = x.get(key);
+      const parentKey = node?.parent ? srcOf.get(node.parent) : undefined;
+      return !(parentKey !== undefined && ids.has(x.get(parentKey)?.id));
+    }).length;
+  };
+  return only(a, b) + only(b, a);
+}
+
+/**
+ * The members built like the template, each with its places: the same thing with a badge more or
+ * less. A member that shares under 80% of the template's places, or of its own, is another shape
+ * (a variant).
+ */
+function alike(tree: Tree, members: string[]) {
+  const kids = childrenOf(tree);
+  const bySrc = new Map(tree.nodes.map((node) => [node.src, node]));
+  const placed = members.flatMap((src) => {
+    const node = bySrc.get(src);
+    return node ? [{ src, node, places: placesOf(node, kids) }] : [];
+  });
+  const [template, ...rest] = placed;
+  if (!template) return [];
+  const like = rest.filter((m) => {
+    let shared = 0;
+    for (const key of template.places.keys()) if (m.places.has(key)) shared += 1;
+    // both ways: a card with much the template lacks is another shape, though it has all of it
+    if (shared >= 0.8 * template.places.size && shared >= 0.8 * m.places.size) return true;
+    // a small card is changed much by one badge: two parts more or less is still the same card
+    return outermostDifferences(template.places, m.places) <= 2;
+  });
+  return [template, ...like];
+}
+
+/**
+ * The pictures the design gives each member of a repeat its own of: a photo, a crest, a
+ * thumbnail on each card. One picture on every card (a logo, an arrow) is decoration and is left
+ * out. Members of another shape are variants, not compared.
+ */
+export function ownPictures(tree: Tree, members: string[]): OwnPicture[] {
+  const [template, ...rest] = alike(tree, members);
+  if (!template || rest.length === 0) return [];
+  const out: OwnPicture[] = [];
+  for (const [key, node] of template.places) {
+    const shows = pictureOf(node);
+    if (shows === undefined) continue;
+    const at = [node, ...rest.map((m) => m.places.get(key))].filter(
+      (n): n is TreeNode => n !== undefined && pictureOf(n) !== undefined,
+    );
+    const distinct = new Set(at.map((n) => pictureOf(n)));
+    if (at.length > 1 && distinct.size > 1) {
+      out.push({
+        srcs: at.map((n) => n.src),
+        alt: String(node.props.alt ?? ""),
+        distinct: distinct.size,
+      });
+    }
+  }
+  return out;
+}
+
+export interface SomeOnly {
+  /** The node, in the first member that has it. */
+  src: string;
+  type: string;
+  /** What it says, for a text or a node with one text in it. */
+  copy?: string;
+  /** The members that have it, of `of`. */
+  in: string[];
+  of: number;
+  /** The template has it: a collapse draws it on every item. Otherwise it draws it on none. */
+  inTemplate: boolean;
+}
+
+/**
+ * Parts the design shows on some members only: a captain's badge on two of five cards, a flag on
+ * the overseas players. A collapse draws the template, so a part the template has is on every item
+ * and a part only others have is on none, unless a `when` on the data decides it. Only the
+ * outermost such part is named. Members of another shape are variants, not compared.
+ */
+export function someOnly(tree: Tree, members: string[]): SomeOnly[] {
+  const all = alike(tree, members);
+  if (all.length < 2) return [];
+  const kids = childrenOf(tree);
+  const byId = new Map(tree.nodes.map((n) => [n.id, n]));
+  const keys = new Map<string, string[]>();
+  for (const m of all) {
+    for (const key of m.places.keys()) keys.set(key, [...(keys.get(key) ?? []), m.src]);
+  }
+  const placeOf = new Map<string, string>();
+  for (const m of all) for (const [key, node] of m.places) placeOf.set(node.id, key);
+  const textIn = (node: TreeNode): string | undefined => {
+    if (node.type === "Text") return String(node.props.content ?? "");
+    const texts: string[] = [];
+    const walk = (n: TreeNode) => {
+      if (n.type === "Text") texts.push(String(n.props.content ?? ""));
+      for (const c of kids.get(n.id) ?? []) walk(c);
+    };
+    walk(node);
+    return texts.length === 1 ? texts[0] : undefined;
+  };
+  const shows = (node: TreeNode): boolean =>
+    node.type === "Text" || pictureOf(node) !== undefined || (kids.get(node.id) ?? []).some(shows);
+  const out: SomeOnly[] = [];
+  for (const [key, has] of keys) {
+    if (has.length === all.length) continue;
+    const owner = all.find((m) => m.src === has[0]);
+    const node = owner?.places.get(key);
+    if (!owner || !node) continue;
+    // the outermost: its parent is the member itself, or a place every member has
+    const parent = node.parent === null ? undefined : byId.get(node.parent);
+    const parentKey = parent ? placeOf.get(parent.id) : undefined;
+    if (
+      parent &&
+      parent.id !== owner.node.id &&
+      (keys.get(parentKey ?? "")?.length ?? 0) !== all.length
+    ) {
+      continue;
+    }
+    // a box or a shade one card has and another lacks is decoration; a part shows text or a picture
+    if (!shows(node)) continue;
+    const copy = textIn(node);
+    out.push({
+      src: node.src,
+      type: node.type,
+      ...(copy ? { copy } : {}),
+      in: has,
+      of: all.length,
+      inTemplate: has[0] === all[0]?.src,
+    });
+  }
+  return out;
+}
+
+/** Siblings built alike, two or more: the cards, rows or tiles a section repeats, wherever they are. */
+export function repeatsOf(tree: Tree): string[][] {
+  const sk = skeletons(tree);
+  const out: string[][] = [];
+  for (const list of childrenOf(tree).values()) {
+    const byShape = new Map<string, string[]>();
+    for (const node of list) {
+      if (CONTENT.has(node.type)) continue;
+      const key = sk.get(node.id) ?? "";
+      byShape.set(key, [...(byShape.get(key) ?? []), node.src]);
+    }
+    for (const members of byShape.values()) if (members.length > 1) out.push(members);
+  }
+  return out;
+}
+
+/** The member of `members` each node of the tree is inside, by src. */
+export function memberOf(tree: Tree, members: string[]): Map<string, string> {
+  const byId = new Map(tree.nodes.map((n) => [n.id, n]));
+  const roots = new Set(members);
+  const out = new Map<string, string>();
+  for (const node of tree.nodes) {
+    let at: TreeNode | undefined = node;
+    while (at && !roots.has(at.src)) at = at.parent === null ? undefined : byId.get(at.parent);
+    if (at) out.set(node.src, at.src);
+  }
+  return out;
 }
 
 /** The outermost nodes under `root` built like `like`: the items one row of a grid draws. */

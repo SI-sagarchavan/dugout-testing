@@ -1,11 +1,15 @@
 import { join } from "node:path";
 import type { AgentSpec, Message } from "@dugout/contracts";
+import type { Pool } from "@dugout/db";
+import type { MemoryReader } from "@dugout/memory";
 import { defineAgent } from "@dugout/sdk";
 import { z } from "zod";
+import { Content } from "./content.ts";
 import type { ControlPlane } from "./control-plane.ts";
+import type { LayoutJudge } from "./layout.ts";
 import type { See } from "./look.ts";
 import { listedNoteIds, NoteReport, unreportedNotes } from "./notes.ts";
-import { createMatchTools, type Engine, RunInput } from "./tools.ts";
+import { createMatchTools, type Engine, PageChoiceSchema, RunInput } from "./tools.ts";
 
 export const spec: AgentSpec = {
   id: "frame-match",
@@ -16,7 +20,7 @@ export const spec: AgentSpec = {
     "",
     "The tools hold the frame and read the export from the run itself. Do not pass an id, a path or a tree to a tool.",
     "1. Call frame.load. It compiles, applies the fixes that need no judgement, and returns the match and the findings. If it returns measured: false, no screenshot fits the frame, so no change can be checked. Skip steps 2 and 3 and go to step 4: the frame is published as it is, marked unmeasured.",
-    "1b. frame.load also says what each container is (layouts): a carousel, a list, a row, a grid, tabs. A carousel the frame shows is already applied. A layout with ask has questions only a person can answer: call frame.layout once for each, with its choice exactly as proposed. The run then stops and a person answers questions written from the frame (what it is, how many items, autoplay, loop); frame.layout applies their answers to your proposal and tells you what it applied. Never decide a layout yourself, and do not translate their answers.",
+    "1b. frame.load also says what each container is (layouts): a carousel, a list, a row, a grid, tabs. A carousel the frame shows is already applied, and so are tabs: each tab becomes one option of a page choice (`_page.<key>`) that any section of the page can read, and the selected tab's look moves with the choice. A layout with ask has questions only a person can answer: call frame.layout once for each, with its choice exactly as proposed. The run then stops and a person answers questions written from the frame (what it is, how many items, autoplay, loop); frame.layout applies their answers to your proposal and tells you what it applied. Never decide a layout yourself, and do not translate their answers.",
     "2. For the worst finding that is not anti-aliasing, call frame.node with its src, and frame.tokens if you need a token. Find the cause.",
     "3. Call frame.override with the fix. It measures the change and keeps it only if it helped. Go back to step 2 with the findings it returns.",
     "3b. frame.look compares the design with the rebuild by eye, which the score cannot do: it sees text on the wrong edge or a background that is missing. frame.publish is refused until you have called it once; its description says when. Read each difference with frame.node before changing anything. A layer frame.load lists under unpainted can be given its paint with frame.override even though no score moves.",
@@ -38,13 +42,30 @@ export const spec: AgentSpec = {
   optional: ["hooks.read"],
   skills: ["frame-match"],
   onDemandSkills: [],
-  model: "sonnet",
+  model: "haiku",
   // The skill only. House facts are about copy (previews, spelling, site menus), and last run's
   // numbers are about another frame: this frame's are all in frame.load. So nothing is read, and
   // nothing is written that no run would read.
   memory: { read: ["procedural"], write: [] },
   budget: { usdPerRun: 1, maxSteps: 30, maxDepth: 0 },
   approvals: ["effect:write"],
+  // frame.layout's questions (ADR 0033): what a person answers is a decision on this section, and
+  // a carousel's motion, answered alike on three sections, the club's fact
+  questions: {
+    kind: { scope: "section", about: "what a container the frame cannot settle is" },
+    items: { scope: "section", about: "how many items a carousel holds in all" },
+    autoplay: {
+      scope: "section",
+      fact: "layout.carousel.autoplay",
+      about: "whether a carousel moves on its own, and how long on each item",
+    },
+    loop: {
+      scope: "section",
+      fact: "layout.carousel.loop",
+      about: "whether a carousel wraps around after its last item",
+    },
+    platform: { scope: "section", about: "a platform carousel config to apply" },
+  },
 };
 
 export const Output = z.object({
@@ -72,10 +93,28 @@ export const Output = z.object({
 });
 export type Output = z.infer<typeof Output>;
 
+/**
+ * The run's result, as hosts and section-builder read it: the model's `final`, and what code adds
+ * from frame.publish. Those are not in `final`'s schema: the model never writes them, and every
+ * field there makes the strict grammar Bedrock compiles bigger.
+ */
+export const Result = Output.extend({
+  content: Content.optional().describe(
+    "Whether anything on the section is data: none means there is nothing to bind",
+  ),
+  choices: z
+    .array(PageChoiceSchema)
+    .optional()
+    .describe(
+      "What the section's tabs write to its page (_page.<key>), for other sections to read",
+    ),
+});
+export type Result = z.infer<typeof Result>;
+
 /** What frame.publish returned in this run, or undefined. The numbers in `final` must be these. */
-export function publishedIn(messages: Message[]): Partial<Output> | undefined {
+export function publishedIn(messages: Message[]): Partial<Result> | undefined {
   const calls = new Set<string>();
-  let found: Partial<Output> | undefined;
+  let found: Partial<Result> | undefined;
   for (const message of messages) {
     if (message.role === "assistant") {
       for (const call of message.toolCalls ?? []) {
@@ -83,7 +122,7 @@ export function publishedIn(messages: Message[]): Partial<Output> | undefined {
       }
     } else if (message.role === "tool" && calls.has(message.toolCallId) && !message.isError) {
       try {
-        found = JSON.parse(message.content) as Partial<Output>;
+        found = JSON.parse(message.content) as Partial<Result>;
       } catch {
         // a result too long to keep inline; frame.publish's is short, so this is not one
       }
@@ -101,6 +140,8 @@ const PUBLISHED_KEYS = [
   "placeholderIcons",
   "before",
   "match",
+  "content",
+  "choices",
 ] as const;
 
 /**
@@ -120,7 +161,7 @@ export function completeFinal(output: unknown, run: { messages: Message[] }): un
 export function verifyFinal(output: unknown, run: { messages: Message[] }): string | undefined {
   const published = publishedIn(run.messages);
   if (!published) return "Nothing was published. Call frame.publish before final.";
-  const final = output as Output;
+  const final = output as Result;
   // completeFinal fills these, so a mismatch here is a bug; say all of them, with both values
   const wrong = PUBLISHED_KEYS.filter(
     (key) => JSON.stringify(final[key]) !== JSON.stringify(published[key]),
@@ -155,6 +196,7 @@ export const agent = defineAgent({
   spec,
   input: RunInput,
   output: Output,
+  result: Result,
   verifyFinal,
   completeFinal,
   dir: join(import.meta.dirname, ".."),
@@ -164,7 +206,10 @@ export const agent = defineAgent({
     plane?: () => ControlPlane;
     vision?: boolean;
     see?: See;
+    judge?: LayoutJudge | false;
     lookOrder?: "first" | "last";
+    pool?: Pool;
+    store?: MemoryReader;
   }) =>
     createMatchTools({
       ...(opts.matchDir ? { dir: opts.matchDir } : {}),
@@ -172,7 +217,10 @@ export const agent = defineAgent({
       ...(opts.plane ? { plane: opts.plane } : {}),
       ...(opts.vision === false ? { vision: false } : {}),
       ...(opts.see ? { see: opts.see } : {}),
+      ...(opts.judge !== undefined ? { judge: opts.judge } : {}),
       ...(opts.lookOrder ? { lookOrder: opts.lookOrder } : {}),
+      ...(opts.pool ? { pool: opts.pool } : {}),
+      ...(opts.store ? { decisions: opts.store } : {}),
     }),
   cli: {
     flags: { export: "exportId", handoff: "handoffId" },

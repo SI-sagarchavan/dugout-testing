@@ -13,6 +13,7 @@
   "dependencies": {
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",
+    "@dugout/db": "workspace:*",
     "@dugout/evals": "workspace:^",
     "@dugout/memory": "workspace:^",
     "@dugout/sdk": "workspace:^",

@@ -5,12 +5,16 @@
  * (which nodes are the items, which are the designed controls, where the active slide sits), so
  * a choice stays small enough for a person to read and edit, and a recompile applies it again.
  *
- * Only `carousel` changes the tree today. `list` and `row` are what the compiler already drew.
- * `grid` and `tabs` are detected and recorded, and left as compiled until the renderer draws them
- * from these intents: a note says so, rather than a half-lowered tree.
+ * `carousel` and `tabs` change the tree. `list` and `row` are what the compiler already drew.
+ * `grid` is detected and recorded, and left as compiled until the renderer draws it from these
+ * intents: a note says so, rather than a half-lowered tree.
+ *
+ * Tabs stay as drawn: each item becomes one option of a page choice (`select`), and the look the
+ * design gives the selected one becomes its `active` state, so pressing another moves the look
+ * (`page.ts`). The first paint is the frame.
  */
 
-import type { FlatNode, FlatTree, LayoutChoice, LayoutIntent } from "@fanos/dsl";
+import { type FlatNode, type FlatTree, type LayoutChoice, type LayoutIntent, PAGE_SCOPE, pageKeyOf, pageValueOf } from "@fanos/dsl";
 import type { FrameIRDocument, FrameIRNode } from "@fanos/surface-canvas/ir";
 import { detectLayout } from "./detect.js";
 
@@ -23,7 +27,7 @@ export interface LowerResult {
   tree: FlatTree;
   /** One per choice: what was done, or why nothing was. */
   notes: LowerNote[];
-  /** Container srcs that became Carousels. */
+  /** Container srcs whose layout was applied: Carousels, and tabs made options of a page choice. */
   lowered: string[];
 }
 
@@ -47,8 +51,21 @@ export function lowerLayout(tree: FlatTree, doc: FrameIRDocument, choices: Layou
       notes.push({ src: choice.src, message: `kept as compiled: a ${choice.kind} is what the frame draws` });
       continue;
     }
-    if (choice.kind === "grid" || choice.kind === "tabs") {
+    if (choice.kind === "grid") {
       notes.push({ src: choice.src, message: `${choice.kind} recorded; not lowered yet, so it stays as compiled` });
+      continue;
+    }
+    if (choice.kind === "tabs") {
+      const container = nodes.find((n) => n.src === choice.src);
+      const result = container
+        ? lowerTabs(nodes, container, choice.config, intents.get(choice.src))
+        : "the compiler did not keep this container as a node";
+      if (typeof result === "string") {
+        notes.push({ src: choice.src, message: result });
+        continue;
+      }
+      lowered.push(choice.src);
+      notes.push({ src: choice.src, message: result.made });
       continue;
     }
     const intent = intents.get(choice.src);
@@ -231,3 +248,177 @@ const CAROUSEL_MOTION = [
 ] as const;
 
 const round = (v: number) => Math.round(v * 100) / 100;
+
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+
+type TabsConfig = Extract<LayoutChoice, { kind: "tabs" }>["config"];
+
+/** The look a state can move: a node's surface and fill, and its label's tone. */
+interface TabLook {
+  surface?: unknown;
+  fill?: unknown;
+  tone?: unknown;
+}
+
+/**
+ * Makes each tab one option of a page choice, keeping every one as drawn. Returns why it could
+ * not, or what it made.
+ *
+ * The design draws one tab selected. What differs between it and the others (a surface, a fill,
+ * the label's colour) becomes a state: the tabs take the plain look, and the selected look is
+ * their `active` state (or, when only the plain ones paint, theirs is `inactive`). What only the
+ * selected tab draws (an underline, a dot) is copied to every tab and shown while it is chosen.
+ */
+function lowerTabs(
+  nodes: FlatNode[],
+  container: FlatNode,
+  config: TabsConfig,
+  intent: LayoutIntent | undefined,
+): { made: string } | string {
+  const kidsOf = (id: string) => nodes.filter((n) => n.parent === id).sort((a, b) => a.idx - b.idx);
+  const items = intent
+    ? intent.items.map((src) => nodes.find((n) => n.src === src && n.parent === container.id))
+    : kidsOf(container.id);
+  if (items.length !== config.options.length || items.some((i) => i === undefined)) {
+    return "its tabs are not each one node of the tree, so they stay as compiled";
+  }
+  const tabs = items as FlatNode[];
+  const selected = tabs[config.active];
+  const plain = tabs.find((_, i) => i !== config.active);
+  if (!selected || !plain) return "no tab is drawn selected, so they stay as compiled";
+
+  const key = config.key ?? pageKeyOf(config.options);
+  const values = uniqueValues(config.options);
+  const subtree = (id: string): FlatNode[] => [nodes.find((n) => n.id === id)!, ...kidsOf(id).flatMap((k) => subtree(k.id))];
+  const labelOf = (tab: FlatNode) => subtree(tab.id).find((n) => n.type === "Text");
+  const lookOf = (tab: FlatNode): TabLook => ({
+    surface: tab.props.surface,
+    fill: tab.props.fill,
+    tone: labelOf(tab)?.props.tone,
+  });
+
+  // Each prop on its own: the side that paints it is the state; both paint it, the selected is.
+  const on = lookOf(selected);
+  const off = lookOf(plain);
+  const base: TabLook = {};
+  const active: TabLook = {};
+  const inactive: TabLook = {};
+  for (const prop of ["surface", "fill", "tone"] as const) {
+    const a = on[prop];
+    const b = off[prop];
+    if (JSON.stringify(a) === JSON.stringify(b)) {
+      base[prop] = a;
+    } else if (a !== undefined && b === undefined) {
+      active[prop] = a;
+    } else if (a === undefined && b !== undefined) {
+      inactive[prop] = b;
+    } else {
+      base[prop] = b;
+      active[prop] = a;
+    }
+  }
+  // a Resp surface cannot be a state's, which takes one token
+  for (const look of [active, inactive]) {
+    for (const prop of ["surface", "fill", "tone"] as const) {
+      if (look[prop] !== undefined && typeof look[prop] !== "string") {
+        return `the selected tab's ${prop} differs by breakpoint, which a state cannot hold: they stay as compiled`;
+      }
+    }
+  }
+
+  // What only the selected tab draws: its children beside the one that holds the label.
+  const holdsLabel = (tab: FlatNode, kid: FlatNode) => subtree(kid.id).some((n) => n.id === labelOf(tab)?.id);
+  const marks = kidsOf(selected.id).filter((k) => !holdsLabel(selected, k));
+  const plainMarks = kidsOf(plain.id).filter((k) => !holdsLabel(plain, k));
+  const copied = plainMarks.length === 0 ? marks : [];
+
+  const states = (tab: FlatNode) => {
+    const own = (tab.props.states as Record<string, object> | undefined) ?? {};
+    const next: Record<string, object> = { ...own };
+    if (Object.keys(active).length) next.active = { ...(own.active ?? {}), ...active };
+    if (Object.keys(inactive).length) next.inactive = { ...(own.inactive ?? {}), ...inactive };
+    return next;
+  };
+  tabs.forEach((tab, i) => {
+    const props: Record<string, unknown> = { ...tab.props };
+    for (const prop of ["surface", "fill"] as const) {
+      if (base[prop] === undefined) delete props[prop];
+      else props[prop] = base[prop];
+    }
+    const next = states(tab);
+    if (Object.keys(next).length) props.states = next;
+    props.select = { key, value: values[i]!, ...(i === config.active ? { initial: true } : {}) };
+    tab.props = props;
+    const label = labelOf(tab);
+    if (label) {
+      if (base.tone === undefined) delete label.props.tone;
+      else label.props = { ...label.props, tone: base.tone };
+    }
+  });
+
+  // The selected tab's own marks, on every tab, each shown while its tab is chosen.
+  const shownFor = (props: Record<string, unknown>, value: string) => {
+    const mine = { path: `${PAGE_SCOPE}.${key}`, eq: value };
+    const own = props.when;
+    return own === undefined ? mine : [...(Array.isArray(own) ? own : [own]), mine];
+  };
+  let made = 0;
+  const syntheticOf = (src: string) => {
+    const base = src.startsWith("synthetic:") ? src.slice("synthetic:".length).replace(/:\d+$/, "") : src;
+    let n = 1;
+    while (nodes.some((x) => x.src === `synthetic:${base}:${n}`)) n++;
+    return `synthetic:${base}:${n}`;
+  };
+  for (const mark of copied) {
+    tabs.forEach((tab, i) => {
+      if (tab === selected) return;
+      const ids = new Map<string, string>();
+      const copy = subtree(mark.id).map((n) => {
+        const id = `${n.id}__${values[i]}`;
+        ids.set(n.id, id);
+        return { ...structuredClone(n), id };
+      });
+      for (const n of copy) {
+        n.parent = n.parent === mark.parent ? tab.id : ids.get(n.parent!)!;
+        n.src = syntheticOf(n.src);
+        nodes.push(n);
+      }
+      const root = copy[0]!;
+      root.props = { ...root.props, when: shownFor(root.props, values[i]!) };
+      // in the same place among the tab's children as in the selected one's
+      for (const sibling of nodes) {
+        if (sibling.parent === tab.id && sibling !== root && sibling.idx >= mark.idx) sibling.idx += 1;
+      }
+      root.idx = Math.min(mark.idx, nodes.filter((n) => n.parent === tab.id && n !== root).length);
+      made++;
+    });
+    mark.props = { ...mark.props, when: shownFor(mark.props, values[config.active]!) };
+  }
+  // idx stays a run from 0 under each tab
+  for (const tab of tabs) kidsOf(tab.id).forEach((k, i) => (k.idx = i));
+
+  const looks = [
+    ...Object.keys(active).map((p) => `${p} when chosen`),
+    ...Object.keys(inactive).map((p) => `${p} when not`),
+  ];
+  return {
+    made: [
+      `tabs: ${config.options.length} options of _page.${key} (${values.join(", ")}), "${values[config.active]}" first`,
+      looks.length ? `the selected look moves with the choice: ${looks.join(", ")}` : "every tab looks the same: nothing shows which is chosen",
+      ...(made ? [`${copied.length} mark(s) only the selected tab draws, copied to each tab and shown while it is chosen`] : []),
+    ].join("; "),
+  };
+}
+
+/** Each label's value, unique: two tabs called "ALL" are `all` and `all_2`. */
+function uniqueValues(labels: string[]): string[] {
+  const seen = new Map<string, number>();
+  return labels.map((label) => {
+    const value = pageValueOf(label);
+    const n = (seen.get(value) ?? 0) + 1;
+    seen.set(value, n);
+    return n === 1 ? value : `${value}_${n}`;
+  });
+}

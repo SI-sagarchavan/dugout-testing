@@ -41,12 +41,17 @@ type Modules = NonNullable<SwiperOptions["modules"]>;
 
 /** Mount on `root` (`[data-fos-carousel]`). Returns the teardown. */
 export function mountCarousel(root: HTMLElement): () => void {
-  const spec = JSON.parse(root.dataset.fosCarousel ?? "{}") as CarouselSpec;
+  if (otherWindow(root)) return mountInItsWindow(root);
+  const drawn = JSON.parse(root.dataset.fosCarousel ?? "{}") as CarouselSpec;
   const viewport = root.querySelector<HTMLElement>(":scope > .swiper");
   if (!viewport) return () => {};
 
   const computed = getComputedStyle(root);
   const read = (name: string, fallback: number) => cssNumber(computed.getPropertyValue(name), fallback);
+  const gap = lengthPx(root, CAROUSEL_VARS.gap);
+  // a loop with too few slides does not run: it rewinds instead (see enoughToLoop)
+  const loops = drawn.loop && enoughToLoop(viewport, drawn, gap);
+  const spec: CarouselSpec = { ...drawn, loop: loops, rewind: drawn.rewind || (drawn.loop && !loops) };
 
   // Ids repeat across two renders on one page; a control belongs to the carousel in its own render.
   const scope: ParentNode = root.closest("[data-fos-root]") ?? document;
@@ -66,9 +71,9 @@ export function mountCarousel(root: HTMLElement): () => void {
   const options: SwiperOptions = {
     slidesPerView: spec.slidesPerView,
     slidesPerGroup: spec.slidesPerGroup,
-    spaceBetween: read(CAROUSEL_VARS.gap, 0),
-    slidesOffsetBefore: read(CAROUSEL_VARS.before, 0),
-    slidesOffsetAfter: read(CAROUSEL_VARS.after, 0),
+    spaceBetween: gap,
+    slidesOffsetBefore: lengthPx(root, CAROUSEL_VARS.before),
+    slidesOffsetAfter: lengthPx(root, CAROUSEL_VARS.after),
     centeredSlides: spec.centered,
     centeredSlidesBounds: spec.centeredBounds,
     initialSlide: spec.initialSlide,
@@ -379,4 +384,85 @@ function drawnLooks(dots: HTMLElement[]) {
       }
     },
   };
+}
+
+/**
+ * A length custom property on `root`, in px. Its computed value is the token's text as the theme
+ * wrote it (`1rem`, `calc(...)`), which Swiper cannot read and `parseFloat` gets wrong ("1rem" is
+ * not 1px), so the browser resolves it: a probe with the variable as its margin, measured. 0 when
+ * unset.
+ */
+function lengthPx(root: HTMLElement, name: string): number {
+  if (!getComputedStyle(root).getPropertyValue(name).trim()) return 0;
+  const probe = root.ownerDocument.createElement("div");
+  // a margin, not a width: an offset may be negative (slides pulled back to bleed), a width not
+  probe.style.cssText = `position:absolute;visibility:hidden;pointer-events:none;width:0;height:0;padding:0;border:0;margin:0;margin-top:var(${name})`;
+  root.append(probe);
+  const px = Number.parseFloat(getComputedStyle(probe).marginTop);
+  probe.remove();
+  return Number.isFinite(px) ? px : 0;
+}
+
+/**
+ * The window `el` belongs to, when it is not this module's: a host that draws the section into an
+ * iframe from its own page (Surface Studio) hands this an element of the frame's document. Swiper
+ * only starts on an element of its own window (`instanceof HTMLElement`), and listens for drags on
+ * its own document, so it has to run in the frame's.
+ */
+function otherWindow(el: HTMLElement): Window | undefined {
+  const win = el.ownerDocument.defaultView;
+  return win && win !== globalThis.window && !(el instanceof HTMLElement) ? win : undefined;
+}
+
+type Mounted = HTMLElement & { __fosStop?: () => void; __fosGone?: boolean };
+
+/**
+ * Loads this module again inside the element's own window and mounts there, so Swiper, its
+ * `HTMLElement` and its listeners are the frame's. The teardown stops it, or stops it from
+ * starting when it has not loaded yet.
+ */
+function mountInItsWindow(root: HTMLElement): () => void {
+  const el = root as Mounted;
+  const doc = root.ownerDocument;
+  const key = `m${Math.random().toString(36).slice(2)}`;
+  root.setAttribute("data-fos-mount", key);
+  const script = doc.createElement("script");
+  script.type = "module";
+  script.textContent = `import(${JSON.stringify(import.meta.url)}).then((m) => {
+  const el = document.querySelector('[data-fos-mount="${key}"]');
+  if (el && el.isConnected && !el.__fosGone) el.__fosStop = m.mountCarousel(el);
+});`;
+  doc.head.append(script);
+  return () => {
+    el.__fosGone = true;
+    el.__fosStop?.();
+    delete el.__fosStop;
+    root.removeAttribute("data-fos-mount");
+    script.remove();
+  };
+}
+
+/**
+ * Whether Swiper can loop these slides. It needs more than are on view: the slides on view and a
+ * step more (half the view more, centred), or it warns and stops after a slide or two. A partly
+ * shown slide counts as on view. With too few, the carousel rewinds to the first after the last,
+ * so it still moves on its own and by hand.
+ */
+function enoughToLoop(viewport: HTMLElement, spec: CarouselSpec, gap: number): boolean {
+  const slides = [...viewport.querySelectorAll<HTMLElement>(":scope > .swiper-wrapper > .swiper-slide")];
+  let onView: number;
+  if (spec.slidesPerView === "auto") {
+    const room = spec.direction === "vertical" ? viewport.clientHeight : viewport.clientWidth;
+    let used = 0;
+    onView = 0;
+    for (const slide of slides) {
+      used += (spec.direction === "vertical" ? slide.offsetHeight : slide.offsetWidth) + (onView > 0 ? gap : 0);
+      onView += 1;
+      if (used >= room) break;
+    }
+  } else {
+    onView = Math.ceil(spec.slidesPerView);
+  }
+  const step = spec.centered ? Math.max(spec.slidesPerGroup, Math.ceil(onView / 2)) : spec.slidesPerGroup;
+  return slides.length >= onView + step;
 }

@@ -18,6 +18,7 @@ import {
   describeChoice,
   LayoutChoice,
   type LayoutIntent,
+  type LayoutJudge,
   type PlatformRead,
   withPlatform,
 } from "../src/layout.ts";
@@ -185,6 +186,7 @@ const ctx = (runId: string, answered?: { by: string; answers: Answers }) =>
 async function tools(
   intents: LayoutIntent[],
   score: (o: Overrides) => Measurement = () => measured(90),
+  judge: LayoutJudge | false = false,
 ) {
   const { engine, plane, builds } = setup(intents, score);
   const dir = await mkdtemp(join(tmpdir(), "frame-match-layout-"));
@@ -194,6 +196,7 @@ async function tools(
     plane: () => plane,
     web: "http://web",
     vision: false,
+    judge,
   });
   const named = (name: string) =>
     list.find((tool) => tool.name === name) as unknown as {
@@ -265,6 +268,78 @@ describe("frame.load", () => {
     expect(row).toMatchObject({ kind: "row", applied: true, decided: false });
     expect(row?.ask?.[0]).toMatch(/fixed row of 4, or a carousel/);
     expect(loaded.layoutNote).toContain("frame.layout");
+  });
+});
+
+/** A doubtful row: the detector scored it 0.55 as a row, with a carousel as the other reading. */
+const squad: LayoutIntent = {
+  ...videos,
+  src: "35:20000",
+  name: "Squad",
+  score: 0.55,
+  context: ['layer "Squad" inside "Players"', "5 items of 285x420px, gaps 24px"],
+  alternativeChoice: {
+    src: "35:20000",
+    kind: "carousel",
+    config: {
+      slidesPerView: "auto",
+      slidesPerGroup: 1,
+      centered: false,
+      initialSlide: 0,
+      loop: false,
+      autoplay: false,
+    },
+  },
+  alternativeAsk: ['How many items does "Squad" hold in all? (proposed: whatever the data holds)'],
+  choice: { src: "35:20000", kind: "row" },
+};
+
+describe("layout judge", () => {
+  it("lets a sure model verdict make a doubtful row a carousel, with the context in the question", async () => {
+    const seen: string[] = [];
+    const judge: LayoutJudge = async (prompt) => {
+      seen.push(prompt);
+      return 'Sure: {"kind":"carousel","confidence":0.9,"reason":"a player roster"}';
+    };
+    const { named } = await tools([squad], undefined, judge);
+    const loaded = await named("frame.load").run({}, ctx("j1"));
+    const [layout] = layoutsOf(loaded);
+    expect(layout).toMatchObject({
+      kind: "carousel",
+      confidence: "certain",
+      score: 0.9,
+      applied: true,
+    });
+    expect(seen[0]).toContain("5 items of 285x420px");
+    expect(seen[0]).toContain("score 0.55");
+  });
+
+  it("leaves a doubtful row to a person when the model is not sure either", async () => {
+    const judge: LayoutJudge = async () => '{"kind":"carousel","confidence":0.5,"reason":"maybe"}';
+    const { named } = await tools([squad], undefined, judge);
+    const [layout] = layoutsOf(await named("frame.load").run({}, ctx("j2")));
+    expect(layout).toMatchObject({ kind: "row", confidence: "unsure", score: 0.55 });
+    expect(layout?.ask).toHaveLength(1);
+  });
+
+  it("falls back to the detector when the model fails", async () => {
+    const judge: LayoutJudge = async () => {
+      throw new Error("down");
+    };
+    const { named } = await tools([squad], undefined, judge);
+    const [layout] = layoutsOf(await named("frame.load").run({}, ctx("j3")));
+    expect(layout).toMatchObject({ kind: "row", confidence: "unsure" });
+  });
+
+  it("does not ask a model about a layout the detector is sure of", async () => {
+    let asked = 0;
+    const judge: LayoutJudge = async () => {
+      asked++;
+      return "{}";
+    };
+    const { named } = await tools([players], undefined, judge);
+    await named("frame.load").run({}, ctx("j4"));
+    expect(asked).toBe(0);
   });
 });
 

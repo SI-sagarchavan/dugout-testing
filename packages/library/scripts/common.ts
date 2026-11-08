@@ -17,9 +17,12 @@ export function openLibrary() {
   return { pool, library, cropDir, crops: createFileCropStore(cropDir) };
 }
 
-/** The neutral palette with any colours given as flags (`--accent '#d71920'`). */
-export function paletteFrom(values: Partial<Record<keyof SkeletonPalette, string | undefined>>) {
-  const palette: SkeletonPalette = { ...NEUTRAL_PALETTE };
+/** `base` (neutral unless given) with any colours given as flags (`--accent '#d71920'`). */
+export function paletteFrom(
+  values: Partial<Record<keyof SkeletonPalette, string | undefined>>,
+  base: SkeletonPalette = NEUTRAL_PALETTE,
+) {
+  const palette: SkeletonPalette = { ...base };
   for (const key of Object.keys(palette) as Array<keyof SkeletonPalette>) {
     const v = values[key];
     if (v) palette[key] = v;

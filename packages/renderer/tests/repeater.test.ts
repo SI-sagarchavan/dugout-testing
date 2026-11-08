@@ -113,3 +113,49 @@ describe("Repeater.slice", () => {
     expect((await withProps({ slice: [0, 3], limit: 1 })).match(/data-fos-repeat="/g)).toHaveLength(3);
   });
 });
+
+/**
+ * `separator` — a rule between stats, `stat | stat | stat`: some of the Repeater's children, drawn
+ * once between two items and never in an item, so no rule leads or trails the row. And `at`: a
+ * look by place, the rule every row but the last has.
+ */
+describe("Repeater.separator and looks by place", () => {
+  async function stats(repeater: Record<string, unknown>, statProps: Record<string, unknown> = {}): Promise<string> {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const { Render } = await import("../src/components/Render.js");
+    const t = flatTreeSchema.parse({
+      schemaVersion: "1.0.0",
+      nodes: [
+        { id: "row", parent: null, idx: 0, type: "Stack", src: "s:row", props: { direction: "row" } },
+        { id: "each", parent: "row", idx: 0, type: "Repeater", src: "s:each", props: { over: "stats", as: "s", ...repeater } },
+        { id: "stat", parent: "each", idx: 0, type: "Text", src: "s:stat", props: { content: "{s.label}", ...statProps } },
+        { id: "gap", parent: "each", idx: 1, type: "Box", src: "s:gap", props: {} },
+        { id: "rule", parent: "each", idx: 2, type: "Divider", src: "s:rule", props: { orientation: "vertical" } },
+      ],
+    });
+    const data = { stats: [{ label: "MATCHES" }, { label: "RUNS" }, { label: "STRIKE RATE" }] };
+    return renderToStaticMarkup(createElement(Render, { tree: t, data, width: 400 } as never));
+  }
+  const order = (html: string) => [...html.matchAll(/data-fos-id="(stat|gap|rule)"/g)].map((m) => m[1]);
+
+  it("draws the separator between items only, its nodes in order", async () => {
+    expect(order(await stats({ separator: ["gap", "rule"] }))).toEqual([
+      "stat", "gap", "rule", "stat", "gap", "rule", "stat",
+    ]);
+  });
+
+  it("without one, every child is drawn in every item", async () => {
+    expect(order(await stats({})).filter((id) => id === "rule")).toHaveLength(3);
+  });
+
+  it("hides a node at a place: the rule after every stat but the last", async () => {
+    const html = await stats({ separator: ["gap"] }, { at: { last: { hidden: true } } });
+    expect(order(html).filter((id) => id === "stat")).toHaveLength(2);
+  });
+
+  it("writes a place's props over the node's own", async () => {
+    const html = await stats({}, { tone: "color.core_neu_00", at: { odd: { textCase: "upper" } } });
+    expect(html.match(/data-fos-id="stat"/g)).toHaveLength(3);
+  });
+});

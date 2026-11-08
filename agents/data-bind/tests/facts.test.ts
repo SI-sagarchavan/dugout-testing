@@ -8,8 +8,10 @@ import {
   groups,
   leftAsDesigned,
   outline,
+  ownPictures,
   rowsOf,
   shapeOf,
+  someOnly,
   unboundCopy,
 } from "../src/facts.ts";
 import { Plan, previewOf, problemsOf } from "../src/tools.ts";
@@ -107,8 +109,8 @@ describe("a plan drawn against the sample", () => {
     const { run, problems } = check(reference);
     expect(problems).toEqual([]);
     expect(run.repeats).toEqual([
-      { template: "35:10546", over: "fixtures.items", items: 7 },
-      { template: "I35:10546;18621:42501", over: "day.matches", items: 9 },
+      { template: "35:10546", over: "fixtures.items", items: 7, most: 7 },
+      { template: "I35:10546;18621:42501", over: "day.matches", items: 9, most: 2 },
     ]);
   });
 
@@ -294,10 +296,11 @@ describe("a grid drawn as rows", () => {
       read("agents/data-bind/tests/fixtures/news-grid.plan.json"),
     );
     const run = dryRun(applied.tree, gridBag, dsl, grid);
-    expect(run.pictures[0]).toEqual({
+    expect(run.pictures[0]).toMatchObject({
       src: "I35:10182;13085:25357",
       url: "https://www.southernbrave.com/static-assets/media/200868ec-e809-4921-9bab-ba57e008e13f.jpg",
     });
+    expect(run.pictures[0]?.urls[0]).toBe(run.pictures[0]?.url);
   });
 
   it("takes a slice on each row's collapse", () => {
@@ -328,9 +331,22 @@ describe("a grid drawn as rows", () => {
         ],
       },
     ]);
-    expect(problems[0]).toMatch(
-      /^35:10187 still shows the design's placeholders .*\(35:10184 \[0, 2\], 35:10187 \[2, 4\]\)/,
+    expect(problems).toContainEqual(
+      expect.stringMatching(
+        /^35:10187 still shows the design's placeholders .*\(35:10184 \[0, 2\], 35:10187 \[2, 4\]\)/,
+      ),
     );
+    // the first row draws all six cards in a row sized for two
+    expect(problems).toContainEqual(
+      expect.stringMatching(
+        /^news\.cards draws up to 6 items where the design drew 2, in 35:10184: a row/,
+      ),
+    );
+  });
+
+  it("reports nothing overflowing when each row draws its own slice", () => {
+    const { problems } = checkGrid(read("agents/data-bind/tests/fixtures/news-grid.plan.json"));
+    expect(problems.filter((p) => p.includes("draws up to"))).toEqual([]);
   });
 
   it("finds nothing left when each row draws its own slice", () => {
@@ -364,6 +380,220 @@ describe("a grid drawn as rows", () => {
   it("does not call the pictures layered in a card a list left unbound", () => {
     const { left } = checkGrid(read("agents/data-bind/tests/fixtures/news-grid.plan.json"));
     expect(left.some((l) => l.src.startsWith("I35:10182;"))).toBe(false);
+  });
+});
+
+describe("a picture each card has its own of", () => {
+  // the player cards: three of one shape, each with its own photo, and the data has no picture
+  const card = (n: number, photo: string) => [
+    { id: `card_${n}`, parent: "carousel", idx: n, type: "Overlay", src: `35:${n}`, props: {} },
+    {
+      id: `photo_${n}`,
+      parent: `card_${n}`,
+      idx: 0,
+      type: "Image",
+      src: `I35:${n};1`,
+      props: { src: photo, alt: "PLAYER" },
+    },
+    {
+      id: `name_${n}`,
+      parent: `card_${n}`,
+      idx: 1,
+      type: "Text",
+      src: `I35:${n};2`,
+      props: { content: "Ben McKinney" },
+    },
+  ];
+  const cards = {
+    nodes: [
+      { id: "carousel", parent: null, idx: 0, type: "Stack", src: "35:0", props: {} },
+      ...card(1, "data:image/png;base64,AAA"),
+      ...card(2, "data:image/png;base64,BBB"),
+      ...card(3, "data:image/png;base64,CCC"),
+    ],
+  } as never;
+  const players = asBag(
+    {
+      squad: {
+        players: [
+          { id: "10085", name: "Glenn Maxwell" },
+          { id: "11755", name: "Obus Pienaar" },
+        ],
+      },
+    },
+    dsl,
+  );
+  const problems = (fields: unknown[]) => {
+    const plan = {
+      collapse: [{ over: "squad.players", as: "p", members: ["35:1", "35:2", "35:3"], fields }],
+    };
+    const applied = dsl.applyBindingPlan(cards, plan);
+    return problemsOf(applied, [], dryRun(applied.tree, players, dsl, cards), plan as never, cards);
+  };
+  const name = { src: "I35:1;2", prop: "content", path: "name" };
+
+  it("finds the photo the design varies across the cards", () => {
+    expect(ownPictures(cards, ["35:1", "35:2", "35:3"])).toEqual([
+      { srcs: ["I35:1;1", "I35:2;1", "I35:3;1"], alt: "PLAYER", distinct: 3 },
+    ]);
+  });
+
+  it("reports the first card's photo drawn on every card", () => {
+    expect(problems([name]).find((p) => p.startsWith("I35:1;1 picture"))).toContain(
+      "draws 35:1's in every item of squad.players",
+    );
+  });
+
+  it("finds nothing once the plan binds the photo, from a house fact's URL", () => {
+    const photo = {
+      src: "I35:1;1",
+      prop: "src",
+      template: "https://cdn.club/players/{p.id}.png",
+    };
+    expect(problems([name, photo]).some((p) => p.includes("picture"))).toBe(false);
+  });
+
+  it("reports the designer's photos left on cards bound by position", () => {
+    const plan = {
+      bind: [
+        { src: "I35:1;2", prop: "content", path: "squad.players.0.name" },
+        { src: "I35:2;2", prop: "content", path: "squad.players.1.name" },
+      ],
+    };
+    const applied = dsl.applyBindingPlan(cards, plan);
+    const found = problemsOf(
+      applied,
+      [],
+      dryRun(applied.tree, players, dsl, cards),
+      plan as never,
+      cards,
+    ).filter((p) => p.includes("bound by position"));
+    // the third card shows no data, so its picture is the design's with the rest of it
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatch(/^I35:1;1, I35:2;1 still show/);
+  });
+
+  it("does not report a picture every card shares, such as a logo", () => {
+    const same = {
+      nodes: (
+        cards as { nodes: Array<{ type: string; props: Record<string, unknown> }> }
+      ).nodes.map((n) =>
+        n.type === "Image" ? { ...n, props: { ...n.props, src: "data:image/png;base64,AAA" } } : n,
+      ),
+    } as never;
+    expect(ownPictures(same, ["35:1", "35:2", "35:3"])).toEqual([]);
+  });
+
+  it("finds crests drawn as vectors, which compile to icons", () => {
+    const crests = {
+      nodes: (
+        cards as { nodes: Array<{ id: string; type: string; props: Record<string, unknown> }> }
+      ).nodes.map((n) =>
+        n.type === "Image" ? { ...n, type: "Icon", props: { name: `crest-${n.id}` } } : n,
+      ),
+    } as never;
+    expect(ownPictures(crests, ["35:1", "35:2", "35:3"])[0]?.distinct).toBe(3);
+  });
+});
+
+describe("cards that differ by a badge", () => {
+  // Figma instances: each card's layers are I<card>;<layer>. Card 1 and 2 have a captain's badge,
+  // card 2 an overseas flag, card 3 neither; the photo and the name are on every card.
+  const node = (
+    id: string,
+    parent: string | null,
+    idx: number,
+    type: string,
+    src: string,
+    props = {},
+  ) => ({
+    id,
+    parent,
+    idx,
+    type,
+    src,
+    props,
+  });
+  const card = (n: number, badges: { captain?: boolean; flag?: boolean }) => [
+    node(`card_${n}`, "row", n, "Overlay", `35:${n}`),
+    node(`photo_${n}`, `card_${n}`, 0, "Image", `I35:${n};1`, {
+      src: `data:image/png;base64,P${n}`,
+      alt: "PLAYER",
+    }),
+    node(`name_${n}`, `card_${n}`, 1, "Text", `I35:${n};2`, { content: "Ben\nMcKinney" }),
+    node(`badges_${n}`, `card_${n}`, 2, "Stack", `I35:${n};3`),
+    ...(badges.captain
+      ? [
+          node(`captain_${n}`, `badges_${n}`, 0, "Stack", `I35:${n};4`),
+          node(`c_${n}`, `captain_${n}`, 0, "Text", `I35:${n};4;5`, { content: "C" }),
+        ]
+      : []),
+    ...(badges.flag
+      ? [node(`flag_${n}`, `badges_${n}`, 1, "Image", `I35:${n};6`, { src: "data:x" })]
+      : []),
+  ];
+  const tree = {
+    nodes: [
+      node("row", null, 0, "Stack", "35:0"),
+      ...card(1, { captain: true }),
+      ...card(2, { captain: true, flag: true }),
+      ...card(3, {}),
+    ],
+  } as never;
+  const members = ["35:1", "35:2", "35:3"];
+  const players = asBag(
+    {
+      squad: {
+        players: [
+          { id: "1", first: "Glenn", last: "Maxwell", captain: true },
+          { id: "2", first: "Obus", last: "Pienaar", captain: false },
+        ],
+      },
+    },
+    dsl,
+  );
+  const problems = (plan: Record<string, unknown>) => {
+    const applied = dsl.applyBindingPlan(tree, plan);
+    return problemsOf(applied, [], dryRun(applied.tree, players, dsl, tree), plan as never, tree);
+  };
+  const photo = { src: "I35:1;1", prop: "src", template: "https://cdn.club/p/{p.id}.png" };
+  const collapse = (fields: unknown[]) => ({
+    over: "squad.players",
+    as: "p",
+    members,
+    shape: "varies",
+    fields,
+  });
+
+  it("matches the cards by their layers, though one has a badge more", () => {
+    expect(ownPictures(tree, members)[0]?.srcs).toEqual(["I35:1;1", "I35:2;1", "I35:3;1"]);
+    expect(someOnly(tree, members).map((p) => [p.src, p.in.length, p.inTemplate])).toEqual([
+      ["I35:1;4", 2, true],
+      ["I35:2;6", 1, false],
+    ]);
+  });
+
+  it("reports a badge the design shows on some cards that the plan draws on all, and one it drops", () => {
+    const name = { src: "I35:1;2", prop: "content", template: "{p.first}\n{p.last}" };
+    const found = problems({ collapse: [collapse([photo, name])] });
+    expect(found.find((p) => p.startsWith("I35:1;4"))).toContain("draws it on every item");
+    expect(found.find((p) => p.startsWith("I35:2;6"))).toContain("draws it on none");
+  });
+
+  it("is satisfied by a when on the badge", () => {
+    const name = { src: "I35:1;2", prop: "content", template: "{p.first}\n{p.last}" };
+    const found = problems({
+      collapse: [collapse([photo, name])],
+      set: [{ src: "I35:1;4", prop: "when", value: { path: "p.captain", eq: true } }],
+    });
+    expect(found.some((p) => p.startsWith("I35:1;4"))).toBe(false);
+  });
+
+  it("reports a name the design breaks over two lines drawn on one", () => {
+    const name = { src: "I35:1;2", prop: "content", template: "{p.first} {p.last}" };
+    expect(
+      problems({ collapse: [collapse([photo, name])] }).find((p) => p.startsWith("I35:1;2")),
+    ).toContain("on one line where the design breaks it");
   });
 });
 

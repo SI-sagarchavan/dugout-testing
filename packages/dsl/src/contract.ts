@@ -30,6 +30,7 @@
 
 import { clockAlias, clockSchema, clockUnits } from "./clock.js";
 import type { FlatNode, FlatTree } from "./flat.js";
+import { isPagePath } from "./page.js";
 import type { Issue } from "./validate.js";
 import {
   CDN_RATIOS,
@@ -313,6 +314,12 @@ export function checkBindings(tree: FlatTree, data: unknown): Issue[] {
     const parsed = node.props.when === undefined ? undefined : predicateSchema.safeParse(node.props.when);
     if (parsed?.success) {
       for (const c of conditionsOf(parsed.data)) {
+        // the page's choices are another section's to write, so they are never in this data
+        if (c.eqPath !== undefined && !isPagePath(c.eqPath)) {
+          const other = walkShape(scope, c.eqPath);
+          if (!other.ok) missing(node, "when", `when "${c.eqPath}"`, c.eqPath, other);
+        }
+        if (isPagePath(c.path)) continue;
         const w = walkShape(scope, c.path);
         if (!w.ok) {
           missing(node, "when", `when "${c.path}"`, c.path, w);

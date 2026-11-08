@@ -307,11 +307,16 @@ export interface Condition {
   gte?: number;
   lt?: number;
   lte?: number;
+  /**
+   * Equal to what another path holds: an item's team and the page's chosen one
+   * (`{ path: "item.team", eqPath: "_page.squad" }`). Nothing missing is equal to anything.
+   */
+  eqPath?: string;
 }
 
 export type Predicate = Condition | Condition[];
 
-export const CONDITION_OPS = ["eq", "ne", "in", "exists", "gt", "gte", "lt", "lte"] as const;
+export const CONDITION_OPS = ["eq", "ne", "in", "exists", "gt", "gte", "lt", "lte", "eqPath"] as const;
 
 const scalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
@@ -326,6 +331,7 @@ export const conditionSchema = z
     gte: z.number().optional(),
     lt: z.number().optional(),
     lte: z.number().optional(),
+    eqPath: z.string().regex(PATH_RE, "not a data path").optional(),
   })
   .strict()
   .refine((c) => CONDITION_OPS.filter((op) => op in c).length === 1, {
@@ -340,10 +346,34 @@ export const conditionsOf = (predicate: Predicate): Condition[] =>
 
 const present = (v: unknown): boolean => !isEmpty(v) && !(Array.isArray(v) && v.length === 0);
 
+/** The root a `when` reads the page's choices under (`page.ts`). */
+export const PAGE_SCOPE = "_page";
+
+/**
+ * A choice's value as it is compared: "Men's" and `mens`, "WOMEN" and `women` are one. A page
+ * choice's values are made from a design's labels and a feed writes its own way, so a comparison
+ * on the page (an `eq` on `_page.…`, any `eqPath`) is of these, not of the strings as written.
+ */
+export function choiceValue(value: unknown): string {
+  return String(value)
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+const onPage = (path: string) => path === PAGE_SCOPE || path.startsWith(`${PAGE_SCOPE}.`);
+const sameChoice = (a: unknown, b: unknown) =>
+  a !== undefined && a !== null && b !== undefined && b !== null && typeof a !== "object" && typeof b !== "object"
+    ? choiceValue(a) === choiceValue(b)
+    : false;
+
 export function evaluateCondition(condition: Condition, scope: unknown): boolean {
   const v = lookup(scope, condition.path);
   if (condition.exists !== undefined) return present(v) === condition.exists;
-  if ("eq" in condition) return v === condition.eq;
+  if (condition.eqPath !== undefined) return sameChoice(v, lookup(scope, condition.eqPath));
+  if ("eq" in condition) return onPage(condition.path) ? sameChoice(v, condition.eq) : v === condition.eq;
   if ("ne" in condition) return v !== condition.ne;
   if (condition.in) return condition.in.includes(v as Scalar);
   if (typeof v !== "number") return false;

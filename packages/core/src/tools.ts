@@ -2,8 +2,10 @@ import {
   type AgentSpec,
   AwaitingAnswers,
   type DenialStage,
+  isNeedsSetup,
   type RunContext,
   type RunUsage,
+  type Situation,
   type Tool,
   type ToolCall,
   type ToolContext,
@@ -125,7 +127,12 @@ export function preflight(
 }
 
 export interface ToolExecutor {
-  execute(req: ToolStepRequest, ctx: RunContext): Promise<ToolOutcome>;
+  /** `relay` writes a child run's events to this run's stream (`ToolContext.relay`). */
+  execute(
+    req: ToolStepRequest,
+    ctx: RunContext,
+    host?: Pick<ToolContext, "relay">,
+  ): Promise<ToolOutcome>;
 }
 
 export interface ToolExecutorOptions {
@@ -144,7 +151,7 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
   const maxInline = opts.maxInlineChars ?? 16_000;
 
   return {
-    async execute({ call, input, usdLeft, answered }, ctx) {
+    async execute({ call, input, usdLeft, answered, situation }, ctx, host) {
       const tool = opts.registry.get(call.name);
       if (!tool) return { ok: false, error: `unknown tool ${call.name}` };
 
@@ -153,14 +160,25 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
       const spend = (usage: RunUsage) => {
         spent = spent ? sumUsage(spent, usage) : { ...usage };
       };
+      // what the call said the run works on (ADR 0033); the loop keeps it
+      let situated: Situation | undefined;
+      const situate = (s: Situation) => {
+        situated = { section: s.section, ...(s.name ? { name: s.name } : {}) };
+      };
       const forCall = {
         callId: call.id,
         ...(usdLeft !== undefined ? { usdLeft } : {}),
         ...(answered ? { answered } : {}),
+        ...(host?.relay ? { relay: host.relay } : {}),
+        ...(situation ? { situation } : {}),
         spend,
+        situate,
       };
-      const withSpend = (outcome: ToolOutcome): ToolOutcome =>
-        spent ? { ...outcome, usage: spent } : outcome;
+      const withSpend = (outcome: ToolOutcome): ToolOutcome => ({
+        ...outcome,
+        ...(spent ? { usage: spent } : {}),
+        ...(situated ? { situation: situated } : {}),
+      });
 
       let lastError = "";
       for (let attempt = 0; attempt <= (tool.retries ?? 0); attempt++) {
@@ -186,6 +204,10 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
           // a tool, or a child run, stopping to ask a person: the loop waits, then runs it again
           if (err instanceof AwaitingAnswers) throw err;
           lastError = redactor.text(err instanceof Error ? err.message : String(err));
+          // nothing a retry, or the model, can change
+          if (isNeedsSetup(err)) {
+            return withSpend({ ok: false, error: lastError, setup: redactor.text(err.setup) });
+          }
         }
       }
       return withSpend({ ok: false, error: lastError });
@@ -210,7 +232,10 @@ async function runWithTimeout(
   tool: Tool,
   input: unknown,
   ctx: RunContext,
-  call: Pick<ToolContext, "callId" | "usdLeft" | "spend" | "answered">,
+  call: Pick<
+    ToolContext,
+    "callId" | "usdLeft" | "spend" | "answered" | "relay" | "situation" | "situate"
+  >,
 ): Promise<unknown> {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;

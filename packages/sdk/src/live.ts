@@ -1,7 +1,12 @@
 import { createBedrockClient, loadEnv, loadModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import { defaultMcpHost } from "@dugout/mcp";
-import { createMemoryStore, createModelLessonWriter, loadEmbeddings } from "@dugout/memory";
+import {
+  createMemoryStore,
+  createModelLessonWriter,
+  createThreadNotes,
+  loadEmbeddings,
+} from "@dugout/memory";
 import { loadTracing } from "@dugout/tracing";
 
 /** The model that turns a reviewer's words into a lesson: a short rewrite, so the cheapest one. */
@@ -19,5 +24,7 @@ export function liveDeps() {
   const tracing = loadTracing();
   // the registry's MCP servers, one connection per server and tenant for the process
   const mcp = defaultMcpHost();
-  return { models, client, pool, store, lessons, tracing, mcp };
+  // what each thread's earlier runs did, for the next run in it (ADR 0031)
+  const threads = createThreadNotes(pool);
+  return { models, client, pool, store, lessons, tracing, mcp, threads };
 }

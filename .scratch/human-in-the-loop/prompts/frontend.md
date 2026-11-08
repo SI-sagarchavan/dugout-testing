@@ -28,14 +28,21 @@ A run that needs a person is **waiting** with questions:
 
 ```ts
 type AskedQuestion = {
-  id: string; question: string; why: string;
+  id: string;
+  question: string;
+  why: string;
   kind: "choice" | "multi" | "text" | "confirm" | "number" | "review";
   options: { value: string; label: string; description: string }[];
   allowOther: boolean;
-  proposed: string[];   // the agent's best answer, or what memory learned; [] if none
-  learned?: { times: number; lastAt: string };   // "answered this way in N earlier runs"
+  proposed: string[]; // the agent's best answer, or what memory learned; [] if none
+  learned?: { times: number; lastAt: string }; // "answered this way in N earlier runs"
 };
-type Answer = string | number | boolean | string[] | { decision: "approve"|"change"|"reject"; comment?: string };
+type Answer =
+  | string
+  | number
+  | boolean
+  | string[]
+  | { decision: "approve" | "change" | "reject"; comment?: string };
 type Answers = Record<string, Answer>;
 ```
 

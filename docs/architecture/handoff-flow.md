@@ -57,7 +57,7 @@ The control plane (`apps/api`, database `fanos`) is retiring (ADR 0027). Agents 
 | `agents/section-builder`                                 | the parent run for one Handoff. Its one tool, `page.build`, runs `frame-match` then `bind` in code. One approval covers the children's writes. |
 | `agents/frame-match`                                     | compiles, renders, compares, fixes. Asks a person what the frame cannot show.                                                                  |
 | `agents/data-bind`                                       | binds the design to data. Starts `hook-maker` for the data.                                                                                    |
-| `agents/hook-maker`                                      | finds the `dugout_` Cast hook that gives it, and builds one only when none fits                                                               |
+| `agents/hook-maker`                                      | finds the `dugout_` Cast hook that gives it, and builds one only when none fits                                                                |
 
 Stand-ins that retire (ADR 0027): `apps/api` (`:4100`). Surface Studio is the FanXP admin app (`wnm-fanxp-frontend`, `apps/surface-studio`), reached through `wnm-fanxp-backend`; this repo no longer has a Studio of its own.
 

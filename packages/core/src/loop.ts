@@ -9,6 +9,7 @@ import {
   type Decision,
   FROM_MEMORY,
   type Message,
+  NEEDS_SETUP,
   proposedAnswers,
   type Question,
   REVIEW_ID,
@@ -27,6 +28,7 @@ import {
   type ToolOutcome,
 } from "@dugout/contracts";
 import { z } from "zod";
+import { compact, compactedView, SUMMARY_SYSTEM } from "./compact.ts";
 import { SpecError } from "./errors.ts";
 import type { RunLog } from "./events.ts";
 import {
@@ -69,6 +71,16 @@ export interface RunAgentOptions {
   context?: RunMemoryContext;
   /** What earlier answers tell this run about the questions it asks. */
   learned?: AnswerMemory;
+  /** Makes the request smaller when it nears the model's window; without it nothing is compacted. */
+  compaction?: {
+    window: number;
+    at?: number;
+    keep?: number;
+    /** A model name; writes the summary of older turns. */
+    summarizer: string;
+    /** Stores a tool result that leaves the transcript, and returns its reference. */
+    store(content: string): Promise<string>;
+  };
   /**
    * Carry on from saved state instead of starting. `decision` answers the questions the run is
    * waiting on; without one, a waiting run asks again.
@@ -148,7 +160,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
     agent.writeExpected?.(opts.ctx.input) ??
     spec.tools.some((name) => registry.get(name)?.effect === "write");
   // not strict: its schema is rich, and it is offered to every agent (see ToolDefinition.strict)
-  tools.push({ ...toolDefinition(ASK_TOOL, ASK_DESCRIPTION, AskInput), strict: false });
+  tools.push({
+    ...toolDefinition(ASK_TOOL, askDescription(spec), AskInput),
+    strict: false,
+  });
   if (final) {
     tools.push(
       toolDefinition(
@@ -199,6 +214,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         blockedFinishes: 0,
         wrote: false,
         pendingChanges: {},
+        // a child starts on what its parent works on (ADR 0033)
+        ...(opts.ctx.situation ? { situation: opts.ctx.situation } : {}),
       };
   carryOverLegacyState(state);
   const hooks = createHooks([...harnessHooks(agent), ...(agent.hooks ?? [])], state);
@@ -324,8 +341,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       subject?: Subject,
     ): Promise<{ ended: RunResult } | { decision: Decision }> => {
       const ids = { step, callId: call.id, tool: call.name };
-      // what a person answered before goes into the proposals; and a question they approved as a
-      // standing answer is not asked again (a write's review is always asked)
+      // this run's own questions say what they are about (ADR 0033); a child's already do
+      if (from.length === 0) questions = questions.map((q) => withAbout(q, spec, state.situation));
+      // what a person decided before goes into the proposals; and a question a house fact answers
+      // is not asked again (a write's review is always asked)
       if (!subject && opts.learned) {
         questions = await opts.learned.refine(questions);
         const standing = await opts.learned.answer(questions);
@@ -683,6 +702,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
             call,
             input: checked.input,
             usdLeft: Math.max(0, spec.budget.usdPerRun - usage.budgetCostUsd),
+            ...(state.situation ? { situation: state.situation } : {}),
             ...(withAnswers ? { answered: withAnswers } : {}),
           });
         } catch (err) {
@@ -699,6 +719,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       if (!outcome.ok) turn.failed = call.name;
       // a child run's spend is the run's spend: its tokens and dollars, not its turns
       if (outcome.usage) addSpend(usage, outcome.usage);
+      // what the run works on, as the tool found it (ADR 0033): saved with the next save point
+      if (outcome.situation) state.situation = outcome.situation;
       // the same call failing again and again is the model stuck, like a refused copy of it
       const stop = hooks.afterTool({
         stage: "ran",
@@ -725,6 +747,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       });
       if (outcome.ok && registry.get(call.name)?.effect === "write") state.wrote = true;
       await save("tool");
+      // a sign-in or a key is missing: the run waits on a person setting it up, not on the model
+      if (outcome.setup !== undefined) return fail("error", `${NEEDS_SETUP} ${outcome.setup}`);
       if (stop !== undefined) return fail("invalid_output", stop);
       if (usage.budgetCostUsd > spec.budget.usdPerRun) {
         return fail(
@@ -743,9 +767,46 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           return fail("max_steps", `no result after ${spec.budget.maxSteps} steps`);
         }
         const step = state.step + 1;
+        if (opts.compaction) {
+          const { summarizer, ...rest } = opts.compaction;
+          let summarizedBy: string | undefined;
+          const done = await compact(messages, state, tools, {
+            ...rest,
+            summarize: async (prompt) => {
+              try {
+                const turn = await steps.model({
+                  step,
+                  model: summarizer,
+                  messages: [
+                    { role: "system", content: SUMMARY_SYSTEM },
+                    { role: "user", content: prompt },
+                  ],
+                  tools: [],
+                  quiet: true,
+                });
+                addUsage(usage, turn.usage);
+                usage.steps -= 1; // spend, but not one of the run's steps
+                const text = turn.message.content.trim();
+                if (text) summarizedBy = summarizer;
+                return text || undefined;
+              } catch (err) {
+                // a summary that cannot be written is not worth the run
+                if (err instanceof RunInterrupted) throw err;
+                return undefined;
+              }
+            },
+          });
+          if (done) {
+            await log.emit({
+              type: "context.compacted",
+              data: { step, ...done, ...(summarizedBy ? { summarizer: summarizedBy } : {}) },
+            });
+            await save("model");
+          }
+        }
         const before = hooks.beforeModel(
           { step, maxSteps: spec.budget.maxSteps, hasOutput: output !== undefined },
-          messages,
+          compactedView(messages, state.compacted),
         );
         if (before.append.length > 0) {
           messages.push(...before.append);
@@ -991,4 +1052,35 @@ function addUsage(total: RunUsage, step: StepUsage): void {
   total.costUsd += step.costUsd;
   total.budgetCostUsd += step.budgetCostUsd;
   total.steps += 1;
+}
+
+/**
+ * `ask`'s description: what to ask and how, and the questions the agent declares (ADR 0033), so the
+ * same question has the same id every time and what a person answers is learned.
+ */
+function askDescription(spec: AgentSpec): string {
+  const declared = Object.entries(spec.questions ?? {});
+  if (declared.length === 0) return ASK_DESCRIPTION;
+  const list = declared.map(([id, q]) => `${id} (${q.about})`).join("; ");
+  return `${ASK_DESCRIPTION} When a question is one of these, use its id, so what the person answers is remembered: ${list}. Any other id is asked all the same and not remembered.`;
+}
+
+/** A declared question of this run's, with what it is about (ADR 0033); others as they are. */
+export function withAbout(
+  q: AskedQuestion,
+  spec: AgentSpec,
+  situation: RunCheckpoint["situation"],
+): AskedQuestion {
+  const declared = q.kind === "review" ? undefined : spec.questions?.[q.id];
+  if (!declared || q.about) return q;
+  return {
+    ...q,
+    about: {
+      agent: spec.id,
+      scope: declared.scope,
+      ...(declared.fact ? { fact: declared.fact } : {}),
+      ...(situation ? { section: situation.section } : {}),
+      ...(situation?.name ? { name: situation.name } : {}),
+    },
+  };
 }

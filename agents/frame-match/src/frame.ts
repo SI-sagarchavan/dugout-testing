@@ -60,6 +60,8 @@ const MAX_INK_GAP = 24;
 export interface Bundle {
   exportId: string;
   rootName: string;
+  /** The section's structural signature, as the section library signs it (ADR 0033). */
+  section?: string;
   ir: unknown;
   doc: IrDoc;
   byId: Map<string, IrNode>;
@@ -107,6 +109,7 @@ export async function loadBundle(
   return {
     exportId,
     rootName: record.rootName ?? doc.root.name,
+    ...(tools.sign ? { section: tools.sign(doc.root) } : {}),
     ir,
     doc,
     byId,
@@ -1054,6 +1057,30 @@ export function colorToken(body: RawTokens | undefined, ref: string | undefined)
 }
 
 /**
+ * What the compiler's `text()` (`@fanos/compile` props.ts) says of a text besides its style, so a
+ * text put back reads as the compiler would have drawn it: where its lines sit in the box (a
+ * centred role label down a card's edge stays centred whatever word the data puts there), its
+ * case, and whether its box is untrimmed. Kept in step with props.ts by its test.
+ */
+export function textLook(
+  text: { textAlignHorizontal?: string; textCase?: string; lineHeight?: number; lines?: number },
+  boxHeight: number,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (text.textAlignHorizontal === "CENTER") out.align = "center";
+  else if (text.textAlignHorizontal === "RIGHT") out.align = "end";
+  const cases: Record<string, string> = { UPPER: "upper", LOWER: "lower", TITLE: "title" };
+  if (text.textCase && cases[text.textCase]) out.textCase = cases[text.textCase];
+  if (
+    typeof text.lineHeight === "number" &&
+    (text.lines ?? 0) > 0 &&
+    Math.abs(boxHeight - (text.lines ?? 0) * text.lineHeight) <= 0.5
+  )
+    out.trim = "none";
+  return out;
+}
+
+/**
  * Puts back a text layer the compiler dropped because no style has its exact size, weight and line
  * height. The nearest style stands in, and `exact` says whether it was one. Losing the words is
  * worse than a line height two pixels off, and the difference is reported.
@@ -1076,6 +1103,8 @@ function addText(
         lines?: number;
         truncation?: string;
         autoResize?: string;
+        textAlignHorizontal?: string;
+        textCase?: string;
       }
     | undefined;
   if (!ir || !text?.characters || !parent || !parentSrc) return undefined;
@@ -1121,6 +1150,9 @@ function addText(
     props.orientation = turn === 90 ? "vertical-up" : "vertical-down";
   if (text.truncation === "ENDING" && text.lines) props.truncate = text.lines;
   if (text.autoResize === "WIDTH_AND_HEIGHT" && !props.truncate) props.wrap = false;
+  // the text's own height, before its turn: a quarter-turned layer's box is transposed
+  const quarter = ir.geometry.rotation === 90 || ir.geometry.rotation === -90;
+  Object.assign(props, textLook(text, quarter ? box.w : box.h));
   const siblings = bundle.byId.get(parentSrc)?.children ?? [];
   const before = siblings.slice(
     0,

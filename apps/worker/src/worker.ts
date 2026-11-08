@@ -28,6 +28,20 @@ export interface WorkerOptions {
   /** How long save points other than a run's latest are kept; 30 days unless set. */
   historyDays?: number;
   onError?: (runId: string, err: unknown) => void;
+  /**
+   * Called once a run completes, after its lease is let go: work that follows a run but is not
+   * part of it (the section library sharing a preview's sections). It cannot fail the run; a throw
+   * goes to `onError`. `idle` and `stop` wait for it.
+   */
+  onCompleted?: (run: CompletedRunInfo) => Promise<void>;
+}
+
+/** A run that just completed, as `onCompleted` gets it. */
+export interface CompletedRunInfo {
+  tenantId: string;
+  runId: string;
+  agentId: string;
+  output: unknown;
 }
 
 interface Claimed {
@@ -53,6 +67,8 @@ export function createWorker(opts: WorkerOptions) {
   const newLease = () => `${owner}/${randomUUID().slice(0, 8)}`;
   /** Invocations in progress, by lease. */
   const active = new Map<string, { tenantId: string; runId: string; ended: Promise<void> }>();
+  /** `onCompleted` calls still going. */
+  const following = new Set<Promise<void>>();
   let timer: ReturnType<typeof setInterval> | undefined;
   let pruning: ReturnType<typeof setInterval> | undefined;
   let polling: Promise<string[]> | undefined;
@@ -135,6 +151,7 @@ export function createWorker(opts: WorkerOptions) {
     lease: string,
     tenantId: string,
     runId: string,
+    agentId: string,
     agent: AgentEntry,
     input: unknown,
     model: string | null,
@@ -153,7 +170,11 @@ export function createWorker(opts: WorkerOptions) {
         input: input as never,
         responder: later,
         runId,
-        sinks: [opts.events.sink(), createPostgresEventSink(opts.pool, tenantId)],
+        sinks: [
+          opts.events.sink(),
+          opts.events.feedSink(tenantId),
+          createPostgresEventSink(opts.pool, tenantId),
+        ],
         store: createPostgresRunStore(opts.pool, { owner: lease, leaseMs }),
         // a child saves through the same store and sinks, to a row of its own under this lease
         children: createChildRuns(opts.pool, opts.events, tenantId, lease),
@@ -161,7 +182,14 @@ export function createWorker(opts: WorkerOptions) {
         ...(resume ? { resume } : {}),
       }))()
       .then(
-        () => undefined,
+        (result) => {
+          if (result?.status !== "completed" || !opts.onCompleted) return;
+          const after = opts
+            .onCompleted({ tenantId, runId, agentId, output: result.output })
+            .catch((err: unknown) => report(runId, err))
+            .finally(() => following.delete(after));
+          following.add(after);
+        },
         async (err: unknown) => {
           // the run was cancelled, or another worker holds it now; this invocation stops
           if (err instanceof RunInterrupted) {
@@ -276,13 +304,13 @@ export function createWorker(opts: WorkerOptions) {
       if (!input.success) {
         return giveUp(tenantId, runId, lease, `invalid input: ${z.prettifyError(input.error)}`);
       }
-      return launch(lease, tenantId, runId, agent, run.input, run.model);
+      return launch(lease, tenantId, runId, run.agent_id, agent, run.input, run.model);
     }
     const [startSeq, events] = await Promise.all([
       lastSeq(opts.pool, opts.events, tenantId, runId),
       readStoredEvents(opts.pool, tenantId, runId, 0),
     ]);
-    launch(lease, tenantId, runId, agent, run.input, run.model, {
+    launch(lease, tenantId, runId, run.agent_id, agent, run.input, run.model, {
       // a decision stays on the run until the first save after it, so a crash before then repeats it
       reason: run.decision ? "answered" : "recovery",
       startSeq,
@@ -363,9 +391,10 @@ export function createWorker(opts: WorkerOptions) {
       );
     },
 
-    /** Waits for every invocation in progress; for tests and shutdown. */
+    /** Waits for every invocation in progress, and what follows them; for tests and shutdown. */
     idle: async () => {
       await Promise.all([...active.values()].map((a) => a.ended));
+      await Promise.all([...following]);
     },
 
     /** Invocations in progress. */

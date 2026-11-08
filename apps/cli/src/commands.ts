@@ -143,6 +143,7 @@ const VALUE_FLAGS = new Set([
   "--from",
   "--model",
   "--effort",
+  "--thread",
   "--reject",
   "--changes",
 ]);
@@ -413,12 +414,12 @@ const TOOLS: Array<[string, string]> = [
     "A Handoff from the Figma plugin starts one section-builder run: frame matched, data bound, one preview",
   ],
   [
-    "memory <review|promote|answers>",
-    "Approve proposed facts, propose shared memory, or decide which learned answers stand",
+    "memory <review|promote|decisions|fact>",
+    "Approve proposed facts (those from people's answers too), propose shared memory, list or forget decisions on sections, or write a house fact",
   ],
   [
-    "library <index|search|share|previews>",
-    "The section library: add Handoffs' sections, search it (--shared: other clubs' too), sharing, previewed sections",
+    "library <index|search|share|previews|palette>",
+    "The section library: add Handoffs' sections, search it (--shared: other clubs' too), sharing, previewed sections, the palette other clubs' skeletons are drawn in",
   ],
   [
     "mcp <list|sync|login>",

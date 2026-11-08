@@ -255,13 +255,7 @@ const SKIP = "\u0000skip";
  */
 async function askOne(terminal: Terminal, q: AskedQuestion): Promise<Answer | undefined> {
   const proposed = q.proposed.length > 0 ? proposedValue(q) : undefined;
-  if (q.learned) {
-    terminal.line(
-      dim(
-        `   answered this way in ${q.learned.times} earlier run${q.learned.times === 1 ? "" : "s"} (last ${q.learned.lastAt.slice(0, 10)})`,
-      ),
-    );
-  }
+  if (q.learned) terminal.line(dim(`   ${learnedLine(q)}`));
   for (;;) {
     let value: Answer | undefined;
     if (terminal.choose && (q.kind === "choice" || q.kind === "confirm")) {
@@ -377,7 +371,23 @@ export function shower(terminal: Terminal) {
     liveDrawn = true;
     midLine = true;
   };
+  // whose events these are: the run's own, or one of its children's (one stream per invocation)
+  let source = "";
   return (e: RunEvent) => {
+    const from = e.child?.runId ?? "";
+    if (from !== source) {
+      source = from;
+      note(e.child ? `▸ ${e.child.agentId}` : "▸ back in the run");
+    }
+    if (e.child && (e.type === "run.completed" || e.type === "run.failed")) {
+      note(
+        e.type === "run.completed"
+          ? `· ${e.child.agentId} ${e.data.status}`
+          : `· ${e.child.agentId} failed: ${e.data.message}`,
+        e.type === "run.completed" && e.data.status === "completed" ? "dim" : "bad",
+      );
+      return;
+    }
     if (e.type === "token") {
       finishLive();
       terminal.write(e.data.text);
@@ -434,4 +444,17 @@ export function shower(terminal: Terminal) {
       }
     }
   };
+}
+
+/** Where a question's proposal came from (ADR 0033), in a line. */
+export function learnedLine(q: AskedQuestion): string {
+  const { times, lastAt, from } = q.learned ?? { times: 0, lastAt: "" };
+  const last = lastAt.slice(0, 10);
+  if (from === "fact") return `the house fact says so (${q.about?.fact ?? "a fact"}, ${last})`;
+  const on = q.about?.name
+    ? ` on "${q.about.name}"`
+    : from === "decision"
+      ? " on this section"
+      : "";
+  return `decided this way${on} ${times} time${times === 1 ? "" : "s"} (last ${last})`;
 }

@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { authFetch } from "./auth.ts";
+import { authFetch, setupFailure } from "./auth.ts";
 import { drift, type Lock, type RemoteResource, type RemoteTool } from "./lock.ts";
 import { pathOf, type Registry, readValue, type ServerEntry } from "./registry.ts";
 import { surfaceTokenStore } from "./surface-tokens.ts";
@@ -193,7 +193,9 @@ export function createMcpHub(opts: HubOptions): McpHub {
     },
 
     async call(server, tenantId, tool, args, callOpts = {}) {
-      const { client } = await connect(server, tenantId);
+      const { client } = await connect(server, tenantId).catch((err: unknown) => {
+        throw setupFailure(err) ?? err;
+      });
       try {
         const raw = await client.callTool({ name: tool, arguments: args }, undefined, {
           ...(callOpts.signal ? { signal: callOpts.signal } : {}),
@@ -205,12 +207,14 @@ export function createMcpHub(opts: HubOptions): McpHub {
       } catch (err) {
         // a JSON-RPC error is the server's answer; anything else may be a broken connection
         if (!(err instanceof McpError)) forget(server, tenantId);
-        throw err;
+        throw setupFailure(err) ?? err;
       }
     },
 
     async listTools(server, tenantId) {
-      const { client } = await connect(server, tenantId);
+      const { client } = await connect(server, tenantId).catch((err: unknown) => {
+        throw setupFailure(err) ?? err;
+      });
       const tools: RemoteTool[] = [];
       let cursor: string | undefined;
       do {

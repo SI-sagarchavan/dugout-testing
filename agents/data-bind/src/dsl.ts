@@ -131,3 +131,44 @@ export function indexIr(root: IrNode): Map<string, IrNode> {
   walk(root);
   return byId;
 }
+
+/** How deep a section is signed: the section library's `SECTION_SIGNATURE_DEPTH`, kept alike. */
+export const SECTION_SIGNATURE_DEPTH = 64;
+
+let signer: Promise<(doc: unknown) => string | undefined> | undefined;
+
+/**
+ * A section's structural signature from its IR document (ADR 0033), as frame-match and the section
+ * library sign it: what a decision a person makes on the section is about. Undefined when the IR
+ * cannot be read, or the pipeline is not built.
+ */
+export function loadSigner(): Promise<(doc: unknown) => string | undefined> {
+  signer ??= (async () => {
+    try {
+      const ir = (await import(
+        pathToFileURL(join(REPO_ROOT, "packages/surface-canvas/dist/ir/index.js")).href
+      )) as {
+        parseFrameIRDocument(json: unknown): { root: unknown };
+        computeStructuralSignature(node: unknown, depthLimit?: number): string;
+      };
+      return (doc: unknown) => {
+        // the document as frame-match parsed it; a root kept on its own is signed as it is
+        let root: unknown;
+        try {
+          root = ir.parseFrameIRDocument(doc).root;
+        } catch {
+          root = (doc as { root?: unknown } | undefined)?.root;
+        }
+        if (!root) return undefined;
+        try {
+          return ir.computeStructuralSignature(root, SECTION_SIGNATURE_DEPTH);
+        } catch {
+          return undefined;
+        }
+      };
+    } catch {
+      return () => undefined;
+    }
+  })();
+  return signer;
+}

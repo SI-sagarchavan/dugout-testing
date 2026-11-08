@@ -1,6 +1,6 @@
 # 0029. A run stops for a person, with typed questions, and waits for the answers
 
-Date: 2026-11-06 · Status: accepted · Replaces the approval events and decision shape of ADR 0005 (the pause itself, ADR 0006 and ADR 0009, stays) · Related: ADR 0025, ADR 0030
+Date: 2026-11-06 · Status: accepted (its "Learning from answers" superseded by ADR 0033) · Replaces the approval events and decision shape of ADR 0005 (the pause itself, ADR 0006 and ADR 0009, stays) · Related: ADR 0025, ADR 0030
 
 ## Context
 
@@ -39,11 +39,11 @@ And a write waiting for a yes was a different thing from a question: two event f
 - A `review` has no proposal and no skip: it always needs its own answer.
 - **A pause for questions is never ended by the person.** There is no "reject the questions". Only cancelling the run ends it, which is the host's own action on the run. (Rejecting a write is a `review` answer, and ends the run as it always did.)
 
-**Learning from answers.** What a person answers is the best evidence of what to propose next time, and it is already the kind of thing memory holds (ADR 0013), so it is built there, per tenant:
+**Learning from answers.** _Superseded by ADR 0033: answers are kept as facts and decisions in memory, `answer_memory` is gone, and a question is matched by its declared id and section, not its words._ What a person answers is the best evidence of what to propose next time, and it is already the kind of thing memory holds (ADR 0013), so it is built there, per tenant:
 
-- **Learn.** After a run, consolidation records each answer a person *chose* (`source: person`). An answer a host gave, or the agent's own proposal taken because the person let it decide, is not learned, or the agent's guesses would come back as if people had said them. The same answer to the same question, asked in other words (cosine 0.88 or more), adds to a count.
+- **Learn.** After a run, consolidation records each answer a person _chose_ (`source: person`). An answer a host gave, or the agent's own proposal taken because the person let it decide, is not learned, or the agent's guesses would come back as if people had said them. The same answer to the same question, asked in other words (cosine 0.88 or more), adds to a count.
 - **Prefill.** When a run asks, the harness looks for the person's latest answer to the same question that fits it (its options, its kind) and makes it the proposal, with `learned` saying so.
-- **Stand.** A person can make an answer *standing* (`pnpm agent memory answers --tenant <id>`, which lists them to decide, the way `memory review` lists proposed facts). Only then does the harness stop asking and answer by itself, as `source: memory`, visible in the run. It only does so while the standing answer is still the person's latest: a newer, different answer ends it, and the question is asked again.
+- **Stand.** A person can make an answer _standing_ (`pnpm agent memory answers --tenant <id>`, which lists them to decide, the way `memory review` lists proposed facts). Only then does the harness stop asking and answer by itself, as `source: memory`, visible in the run. It only does so while the standing answer is still the person's latest: a newer, different answer ends it, and the question is asked again.
 - Only consolidation writes (ADR 0013). A learned answer is never used without asking before a person has approved it.
 
 **Unattended.** A host that answers without asking (`--yes`, `pnpm agent watch` without `--ask`) answers each question with its `proposed` value and approves writes, as `<who> (auto)`.

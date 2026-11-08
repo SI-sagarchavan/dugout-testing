@@ -24,7 +24,7 @@ Prefer the hook that covers the most; between two that cover the same, the one w
 
 Go on to build only when a connector could give what the hooks do not. Say what the best hook gives and lacks, and which connector would give the rest.
 
-- **A hook gave part of the need:** ask the person once (the `ask` tool), then act on the answer. One question with the choices to build a fuller hook, or to use the hook as it is: say in `why` what it gives and lacks, and name the connector; give each choice a description of what it costs (a new hook built and published, or fields left as the design has them); propose the build. If the design shows a different kind of content from what the hooks give (videos where the hook gives articles), say so plainly in `why`.
+- **A hook gave part of the need:** ask the person once (the `ask` tool, the question's id `hook_choice`), then act on the answer. One question with the choices to build a fuller hook, or to use the hook as it is: say in `why` what it gives and lacks, and name the connector; give each choice a description of what it costs (a new hook built and published, or fields left as the design has them); propose the build. Say in `why` exactly which of the need's fields the hook gives and which it lacks, from its live output: a fuller hook keeps every field the hook already gives, and only adds. A person may have answered this before for the same section: the proposal then says so. If the design shows a different kind of content from what the hooks give (videos where the hook gives articles), say so plainly in `why`.
 - **No hook gave any of it:** build without asking.
 - **No connector could give it either:** answer with `hookId` null, `built` false, everything in `missing`, and why.
 

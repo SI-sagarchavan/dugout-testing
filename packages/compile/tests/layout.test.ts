@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import type { FrameIRDocument, FrameIRNode } from "@fanos/surface-canvas/ir";
 import { parseFrameIRDocument } from "@fanos/surface-canvas/ir";
 import { createRegistry, loadSurfaces, loadTheme } from "@fanos/tokens";
-import { validate, type FlatNode } from "@fanos/dsl";
+import { validate, type FlatNode, type FlatTree } from "@fanos/dsl";
 import { detectLayout } from "../src/layout/detect.js";
 import { lowerLayout } from "../src/layout/lower.js";
 
@@ -253,6 +253,29 @@ describe("tabs", () => {
     expect(intent?.choice).toEqual({ src: bar.id, kind: "tabs", config: { options: labels, active: 2 } });
   });
 
+  it("finds a two-way toggle whose selected half is shaped differently (WOMEN | MEN)", () => {
+    // Southern Brave's squad header: the selected half has a fill and a stray 1px ellipse the
+    // other lacks, so the two are not one shape; they touch, inside one bordered, clipped frame.
+    const women = n({ name: "Button", at: [0, 0, 90, 40], children: [n({ at: [18, 16, 54, 8], text: "WOMEN", fill: "text/sec/high" })] });
+    const men = n({
+      name: "Button",
+      at: [90, 0, 90, 40],
+      fill: "background/prim/card",
+      children: [n({ type: "VECTOR", at: [134, 19, 1, 1], fill: "Color/core_neu_00" }), n({ at: [120, 16, 30, 8], text: "MEN", fill: "text/prim/high" })],
+    });
+    const toggle = n({ name: "Frame 1984078920", at: [0, 0, 180, 40], mode: "horizontal", clip: true, children: [women, men] });
+    const [intent] = detectLayout(doc(toggle));
+    expect(intent).toMatchObject({ kind: "tabs", confidence: "likely" });
+    expect(intent?.choice).toEqual({ src: toggle.id, kind: "tabs", config: { options: ["WOMEN", "MEN"], active: 1 } });
+  });
+
+  it("does not call two buttons apart a toggle", () => {
+    const button = (x: number, label: string, fill?: string) =>
+      n({ at: [x, 0, 120, 40], sig: "cta", fill, children: [n({ at: [x + 20, 12, 80, 16], text: label })] });
+    const pair = n({ at: [0, 0, 264, 40], mode: "horizontal", children: [button(0, "LOG IN", "primary"), button(144, "SIGN UP")] });
+    expect(detectLayout(doc(pair))).toEqual([]);
+  });
+
   it("is only likely when nothing is named as tabs", () => {
     const bar = n({ name: "Frame 1", at: [0, 0, 926, 40], mode: "horizontal", children: ["A", "B", "C"].map((l, i) => tab(i, l, i === 0)) });
     for (const item of bar.children) item.name = "Frame";
@@ -275,6 +298,33 @@ describe("lists and grids", () => {
     const items = [0, 1, 2, 3, 4, 5].map((i) => card((i % 3) * 300, Math.floor(i / 3) * 420, 281, 400));
     const [intent] = detectLayout(doc(n({ name: "grid", at: [0, 0, 900, 820], mode: "horizontal", children: items })));
     expect(intent?.choice).toEqual({ src: intent?.src, kind: "grid", config: { columns: 3, rows: 2 } });
+  });
+});
+
+describe("scores", () => {
+  it("scores a cut-off row as sure, and a row that only fits as a doubt a model can settle", () => {
+    const [fits] = detectLayout(doc(row(cards(4), 1172)));
+    expect(fits?.score).toBeGreaterThan(0.3);
+    expect(fits?.score).toBeLessThan(0.8);
+    expect(fits?.confidence).toBe("unsure");
+    expect(fits?.alternative).toBeDefined();
+    expect(fits?.alternativeChoice).toBeDefined();
+    expect(fits?.context.join(" ")).toContain("4 items of");
+  });
+
+  it("is sure of a row named as a slider that is made of fixed-width cards", () => {
+    const slider = row(cards(5), 1172);
+    slider.name = "Squad slider";
+    const [intent] = detectLayout(doc(slider));
+    expect(intent?.kind).toBe("carousel");
+    expect(intent?.score).toBeGreaterThanOrEqual(0.6);
+  });
+
+  it("gives every intent a score between 0 and 1", () => {
+    for (const intent of detectLayout(doc(row(cards(4), 1172)))) {
+      expect(intent.score).toBeGreaterThan(0);
+      expect(intent.score).toBeLessThanOrEqual(1);
+    }
   });
 });
 
@@ -462,16 +512,61 @@ describe("lowering", () => {
     });
   });
 
-  it("leaves lists, rows, grids and tabs as compiled, and says so", () => {
+  it("leaves lists, rows and grids as compiled, and says so", () => {
     const tree = flat("x", [], {});
     const { tree: out, notes } = lowerLayout(tree, doc(n({ at: [0, 0, 10, 10] })), [
       { src: "x", kind: "row" },
-      { src: "x", kind: "tabs", config: { options: ["A", "B"], active: 0 } },
+      { src: "x", kind: "grid", config: { columns: 2, rows: 2 } },
     ]);
     expect(out).toEqual(tree);
     expect(notes.map((x) => x.message)).toEqual([
       "kept as compiled: a row is what the frame draws",
-      "tabs recorded; not lowered yet, so it stays as compiled",
+      "grid recorded; not lowered yet, so it stays as compiled",
     ]);
+  });
+});
+
+describe("lowering tabs", () => {
+  /** The squad header's toggle as the compiler draws it: MEN has the surface and its own dot. */
+  const toggleTree = (): FlatTree => ({
+    schemaVersion: "1",
+    nodes: [
+      { id: "bar", parent: null, idx: 0, type: "Stack", src: "35:10515", props: { direction: "row", surface: "surface.border" } },
+      { id: "women", parent: "bar", idx: 0, type: "Stack", src: "35:10516", props: { direction: "row" } },
+      { id: "women_label", parent: "women", idx: 0, type: "Text", src: "35:10517", props: { content: "WOMEN", style: "type.body_sm_bold", tone: "color.text_sec_high" } },
+      { id: "men", parent: "bar", idx: 1, type: "Stack", src: "35:10518", props: { direction: "row", surface: "surface.button" } },
+      { id: "dot", parent: "men", idx: 0, type: "Box", src: "35:10519", props: { size: { w: { raw: 1, _unbound: true } } } },
+      { id: "men_label", parent: "men", idx: 1, type: "Text", src: "35:10520", props: { content: "MEN", style: "type.body_sm_bold", tone: "color.text_prim_high" } },
+    ] as FlatNode[],
+  });
+  const choice: LayoutChoice = { src: "35:10515", kind: "tabs", config: { options: ["WOMEN", "MEN"], active: 1 } };
+  const byId = (tree: FlatTree, id: string) => tree.nodes.find((x) => x.id === id)!;
+
+  it("makes each tab an option of a page choice, with the selected look as its active state", () => {
+    const { tree, lowered, notes } = lowerLayout(toggleTree(), doc(n({ at: [0, 0, 180, 40] })), [choice]);
+    expect(lowered).toEqual(["35:10515"]);
+    expect(notes[0]?.message).toContain("2 options of _page.women_men (women, men)");
+    const states = { active: { surface: "surface.button", tone: "color.text_prim_high" } };
+    expect(byId(tree, "women").props).toEqual({ direction: "row", states, select: { key: "women_men", value: "women" } });
+    expect(byId(tree, "men").props).toEqual({ direction: "row", states, select: { key: "women_men", value: "men", initial: true } });
+    // the labels take the plain colour; the state gives the chosen one its own
+    expect(byId(tree, "men_label").props.tone).toBe("color.text_sec_high");
+  });
+
+  it("copies what only the selected tab draws to every tab, shown while it is chosen", () => {
+    const { tree } = lowerLayout(toggleTree(), doc(n({ at: [0, 0, 180, 40] })), [choice]);
+    expect(byId(tree, "dot").props.when).toEqual({ path: "_page.women_men", eq: "men" });
+    const copy = byId(tree, "dot__women");
+    expect(copy).toMatchObject({ parent: "women", idx: 0, src: "synthetic:35:10519:1" });
+    expect(copy.props.when).toEqual({ path: "_page.women_men", eq: "women" });
+    expect(byId(tree, "women_label").idx).toBe(1);
+  });
+
+  it("is a valid tree, with the key a person named", () => {
+    const named: LayoutChoice = { ...choice, config: { ...choice.config, key: "squad" } } as LayoutChoice;
+    const { tree } = lowerLayout(toggleTree(), doc(n({ at: [0, 0, 180, 40] })), [named]);
+    expect(byId(tree, "men").props.select).toEqual({ key: "squad", value: "men", initial: true });
+    const errors = validate(tree, { registry: createRegistry(loadTheme(THEME), { surfaces: loadSurfaces(SURFACES) }) }).errors;
+    expect(errors.filter((e) => e.code.startsWith("S")).map((e) => `${e.nodeId} ${e.path} ${e.message}`)).toEqual([]);
   });
 });

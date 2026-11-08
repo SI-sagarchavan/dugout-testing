@@ -48,7 +48,7 @@ describe("annotations", () => {
     expect(applyAnnotations(doc(), [note, gone]).annotations).toHaveLength(1);
   });
 
-  it("is on IR 1.11.0, and an older document parses with no notes", () => {
+  it("reads IR 1.11.0, and an older document parses with no notes", () => {
     expect(IR_VERSIONS).toContain("1.11.0");
     const { annotations: _omit, ...older } = doc();
     const parsed = parseFrameIRDocument({ ...older, irVersion: "1.10.0" });

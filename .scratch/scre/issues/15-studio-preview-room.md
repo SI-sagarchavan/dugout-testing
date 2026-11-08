@@ -32,9 +32,9 @@ sidebar, the queue, the preview and the inspector all shared the width. wnm-fanx
   `SidebarProvider` (opt out with `sidebar: false`).
 
 | 1440×900, "IN THE FRAME" (1280px) | before | after |
-|---|---|---|
-| threads open | 29% | 65% |
-| Focus | n/a | 98% |
+| --------------------------------- | ------ | ----- |
+| threads open                      | 29%    | 65%   |
+| Focus                             | n/a    | 98%   |
 
 ## Checked
 

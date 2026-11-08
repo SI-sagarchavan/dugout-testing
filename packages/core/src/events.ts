@@ -5,6 +5,11 @@ import { createRedactor, type Redactor } from "./redact.ts";
 
 export interface RunLog {
   emit(event: RunEventInput): Promise<void>;
+  /**
+   * Writes a child run's event as this run's next one: this run's `runId`, `seq` and `at`, the
+   * child's `type`, `data` and `child` kept. Its payload was redacted when the child wrote it.
+   */
+  relay(event: RunEvent): Promise<void>;
   /** `seq` of the last event emitted. */
   lastSeq(): number;
 }
@@ -23,19 +28,25 @@ export function createRunLog(
   const now = opts.now ?? (() => new Date());
   let seq = opts.startSeq ?? 0;
   let chain: Promise<void> = Promise.resolve();
+  const write = (event: RunEvent) => {
+    chain = chain.then(async () => {
+      for (const sink of sinks) await sink.write(event);
+    });
+    return chain;
+  };
   return {
     emit(input) {
-      const event = {
+      return write({
         ...input,
         data: redactor.value(input.data),
         runId,
         seq: ++seq,
         at: now().toISOString(),
-      } as RunEvent;
-      chain = chain.then(async () => {
-        for (const sink of sinks) await sink.write(event);
-      });
-      return chain;
+      } as RunEvent);
+    },
+    relay(event) {
+      if (!event.child) throw new Error("only a child run's event is relayed");
+      return write({ ...event, runId, seq: ++seq });
     },
     lastSeq: () => seq,
   };

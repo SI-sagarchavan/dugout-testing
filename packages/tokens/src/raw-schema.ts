@@ -118,6 +118,19 @@ export const surfaceBorderSchema = z.object({
   inset: z.number().optional(),
   radius: z.string().optional(),
   style: z.enum(["solid", "dashed", "dotted"]).optional(),
+  /**
+   * The sides it is drawn on, each with its own width, when not all four: a row's rule underneath
+   * (`{ bottom: 1 }`), a stat's on its end. Logical sides, so a right-to-left page turns it. A side
+   * left out is not drawn; `width` is then what a reader that knows no sides draws.
+   */
+  sides: z
+    .object({
+      top: z.number().optional(),
+      end: z.number().optional(),
+      bottom: z.number().optional(),
+      start: z.number().optional(),
+    })
+    .optional(),
 });
 
 export const surfaceSchema = z.object({

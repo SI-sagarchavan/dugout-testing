@@ -390,6 +390,7 @@ function jsonOfType(type: FieldType, ctx: JsonContext): JsonSchema {
           gte: { type: "number" },
           lt: { type: "number" },
           lte: { type: "number" },
+          eqPath: { type: "string" },
         };
         return {
           type: "object",

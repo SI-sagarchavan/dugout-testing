@@ -129,6 +129,8 @@ export { proposeCollapse } from "./collapse.js";
 export {
   CONFIDENCE,
   LAYOUT_KINDS,
+  LAYOUT_THRESHOLDS,
+  confidenceOf,
   carouselConfigSchema,
   gridConfigSchema,
   layoutChoiceSchema,
@@ -147,6 +149,16 @@ export type {
 } from "./platform-carousel.js";
 export type { CollapseProposal, VaryingContent } from "./collapse.js";
 export { applyBindingPlan, hasBindings } from "./bind.js";
+export {
+  type AtPlaces,
+  type ItemPlace,
+  type Place,
+  type PlaceLook,
+  PLACES,
+  placesOf,
+  positionalLooks,
+  propsAtPlace,
+} from "./positional.js";
 export type { BindingPlan, BindResult, Drift, DriftReason, PlanBinding, PlanCollapse, PlanSet } from "./bind.js";
 
 // Data binding — the ref grammar, pipes, `when`, CAST payloads, the B rules
@@ -183,6 +195,27 @@ export {
   parseInstant,
 } from "./clock.js";
 export type { Clock, ClockScope, ClockUnit, ClockValues } from "./clock.js";
+// Page state: a choice one section makes and any section reads (`select`, `_page`)
+export { choiceValue } from "./binding.js";
+export {
+  isPagePath,
+  PAGE_KEY_RE,
+  PAGE_SCOPE,
+  pageChoices,
+  pageDefaults,
+  pageFields,
+  FIELD_TYPES,
+  pageKeyOf,
+  pageKeyOfPath,
+  pageReads,
+  pageScope,
+  pageValueOf,
+  readsPage,
+  selectOf,
+  selectSchema,
+  splitPageWhen,
+} from "./page.js";
+export type { PageChoice, PageField, PageFieldType, PageOption, PageState, Select } from "./page.js";
 export { fromCastFlow } from "./cast.js";
 export type { CastData, CastPagination } from "./cast.js";
 export { checkBindings, checkPipes, inferShape } from "./contract.js";

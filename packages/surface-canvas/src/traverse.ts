@@ -542,10 +542,27 @@ async function extractStroke(
 
   const rawWeight = (node as SceneNode & { strokeWeight?: number | symbol })
     .strokeWeight;
+  // Mixed weights are a stroke on some sides only: a row's bottom rule, a stat's right one.
+  const each = node as SceneNode & {
+    strokeTopWeight?: number;
+    strokeRightWeight?: number;
+    strokeBottomWeight?: number;
+    strokeLeftWeight?: number;
+  };
+  const sides =
+    typeof rawWeight === "number"
+      ? undefined
+      : {
+          top: round(each.strokeTopWeight ?? 0, 3),
+          right: round(each.strokeRightWeight ?? 0, 3),
+          bottom: round(each.strokeBottomWeight ?? 0, 3),
+          left: round(each.strokeLeftWeight ?? 0, 3),
+        };
   const weight =
     typeof rawWeight === "number"
       ? rawWeight
-      : ((node as SceneNode & { strokeTopWeight?: number }).strokeTopWeight ?? 0);
+      : Math.max(sides?.top ?? 0, sides?.right ?? 0, sides?.bottom ?? 0, sides?.left ?? 0);
+  if (sides && weight === 0) return null;
 
   const tokenRef =
     (await paintTokenRef(paint, caches)) ??
@@ -554,6 +571,8 @@ async function extractStroke(
   const styleRef = styleId ? await styleName(styleId, caches) : undefined;
 
   const stroke: Stroke = { weight: round(weight, 3), unbound: !tokenRef && !styleId };
+  const uneven = sides && new Set([sides.top, sides.right, sides.bottom, sides.left]).size > 1;
+  if (sides && uneven) stroke.sides = sides;
   if (tokenRef) stroke.tokenRef = tokenRef;
   if (styleId) stroke.styleId = styleId;
   if (styleRef) stroke.styleRef = styleRef;

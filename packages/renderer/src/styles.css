@@ -372,6 +372,58 @@
   text-underline-offset: 0.2em;
 }
 
+/**
+ * Input and Checkbox: real form controls, with the browser's own look taken off so the node's
+ * surface, size and type token are all that is seen. The resets are `:where()`, weight zero, so a
+ * surface class (its background, border and radius) always wins over them. Nothing here is a look:
+ * the tick's colour is `mark` and its size `markSize`, the box's ticked look is `states.active`,
+ * its keyboard focus `states.focus`.
+ */
+:where(.fos-input) {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  min-width: 0;
+  margin: 0;
+  box-sizing: border-box;
+}
+.fos-input::placeholder {
+  color: var(--fos-placeholder, currentColor);
+  opacity: 1;
+}
+
+.fos-checkbox {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  box-sizing: border-box;
+}
+/* Laid over the drawn box and not seen: the click, Space and a screen reader land on it. */
+.fos-checkbox-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.fos-checkbox-input:disabled {
+  cursor: not-allowed;
+}
+.fos-checkbox-mark {
+  display: flex;
+  visibility: hidden;
+  pointer-events: none;
+}
+.fos-checkbox-input:checked + .fos-checkbox-mark {
+  visibility: visible;
+}
+
 /* `:hover` only where the pointer can actually hover, so a tap does not stick. */
 @media (hover: hover) {
   .fos-button:hover:not(:disabled):not([aria-disabled="true"]) {
@@ -587,6 +639,12 @@
   cursor: default;
 }
 
+/* An option of a page choice (a tab, a toggle half) is pressed; its look in each state is the tree's. */
+[data-fos-select] {
+  cursor: pointer;
+  user-select: none;
+}
+
 /*
  * A layer laid over others catches the pointer only where it draws something. Its empty, unpainted
  * space lets the pointer through to what is underneath. The fixtures strip's arrows sit in a row as
@@ -606,7 +664,7 @@
   pointer-events: none;
 }
 .fos-overlay > [data-fos-type]:is([data-fos-type="Stack"], [data-fos-type="Box"], [data-fos-type="Overlay"]):not([class*="fos-surface-"])
-  :is([data-fos-type="Text"], [data-fos-type="Image"], [data-fos-type="Icon"], [data-fos-type="Button"], [data-fos-type="Carousel"], [class*="fos-surface-"], [data-fos-control], a, button, input):not([data-fos-decor]) {
+  :is([data-fos-type="Text"], [data-fos-type="Image"], [data-fos-type="Icon"], [data-fos-type="Button"], [data-fos-type="Carousel"], [data-fos-type="Input"], [data-fos-type="Checkbox"], [class*="fos-surface-"], [data-fos-control], a, button, input):not([data-fos-decor]) {
   pointer-events: auto;
 }
 [data-fos-control="progress"] {

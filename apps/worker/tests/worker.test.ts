@@ -20,6 +20,7 @@ import { Valkey } from "iovalkey";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import {
   type AgentEntry,
+  type CompletedRunInfo,
   createPostgresRunStore,
   createRunQueue,
   createValkeyEventLog,
@@ -63,7 +64,11 @@ const entry = (client: () => ModelClient): AgentEntry => ({
 /** One worker process. Two of them with the same database are a restart, or a second worker. */
 const workerWith = (
   client: () => ModelClient,
-  opts: { leaseMs?: number; maxAttempts?: number } = {},
+  opts: {
+    leaseMs?: number;
+    maxAttempts?: number;
+    onCompleted?: (run: CompletedRunInfo) => Promise<void>;
+  } = {},
 ) =>
   createWorker({
     pool,
@@ -140,7 +145,11 @@ describe("workers", () => {
   });
 
   it("start a queued run, and another worker finishes it once its approval is decided", async () => {
-    const first = workerWith(writerModel);
+    const completed: CompletedRunInfo[] = [];
+    const onCompleted = async (run: CompletedRunInfo) => {
+      completed.push(run);
+    };
+    const first = workerWith(writerModel, { onCompleted });
     const runId = await queue.start(TENANT, "drafter", INPUT);
     expect(await runRow(runId)).toMatchObject({ status: "queued", lease_owner: null });
     expect(await first.poll()).toEqual([runId]);
@@ -148,6 +157,8 @@ describe("workers", () => {
     await first.idle();
     // nothing in memory holds the run now: it is saved and waiting
     expect(await runRow(runId)).toMatchObject({ status: "waiting", lease_until: null });
+    // waiting is not completed: nothing follows it yet
+    expect(completed).toEqual([]);
 
     const callId = waitingCall(await events.read(runId, 0));
     expect(await queue.decide("demo-football", runId, callId, approved)).toBeUndefined();
@@ -157,9 +168,16 @@ describe("workers", () => {
     expect(await queue.decide(TENANT, runId, callId, approved)).toBeUndefined();
     expect(await runRow(runId)).toMatchObject({ status: "queued", decision: approved });
 
-    const second = workerWith(writerModel);
+    const second = workerWith(writerModel, {
+      onCompleted: async (run) => {
+        await onCompleted(run);
+        throw new Error("what follows a run cannot fail it");
+      },
+    });
     expect(await second.poll()).toEqual([runId]);
     await second.idle();
+    expect(completed).toMatchObject([{ tenantId: TENANT, runId, agentId: "drafter" }]);
+    expect(errors.pop()).toMatchObject({ message: "what follows a run cannot fail it" });
     const all = await events.read(runId, 0);
     contiguous(all);
     expect(all.at(-1)).toMatchObject({ type: "run.completed", data: { status: "completed" } });

@@ -1,8 +1,12 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AwaitingAnswers, defineTool, type ToolContext } from "@dugout/contracts";
-import { describeImage, REPO_ROOT } from "@dugout/core";
+import { describeImage, describeText, REPO_ROOT } from "@dugout/core";
+import type { Pool } from "@dugout/db";
+import { recordPageChoices } from "@dugout/db/page-choices";
+import { BEFORE_RULE, decidedBefore, type MemoryReader } from "@dugout/memory";
 import { z } from "zod";
+import { applyContentVerdict, Content, contentOf, contentPrompt, outlineOf } from "./content.ts";
 import { type ControlPlane, createControlPlane, webUrl } from "./control-plane.ts";
 import {
   type Built,
@@ -24,18 +28,43 @@ import {
 import { createHandoffSource, type FrameSource, handoffConfig } from "./handoff.ts";
 import {
   applyLayoutAnswers,
+  applyVerdict,
   describeChoice,
   describePlatform,
+  judgePrompt,
   LayoutChoice,
   type LayoutIntent,
+  type LayoutJudge,
   type LayoutReport,
   layoutQuestions,
+  needsJudge,
   type PlatformRead,
+  readVerdict,
   withPlatform,
 } from "./layout.ts";
 import { type Looked, LookInputError, look, type See } from "./look.ts";
 import { NOTES_RULE } from "./notes.ts";
-import { loadToolchain, type Toolchain } from "./toolchain.ts";
+import { loadToolchain, type PageChoice, type Toolchain } from "./toolchain.ts";
+
+/**
+ * What a person calls a section: its frame's name, or, when Figma named it (`Frame 1984078815`),
+ * the first thing it says ("THE BRAVE SQUAD").
+ */
+export function sectionName(
+  frame: string,
+  tree: { nodes: Array<{ type: string; props: Record<string, unknown> }> },
+): string {
+  if (!/^(frame|group|rectangle)\s*\d*$/i.test(frame.trim())) return frame;
+  const said = tree.nodes.find((n) => n.type === "Text" && typeof n.props.content === "string");
+  return typeof said?.props.content === "string" ? said.props.content : frame;
+}
+
+/** A page choice as published: `_page.<key>`, its options, where it starts. */
+export const PageChoiceSchema = z.object({
+  key: z.string(),
+  options: z.array(z.object({ value: z.string(), label: z.string().optional() })),
+  initial: z.string(),
+});
 
 export const MATCH_DIR = join(REPO_ROOT, ".runs", "frame-match");
 
@@ -69,6 +98,8 @@ export interface Engine {
   unpainted?(bundle: Bundle, built: Built): Unpainted[];
   /** What each container of the frame is (`@fanos/compile` `detectLayout`). */
   layouts?(bundle: Bundle): Promise<LayoutIntent[]>;
+  /** The page choices a built frame writes: its tabs (`@fanos/dsl` `pageChoices`). */
+  choices?(built: Built): Promise<PageChoice[]>;
   /** A platform carousel config as Carousel props, its colours checked against the theme. */
   platform?(json: unknown, colors: ReadonlySet<string>): Promise<PlatformRead>;
 }
@@ -93,6 +124,7 @@ export function pipelineEngine(tools?: Toolchain): Engine {
       }),
     unpainted: (bundle, built) => unpaintedLayers(bundle, built.tree, built.themeRaw),
     layouts: async (bundle) => (await load()).detectLayout(bundle.doc),
+    choices: async (built) => (await load()).pageChoices(built.tree),
     platform: async (json, colors) => (await load()).fromPlatformCarousel(json, { colors }),
   };
 }
@@ -114,6 +146,10 @@ const Published = z.object({
   placeholderIcons: z.number(),
   before: z.number().optional(),
   match: z.number().optional(),
+  /** Whether anything on the section is data: none means there is nothing to bind. */
+  content: Content.optional(),
+  /** What the section's tabs write to its page, for any section to read (`_page.<key>`). */
+  choices: z.array(PageChoiceSchema).default([]),
 });
 
 /** A run's work so far. On disk, so a run resumed after an approval keeps its overrides. */
@@ -148,6 +184,8 @@ const State = z.object({
   publishRefusals: z.number().default(0),
   /** What each container is: detected by frame.load, decided through frame.layout. */
   layouts: z.array(z.custom<LayoutReport>()).default([]),
+  /** Whether anything on the section is data, read by frame.load. */
+  content: Content.optional(),
   published: Published.optional(),
 });
 type State = z.infer<typeof State>;
@@ -216,6 +254,9 @@ function standing(state: State) {
       ...layoutsOf(state),
     };
   }
+  // what frame.publish will refuse over, said with every result: a model told only at the refusal
+  // spends a turn on a publish that cannot go through
+  const examine = unexamined(state);
   return {
     measured: true,
     coverage: current.coverage,
@@ -231,6 +272,7 @@ function standing(state: State) {
     ...(state.unpainted.length > 0 ? { unpainted: state.unpainted } : {}),
     surfaces: current.surfaces,
     findings: current.findings,
+    ...(examine.length > 0 ? { examineBeforePublish: examine } : {}),
     ...layoutsOf(state),
   };
 }
@@ -244,6 +286,7 @@ function layoutsOf(state: State) {
       name: l.name,
       kind: l.choice.kind,
       confidence: l.confidence,
+      ...(l.score !== undefined ? { score: l.score } : {}),
       applied: l.applied,
       decided: l.decided,
       choice: l.choice,
@@ -398,11 +441,24 @@ export function createMatchTools(
     /** The vision call, replaceable in a test. */
     see?: See;
     /**
+     * Judges a container the detector is not sure of (see `needsJudge`), from its context. `false`
+     * (or `FRAME_MATCH_JUDGE=off`) leaves it out, so a person is asked as before. A text model
+     * (`sonnet`) by default.
+     */
+    judge?: LayoutJudge | false;
+    /**
      * When frame.look may be called. `first` is any time. `last` refuses it until the findings the
      * publish gate asks to be examined have been, so it is the final check and not the first
      * lead: a model handed a list of leads early can follow them in place of the measured findings.
      */
     lookOrder?: "first" | "last";
+    /**
+     * The harness's pool: where a published section's page choices are recorded, for sections
+     * built later to read (ADR 0032). Without it nothing is recorded.
+     */
+    pool?: Pool;
+    /** What people decided about a section before (ADR 0033), read for frame.load's `before`. */
+    decisions?: Pick<MemoryReader, "decisionsOn">;
     /** Cast MCP client (ADR 0022). Its read tools are added; writes are never given to this agent. */
   } = {},
 ) {
@@ -484,18 +540,33 @@ export function createMatchTools(
     overrides: Overrides,
     current: Measurement,
     measured: boolean,
+    signal?: AbortSignal,
   ): Promise<{
     layouts: LayoutReport[];
     overrides: Overrides;
     current: Measurement;
     built?: Built;
   }> {
-    const intents = (await engine.layouts?.(bundle)) ?? [];
+    const detected = (await engine.layouts?.(bundle)) ?? [];
+    // Below the apply score, with another kind that also fits, a model reads the container's
+    // context and judges it. Its answer is used only when it is sure enough; a model that is
+    // down, or unsure, leaves the detector's answer and a person is asked as before.
+    const intents = await Promise.all(
+      detected.map(async (i) => {
+        if (!judge || !needsJudge(i)) return i;
+        try {
+          return applyVerdict(i, readVerdict(await judge(judgePrompt(i), signal)));
+        } catch {
+          return i;
+        }
+      }),
+    );
     const layouts: LayoutReport[] = intents.map((i) => ({
       src: i.src,
       name: i.name,
       kind: i.kind,
       confidence: i.confidence,
+      ...(i.score !== undefined ? { score: i.score } : {}),
       evidence: i.evidence,
       ask: i.ask,
       choice: i.choice,
@@ -505,8 +576,14 @@ export function createMatchTools(
       ...(i.alternative ? { alternative: i.alternative } : {}),
       ...(Object.keys(i.chrome ?? {}).length > 0 ? { chrome: i.chrome } : {}),
     }));
+    // Applied with no question: a carousel the frame shows, and tabs (one label drawn selected,
+    // nothing to ask). Each is kept only if the first paint is still the frame.
     const certain = intents
-      .filter((i) => i.confidence === "certain" && i.choice.kind === "carousel")
+      .filter(
+        (i) =>
+          (i.confidence === "certain" && i.choice.kind === "carousel") ||
+          (i.choice.kind === "tabs" && i.confidence !== "unsure" && i.ask.length === 0),
+      )
       .map((i) => i.choice);
     if (certain.length === 0) return { layouts, overrides, current };
     const next = { ...overrides, layouts: [...overrides.layouts, ...certain] };
@@ -524,7 +601,7 @@ export function createMatchTools(
         after.conformErrors > current.conformErrors)
     ) {
       return leftOut(
-        `not applied: as a carousel the first paint moved (match ${current.match} → ${after.match}, conform errors ${current.conformErrors} → ${after.conformErrors}), so it stays as compiled`,
+        `not applied: as laid out the first paint moved (match ${current.match} → ${after.match}, conform errors ${current.conformErrors} → ${after.conformErrors}), so it stays as compiled`,
       );
     }
     for (const l of layouts) {
@@ -534,6 +611,30 @@ export function createMatchTools(
       if (!note.applied) l.note = note.message;
     }
     return { layouts, overrides: next, current: after, built };
+  }
+
+  /**
+   * Whether anything on the section is data. Code reads the signs; when they do not settle it, the
+   * model that judges layouts reads the outline, and only a sure answer is taken.
+   */
+  async function readContent(
+    bundle: Bundle,
+    tree: Built["tree"],
+    layouts: LayoutReport[],
+    signal?: AbortSignal,
+  ): Promise<Content> {
+    const nodes = (tree as { nodes: Parameters<typeof contentOf>[0]["nodes"] }).nodes;
+    const boxOf = (src: string) => bundle.byId.get(src)?.geometry.bbox;
+    const found = contentOf({ nodes }, layouts, boxOf);
+    if (found.data !== "unsure" || !judge) return found;
+    try {
+      return applyContentVerdict(
+        found,
+        await judge(contentPrompt(outlineOf({ nodes }), found), signal),
+      );
+    } catch {
+      return found;
+    }
   }
 
   const load = defineTool({
@@ -554,7 +655,13 @@ export function createMatchTools(
           bundle.notes.length > 0
             ? { designerNotes: bundle.notes, designerNotesRule: NOTES_RULE }
             : {};
-        if (saved) return { ...standing(saved), ...designer };
+        // the section the run works on, so what a person answers is about it (ADR 0033)
+        if (bundle.section) ctx.situate?.({ section: bundle.section, name: bundle.rootName });
+        const decided = await decidedBefore(opts.decisions, ctx.tenantId, bundle.section).catch(
+          () => [],
+        );
+        const earlier = decided.length > 0 ? { before: decided, beforeRule: BEFORE_RULE } : {};
+        if (saved) return { ...standing(saved), ...designer, ...earlier };
 
         const base = await engine.build(bundle, noOverrides());
         const before = await engine.measure(bundle, base);
@@ -566,7 +673,19 @@ export function createMatchTools(
               ? `Only ${before.coverage}% of the frame has a screenshot that lines up with it, so a match over that says nothing about the rest.${before.plates.some((p) => p.problem) ? ` ${before.plates.map((p) => `${p.name}: ${p.problem ?? "compared"}`).join("; ")}` : ""}`
               : undefined;
         const first = await engine.firstPass(bundle, noOverrides(), before);
-        const laid = await detectLayouts(bundle, first.overrides, first.measurement, !unmeasured);
+        const laid = await detectLayouts(
+          bundle,
+          first.overrides,
+          first.measurement,
+          !unmeasured,
+          ctx.signal,
+        );
+        const content = await readContent(
+          bundle,
+          (laid.built ?? first.built).tree,
+          laid.layouts,
+          ctx.signal,
+        );
         const state: State = {
           exportId: bundle.exportId,
           themeArtifactId: bundle.themeArtifactId,
@@ -589,6 +708,7 @@ export function createMatchTools(
           examinedSurfaces: [],
           publishRefusals: 0,
           layouts: laid.layouts,
+          content,
         };
         writeState(dir, ctx.runId, state);
         return {
@@ -615,7 +735,17 @@ export function createMatchTools(
                   "The design paints these and the compile does not. No score sees a layer with no screenshot of its own. Give one a paint with frame.override: a surface under a new name, then props { surface } on the layer.",
               }
             : {}),
+          content: {
+            ...content,
+            note:
+              content.data === "none"
+                ? "Nothing on this section is data: it is published as it is, and nothing is bound to a source."
+                : content.data === "some"
+                  ? "This section shows data: the binding stage finds its source after you publish."
+                  : "The signs do not say whether this section shows data: the binding stage looks again.",
+          },
           ...designer,
+          ...earlier,
           ...standing(state),
         };
       }),
@@ -977,7 +1107,24 @@ export function createMatchTools(
             ? await plane.upload("token_set", built.themeRaw, meta)
             : state.themeArtifactId;
         const surfaceArtifactId = await plane.upload("surface_set", built.surfaces, meta);
-        const treeArtifactId = await plane.upload("dsl_tree", built.tree, meta);
+        const choices = (await engine.choices?.(built)) ?? [];
+        const content = state.content;
+        const treeArtifactId = await plane.upload("dsl_tree", built.tree, {
+          ...meta,
+          ...(content ? { content } : {}),
+          ...(choices.length ? { choices } : {}),
+        });
+        // what this section's tabs write, for a section built later to read
+        if (opts.pool) {
+          await recordPageChoices(opts.pool, ctx.tenantId, {
+            project,
+            section: input.handoffId ?? state.exportId,
+            name: sectionName(bundle.rootName, built.tree),
+            treeArtifactId,
+            runId: ctx.runId,
+            choices,
+          });
+        }
         const width = Math.round(bundle.doc.root.geometry.bbox.w);
         const query = new URLSearchParams({
           theme: themeArtifactId,
@@ -996,6 +1143,8 @@ export function createMatchTools(
           unchecked: state.current.unchecked,
           placeholderIcons: state.current.placeholderIcons,
           ...(state.unmeasured ? {} : { before: state.before.match, match: state.current.match }),
+          ...(content ? { content } : {}),
+          choices,
         };
         writeState(dir, ctx.runId, { ...state, published });
         return published;
@@ -1003,10 +1152,17 @@ export function createMatchTools(
     },
   });
 
+  const judge: LayoutJudge | undefined =
+    opts.judge === false || (opts.judge === undefined && process.env.FRAME_MATCH_JUDGE === "off")
+      ? undefined
+      : (opts.judge ??
+        ((prompt, signal) =>
+          describeText({ prompt, model: "haiku", ...(signal ? { signal } : {}) })));
+
   const see: See =
     opts.see ??
     ((png, prompt, signal) =>
-      describeImage({ png, prompt, model: "sonnet", ...(signal ? { signal } : {}) }));
+      describeImage({ png, prompt, model: "haiku", ...(signal ? { signal } : {}) }));
 
   const lookInput = z
     .object({
@@ -1068,9 +1224,12 @@ export function createMatchTools(
           );
         }
         writeState(dir, ctx.runId, { ...state, looks: state.looks + 1 });
+        // a look is often the last call before frame.publish, so it says what publish waits on
+        const examine = unexamined(state);
         return {
           bands: looked.bands,
           differences: looked.differences.slice(0, 12),
+          ...(examine.length > 0 ? { examineBeforePublish: examine } : {}),
           ...(looked.differences.length === 0
             ? { note: "The vision model sees no difference a person would notice." }
             : {

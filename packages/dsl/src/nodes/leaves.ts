@@ -1,5 +1,5 @@
 /**
- * Part 5 — Leaves (10).
+ * Part 5 — Leaves (12).
  */
 
 import { f, opt, req } from "../field.js";
@@ -167,6 +167,60 @@ export const LEAF_NODES: NodeSpec[] = [
       units: req(f.arr(f.enum("d", "h", "m", "s"))),
       labels: opt(f.bool()),
       onZero: opt(f.enum("hide", "hold")),
+    },
+  },
+
+  /**
+   * A field a person types in, where a design drew a box with a placeholder in it (the
+   * newsletter's "Your Email Address"). It is a real `<input>`: focusable, typed in, filled by the
+   * browser's autofill, sent with a form under `key`. Its box is the universal surface, space and
+   * size, as drawn; the text in it is `style` and `tone`, the placeholder `placeholderTone`.
+   *
+   * What is typed is the page's under `key`, like a choice (`page.ts`): any section reads it as
+   * `_page.<key>` in `when`, so a hint can show once something is typed.
+   */
+  {
+    type: "Input",
+    kind: "leaf",
+    doc: "A text field a person types in: a real <input>, its box the universal surface, space and size. What is typed is the page's under `key` (`_page.<key>` in any `when`) and is its name in a sent form.",
+    fields: {
+      key: req(f.str(), { doc: "the page key it writes, read as _page.<key>, and its form name: letters, digits and _" }),
+      kind: opt(f.enum("text", "email", "tel", "number", "password", "search", "url"), {
+        doc: 'what is typed, which picks the keyboard and what the browser checks (default "text")',
+      }),
+      placeholder: opt(f.str(), { doc: "shown while it is empty" }),
+      value: opt(f.str(), { doc: "what it starts with" }),
+      style: req(f.token("type")),
+      tone: opt(f.token("color"), { doc: "what is typed" }),
+      placeholderTone: opt(f.token("color")),
+      label: opt(f.str(), { doc: "its accessible name, when nothing on screen says it (default: the placeholder)" }),
+      autocomplete: opt(f.str(), { doc: 'the browser\'s autofill hint: "email", "given-name", "tel" …' }),
+      required: opt(f.bool()),
+      disabled: opt(f.bool()),
+    },
+  },
+
+  /**
+   * A box a person ticks, where a design drew a small square beside a line of consent text. It is
+   * a real checkbox, drawn in the design's look: its box is the universal surface and size, the
+   * tick is drawn in `mark`, and while ticked it is in its `active` state (else `inactive`), so
+   * `states.active` is the ticked box's look.
+   *
+   * Ticked or not is the page's under `key`: `_page.<key>` is "true" or "false" in any `when`.
+   */
+  {
+    type: "Checkbox",
+    kind: "leaf",
+    doc: 'A box a person ticks: a real checkbox in the design\'s look. Its box is the universal surface and size, the tick is drawn in `mark`, and ticked it is in its `active` state (`states.active`), else `inactive`. `_page.<key>` is "true" or "false" in any `when`; `key` is also its form name.',
+    fields: {
+      key: req(f.str(), { doc: "the page key it writes, read as _page.<key>, and its form name: letters, digits and _" }),
+      checked: opt(f.bool(), { doc: "ticked to start with (default false)" }),
+      mark: opt(f.token("color"), { doc: "the tick's colour" }),
+      markSize: opt(f.num(), { doc: "the tick's width in px, as drawn (default 10)" }),
+      label: opt(f.str(), { doc: "its accessible name: what the text beside it says" }),
+      value: opt(f.str(), { doc: 'what a sent form carries while it is ticked (default "on")' }),
+      required: opt(f.bool()),
+      disabled: opt(f.bool()),
     },
   },
 

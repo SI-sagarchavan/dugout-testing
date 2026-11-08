@@ -2068,3 +2068,42 @@ describe("what Figma draws and CSS would not", () => {
     );
   });
 });
+
+/**
+ * A static form drew its email field as a box with grey words in it and its consent box as a
+ * glyph. Both are fields a person fills in (`fields.ts`).
+ */
+describe("form fields", () => {
+  it("makes the newsletter's placeholder an email Input spanning the field up to its button", () => {
+    const { result } = check("newsletter-signup");
+    const input = result.tree.nodes.find((n) => n.src === "1:5114")!;
+    expect(input.type).toBe("Input");
+    expect(input.props).toMatchObject({
+      key: "email",
+      kind: "email",
+      autocomplete: "email",
+      placeholder: "Your Email Address",
+      style: "type.body_sm_regular",
+      placeholderTone: "color.text_sec_disable",
+      size: { w: { raw: 383 }, h: { raw: 52 } },
+    });
+    // the button in the field stays a button
+    expect(result.tree.nodes.find((n) => n.src === "1:5101")!.type).toBe("Button");
+  });
+
+  it("makes the box beside the consent text a Checkbox, ticked as drawn", () => {
+    const { result } = check("newsletter-signup");
+    const box = result.tree.nodes.find((n) => n.src === "1:5116")!;
+    expect(box.type).toBe("Checkbox");
+    expect(box.props).toMatchObject({ key: "consent", checked: true, mark: "color.button_filled_style_1_text_default" });
+    expect(String(box.props.label)).toMatch(/^I'd like to hear from Southern Brave/);
+    expect(result.tree.nodes.filter((n) => n.parent === box.id)).toEqual([]);
+  });
+
+  it("finds no field in a frame that draws none", () => {
+    for (const name of FIXTURES.filter((f) => f !== "newsletter-signup")) {
+      const nodes = compile(ir(name), { theme, surfaces }).tree.nodes;
+      expect(nodes.filter((n) => n.type === "Input" || n.type === "Checkbox"), name).toEqual([]);
+    }
+  });
+});

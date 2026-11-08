@@ -1,4 +1,5 @@
 import { type Client, type Pool, toVector, withTenant } from "@dugout/db";
+import { type DataShape, shapeWords } from "./data-shape.ts";
 import type { MultimodalEmbeddings } from "./embeddings.ts";
 import type { Rect } from "./ir.ts";
 import type { Skeleton } from "./skeleton.ts";
@@ -71,6 +72,8 @@ export interface Section {
   /** When a preview was first built from it; null until then, and it is not shared until then. */
   previewedAt: string | null;
   previews: SectionPreview[];
+  /** The fields and lists it shows, from the latest preview that bound it to data; no values. */
+  dataShape: DataShape | null;
   tree: unknown;
   embeddingModel: string;
   hidden: boolean;
@@ -111,6 +114,10 @@ export interface SectionLibrary {
   ): Promise<Section>;
   setHidden(tenantId: string, id: string, hidden: boolean): Promise<Section>;
   setSkeleton(tenantId: string, id: string, skeleton: Skeleton): Promise<Section>;
+  /** What data it shows; its words are searched from then on. */
+  setDataShape(tenantId: string, id: string, shape: DataShape): Promise<Section>;
+  /** The tenant's sections seen in a Handoff. */
+  ofHandoff(tenantId: string, handoffId: string): Promise<Section[]>;
   /**
    * A preview was built from a Handoff: every section of the tenant seen in it is now used, and
    * shared from then on. Returns how many. The same run twice changes nothing.
@@ -132,7 +139,7 @@ const MAX_LIMIT = 50;
 
 const COLUMNS = `id, tenant_id, signature, name, kind, layout, summary, caption, tags, person_tags,
   removed_tags, box, crop_key, crop_width, crop_height, sources, skeleton, previewed_at, previews,
-  tree, embedding_model, hidden, created_at, updated_at`;
+  data_shape, tree, embedding_model, hidden, created_at, updated_at`;
 
 const clean = (tags: readonly string[]) => [
   ...new Set(tags.map((t) => t.trim().toLowerCase().replace(/\s+/g, " ")).filter(Boolean)),
@@ -150,11 +157,13 @@ export function searchText(s: {
   tags: string[];
   summary: string;
   layout: string;
+  dataShape?: DataShape | null;
 }): string {
   return [
     `${s.kind}${s.layout !== "none" ? `, ${s.layout}` : ""}.`,
     s.caption,
     s.tags.length ? `Tags: ${s.tags.join(", ")}.` : "",
+    s.dataShape ? shapeWords(s.dataShape) : "",
     `Structure: ${s.summary}`,
   ]
     .filter(Boolean)
@@ -194,6 +203,7 @@ function toSection(r: Record<string, unknown>, viewer: string): Section {
     skeleton: (r.skeleton as Skeleton | null) ?? null,
     previewedAt: r.previewed_at ? iso(r.previewed_at) : null,
     previews: (r.previews as SectionPreview[]) ?? [],
+    dataShape: (r.data_shape as DataShape | null) ?? null,
     tree: r.tree ?? null,
     embeddingModel: String(r.embedding_model),
     hidden: Boolean(r.hidden),
@@ -464,6 +474,29 @@ export function createSectionLibrary(opts: {
           [id, JSON.stringify(skeleton), tenantId],
         ),
       ),
+
+    setDataShape: (tenantId, id, shape) =>
+      tx(tenantId, async (db) => {
+        const section = await one(
+          db,
+          tenantId,
+          `update library_sections set data_shape = $2, updated_at = now()
+           where id = $1 and tenant_id = $3 returning ${COLUMNS}`,
+          [id, JSON.stringify(shape), tenantId],
+        );
+        return rewrite(db, section);
+      }),
+
+    ofHandoff: (tenantId, handoffId) =>
+      tx(tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select ${COLUMNS} from library_sections where tenant_id = $1
+             and sources @> jsonb_build_array(jsonb_build_object('handoffId', $2::text))
+           order by created_at`,
+          [tenantId, handoffId],
+        );
+        return rows.map((r) => toSection(r, tenantId));
+      }),
 
     markPreviewed: (tenantId, p) =>
       tx(tenantId, async (db) => {

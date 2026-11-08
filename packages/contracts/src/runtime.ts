@@ -11,6 +11,17 @@ import {
 } from "./questions.ts";
 import type { ToolOutcome } from "./tools.ts";
 
+/**
+ * What a run works on (ADR 0033): the section, by the structural signature of its tree's root, set
+ * by a tool from what it loaded, never by the model. A decision a person makes is about it.
+ */
+export const Situation = z.object({
+  section: z.string().min(1),
+  /** The section's name, for people (the frame's name). */
+  name: z.string().optional(),
+});
+export type Situation = z.infer<typeof Situation>;
+
 /** Verified identity for one run. Built by the caller (CLI now, API later), never by the model. */
 export interface RunContext {
   readonly runId: string;
@@ -21,6 +32,8 @@ export interface RunContext {
   readonly depth?: number;
   /** A child run's parent: the run and the call that started it. */
   readonly parent?: { readonly runId: string; readonly callId: string };
+  /** What the run works on when it starts: a child's is its parent's at the call (ADR 0033). */
+  readonly situation?: Situation;
 }
 
 /**
@@ -43,6 +56,8 @@ export interface ModelStepRequest {
   tools: ToolDefinition[];
   /** Ask the model to call this tool; dropped for a model that can't be forced. */
   toolChoice?: { tool: string };
+  /** Not part of the run's turns: its text is not streamed to the event log. */
+  quiet?: boolean;
 }
 
 export type ModelStep = ModelTurn & { usage: StepUsage };
@@ -56,6 +71,8 @@ export interface ToolStepRequest {
   usdLeft?: number;
   /** The answers this call stopped the run for, when it runs again with them (ADR 0029). */
   answered?: { by: string; answers: Answers };
+  /** What the run works on so far (ADR 0033). */
+  situation?: Situation;
 }
 
 /**
@@ -172,6 +189,20 @@ export const RunCheckpoint = z.object({
       }),
     )
     .optional(),
+  /**
+   * How the transcript is made smaller for the model (ticket thread-context/02): tool results
+   * replaced by a reference (`elided`, by call id) and, when that was not enough, the messages
+   * from the third to `upTo` replaced by `summary`. The transcript itself is never rewritten.
+   */
+  compacted: z
+    .object({
+      upTo: z.number().int().nonnegative(),
+      summary: z.string().optional(),
+      elided: z.record(z.string(), z.string()),
+    })
+    .optional(),
+  /** What the run works on, once a tool said (ADR 0033). Absent before, and on older saves. */
+  situation: Situation.optional(),
   /** Unset on checkpoints saved before save points were kept. */
   savedAfter: SavedAfter.optional(),
   /** The run and save point this run was forked from. */

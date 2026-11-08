@@ -28,7 +28,9 @@ export type DslType =
   | "Image"
   | "Icon"
   | "Divider"
-  | "Button";
+  | "Button"
+  | "Input"
+  | "Checkbox";
 
 /**
  * Figma components the designer has declared to be a DSL primitive.

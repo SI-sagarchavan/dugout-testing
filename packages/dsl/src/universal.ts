@@ -187,6 +187,24 @@ export const universalFields: Fields = {
    */
   when: opt(f.predicate(), { doc: '{ path, eq|ne|in|exists|gt|gte|lt|lte } or a list (all must hold)' }),
   /**
+   * How it looks at a place in the nearest Repeater's items, when that differs from the item the
+   * template was drawn from (the first). A row's rule on every item but the last, a zebra stripe on
+   * every other one, a first card drawn without its leading space. Each place holds props as the
+   * node takes them, written over its own there: `null` removes one, `hidden: true` draws nothing.
+   * `middle` is neither the first nor the last; later keys win: even, odd, middle, first, last. A
+   * single item is both first and last. Outside a Repeater it is not read.
+   */
+  at: opt(
+    f.obj({
+      even: opt(f.opaque()),
+      odd: opt(f.opaque()),
+      middle: opt(f.opaque()),
+      first: opt(f.opaque()),
+      last: opt(f.opaque()),
+    }),
+    { doc: "looks by place in the nearest Repeater: { even|odd|middle|first|last: { prop: value | null, hidden?: true } }" },
+  ),
+  /**
    * This node is a designed control of a Carousel elsewhere in the tree: its previous or next
    * arrow, or its row of pagination dots.
    *
@@ -207,6 +225,21 @@ export const universalFields: Fields = {
     {
       doc: "a control of the Carousel `target`, as a node with its own look: prev, next, pagination (its children are the dots; one child is repeated per page), counter (a Text), progress (filled by scale) (S16)",
     },
+  ),
+  /**
+   * This node is one option of a choice the page holds under `key`: a tab, one half of a toggle, a
+   * filter chip. Pressing it sets the key to `value`. While the key holds `value` the node is in its
+   * `active` state, otherwise `inactive`, and `states` gives each its designed look. Any section of
+   * the page reads the choice in `when`, as `_page.<key>` (see `page.ts`). `initial` marks the option
+   * the page starts at (default: the first). The options stay as drawn: nothing here is chrome.
+   */
+  select: opt(
+    f.obj({
+      key: req(f.str(), { doc: "the choice's name: letters, digits and _; read as _page.<key>" }),
+      value: req(f.str(), { doc: "what pressing this option sets the key to" }),
+      initial: opt(f.bool(), { doc: "the option the page starts at" }),
+    }),
+    { doc: "one option of a page choice (a tab, a toggle half): pressing it sets _page.<key> to value; active while it holds it" },
   ),
   /**
    * A clock over this node's subtree: the time left until an instant, or since it. Inside,
@@ -263,6 +296,8 @@ export const REPEATER_FORBIDDEN_PROPS = [
   "transform",
   "states",
   "transition",
+  // an option is pressed, and a fragment has nothing to press
+  "select",
 ] as const;
 
 /**

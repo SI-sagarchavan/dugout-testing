@@ -60,7 +60,7 @@ export async function resetDatabase(adminUrl: string): Promise<void> {
   await client.connect();
   try {
     await client.query(
-      "truncate runs, run_events, run_messages, run_checkpoints, run_checkpoint_history, memory_items, library_sections, library_tenants",
+      "truncate runs, run_events, run_messages, run_checkpoints, run_checkpoint_history, memory_items, library_sections, library_tenants, threads, thread_notes",
     );
   } finally {
     await client.end();

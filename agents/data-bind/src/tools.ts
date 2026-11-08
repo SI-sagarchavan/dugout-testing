@@ -1,10 +1,15 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineTool, type ToolContext } from "@dugout/contracts";
 import { REPO_ROOT } from "@dugout/core";
+import type { Pool } from "@dugout/db";
+import { pageChoicesOf } from "@dugout/db/page-choices";
 import { defaultMcpHost, hookOutput, type McpHost } from "@dugout/mcp";
+import { BEFORE_RULE, decidedBefore, type MemoryReader } from "@dugout/memory";
 import { z } from "zod";
-import { asBag, type Dsl, type IrNode, indexIr, loadDsl, type Tree } from "./dsl.ts";
+import { describeChoice, describeLink, type KnownChoice, linksOf } from "./choices.ts";
+import { asBag, type Dsl, type IrNode, indexIr, loadDsl, loadSigner, type Tree } from "./dsl.ts";
 import {
   type DryRun,
   dryRun,
@@ -12,9 +17,13 @@ import {
   type LeftAsDesigned,
   leftAsDesigned,
   lostLooks,
+  memberOf,
   outline,
+  ownPictures,
+  repeatsOf,
   rowsOf,
   shapeOf,
+  someOnly,
   type Unbound,
   unboundCopy,
 } from "./facts.ts";
@@ -206,6 +215,8 @@ const State = z.object({
   refusals: z.number().default(0),
   published: Published.optional(),
   source: Source.optional(),
+  /** Nothing on the frame is data: what the run said why, when it said so (bind.static). */
+  static: z.object({ why: z.string() }).optional(),
 });
 type State = z.infer<typeof State>;
 
@@ -232,9 +243,9 @@ function writeState(dir: string, runId: string, state: State) {
 export interface Plane {
   json(id: string): Promise<unknown>;
   meta(id: string): Promise<Record<string, unknown>>;
-  exportIr(exportId: string): Promise<{ root: IrNode; annotations: unknown[] }>;
+  exportIr(exportId: string): Promise<{ root: IrNode; annotations: unknown[]; doc?: unknown }>;
   /** A Figma IR stored as its own artifact (a Handoff's, stored by frame-match). */
-  ir(artifactId: string): Promise<{ root: IrNode; annotations: unknown[] }>;
+  ir(artifactId: string): Promise<{ root: IrNode; annotations: unknown[]; doc?: unknown }>;
   dataset(name: string): Promise<unknown>;
   upload(kind: string, json: unknown, meta: Record<string, unknown>): Promise<string>;
 }
@@ -254,7 +265,7 @@ export function createPlane(project: string, env: NodeJS.ProcessEnv = process.en
       root: IrNode;
       annotations?: unknown[];
     };
-    return { root: doc.root, annotations: doc.annotations ?? [] };
+    return { root: doc.root, annotations: doc.annotations ?? [], doc };
   };
   return {
     json: (id) => get(`${base}/artifacts/${encodeURIComponent(id)}/content`),
@@ -302,6 +313,15 @@ interface Frame {
   dataset?: unknown;
   /** What the designer wrote on layers in the plugin; every one must be answered. */
   notes: DesignerNote[];
+  /** frame-match's read of whether anything on the frame is data, when it published one. */
+  content?: { data: string; evidence: string[] };
+  /** What the frame's own tabs write to the page. */
+  writes: KnownChoice[];
+  /** The page's choices other sections write: what this one can follow. */
+  choices: KnownChoice[];
+  /** The section's structural signature (ADR 0033), and its name, when the IR could be read. */
+  signature?: string;
+  name?: string;
 }
 
 interface Loaded extends Frame {
@@ -310,11 +330,11 @@ interface Loaded extends Frame {
 }
 
 const NO_DATA =
-  "This run has no data yet. Call agent.hookMaker with what the frame shows, then bind.source with the hook and input it returned.";
+  "This run has no data yet. If the frame shows data, call agent.hookMaker with what it shows, then bind.source with the hook and input it returned. If nothing on it is data (a heading, labels, tabs, a button), call bind.static instead.";
 
 /** Problems a person would see on the page: each is a reason not to publish. */
 export function problemsOf(
-  applied: { drift: Array<{ src: string; message: string }> },
+  applied: { drift: Array<{ src: string; message: string; reason?: string }>; tree?: Tree },
   structure: Array<{ message: string }>,
   run: DryRun,
   plan?: z.infer<typeof Plan>,
@@ -323,12 +343,17 @@ export function problemsOf(
   unbound: Unbound[] = [],
   unreachable: string[] = [],
 ): string[] {
+  // looks by place (the rule every row but the last has) the fold keeps on its template: not lost
+  const kept = new Set(
+    (applied.tree?.nodes ?? []).filter((n) => n.props.at !== undefined).map((n) => n.src),
+  );
   const lost = (plan?.collapse ?? []).flatMap((c) => {
     if (!design) return [];
     const variantRoots = new Set((c.variants ?? []).map((v) => v.src));
     const differ = lostLooks(
       design,
       c.members.filter((m, i) => i === 0 || !variantRoots.has(m)),
+      kept,
     );
     return differ.length
       ? [
@@ -336,8 +361,24 @@ export function problemsOf(
         ]
       : [];
   });
+  // a picture the plan binds, sets or hides is the plan's choice; one it leaves is the template's
+  const handled = new Set([
+    ...(plan?.bind ?? []).filter((f) => f.prop === "src").map((f) => f.src),
+    ...(plan?.set ?? []).filter((s) => s.prop === "src" || s.prop === "when").map((s) => s.src),
+    ...(plan?.collapse ?? []).flatMap((c) =>
+      [...(c.fields ?? []), ...(c.variants ?? []).flatMap((v) => v.fields ?? [])]
+        .filter((f) => f.prop === "src")
+        .map((f) => f.src),
+    ),
+  ]);
+  const samePicture = design ? pictureProblems(design, plan, handled) : [];
+  const partial = design ? partProblems(design, plan) : [];
+  const overflow = applied.tree ? overflowProblems(applied.tree, plan, run) : [];
   return [
     ...lost,
+    ...samePicture,
+    ...overflow,
+    ...partial,
     ...left.map(placeholdersLeft),
     ...unbound.map(unboundMessage),
     ...unreachable,
@@ -349,11 +390,17 @@ export function problemsOf(
       (r) =>
         `${r.src} src shows "${r.shows}" for ${r.times} item(s): a path with no domain, which no browser loads. Bind it with a template that puts the site's domain in front ("https://domain{item.image}"; ask which domain if the question was left unanswered), and read shows to see the whole URL`,
     ),
+    ...run.breaks.map(
+      (b) =>
+        `${b.src} shows "${b.shows}" on one line where the design breaks it (${JSON.stringify(b.design)}): put the break in the template where the design has it ("{item.first}\\n{item.last}")`,
+    ),
     ...run.capitals.map(
       (c) =>
         `${c.src} shows "${c.shows}" where the design writes capitals ("${c.design}"): set textCase "upper"`,
     ),
-    ...applied.drift.map((d) => `not applied: ${d.message}`),
+    ...applied.drift.map((d) =>
+      d.reason === "stranded" ? d.message : `not applied: ${d.message}`,
+    ),
     ...structure.map((s) => `the tree is invalid: ${s.message}`),
     ...run.variants.map((v) =>
       v.drew === 0
@@ -368,6 +415,119 @@ export function problemsOf(
   ];
 }
 
+/** A length a prop gives as a plain number or `{ raw }`: a box the design fixed. */
+const fixedPx = (value: unknown): number | undefined =>
+  typeof value === "number"
+    ? value
+    : value && typeof value === "object" && typeof (value as { raw?: unknown }).raw === "number"
+      ? (value as { raw: number }).raw
+      : undefined;
+
+/**
+ * Lists that draw more items than the design did, in a row or column the design sized for its
+ * own count and that does not wrap: three stats in a 249 px strip, and the data has five. The
+ * extra ones draw past its end or squeeze the rest. A carousel scrolls them: never reported.
+ */
+function overflowProblems(tree: Tree, plan: Plan | undefined, run: DryRun): string[] {
+  const out: string[] = [];
+  for (const c of plan?.collapse ?? []) {
+    const drew = run.repeats.find((r) => r.template === c.members[0]);
+    if (!drew || drew.most <= c.members.length) continue;
+    const template = tree.nodes.find((n) => n.src === c.members[0]);
+    const repeater = tree.nodes.find((n) => n.id === template?.parent);
+    const box = tree.nodes.find((n) => n.id === repeater?.parent);
+    if (box?.type !== "Stack" || box.props.wrap === true) continue;
+    const direction = box.props.direction;
+    const row =
+      (typeof direction === "string" ? direction : (direction as { base?: string })?.base) ===
+      "row";
+    const size = box.props.size as { w?: unknown; h?: unknown } | undefined;
+    const length = fixedPx(row ? size?.w : size?.h);
+    if (length === undefined) continue;
+    out.push(
+      `${c.over} draws up to ${drew.most} items where the design drew ${c.members.length}, in ${box.src}: a ${row ? "row" : "column"} ${Math.round(length)} px long that does not wrap, so ${drew.most - c.members.length} more draw past its end or squeeze the rest. Draw as many as the design (slice [0, ${c.members.length}] on the collapse), or say in remaining that the box should grow`,
+    );
+  }
+  return out;
+}
+
+const PICTURE_FIX =
+  'Bind its src to the item\'s picture URL. When the data has none, a house fact media.<what> gives the URL from an item field ("https://…/{id}.png"): use it as a template. With no such fact, ask the person for the URL pattern; if there is none, hide it with a when, or say in remaining why it stays';
+
+/**
+ * Pictures the design gives each item its own of (a photo, a crest, a thumbnail) that the plan
+ * leaves as designed beside data: a collapse draws the first item's on every item, and items bound
+ * by position keep the designer's, each the wrong one beside its data. One picture on every item
+ * is decoration and never reported.
+ */
+function pictureProblems(design: Tree, plan: Plan | undefined, handled: Set<string>): string[] {
+  const out: string[] = [];
+  const named = (p: { alt: string }) => (p.alt ? ` "${p.alt}"` : "");
+  const collapsed = new Set<string>();
+  for (const c of plan?.collapse ?? []) {
+    for (const m of c.members) collapsed.add(m);
+    for (const p of ownPictures(design, c.members)) {
+      const src = p.srcs[0] ?? "";
+      if (handled.has(src)) continue;
+      out.push(
+        `${src} picture${named(p)} is ${p.distinct} different pictures across the design's ${p.srcs.length} items, and the plan draws ${c.members[0]}'s in every item of ${c.over}: the wrong picture on all but one. ${PICTURE_FIX}`,
+      );
+    }
+  }
+  const bound = (plan?.bind ?? []).map((f) => f.src);
+  for (const members of repeatsOf(design)) {
+    if (members.some((m) => collapsed.has(m))) continue;
+    const owner = memberOf(design, members);
+    const withData = new Set(bound.map((src) => owner.get(src)).filter((m) => m !== undefined));
+    if (withData.size === 0) continue;
+    for (const p of ownPictures(design, members)) {
+      const left = p.srcs.filter((src) => {
+        const member = owner.get(src);
+        return member !== undefined && withData.has(member) && !handled.has(src);
+      });
+      if (left.length === 0) continue;
+      out.push(
+        `${left.join(", ")} still show the design's picture${named(p)} beside data bound by position: the design gives each item its own (${p.distinct} different), so each is the designer's, not the item's. ${PICTURE_FIX}`,
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * Parts the design shows on some items only (a captain's badge, an overseas flag) that the plan
+ * draws on every item, or on none: a `when` on the data decides them, or a variant draws them.
+ */
+function partProblems(design: Tree, plan: Plan | undefined): string[] {
+  const byId = new Map(design.nodes.map((n) => [n.id, n]));
+  const bySrc = new Map(design.nodes.map((n) => [n.src, n]));
+  const hidden = new Set((plan?.set ?? []).filter((s) => s.prop === "when").map((s) => s.src));
+  // a when on the node or on anything around it decides it
+  const decided = (src: string) => {
+    for (let at = bySrc.get(src); at; at = at.parent === null ? undefined : byId.get(at.parent)) {
+      if (hidden.has(at.src)) return true;
+    }
+    return false;
+  };
+  return (plan?.collapse ?? []).flatMap((c) => {
+    const variants = new Set((c.variants ?? []).map((v) => v.src));
+    return someOnly(design, c.members).flatMap((part) => {
+      const what = `${part.src} (${part.type}${part.copy ? ` "${part.copy}"` : ""})`;
+      const where = `on ${part.in.length} of the design's ${part.of} items (${part.in.join(", ")})`;
+      if (part.inTemplate) {
+        if (decided(part.src)) return [];
+        return [
+          `${what} is ${where}, and the plan draws it on every item of ${c.over}. Something in each item decides it: set a when on the field that does (is_captain, has_video), or say in remaining why every item shows it`,
+        ];
+      }
+      if (part.in.some((m) => variants.has(m))) return [];
+      return [
+        `${what} is ${where}, not on ${c.members[0]}, the template, so the plan draws it on none of ${c.over}. If a field decides it, make ${part.in[0]} a variant with a when on that field; otherwise say in remaining that it is left out`,
+      ];
+    });
+  });
+}
+
 /** Design copy beside data, said so a plan can act on it. */
 function unboundMessage(u: Unbound): string {
   return `${u.src} still shows the design's "${u.copy}" inside ${u.within}, which shows data: bind it to what it stands for, hide it with a when if the data has nothing for it, or say in remaining why it stays (a label)`;
@@ -375,15 +535,91 @@ function unboundMessage(u: Unbound): string {
 
 const clipUrl = (url: string) => (url.length > 90 ? `${url.slice(0, 89)}…` : url);
 
-/** A picture's HTTP status. A network failure is not an answer about the picture. */
-async function probePicture(url: string): Promise<number | undefined> {
+/** What a picture's URL answers: its status, and for a 2xx what came back. */
+export interface PictureAnswer {
+  status: number;
+  /** The content type, without parameters. */
+  type?: string;
+  bytes?: number;
+  /** A hash of the body: the same picture on every item is the site's stand-in. */
+  digest?: string;
+}
+
+/** Below this, a picture is a site's stand-in for one it does not have (a 1×1 PNG is 68 bytes). */
+const EMPTY_PICTURE_BYTES = 200;
+/** How much of a picture is read to tell it from another. */
+const PROBE_BYTES = 256 * 1024;
+
+/** What a picture's URL answers. A network failure is not an answer about the picture. */
+async function probePicture(url: string): Promise<PictureAnswer | undefined> {
   try {
     const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(5000) });
-    await response.body?.cancel();
-    return response.status;
+    const type = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+    if (!response.ok) {
+      await response.body?.cancel();
+      return { status: response.status, ...(type ? { type } : {}) };
+    }
+    // the first part of the body is enough to tell two pictures apart; a photo is not read whole
+    const hash = createHash("sha1");
+    let read = 0;
+    const reader = response.body?.getReader();
+    while (reader && read < PROBE_BYTES) {
+      const { done, value } = await reader.read();
+      if (done || !value) break;
+      hash.update(value);
+      read += value.length;
+    }
+    await reader?.cancel();
+    const length = Number(response.headers.get("content-length"));
+    return {
+      status: response.status,
+      ...(type ? { type } : {}),
+      bytes: read < PROBE_BYTES || !Number.isFinite(length) || length <= 0 ? read : length,
+      digest: hash.digest("hex"),
+    };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * What is wrong with a picture, from what its items' URLs answered: nothing loads, a page comes
+ * back, the site answers with its stand-in (a 200 with an empty picture is how a site says it has
+ * no picture at that id), or every item gets the same one. A pattern built from one picture's URL
+ * (`…/players/26718.png` → `…/players/{p.id}.png`) loads nothing real when the data's ids are
+ * another system's, and a status alone does not show it.
+ */
+export function pictureTrouble(
+  src: string,
+  urls: readonly string[],
+  answers: ReadonlyArray<PictureAnswer | undefined>,
+): string | undefined {
+  const heard = urls.flatMap((url, i) => {
+    const a = answers[i];
+    return a ? [{ url, ...a }] : [];
+  });
+  const failed = heard.find((a) => a.status >= 400);
+  if (failed) {
+    return `${src} src loads nothing: ${clipUrl(failed.url)} answers ${failed.status}. The domain or the path is wrong; ask a person for the site's domain rather than guessing one`;
+  }
+  const page = heard.find((a) => a.type !== undefined && !a.type.startsWith("image/"));
+  if (page) {
+    return `${src} src loads a ${page.type} page, not a picture: ${clipUrl(page.url)}. The path is wrong; ask a person for the URL pattern rather than guessing one`;
+  }
+  const fix =
+    "The URL's id is not one the site knows: a pattern made from one picture's URL needs the id the site names its pictures by, and the data's ids may be another system's. Ask a person for a field or a pattern that gives the site's id, with an id from the data in the question, or hide it with a when";
+  // a bitmap that small draws nothing; an SVG icon may be that small and whole
+  const empty = heard.find(
+    (a) => a.bytes !== undefined && a.bytes < EMPTY_PICTURE_BYTES && a.type !== "image/svg+xml",
+  );
+  if (empty) {
+    return `${src} src loads an empty picture: ${clipUrl(empty.url)} answers ${empty.bytes} bytes, the site's stand-in for a picture it does not have. ${fix}`;
+  }
+  const digests = new Set(heard.map((a) => a.digest).filter((d) => d !== undefined));
+  if (heard.length >= 2 && digests.size === 1 && heard.every((a) => a.digest !== undefined)) {
+    return `${src} src draws the same picture for every item: ${heard.length} items' URLs (${clipUrl(heard[0]?.url ?? "")}, …) answer the same bytes, the site's fallback. ${fix}`;
+  }
+  return undefined;
 }
 
 /** A repeat drawn as designed beside one drawn from data, said so a plan can fix it. */
@@ -406,8 +642,15 @@ export function createBindTools(
     web?: string;
     /** The MCP servers, for the live output of the Cast hook the run chooses as its data. */
     mcp?: McpHost;
-    /** The HTTP status of a picture's URL, or undefined when the site cannot be reached at all. */
-    probe?: (url: string) => Promise<number | undefined>;
+    /** The harness's pool: the page choices other sections write (ADR 0032). */
+    pool?: Pool;
+    /** What people decided about a section before (ADR 0033), read for bind.load's `before`. */
+    decisions?: Pick<MemoryReader, "decisionsOn">;
+    /**
+     * What a picture's URL answers (a bare number is its status), or undefined when the site
+     * cannot be reached at all.
+     */
+    probe?: (url: string) => Promise<number | PictureAnswer | undefined>;
   } = {},
 ) {
   const dir = opts.dir ?? BIND_DIR;
@@ -417,7 +660,7 @@ export function createBindTools(
   const cache = new Map<string, Promise<Frame>>();
   const inputOf = (ctx: Pick<ToolContext, "input">) => RunInput.parse(ctx.input);
 
-  const frameOf = (ctx: Pick<ToolContext, "input" | "runId">) => {
+  const frameOf = (ctx: Pick<ToolContext, "input" | "runId" | "tenantId">) => {
     let held = cache.get(ctx.runId);
     if (!held) {
       held = (async () => {
@@ -439,11 +682,38 @@ export function createBindTools(
             ? await plane.exportIr(exportId)
             : undefined;
         const byId = ir ? indexIr(ir.root) : new Map<string, IrNode>();
+        // the section's signature, as frame-match signed it: what a person's decisions are about
+        const signature = ir ? (await loadSigner())(ir.doc ?? ir) : undefined;
+        const content = meta.content as Frame["content"];
+        const writes = Array.isArray(meta.choices) ? (meta.choices as KnownChoice[]) : [];
+        // the page's choices other sections write: this one may follow them
+        const section = typeof meta.handoffId === "string" ? meta.handoffId : exportId;
+        const choices = opts.pool
+          ? (
+              await pageChoicesOf(
+                opts.pool,
+                ctx.tenantId,
+                project,
+                section ? { except: section } : {},
+              )
+            )
+              .filter((c) => !writes.some((w) => w.key === c.key))
+              .map((c) => ({
+                key: c.key,
+                options: c.options,
+                initial: c.initial,
+                section: c.sectionName,
+              }))
+          : [];
         return {
           tree,
           byId,
+          ...(signature ? { signature, name: ir?.root.name ?? "" } : {}),
           notes: ir ? notesOf(ir, byId) : [],
           dsl,
+          writes,
+          choices,
+          ...(content ? { content } : {}),
           ...(input.data ? { dataset } : {}),
         };
       })();
@@ -457,18 +727,50 @@ export function createBindTools(
   const sourceBag = (source: z.infer<typeof Source>, dsl: Dsl) =>
     asBag({ [source.as]: { castFlow: source.sample } }, dsl);
 
-  const loaded = async (ctx: Pick<ToolContext, "input" | "runId">): Promise<Loaded> => {
+  const loaded = async (
+    ctx: Pick<ToolContext, "input" | "runId" | "tenantId">,
+  ): Promise<Loaded> => {
     const frame = await frameOf(ctx);
     if (inputOf(ctx).data) return { ...frame, bag: asBag(frame.dataset, frame.dsl) };
     const source = readState(dir, ctx.runId).source;
     return { ...frame, bag: source ? sourceBag(source, frame.dsl) : undefined };
   };
   /** The data, for the tools that cannot work without it. */
-  const withData = async (ctx: Pick<ToolContext, "input" | "runId">) => {
+  const withData = async (ctx: Pick<ToolContext, "input" | "runId" | "tenantId">) => {
     const run = await loaded(ctx);
     if (!run.bag) throw new Error(NO_DATA);
     return { ...run, bag: run.bag };
   };
+
+  /** Where the data follows a page choice: lists whose items hold its values. */
+  const linked = (bag: unknown, choices: KnownChoice[]) => {
+    const links = linksOf(bag, choices);
+    return links.length ? { links: links.map(describeLink) } : {};
+  };
+
+  const staticTool = defineTool({
+    name: "bind.static",
+    description:
+      "Say that nothing on this frame is data, so there is nothing to bind: a heading, labels, tabs, a button. The frame is handed over as frame-match published it, with no data source. Pass why, in one sentence naming what the frame shows. Only for a frame with no data: a list of players, fixtures, scores, headlines or photos of them is data.",
+    input: z.object({ why: z.string().min(10) }).strict(),
+    effect: "read",
+    timeoutMs: 10_000,
+    block(_input, ctx) {
+      const state = readState(dir, ctx.runId);
+      if (state.published) return "A plan was published: this frame is bound, so it is not static.";
+      if (state.source)
+        return "This run chose a data source with bind.source: bind it, or say in remaining why it does not fit.";
+      return undefined;
+    },
+    async run({ why }, ctx) {
+      writeState(dir, ctx.runId, { ...readState(dir, ctx.runId), static: { why } });
+      return {
+        static: true,
+        previewUrl: inputOf(ctx).preview,
+        next: "Call final: previewUrl as here, planArtifactId and dataArtifactId empty, bound and collapsed 0.",
+      };
+    },
+  });
 
   const load = defineTool({
     name: "bind.load",
@@ -493,12 +795,31 @@ export function createBindTools(
           ? `${line} (their items: ${g.members.map((m, i) => `${m} [${rows[i]?.join(", ")}]`).join(", ")})`
           : line;
       });
-      const { notes } = await frameOf(ctx);
+      const { notes, content, writes, choices, signature, name } = await frameOf(ctx);
+      // the section the run works on, so what a person answers is about it (ADR 0033); a child
+      // started after this (agent.hookMaker) works on it too
+      if (signature) ctx.situate?.({ section: signature, ...(name ? { name } : {}) });
+      const decided = await decidedBefore(opts.decisions, ctx.tenantId, signature).catch(() => []);
       return {
         ...(notes.length > 0 ? { designerNotes: notes, designerNotesRule: NOTES_RULE } : {}),
+        ...(decided.length > 0 ? { before: decided, beforeRule: BEFORE_RULE } : {}),
+        ...(content
+          ? {
+              content: `frame-match read it as ${content.data === "none" ? "showing no data" : content.data === "some" ? "showing data" : "unsure"}: ${content.evidence.join("; ")}`,
+            }
+          : {}),
         frame: outline(tree, byId).join("\n"),
         repeats: found.length ? found.join("\n") : "nothing repeats",
+        ...(writes.length ? { writes: writes.map(describeChoice) } : {}),
+        ...(choices.length
+          ? {
+              pageChoices: choices.map(describeChoice),
+              pageChoicesRule:
+                "Other sections of the page write these choices. When this frame shows the items of the one chosen there (a strip under a toggle), draw only those: see links once the data is in.",
+            }
+          : {}),
         data: bag ? shapeOf(bag).join("\n") : NO_DATA,
+        ...(bag && choices.length ? linked(bag, choices) : {}),
       };
     },
   });
@@ -542,8 +863,9 @@ export function createBindTools(
         sample: output,
       };
       writeState(dir, ctx.runId, { ...readState(dir, ctx.runId), source: chosen });
-      const { dsl } = await frameOf(ctx);
-      return { data: shapeOf(sourceBag(chosen, dsl)).join("\n") };
+      const { dsl, choices } = await frameOf(ctx);
+      const bag = sourceBag(chosen, dsl);
+      return { data: shapeOf(bag).join("\n"), ...(choices.length ? linked(bag, choices) : {}) };
     },
   });
 
@@ -624,12 +946,21 @@ export function createBindTools(
       const applied = dsl.applyBindingPlan(tree, plan);
       const structure = dsl.check(applied.tree);
       const run = dryRun(applied.tree, bag, dsl, tree);
-      // the first picture of each node: a domain the site does not serve shows as a 404 here
+      // the first items' pictures of each node: a domain the site does not serve shows as a 404,
+      // an id the site does not know as its empty stand-in, or the same picture on every item
       const broken = (
         await Promise.all(
-          run.pictures.slice(0, 6).map(async (p) => ({ ...p, status: await probe(p.url) })),
+          run.pictures.slice(0, 6).map(async (p) => {
+            const answers = await Promise.all(
+              p.urls.map(async (url) => {
+                const a = await probe(url);
+                return typeof a === "number" ? { status: a } : a;
+              }),
+            );
+            return pictureTrouble(p.src, p.urls, answers);
+          }),
         )
-      ).filter((p) => p.status !== undefined && p.status >= 400);
+      ).filter((m) => m !== undefined);
       const left = leftAsDesigned(tree, applied.tree, byId, dsl.hasRef);
       const problems = problemsOf(
         applied,
@@ -639,10 +970,7 @@ export function createBindTools(
         tree,
         left,
         unboundCopy(applied.tree, dsl.hasRef),
-        broken.map(
-          (p) =>
-            `${p.src} src loads nothing: ${clipUrl(p.url)} answers ${p.status}. The domain or the path is wrong; ask a person for the site's domain rather than guessing one`,
-        ),
+        broken,
       );
       const state = readState(dir, ctx.runId);
       writeState(dir, ctx.runId, {
@@ -744,5 +1072,5 @@ export function createBindTools(
     },
   });
 
-  return [load, source, node, tryPlan, publish];
+  return [load, source, node, tryPlan, publish, staticTool];
 }

@@ -48,6 +48,9 @@ importers:
       '@dugout/core':
         specifier: workspace:^
         version: link:../../packages/core
+      '@dugout/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@dugout/evals':
         specifier: workspace:^
         version: link:../../packages/evals
@@ -72,6 +75,9 @@ importers:
       '@dugout/core':
         specifier: workspace:^
         version: link:../../packages/core
+      '@dugout/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@dugout/evals':
         specifier: workspace:^
         version: link:../../packages/evals
@@ -297,6 +303,9 @@ importers:
       '@dugout/db':
         specifier: workspace:^
         version: link:../../packages/db
+      '@dugout/library':
+        specifier: workspace:^
+        version: link:../../packages/library
       '@dugout/sdk':
         specifier: workspace:^
         version: link:../../packages/sdk

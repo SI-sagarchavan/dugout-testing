@@ -12,7 +12,7 @@ export {
   NotSampled,
   unsafeToRun,
 } from "./adapters/cast.ts";
-export { type AuthOptions, authFetch, McpAuthError } from "./auth.ts";
+export { type AuthOptions, authFetch, McpAuthError, setupFailure } from "./auth.ts";
 export {
   ADAPTERS,
   type CapabilityRequest,

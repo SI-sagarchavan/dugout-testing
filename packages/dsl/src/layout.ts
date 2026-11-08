@@ -15,6 +15,7 @@
  */
 
 import { z } from "zod";
+import { PAGE_KEY_RE } from "./page.js";
 
 export const LAYOUT_KINDS = ["list", "row", "grid", "carousel", "tabs"] as const;
 export type LayoutKind = (typeof LAYOUT_KINDS)[number];
@@ -71,6 +72,11 @@ export const tabsConfigSchema = z
     options: z.array(z.string()),
     /** The tab drawn as selected. */
     active: z.number().int().min(0),
+    /**
+     * The page choice the tabs write, read as `_page.<key>` by any section (`page.ts`). Named by a
+     * person when it means something the labels do not say (`squad`); else made from the labels.
+     */
+    key: z.string().regex(PAGE_KEY_RE).optional(),
   })
   .strict();
 
@@ -93,6 +99,22 @@ export type LayoutChoice = z.infer<typeof layoutChoiceSchema>;
 export const CONFIDENCE = ["certain", "likely", "unsure"] as const;
 export type Confidence = (typeof CONFIDENCE)[number];
 
+/**
+ * How far a detection is trusted, 0 to 1 (`LayoutIntent.score`: the confidence in its `kind`).
+ *
+ * - `apply` and above: the frame shows it; applied with no question.
+ * - below `apply`, with another kind that also fits: a model reads the container's context
+ *   (`LayoutIntent.context`) and judges. Its verdict counts when it is at least `accept` sure.
+ * - still below `apply` after that: a person is asked, as before.
+ */
+export const LAYOUT_THRESHOLDS = { apply: 0.8, accept: 0.75 } as const;
+
+/** The band a score falls in: `certain` is applied unasked, `unsure` has a kind that also fits. */
+export function confidenceOf(score: number, hasAlternative: boolean): Confidence {
+  if (score >= LAYOUT_THRESHOLDS.apply) return "certain";
+  return hasAlternative ? "unsure" : "likely";
+}
+
 /** Designed controls, by Figma id. They stay nodes, wired to the carousel with `controlFor`. */
 export interface LayoutChrome {
   prev?: string;
@@ -108,6 +130,10 @@ export interface LayoutIntent {
   name: string;
   kind: LayoutKind;
   confidence: Confidence;
+  /** Confidence in `kind`, 0 to 1: the sum of the evidence's weights (see `LAYOUT_THRESHOLDS`). */
+  score: number;
+  /** What the container sits in, in plain lines: the facts a model judges the kind from. */
+  context: string[];
   /** The repeated items, by Figma id, in order. */
   items: string[];
   /** What the frame showed, in plain words. */
@@ -119,4 +145,8 @@ export interface LayoutIntent {
   chrome: LayoutChrome;
   /** The kind the frame also fits, when `confidence` is `unsure`. */
   alternative?: LayoutKind;
+  /** What applying `alternative` would lower to; set with it. */
+  alternativeChoice?: LayoutChoice;
+  /** The questions `alternative` would leave open, as `ask` is for `kind`. */
+  alternativeAsk?: string[];
 }

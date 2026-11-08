@@ -8,6 +8,7 @@ import {
   defineTool,
   type InterruptRequest,
   type ModelClient,
+  NeedsSetup,
   type RunEvent,
   reject,
   requestChange,
@@ -76,6 +77,7 @@ const maybeSave = defineTool({
   timeoutMs: 1_000,
   async run({ text }) {
     if (text.startsWith("bad")) throw new Error("rejected by the store");
+    if (text.startsWith("setup")) throw new NeedsSetup("no grant for tenant demo-cricket on cast");
     return { saved: true };
   },
 });
@@ -818,6 +820,16 @@ describe("runAgent", () => {
       },
     });
     const save = (text: string) => call("maybe.save", { text });
+
+    it("ends the run at the first failure that needs setup: no retry, no model turn changes it", async () => {
+      const { result, model } = await run([save("setup"), save("setup"), final("x")], agent());
+      expect(model.requests).toHaveLength(1);
+      expect(result).toMatchObject({
+        status: "failed",
+        reason: "error",
+        message: "needs setup: no grant for tenant demo-cricket on cast",
+      });
+    });
 
     it("ends the run at the third identical failure, not at maxSteps", async () => {
       const { result, model, of } = await run(

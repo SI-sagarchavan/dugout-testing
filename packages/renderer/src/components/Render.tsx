@@ -1,13 +1,23 @@
 /**
  * Tree renderer — Server Components only. No "use client".
  *
- * Scope: Box, Stack, Overlay, Text, Image, Icon, Divider.
+ * Scope: Box, Stack, Overlay, Carousel, Repeater, Text, Image, Icon, Divider, Button, Input, Checkbox.
  * Other node types render a visible diagnostic placeholder.
  */
 
 import type { ReactNode } from "react";
 import type { FlatTree, Node } from "@fanos/dsl";
-import { childrenOf, evaluateWhen, lookup, reify, rootOf } from "@fanos/dsl";
+import {
+  childrenOf,
+  evaluateWhen,
+  lookup,
+  pageDefaults,
+  propsAtPlace,
+  reify,
+  rootOf,
+  selectOf,
+  splitPageWhen,
+} from "@fanos/dsl";
 import type { NodeRenderContext, RenderConfig } from "../context.js";
 import { Box } from "./Box.js";
 import { Button } from "./Button.js";
@@ -17,10 +27,13 @@ import { Text } from "./Text.js";
 import { Image } from "./Image.js";
 import { Icon } from "./Icon.js";
 import { Divider } from "./Divider.js";
+import { Input } from "./Input.js";
+import { Checkbox } from "./Checkbox.js";
 import { Carousel } from "./Carousel.js";
 import { stateRules } from "../resolve/look.js";
 import { splitWhen, withClock } from "../resolve/clock.js";
-import { ClockGate } from "@fanos/renderer/client";
+import { ClockGate, PageChoices, PageGate } from "@fanos/renderer/client";
+import { PAGE_SELECTED } from "../resolve/style.js";
 
 export interface RenderProps {
   tree: FlatTree;
@@ -31,6 +44,8 @@ export interface RenderProps {
   timeZone?: RenderConfig["timeZone"];
   /** The time to draw clocks at, epoch ms. Defaults to now. */
   now?: RenderConfig["now"];
+  /** Where the page's choices start, when the host draws several sections (`pageDefaults`). */
+  page?: RenderConfig["page"];
   /** Optional root width in px (harness sets this). */
   width?: number;
   /**
@@ -49,14 +64,25 @@ export interface RenderProps {
   designWidth?: number;
 }
 
-export function Render({ tree, data, assets, themeSlug, origin, timeZone, now, width, designWidth }: RenderProps) {
+export function Render({ tree, data, assets, themeSlug, origin, timeZone, now, width, designWidth, page }: RenderProps) {
   // Validate structure early — reify throws on broken trees.
   reify(tree);
   const root = rootOf(tree);
   if (!root) return null;
 
   // Read once: every clock on the page is drawn at the same moment.
-  const ctx: NodeRenderContext = { data, assets, themeSlug, origin, timeZone, now: now ?? Date.now() };
+  // The choices and fields this tree writes start as drawn, unless the host says otherwise.
+  const writes = pageDefaults([tree]);
+  const pageState = { ...writes, ...(page ?? {}) };
+  const ctx: NodeRenderContext = {
+    data,
+    assets,
+    themeSlug,
+    origin,
+    timeZone,
+    now: now ?? Date.now(),
+    page: pageState,
+  };
   const scale = width && designWidth && designWidth > 0 ? width / designWidth : 1;
   const scaled = scale !== 1;
 
@@ -88,6 +114,7 @@ export function Render({ tree, data, assets, themeSlug, origin, timeZone, now, w
       }}
     >
       {states && <style>{states}</style>}
+      {Object.keys(writes).length > 0 && <PageChoices initial={pageState} />}
       {scaled ? (
         <div
           data-fos-scaler
@@ -140,18 +167,32 @@ function repetitions(node: Node, ctx: NodeRenderContext): NodeRenderContext[] | 
       ? items.slice(0, props.limit)
       : items;
   const alias = props.as ?? "item";
-  return capped.map((item) => ({ ...ctx, data: { ...(ctx.data ?? {}), [alias]: item } }));
+  // each item's place among those drawn: what a node's `at` reads (the rule every row but the last has)
+  return capped.map((item, index) => ({
+    ...ctx,
+    data: { ...(ctx.data ?? {}), [alias]: item },
+    place: { index, count: capped.length },
+  }));
 }
 
-function RenderNode({
-  node,
-  tree,
-  ctx: outer,
-}: {
-  node: Node;
-  tree: FlatTree;
-  ctx: NodeRenderContext;
-}) {
+/** The children a Repeater draws between its items (`separator`), in order. */
+function separatorOf(node: Node, kids: Node[]): Node[] {
+  const ids = (node.props as { separator?: unknown }).separator;
+  if (!Array.isArray(ids)) return [];
+  return ids.flatMap((id) => kids.filter((k) => k.id === id));
+}
+
+/** A Repeater's children drawn for each item: all but its separator, which a slide has no use for. */
+function repeated(node: Node, kids: Node[]): Node[] {
+  const separator = separatorOf(node, kids);
+  return kids.filter((k) => !separator.includes(k));
+}
+
+function RenderNode({ node: given, tree, ctx: outer }: { node: Node; tree: FlatTree; ctx: NodeRenderContext }) {
+  // its look at its item's place in the nearest Repeater (`at`); nothing where it is hidden there
+  const placed = propsAtPlace(given.props as Record<string, unknown>, outer.place);
+  if (placed === undefined) return null;
+  const node = placed === given.props ? given : ({ ...given, props: placed } as Node);
   const props = node.props as Record<string, unknown>;
   // A clock is in scope on the node that carries it, its own `when` included.
   const ctx = withClock(props, outer);
@@ -165,14 +206,32 @@ function RenderNode({
    * and shown while the clock's conditions hold.
    */
   const when = splitWhen(props.when, ctx);
-  if (!evaluateWhen(when.now, ctx.data)) return null;
-  const drawn = <DrawNode node={node} tree={tree} ctx={ctx} />;
-  if (when.ticking.length === 0) return drawn;
+  // A condition on the page's choices changes as a person chooses, so the browser decides it too:
+  // the node is drawn, and shown while it holds; the server's first paint is the page's start.
+  const paged = splitPageWhen(when.now, ctx.data);
+  if (!evaluateWhen(paged.now, ctx.data)) return null;
+  const drawn = <DrawNode node={chosen(node, ctx)} tree={tree} ctx={ctx} />;
+  const ticking =
+    when.ticking.length === 0 ? (
+      drawn
+    ) : (
+      <ClockGate conditions={when.ticking} clocks={when.clocks} now={ctx.now ?? Date.now()}>
+        {drawn}
+      </ClockGate>
+    );
+  if (paged.page.length === 0) return ticking;
   return (
-    <ClockGate conditions={when.ticking} clocks={when.clocks} now={ctx.now ?? Date.now()}>
-      {drawn}
-    </ClockGate>
+    <PageGate conditions={paged.page} page={ctx.page ?? {}}>
+      {ticking}
+    </PageGate>
   );
+}
+
+/** An option of a page choice, marked when it is the choice the page is drawn at. */
+function chosen(node: Node, ctx: NodeRenderContext): Node {
+  const select = selectOf(node);
+  if (!select) return node;
+  return { ...node, props: { ...node.props, [PAGE_SELECTED]: ctx.page?.[select.key] === select.value } } as Node;
 }
 
 function DrawNode({
@@ -232,9 +291,16 @@ function DrawNode({
       return <Icon node={node} ctx={ctx} />;
     case "Divider":
       return <Divider node={node} ctx={ctx} />;
+    case "Input":
+      return <Input node={node} ctx={ctx} />;
+    case "Checkbox":
+      return <Checkbox node={node} ctx={ctx} />;
     case "Repeater": {
       const scopes = repetitions(node, ctx);
       if (scopes === undefined) return null;
+      // The separator is drawn once between two items, in the Repeater's own scope, not in each.
+      const separator = separatorOf(node, kids);
+      const each = repeated(node, kids);
       return (
         <>
           {scopes.map((scope, i) => (
@@ -243,7 +309,8 @@ function DrawNode({
             // into that flex flow, not inside a wrapper. The attribute still
             // gives the repair loop something to map a diff region onto.
             <div key={`${node.id}-${i}`} style={{ display: "contents" }} data-fos-repeat={i} data-fos-repeat-of={node.id}>
-              {kids.map((child) => (
+              {i > 0 ? separator.map((between) => <RenderNode key={between.id} node={between} tree={tree} ctx={ctx} />) : null}
+              {each.map((child) => (
                 <RenderNode
                   key={child.id}
                   node={child}
@@ -269,7 +336,7 @@ function DrawNode({
           scopes.forEach((scope, i) => {
             slides.push(
               <div key={`${child.id}-${i}`} className="swiper-slide" data-fos-repeat={i} data-fos-repeat-of={child.id}>
-                {childrenOf(tree, child.id).map((grand) => (
+                {repeated(child, childrenOf(tree, child.id)).map((grand) => (
                   <RenderNode key={grand.id} node={grand} tree={tree} ctx={scope} />
                 ))}
               </div>,

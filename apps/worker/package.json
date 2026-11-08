@@ -20,6 +20,7 @@
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",
     "@dugout/db": "workspace:^",
+    "@dugout/library": "workspace:^",
     "@dugout/sdk": "workspace:^",
     "iovalkey": "^0.4.0",
     "zod": "^4.6.7"

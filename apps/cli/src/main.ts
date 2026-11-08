@@ -262,6 +262,7 @@ async function startRun(
   }
   const runId = await host.queue.start(tenant.id, agent.spec.id, parsed.data, {
     ...(model ? { model } : {}),
+    ...(args.thread ? { threadId: args.thread } : {}),
   });
   host.terminal.line(dim(`· run ${runId} queued${model ? ` on ${model}` : ""}`));
   return followAndReport(host, agent, tenant.id, runId, 0, args.yes);

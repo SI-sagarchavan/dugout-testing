@@ -216,6 +216,12 @@ export function applyEdits(
         );
         continue;
       }
+      if (typeof value === "string" && HANDLE.test(value)) {
+        problems.push(
+          `${label}: "${value}" stands for a picture the prop holds; leave the prop out to keep it, or write a URL`,
+        );
+        continue;
+      }
     }
     const before = at(node.props, edit.path);
     tree =
@@ -274,12 +280,33 @@ export function outline(tree: Tree, limit = 250): string[] {
   return lines;
 }
 
+const HANDLE = /^<picture [^>]*>$/;
+
+/**
+ * Any `data:` string in a value, deeply, as a short handle (`<picture png, 412 KB>`): a picture
+ * is not words, and in the model's context it would cost as many tokens as it has characters.
+ * The tree keeps the picture; an edit that leaves the prop alone leaves it as it was.
+ */
+export function shorten<T>(value: T): T {
+  if (typeof value === "string") {
+    const m = /^data:([^;,]*)/.exec(value);
+    if (!m) return value;
+    const kind = (m[1] ?? "").split("/").pop() || "data";
+    return `<picture ${kind}, ${Math.max(1, Math.round(value.length / 1024))} KB>` as T;
+  }
+  if (Array.isArray(value)) return value.map(shorten) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, shorten(v)])) as T;
+  }
+  return value;
+}
+
 const summary = (tree: Tree, n: TreeNode) => ({
   id: n.id,
   type: n.type,
   src: n.src,
   parent: n.parent,
-  props: n.props,
+  props: shorten(n.props),
   children: tree.nodes
     .filter((c) => c.parent === n.id)
     .sort((a, b) => a.idx - b.idx)
@@ -346,7 +373,6 @@ export function createEditTools(
     input: z.object({}).strict(),
     effect: "read",
     timeoutMs: 60_000,
-    alwaysInline: true,
     async run(_input, ctx) {
       const { tree, comments } = await loaded(ctx);
       const byId = new Map(tree.nodes.map((n) => [n.id, n]));
@@ -362,7 +388,10 @@ export function createEditTools(
             path: c.path,
             ...(n ? { element: summary(tree, n) } : { missing: "this node is not in the tree" }),
             onScreen: c.context.draft?.changed?.length
-              ? { draftedEdits: c.context.draft.changed, propsBeforeThem: c.context.draft.was }
+              ? {
+                  draftedEdits: c.context.draft.changed,
+                  propsBeforeThem: shorten(c.context.draft.was),
+                }
               : undefined,
           };
         }),
@@ -404,11 +433,11 @@ export function createEditTools(
         tried: {
           edits: input.edits,
           problems: result.problems,
-          changes: result.changes,
+          changes: shorten(result.changes),
           tree: result.tree,
         },
       });
-      return { problems: result.problems, changes: result.changes };
+      return { problems: result.problems, changes: shorten(result.changes) };
     },
   });
 
@@ -423,7 +452,7 @@ export function createEditTools(
     // the approval shows what code applied, never the model's account of it
     resolve(_input, ctx) {
       const tried = readState(dir, ctx.runId).tried;
-      return { changes: tried?.changes ?? [], problems: tried?.problems ?? [] };
+      return { changes: shorten(tried?.changes ?? []), problems: tried?.problems ?? [] };
     },
     block(_input, ctx) {
       const state = readState(dir, ctx.runId);

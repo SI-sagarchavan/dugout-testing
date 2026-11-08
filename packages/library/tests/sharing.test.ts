@@ -8,6 +8,7 @@ import {
   type IndexReport,
   type NewSection,
   type SectionLibrary,
+  type ShapeReader,
   syncPreviews,
 } from "../src/index.ts";
 
@@ -198,5 +199,82 @@ describe("syncPreviews", () => {
     expect(again.marked.map((m) => m.sections)).toEqual([0, 0]);
     const shared = await library.findBySignature(a, "s2:h9");
     expect(await ids(b, "standings table", "shared")).toContain(shared?.id);
+  });
+
+  it("gives a bound preview's sections their data shape, and finds a data-bind run's Handoff by its tree", async () => {
+    const tree = randomUUID();
+    const link = `http://localhost:3000/preview/default/${tree}?theme=t`;
+    await run(a, "frame-match", { handoffId: "h-news" }, link);
+    await run(a, "data-bind", { preview: link }, `${link}&data=d1&plan=p1`);
+    await library.add(a, {
+      ...section("s:news", "h-news", "News cards"),
+      source: { ...section("s:news", "h-news", "").source, nodeId: "2:1" },
+    });
+    await library.add(a, {
+      ...section("s:footer", "h-news", "Footer"),
+      source: { ...section("s:footer", "h-news", "").source, nodeId: "3:1" },
+    });
+
+    const shapes: ShapeReader = {
+      ir: async () => ({
+        rootNodeId: "1:1",
+        root: {
+          id: "1:1",
+          name: "Page",
+          type: "FRAME",
+          geometry: { bbox: { x: 0, y: 0, w: 1366, h: 900 } },
+          children: [
+            {
+              id: "2:1",
+              name: "News",
+              type: "FRAME",
+              geometry: { bbox: { x: 0, y: 0, w: 1366, h: 600 } },
+              children: [
+                {
+                  id: "I2:5;9:1",
+                  name: "title",
+                  type: "TEXT",
+                  geometry: { bbox: { x: 0, y: 0, w: 300, h: 20 } },
+                },
+              ],
+            },
+            {
+              id: "3:1",
+              name: "Footer",
+              type: "FRAME",
+              geometry: { bbox: { x: 0, y: 600, w: 1366, h: 300 } },
+            },
+          ],
+        },
+      }),
+      artifact: async (_run, id) =>
+        id === "p1"
+          ? { bind: [{ path: "news.articles.0.title", prop: "content", src: "I2:5;9:1" }] }
+          : { news: { articles: [{ title: "A headline nobody else may read" }] } },
+    };
+    const index = async (): Promise<IndexReport> => {
+      throw new Error("the Handoff is in the library already");
+    };
+    const first = await syncPreviews({ pool, tenantId: a, library, index, shapes });
+    expect(first.failed).toEqual([]);
+    expect(first.marked.map((m) => m.sections)).toEqual([2, 2]);
+    expect(first.shaped).toEqual([expect.objectContaining({ handoffId: "h-news", sections: 1 })]);
+
+    const news = await library.findBySignature(a, "s:news");
+    expect(news?.dataShape).toEqual({
+      lists: [
+        { path: "news.articles", items: 1, looks: 1, fields: [{ path: "title", type: "text" }] },
+      ],
+      fields: [],
+    });
+    expect((await library.findBySignature(a, "s:footer"))?.dataShape).toBeNull();
+    // another club finds it by the data it shows, and reads the shape, never the values
+    expect(await ids(b, "news articles title", "shared")).toContain(news?.id);
+    const seen = await library.get(b, news?.id ?? "");
+    expect(seen?.dataShape?.lists[0]?.path).toBe("news.articles");
+    expect(JSON.stringify(seen)).not.toContain("headline");
+
+    const again = await syncPreviews({ pool, tenantId: a, library, index, shapes });
+    expect(again.shaped).toEqual([]);
   });
 });

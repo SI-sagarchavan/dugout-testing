@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { agent as bind, type Output as DataOutput } from "@dugout/agent-data-bind";
+import { agent as bind, type Result as DataOutput } from "@dugout/agent-data-bind";
 import {
-  type Output as FrameOutput,
+  type Result as FrameOutput,
   agent as frameMatch,
   RunInput,
 } from "@dugout/agent-frame-match";
@@ -17,14 +17,14 @@ export const spec: AgentSpec = {
   version: 1,
   owner: "fanos-content",
   description:
-    "Turns a designer's Handoff into one page preview with its data bound: the frame matched to its screenshot and published (frame-match), then the data found, or built, in Cast and bound to it (bind). One run, one result, one preview.",
+    "Turns a designer's Handoff into one page preview with its data bound: the frame matched to its screenshot and published (frame-match), then the data found, or built, in Cast and bound to it (bind). A section with no data on it (a heading, tabs, a button) is handed over as frame-match published it, with nothing bound. One run, one result, one preview.",
   instructions: [
-    "A designer pressed Handoff in the Figma plugin. The whole job is one tool: page.build. It runs in a fixed order, so you do not choose the steps: the frame is matched to its screenshot and published, then the data it shows is found in Cast, or built there, and bound to it. It takes no arguments.",
+    "A designer pressed Handoff in the Figma plugin. The whole job is one tool: page.build. It runs in a fixed order, so you do not choose the steps: the frame is matched to its screenshot and published, then the data it shows is found in Cast, or built there, and bound to it. A section that shows no data skips the second stage. It takes no arguments.",
     "",
     `1. Call ${BUILD} once. A person approves it once; that covers everything it does.`,
-    "2. Call final. Every field is copied from what page.build returned: do not write a link or a number of your own.",
+    "2. Call final with a one-sentence summary of what page.build did. The result itself is page.build's, filled in by code: do not write a link or a number of your own.",
     "",
-    "If page.build fails, read why. It names the stage that failed and what it said. A stage that finished is not done again, so you may call page.build again, and a person approves that. After three failures of one stage it is not tried again: say so in your answer, with the reason, and stop. Never invent a preview link or a result.",
+    "If page.build fails, read why. It names the stage that failed and what it said. A stage that finished is not done again, so you may call page.build again, and a person approves that. After three failures of one stage it is not tried again: say so in your answer, with the reason, and stop. A failure that needs setup (a sign-in, a key) ends the run by itself: nothing you call changes it. Never invent a preview link or a result.",
   ].join("\n"),
   tools: [],
   skills: [],
@@ -37,11 +37,28 @@ export const spec: AgentSpec = {
   approvals: ["effect:write"],
 };
 
+const Choice = z.object({
+  key: z.string(),
+  options: z.array(z.object({ value: z.string(), label: z.string().optional() })),
+  initial: z.string(),
+});
+
 export const Output = z.object({
   previewUrl: z.string().describe("The preview with its data bound: the one thing handed over"),
   treeArtifactId: z.string(),
-  planArtifactId: z.string(),
-  dataArtifactId: z.string(),
+  planArtifactId: z.string().describe("Empty when nothing was bound"),
+  dataArtifactId: z.string().describe("Empty when nothing was bound"),
+  data: z
+    .enum(["bound", "none"])
+    .default("bound")
+    .describe("none: nothing on the section is data, so it was handed over with nothing bound"),
+  dataWhy: z.array(z.string()).default([]).describe("Why the section was read as showing no data"),
+  choices: z
+    .array(Choice)
+    .default([])
+    .describe(
+      "What the section's tabs write to its page (_page.<key>), for other sections to read",
+    ),
   measured: z.boolean().describe("False when too little of the frame has a screenshot to compare"),
   coverage: z.number().describe("Share of the frame a compared screenshot covers, 0 to 100"),
   before: z.number().optional().describe("Match before the frame was fixed, 0 to 100"),
@@ -65,6 +82,14 @@ export const Output = z.object({
 });
 export type Output = z.infer<typeof Output>;
 
+/**
+ * What the model writes in `final`: one sentence. Everything else in the result is page.build's,
+ * filled in by code (`completeFinal`), so none of it is in `final`'s grammar.
+ */
+export const Final = z.object({
+  summary: z.string().describe("One sentence: what page.build did, or why it could not"),
+});
+
 type StageNote = { id: string; status: "addressed" | "not-addressed" | "not-mine"; detail: string };
 
 /**
@@ -87,14 +112,31 @@ export function mergeNotes(frame: StageNote[] = [], data: StageNote[] = []): Out
   });
 }
 
-/** One answer from the two stages, as the pass hands it over. */
-export function assemble(frame: FrameOutput, data: DataOutput): Output {
+/** One answer from the two stages, as the pass hands it over. No data stage: nothing was data. */
+export function assemble(frame: FrameOutput, given?: DataOutput): Output {
+  const data: DataOutput = given ?? {
+    static: true,
+    previewUrl: frame.previewUrl,
+    planArtifactId: "",
+    dataArtifactId: "",
+    bound: 0,
+    collapsed: 0,
+    remaining: [],
+    notes: [],
+  };
   const notes = mergeNotes(frame.notes, data.notes);
   return {
-    previewUrl: data.previewUrl,
+    previewUrl: data.previewUrl || frame.previewUrl,
     treeArtifactId: frame.treeArtifactId,
     planArtifactId: data.planArtifactId,
     dataArtifactId: data.dataArtifactId,
+    data: data.static ? "none" : "bound",
+    dataWhy: data.static
+      ? given
+        ? ["the binding stage found nothing on it to bind"]
+        : (frame.content?.evidence ?? [])
+      : [],
+    choices: frame.choices ?? [],
     measured: frame.measured,
     coverage: frame.coverage,
     ...(frame.before !== undefined ? { before: frame.before } : {}),
@@ -135,6 +177,31 @@ export function builtIn(messages: Message[]): Output | undefined {
 }
 
 /** Every field is the pass's: the host writes it over whatever the model sent. */
+/** What a run did, for its thread's note (ADR 0031): the next run on the section starts from it. */
+export function threadNote(_input: unknown, output: unknown): string | undefined {
+  const parsed = Output.safeParse(output);
+  if (!parsed.success) return undefined;
+  const o = parsed.data;
+  const match =
+    o.measured && o.match !== undefined
+      ? `the frame matches its screenshot ${o.match}%${o.before !== undefined ? ` (from ${o.before}%)` : ""}`
+      : "the frame was not measured against a screenshot";
+  const missed = o.notes.filter((n) => n.status === "not-addressed");
+  const writes = o.choices.length
+    ? ` Its tabs write ${o.choices.map((c) => `_page.${c.key} (${c.options.map((x) => x.value).join(", ")})`).join(", ")} for the page's other sections to read.`
+    : "";
+  return [
+    o.data === "none"
+      ? `Built the section from the Handoff and published its preview: ${match}; nothing on it is data, so nothing was bound.${writes}`
+      : `Built the section from the Handoff and published its preview with data bound: ${match}; ${o.bound} props bound to data, ${o.collapsed} lists.${writes}`,
+    missed.length
+      ? `Designer notes not met: ${missed.map((n) => `${n.id} (${n.detail})`).join("; ")}.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export function completeFinal(_output: unknown, run: { messages: Message[] }): unknown {
   return builtIn(run.messages);
 }
@@ -149,13 +216,15 @@ export function verifyFinal(output: unknown, run: { messages: Message[] }): stri
 export const pipeline: Pipeline = {
   name: BUILD,
   description:
-    "Runs the whole pass for this Handoff, in order: matches the frame to its screenshot and publishes it, then finds (or builds) the data in Cast and binds it. Takes no arguments. Answers with the one preview and everything still off.",
+    "Runs the whole pass for this Handoff, in order: matches the frame to its screenshot and publishes it, then finds (or builds) the data in Cast and binds it, unless nothing on the section is data. Takes no arguments. Answers with the one preview and everything still off.",
   async run(call, input) {
     const { exportId, handoffId, project } = RunInput.parse(input);
     const frame = (await call(
       frameMatch,
       handoffId ? { handoffId, project } : { exportId, project },
     )) as FrameOutput;
+    // a heading, tabs and a button: nothing to find in Cast, nothing to bind
+    if (frame.content?.data === "none") return assemble(frame);
     const data = (await call(bind, { preview: frame.previewUrl })) as DataOutput;
     return assemble(frame, data);
   },
@@ -164,9 +233,11 @@ export const pipeline: Pipeline = {
 export const agent = defineAgent({
   spec,
   input: RunInput,
-  output: Output,
+  output: Final,
+  result: Output,
   completeFinal,
   verifyFinal,
+  threadNote,
   dir: join(import.meta.dirname, ".."),
   tools: () => [],
   agents: [frameMatch, bind],

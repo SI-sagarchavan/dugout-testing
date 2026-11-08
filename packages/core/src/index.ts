@@ -1,3 +1,4 @@
+export * from "./compact.ts";
 export * from "./events.ts";
 export * from "./fork.ts";
 export * from "./hooks.ts";

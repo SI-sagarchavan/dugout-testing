@@ -79,6 +79,9 @@ export const TYPE_EXCLUSIONS: Readonly<Record<string, readonly string[]>> = {
   Icon: ["name"],
   Tabs: ["options"],
   Countdown: ["to"],
+  // what a field says and starts with is content; its key names it, as an id does
+  Input: ["key", "placeholder", "value", "label"],
+  Checkbox: ["key", "label"],
   Custom: ["props"],
 };
 

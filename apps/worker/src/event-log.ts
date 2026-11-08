@@ -5,12 +5,23 @@ import type { Valkey } from "iovalkey";
 export const LOCAL_VALKEY_URL = "redis://localhost:56379";
 /** Live streams are kept this long after a run ends; Postgres has the permanent record. */
 const RETAIN_SECONDS = 7 * 24 * 3600;
+/** About this many events stay on a tenant's feed, tokens included. */
+const FEED_MAX_ENTRIES = 20_000;
 
-/** The run is over. */
-export const isTerminal = (e: RunEvent) =>
+/** A run ended: the stream's own, or, for an event with `child`, that child. */
+type Ending = Extract<RunEvent, { type: "run.completed" | "run.failed" | "run.cancelled" }>;
+const ends = (e: RunEvent): e is Ending =>
   e.type === "run.completed" || e.type === "run.failed" || e.type === "run.cancelled";
-/** The invocation is over: the run ended, or it waits for a person (ADR 0029). */
-export const endsInvocation = (e: RunEvent) => e.type === "question.asked" || isTerminal(e);
+/** The run is over. A child's ending, written to its parent's stream, is not. */
+export const isTerminal = (e: RunEvent): e is Ending => !e.child && ends(e);
+/**
+ * The invocation is over: the run ended, or it waits for a person (ADR 0029). A child that asks
+ * stops its parent, which asks in its own name.
+ */
+export const endsInvocation = (
+  e: RunEvent,
+): e is Ending | Extract<RunEvent, { type: "question.asked" }> =>
+  !e.child && (e.type === "question.asked" || ends(e));
 /** Streamed fragments: only the live stream has them; the finished messages are in the record. */
 const LIVE_ONLY = new Set<RunEvent["type"]>(["token", "tool.input.delta"]);
 const parse = (fields: string[]) => JSON.parse(fields[1] ?? "null") as RunEvent;
@@ -27,7 +38,37 @@ export function createValkeyEventLog(valkey: Valkey, opts: { keyPrefix?: string 
     return entries.map(([, fields]) => parse(fields));
   };
 
+  /** One stream per tenant, every run's events in it: what a person's one open connection reads. */
+  const feedKey = (tenantId: string) => `${opts.keyPrefix ?? ""}tenant:${tenantId}:feed`;
+
   return {
+    feedKey,
+
+    /**
+     * A copy of each event on the tenant's one feed, so a client follows all its runs over a
+     * single connection (`GET /surface/stream`). The feed is a window, not a record: the run's
+     * own stream and Postgres hold the history. Never fails a run.
+     */
+    feedSink: (tenantId: string): EventSink => ({
+      async write(event) {
+        try {
+          await valkey.xadd(
+            feedKey(tenantId),
+            "MAXLEN",
+            "~",
+            FEED_MAX_ENTRIES,
+            "*",
+            "type",
+            "run.event",
+            "data",
+            JSON.stringify(event),
+          );
+        } catch {
+          // the feed is best effort: the run's own stream is what it is judged by
+        }
+      },
+    }),
+
     sink: (): EventSink => ({
       async write(event) {
         const key = streamKey(event.runId);
@@ -105,11 +146,12 @@ export function createPostgresEventSink(pool: Pool, tenantId: string): EventSink
       if (LIVE_ONLY.has(event.type)) return;
       await withTenant(pool, tenantId, async (db) => {
         await db.query(
-          `insert into run_events (run_id, seq, tenant_id, type, data, at)
-           values ($1, $2, $3, $4, $5, $6) on conflict do nothing`,
-          [event.runId, event.seq, tenantId, event.type, event.data, event.at],
+          `insert into run_events (run_id, seq, tenant_id, type, data, at, child)
+           values ($1, $2, $3, $4, $5, $6, $7) on conflict do nothing`,
+          [event.runId, event.seq, tenantId, event.type, event.data, event.at, event.child ?? null],
         );
-        if (isTerminal(event)) {
+        // the run that ended: the stream's own, or the child the event came from
+        if (ends(event)) {
           const status =
             event.type === "run.completed"
               ? event.data.status
@@ -118,7 +160,7 @@ export function createPostgresEventSink(pool: Pool, tenantId: string): EventSink
                 : "cancelled";
           await db.query(
             "update runs set status = $2, result = $3, updated_at = now() where id = $1",
-            [event.runId, status, event.data],
+            [event.child?.runId ?? event.runId, status, event.data],
           );
         }
       });
@@ -134,7 +176,7 @@ export async function readStoredEvents(
 ) {
   return withTenant(pool, tenantId, async (db) => {
     const { rows } = await db.query(
-      `select run_id, seq, type, data, at from run_events
+      `select run_id, seq, type, data, at, child from run_events
        where run_id = $1 and seq > $2 order by seq`,
       [runId, afterSeq],
     );
@@ -146,6 +188,7 @@ export async function readStoredEvents(
           type: r.type,
           data: r.data,
           at: new Date(r.at).toISOString(),
+          ...(r.child ? { child: r.child } : {}),
         }) as RunEvent,
     );
   });

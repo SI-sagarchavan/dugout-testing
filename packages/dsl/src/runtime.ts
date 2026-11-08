@@ -14,6 +14,27 @@ export {
   resolveTemplate,
 } from "./binding.js";
 export type { Condition, Predicate, ResolveOptions, ResolveResult } from "./binding.js";
+// Page state: a choice one section makes and any section reads (`select`, `_page`)
+export { choiceValue } from "./binding.js";
+export {
+  isPagePath,
+  PAGE_KEY_RE,
+  PAGE_SCOPE,
+  pageChoices,
+  pageDefaults,
+  pageFields,
+  FIELD_TYPES,
+  pageKeyOf,
+  pageKeyOfPath,
+  pageReads,
+  pageScope,
+  pageValueOf,
+  readsPage,
+  selectOf,
+  selectSchema,
+  splitPageWhen,
+} from "./page.js";
+export type { PageChoice, PageField, PageFieldType, PageOption, PageState, Select } from "./page.js";
 export {
   CLOCK_UNITS,
   clockAlias,

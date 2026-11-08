@@ -4,7 +4,11 @@ import {
   AUTO_APPROVED,
   AwaitingAnswers,
   approve,
+  type ChildRef,
   defineTool,
+  type EventSink,
+  NEEDS_SETUP,
+  NeedsSetup,
   reject,
   type Tool,
   type ToolContext,
@@ -121,6 +125,20 @@ export interface ChildCaller {
   failuresFor(parentRunId: string): string[];
 }
 
+/** A child run's sink: each of its events, written to the stream of the run that called it. */
+function relayTo(
+  relay: NonNullable<ToolContext["relay"]>,
+  child: { runId: string; agentId: string; parentOf: { runId: string; callId: string } },
+): EventSink {
+  const ref: ChildRef = {
+    runId: child.runId,
+    agentId: child.agentId,
+    parentRunId: child.parentOf.runId,
+    callId: child.parentOf.callId,
+  };
+  return { write: (event) => relay({ ...event, child: event.child ?? ref }) };
+}
+
 export function childCaller(
   parent: AgentSpec,
   child: AnyAgent,
@@ -208,9 +226,17 @@ export function childCaller(
           depth,
           parent: parentOf,
           usdPerRun,
+          // the child's questions are about what this run works on (ADR 0033)
+          ...(ctx.situation ? { situation: ctx.situation } : {}),
           // a host that named the model for the run named it for the whole tree
           ...(run.model ? { model: run.model } : {}),
-          ...(run.sinks ? { sinks: run.sinks } : {}),
+          // one stream per invocation: the child's events go to this run's stream, tagged as
+          // the child's; a grandchild's come up through the child, keeping their own tag
+          ...(ctx.relay
+            ? { sinks: [relayTo(ctx.relay, { runId, agentId: child.spec.id, parentOf })] }
+            : run.sinks
+              ? { sinks: run.sinks }
+              : {}),
           ...(run.store ? { store: run.store } : {}),
           // the child's own children need their records too: without it a grandchild has no
           // `runs` row, and its first event breaks the foreign key on `run_events`
@@ -246,6 +272,17 @@ export function childCaller(
           ? `${result.reason}: ${result.message}`
           : `rejected: ${(result as { output?: { reason?: string } }).output?.reason ?? result.status}`;
       const why = result.status === "failed" ? `failed, ${reason}` : `ended ${result.status}`;
+      // A child that waits on setup (a sign-in, a key) is not tried again, and neither is this:
+      // the run that started it all ends saying what to set up, once.
+      if (result.status === "failed" && result.message.startsWith(NEEDS_SETUP)) {
+        if (opts.writes) {
+          failures.set(
+            ctx.runId,
+            Array.from({ length: MAX_WRITING_ATTEMPTS }, () => reason),
+          );
+        }
+        throw new NeedsSetup(result.message.slice(NEEDS_SETUP.length).trim());
+      }
       if (opts.writes) {
         failures.set(ctx.runId, [...failedTries(ctx.runId).slice(0, attempt - 1), reason]);
         const left = MAX_WRITING_ATTEMPTS - attempt;

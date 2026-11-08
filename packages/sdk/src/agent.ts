@@ -9,6 +9,7 @@ import {
   type RunContext,
   type RunHook,
   type RunStore,
+  type Situation,
   type Tool,
 } from "@dugout/contracts";
 import {
@@ -24,12 +25,13 @@ import {
 } from "@dugout/core";
 import { defaultMcpHost, type McpHost } from "@dugout/mcp";
 import {
-  createAnswerMemory,
+  createDecisionMemory,
   type LessonWriter,
   type MemoryStore,
   memoryGroups,
   memoryHooks,
   SKILL_TOOL,
+  type ThreadNotes,
 } from "@dugout/memory";
 import type { z } from "zod";
 import {
@@ -66,6 +68,11 @@ export interface AgentDeps {
    * input names them.
    */
   memoryGroups?: (tenantId: string, sports?: string[]) => string[];
+  /**
+   * The threads' notes (ADR 0031): a run a host started reads what earlier runs in its thread
+   * did, and leaves a note when it ends. Left out (tests, evals), runs read and write none.
+   */
+  threads?: ThreadNotes;
 }
 
 /** One run of an agent. */
@@ -86,6 +93,8 @@ export interface RunOptions<Input> {
   /** Set by the harness on a child run: how far down it is, and the run and call that started it. */
   depth?: number;
   parent?: { runId: string; callId: string };
+  /** Set by the harness on a child run: what its parent works on at the call (ADR 0033). */
+  situation?: Situation;
   /** Caps the spec's budget for this run: a child gets no more than its parent has left. */
   usdPerRun?: number;
 }
@@ -141,6 +150,11 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
    * A failure is recorded on the result and does not change the run status.
    */
   afterRun?: (run: CompletedRun, deps: AgentDeps & Options) => Promise<void>;
+  /**
+   * What a run did, in a sentence or two, for its thread's note (ADR 0031): the next run on the
+   * same section starts from it. Left out, the note says what the output and events show.
+   */
+  threadNote?: (input: z.output<Input>, output: unknown) => string | undefined;
   /** The sports a run is about, when its input says (ADR 0014); its shared memory narrows to them. */
   sportsOf?: (input: z.output<Input>) => string[] | undefined;
   /** Tool outputs longer than this are stored and replaced by a reference. */
@@ -262,6 +276,13 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
         contextWindow: model.contextWindow,
         ...(deps.lessons ? { lessons: deps.lessons } : {}),
         ...(deps.consolidate === false ? { consolidate: false } : {}),
+        ...(deps.threads ? { threads: deps.threads } : {}),
+        ...(config.threadNote
+          ? {
+              threadNote: (input: unknown, output: unknown) =>
+                config.threadNote?.(input as z.output<Input>, output),
+            }
+          : {}),
         groupsOf: (tenantId, input) =>
           (deps.memoryGroups ?? registryGroups)(
             tenantId,
@@ -330,13 +351,14 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
           tenantId: opts.tenantId,
           ...(opts.depth ? { depth: opts.depth } : {}),
           ...(opts.parent ? { parent: opts.parent } : {}),
+          ...(opts.situation ? { situation: opts.situation } : {}),
           tools: [...tools, ...childToolsFor(opts)],
           client: deps.client,
           models: deps.models,
           responder: opts.responder,
           context: memory.context,
-          // what people answered before goes into the questions this run asks (ADR 0029)
-          learned: createAnswerMemory(deps.store, opts.tenantId),
+          // what people decided before, and the house facts, go into the questions this run asks (ADR 0033)
+          learned: createDecisionMemory(deps.store, opts.tenantId),
           afterRun: async (run) => {
             // The agent's hook can fail (a disk, a missing checkout) and the run's lessons, examples
             // and record must still be written; its failure is reported after, not instead.

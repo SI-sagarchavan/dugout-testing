@@ -40,4 +40,3 @@ The old renderer draws the page; a v2 section is one template in it. Follow `dyn
   it today) must start carrying it, and ticket 04 should land first (5.7 MB of base64 per template).
 - `query-engine.tsx` already has the branch (ticket 14): replace its `return null` with the renderer.
 - The page builder's placeholder (ticket 12) can then draw the section too.
-

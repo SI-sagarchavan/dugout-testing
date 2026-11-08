@@ -241,6 +241,13 @@ export const STRUCTURAL_NODES: NodeSpec[] = [
        * tree that says `slice: [3, 6], limit: 2` has two answers.
        */
       slice: opt(f.arr(f.num(true)), { doc: "[start, end) — end exclusive; not with `limit` (S13)" }),
+      /**
+       * Its own children drawn once between two items instead of in each, in order: the rule
+       * between stats (`stat | stat | stat`), a spacer and a rule, a chevron between crumbs. They
+       * draw in the Repeater's scope, not an item's. A Carousel draws none: its `gap` is the space
+       * between slides.
+       */
+      separator: opt(f.arr(f.str()), { doc: "ids of its children drawn between items instead of in each, in order (a rule between stats)" }),
       paginate: opt(
         f.obj({
           mode: req(f.enum("pages", "more", "infinite")),

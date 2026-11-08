@@ -10,10 +10,69 @@
       "type": "string"
     },
     "planArtifactId": {
-      "type": "string"
+      "type": "string",
+      "description": "Empty when nothing was bound"
     },
     "dataArtifactId": {
-      "type": "string"
+      "type": "string",
+      "description": "Empty when nothing was bound"
+    },
+    "data": {
+      "default": "bound",
+      "description": "none: nothing on the section is data, so it was handed over with nothing bound",
+      "type": "string",
+      "enum": [
+        "bound",
+        "none"
+      ]
+    },
+    "dataWhy": {
+      "default": [],
+      "description": "Why the section was read as showing no data",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "choices": {
+      "default": [],
+      "description": "What the section's tabs write to its page (_page.<key>), for other sections to read",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "initial": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "options",
+          "initial"
+        ],
+        "additionalProperties": false
+      }
     },
     "measured": {
       "type": "boolean",
@@ -88,6 +147,9 @@
     "treeArtifactId",
     "planArtifactId",
     "dataArtifactId",
+    "data",
+    "dataWhy",
+    "choices",
     "measured",
     "coverage",
     "bound",

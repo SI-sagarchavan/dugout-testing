@@ -13,6 +13,7 @@ import type {
   RunEventInput,
   RunMemoryContext,
   RunStore,
+  Situation,
   Steps,
   Tool,
   ToolInputDelta,
@@ -66,7 +67,7 @@ export function retryDelay(attempt: number): number {
 export const FRAGMENT_MS = 50;
 
 /** Collects a model call's streamed fragments and emits them in batches: text, then each call. */
-function batchFragments(log: RunLog, step: number, everyMs: number) {
+function batchFragments(log: RunLog, step: number, everyMs: number, quiet = false) {
   let text = "";
   const inputs = new Map<number, ToolInputDelta>();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -87,10 +88,12 @@ function batchFragments(log: RunLog, step: number, everyMs: number) {
   };
   return {
     token(fragment: string) {
+      if (quiet) return;
       text += fragment;
       later();
     },
     toolInput(delta: ToolInputDelta) {
+      if (quiet) return;
       const pending = inputs.get(delta.index);
       if (pending) pending.text += delta.text;
       else inputs.set(delta.index, { ...delta });
@@ -108,12 +111,12 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 /** `Steps` that call the model, tools and responder directly in this process. */
 export function createLocalSteps(opts: LocalStepsOptions): Steps {
   return {
-    async model({ step, model, messages, tools, toolChoice }) {
+    async model({ step, model, messages, tools, toolChoice, quiet }) {
       const { price, forcedTools } = modelEntry(opts.models, model);
       const delay = opts.retryDelayMs ?? retryDelay;
       for (let attempt = 0; ; attempt++) {
         // new fragments per attempt: a failed call's half-sent batch is not carried over
-        const fragments = batchFragments(opts.log, step, opts.fragmentMs ?? FRAGMENT_MS);
+        const fragments = batchFragments(opts.log, step, opts.fragmentMs ?? FRAGMENT_MS, quiet);
         let turn: ModelTurn;
         try {
           turn = await opts.client.complete(
@@ -122,7 +125,7 @@ export function createLocalSteps(opts: LocalStepsOptions): Steps {
               model,
               messages,
               tools,
-              cache: true,
+              cache: !quiet,
               ...(toolChoice && forcedTools ? { toolChoice } : {}),
             },
             fragments.token,
@@ -146,7 +149,7 @@ export function createLocalSteps(opts: LocalStepsOptions): Steps {
         return { ...turn, usage };
       }
     },
-    tool: (req) => opts.executor.execute(req, opts.ctx),
+    tool: (req) => opts.executor.execute(req, opts.ctx, { relay: (e) => opts.log.relay(e) }),
     async interrupt(req) {
       const answer = await opts.responder(req);
       if ("pending" in answer && !opts.store) {
@@ -173,6 +176,8 @@ export interface RunLocalOptions {
   /** A child run's place: how far below the host's run, and the run and call that started it. */
   depth?: number;
   parent?: { runId: string; callId: string };
+  /** What a child run starts on: its parent's situation at the call (ADR 0033). */
+  situation?: Situation;
   tools: Tool[];
   client: ModelClient;
   models: ModelConfig;
@@ -185,6 +190,12 @@ export interface RunLocalOptions {
   outputs?: OutputStore;
   /** Tool outputs longer than this are stored and replaced by a reference. */
   maxInlineChars?: number;
+  /**
+   * Keeps a long run inside its model's window: past `at` of it (65%), older tool results become
+   * references and older turns a summary written by `summarizer` (the agent's own model unless
+   * named). `false` leaves the transcript as it is.
+   */
+  compaction?: false | { at?: number; keep?: number; summarizer?: string };
   /** Builds the run's skills and memory context before the loop starts. */
   context?: (ctx: RunContext, input: unknown) => Promise<RunMemoryContext>;
   /** What earlier answers tell the run about the questions it asks (ADR 0029). */
@@ -211,8 +222,13 @@ export interface RunLocalOptions {
 export interface CompletedRun {
   ctx: RunContext;
   result: Exclude<RunResult, { status: "waiting" }>;
-  /** Every event of the run, earlier invocations included when the host passed them. */
+  /** Every event of the run's own, earlier invocations included when the host passed them. */
   events: RunEvent[];
+  /**
+   * Its child runs' events, which came in its stream tagged `child` (ADR 0031). Kept apart: a
+   * child's lessons are the child's own to learn, and its `run.started` is not this run's.
+   */
+  childEvents: RunEvent[];
 }
 
 /** Wires a whole in-process run: registry, executor, event log and steps. */
@@ -225,6 +241,7 @@ export async function runLocal(opts: RunLocalOptions) {
     ...(opts.input !== undefined ? { input: opts.input } : {}),
     ...(opts.depth ? { depth: opts.depth } : {}),
     ...(opts.parent ? { parent: opts.parent } : {}),
+    ...(opts.situation ? { situation: opts.situation } : {}),
   };
   const outputs = opts.outputs ?? createFileOutputStore(runsDir);
   const registry = createToolRegistry([...opts.tools, createReadOutputTool(outputs)]);
@@ -261,6 +278,18 @@ export async function runLocal(opts: RunLocalOptions) {
     steps,
     log,
     ...(context ? { context } : {}),
+    ...(opts.compaction === false
+      ? {}
+      : {
+          compaction: {
+            window: modelEntry(opts.models, opts.agent.spec.model).contextWindow,
+            ...(opts.compaction?.at ? { at: opts.compaction.at } : {}),
+            ...(opts.compaction?.keep ? { keep: opts.compaction.keep } : {}),
+            // the agent's own model: what it carries on from is only as good as the summary
+            summarizer: opts.compaction?.summarizer ?? opts.agent.spec.model,
+            store: (content: string) => outputs.put(runId, content),
+          },
+        }),
     ...(opts.learned ? { learned: opts.learned } : {}),
     ...(saved && opts.resume
       ? {
@@ -276,7 +305,12 @@ export async function runLocal(opts: RunLocalOptions) {
   // a run resumed after it ended only answered with its ending: its afterRun has run already
   if (result.status !== "waiting" && !saved?.checkpoint.ended) {
     try {
-      await opts.afterRun?.({ ctx, result, events: recorded.events });
+      await opts.afterRun?.({
+        ctx,
+        result,
+        events: recorded.events.filter((e) => !e.child),
+        childEvents: recorded.events.filter((e) => e.child),
+      });
     } catch (err) {
       afterRunError = err instanceof Error ? err.message : String(err);
     }

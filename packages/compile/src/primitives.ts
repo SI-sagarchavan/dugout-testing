@@ -37,6 +37,9 @@ export const PRIMITIVE_PREFIX = "atom";
  */
 const DECLARABLE: Readonly<Record<string, DslType>> = {
   button: "Button",
+  checkbox: "Checkbox",
+  // the field's box: its placeholder becomes the Input (`fields.ts`), the rest stays as drawn
+  input: "Input",
 };
 
 /**

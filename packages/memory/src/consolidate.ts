@@ -7,11 +7,19 @@ import {
   type RunEvent,
 } from "@dugout/contracts";
 import { createRedactor } from "@dugout/core";
-import type { AnswerWriter, LearnedAnswer } from "./answers.ts";
-import type { MemoryItem, MemoryWriter } from "./store.ts";
+import { answerText } from "./decisions.ts";
+import {
+  decisionKey,
+  type MemoryItem,
+  type MemoryReader,
+  type MemoryWriter,
+  sameValue,
+} from "./store.ts";
 import { PROPOSE_TOOL } from "./tools.ts";
 
 export const EPISODE_TTL_DAYS = 180;
+/** A section question answered the same on this many sections is proposed as the club's fact. */
+export const PROMOTE_SECTIONS = 3;
 
 /** An example longer than this isn't stored: it would crowd out the rest of the recalled memory. */
 export const MAX_EXAMPLE_CHARS = 4000;
@@ -28,12 +36,17 @@ export interface Rejection {
 export type LessonWriter = (rejection: Rejection) => Promise<string>;
 
 export interface ConsolidateOptions {
-  writer: MemoryWriter & AnswerWriter;
+  writer: MemoryWriter & Pick<MemoryReader, "sectionsAnswered" | "fact">;
   tenantId: string;
   agentId: string;
   runId: string;
   events: RunEvent[];
   lessons?: LessonWriter;
+  /**
+   * False for a child run: the questions it asked went up to the run a person answered, and are
+   * learned there, once, under the agent that asked (ADR 0033). Defaults to true.
+   */
+  learnsAnswers?: boolean;
 }
 
 /**
@@ -43,14 +56,15 @@ export interface ConsolidateOptions {
  * - a run that completed with an approved write leaves its last approved input as an example;
  * - a run that ended leaves one run record;
  * - `memory.propose` calls become proposed facts that wait for review;
- * - what a person answered when the run asked (ADR 0029) is learned, to prefill the same question
- *   next time, and to stop asking it once a person makes the answer standing.
+ * - what a person answered to a declared question (ADR 0033) is a decision on the section it was
+ *   about, or, for a question about the club, a proposed fact; a section answer given on
+ *   {@link PROMOTE_SECTIONS} sections is proposed as the club's fact too.
  */
 export async function consolidateRun(opts: ConsolidateOptions): Promise<{
   episodes: MemoryItem[];
   proposals: MemoryItem[];
   run: MemoryItem | undefined;
-  answers: LearnedAnswer[];
+  decisions: MemoryItem[];
 }> {
   const { writer, tenantId, agentId, runId, events } = opts;
   const episodes: MemoryItem[] = [];
@@ -60,9 +74,9 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
   const redactor = createRedactor();
   const redact = (text: string) => redactor.text(text);
   const requested = new Map<string, unknown>();
-  // the questions each pause asked, to learn from the answers people gave them (ADR 0029)
+  // the questions each pause asked, to learn from the answers people gave them (ADR 0033)
   const asked = new Map<string, AskedQuestion[]>();
-  const learned: LearnedAnswer[] = [];
+  const decisions: MemoryItem[] = [];
   let approved: { tool: string; input: unknown } | undefined;
   const proposed = new Map<string, unknown>();
   const feedback: string[] = [];
@@ -75,19 +89,23 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
     if (event.type === "question.asked") asked.set(event.data.callId, event.data.questions);
     // what a person chose is learned; what a host, the agent or memory answered is not, or the
     // agent's own proposals would come back as if people had said them
-    if (event.type === "question.answered" && event.data.source === "person") {
+    if (
+      event.type === "question.answered" &&
+      event.data.source === "person" &&
+      opts.learnsAnswers !== false
+    ) {
       for (const q of asked.get(event.data.callId) ?? []) {
         const answer = event.data.answers[q.id];
-        if (q.kind === "review" || answer === undefined) continue;
-        learned.push(
-          await writer.recordAnswer({
-            tenantId,
-            agentId,
-            runId,
-            question: { ...q, question: redact(q.question) },
-            answer: typeof answer === "string" ? redact(answer) : answer,
-          }),
-        );
+        if (q.kind === "review" || answer === undefined || !q.about) continue;
+        const learned = await learnAnswer(writer, {
+          tenantId,
+          runId,
+          by: event.data.by,
+          question: { ...q, question: redact(q.question) },
+          answer: typeof answer === "string" ? redact(answer) : answer,
+        });
+        if (learned.decision) decisions.push(learned.decision);
+        if (learned.proposal) proposals.push(learned.proposal);
       }
     }
     // a write waiting for a yes is a pause with a call under review (ADR 0029)
@@ -199,7 +217,64 @@ export async function consolidateRun(opts: ConsolidateOptions): Promise<{
         ttlDays: EPISODE_TTL_DAYS,
       })
     : undefined;
-  return { episodes, proposals, run, answers: learned };
+  return { episodes, proposals, run, decisions };
+}
+
+/**
+ * One answer a person gave to a declared question (ADR 0033). About a section: a decision on it,
+ * and the club's fact once {@link PROMOTE_SECTIONS} sections were given the same answer. About the
+ * club: its fact, proposed for a person to approve. A fact that already says it is not proposed
+ * again.
+ */
+async function learnAnswer(
+  writer: ConsolidateOptions["writer"],
+  a: { tenantId: string; runId: string; by: string; question: AskedQuestion; answer: unknown },
+): Promise<{ decision?: MemoryItem; proposal?: MemoryItem }> {
+  const { tenantId, runId, question: q, answer } = a;
+  const about = q.about;
+  if (!about) return {};
+  const said = answerText(answer);
+  const out: { decision?: MemoryItem; proposal?: MemoryItem } = {};
+  let sources: string[] = [];
+  if (about.scope === "section") {
+    // a section question asked before the run knew its section says nothing about one
+    if (!about.section) return {};
+    const on = about.name ? `"${about.name}"` : `section ${about.section.slice(0, 12)}`;
+    out.decision = await writer.recordDecision({
+      tenantId,
+      agentId: about.agent,
+      key: decisionKey(about.agent, q.id, about.section),
+      value: answer,
+      content: `On ${on}, ${a.by} answered "${q.question}": ${said}.`,
+      sourceRunId: runId,
+      ttlDays: EPISODE_TTL_DAYS,
+    });
+    if (!about.fact) return out;
+    const same = await writer.sectionsAnswered(tenantId, about.agent, q.id, answer);
+    if (same.length < PROMOTE_SECTIONS) return out;
+    sources = same.map((d) => d.id);
+  }
+  if (!about.fact) return out;
+  for (const status of ["active", "proposed"] as const) {
+    const fact = await writer.fact(tenantId, about.fact, status);
+    if (fact && sameValue(fact.value, answer)) return out;
+  }
+  out.proposal = await writer.proposeFact({
+    tenantId,
+    agentId: about.agent,
+    key: about.fact,
+    content: clip(
+      sources.length
+        ? `"${q.question}": ${said} (a person's answer on ${sources.length} sections).`
+        : `"${q.question}": ${said}.`,
+      MAX_FACT_CHARS - 1,
+    ),
+    confidence: 1,
+    sourceRunId: runId,
+    value: answer,
+    ...(sources.length ? { sources } : {}),
+  });
+  return out;
 }
 
 /**

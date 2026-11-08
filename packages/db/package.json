@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./page-choices": "./src/page-choices.ts",
     "./testing": "./src/testing.ts",
     "./vitest-setup": "./src/vitest-setup.ts"
   },

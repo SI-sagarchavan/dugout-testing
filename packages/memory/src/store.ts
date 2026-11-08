@@ -1,14 +1,14 @@
 import { type Client, type Pool, toVector, withTenant } from "@dugout/db";
-import { type AnswerReader, type AnswerWriter, createAnswerStore } from "./answers.ts";
 import type { EmbeddingClient } from "./embeddings.ts";
 
 export type MemoryKind = "episodic" | "semantic";
 export type MemoryStatus = "proposed" | "active" | "retired";
 /**
- * A record of one run, a lesson from a reviewer's feedback, or an example: the input of a write
- * call an editor approved in a completed run.
+ * A record of one run, a lesson from a reviewer's feedback, an example (the input of a write call
+ * an editor approved in a completed run), or a decision: what a person answered to a question
+ * about one section (ADR 0033).
  */
-export type EpisodeType = "run" | "lesson" | "example";
+export type EpisodeType = "run" | "lesson" | "example" | "decision";
 
 export interface MemoryItem {
   id: string;
@@ -36,8 +36,13 @@ export interface MemoryItem {
   expiresAt: string | null;
   /** For shared memory: `global` (every tenant) or `sport:<sport>` (every tenant of a sport). */
   sharedScope: string | null;
-  /** For shared memory: the tenant items it was promoted from. */
+  /** For shared memory: the tenant items it was promoted from. For a fact from decisions: them. */
   sources: string[];
+  /**
+   * The typed answer, for a decision and a fact made from answers (ADR 0033): what a question is
+   * proposed, or answered, with. Null for everything else.
+   */
+  value: unknown;
 }
 
 export interface SearchQuery {
@@ -70,7 +75,28 @@ export interface MemoryReader {
   recallEpisodes(
     q: Omit<SearchQuery, "kinds"> & { episodeType: EpisodeType; agentId: string },
   ): Promise<Array<MemoryItem & { score: number }>>;
+  /** The latest live decision for a key (`decisionKey`), whoever made it. */
+  decision(tenantId: string, key: string): Promise<MemoryItem | undefined>;
+  /** The latest live decision for each question about one section, newest first. */
+  decisionsOn(tenantId: string, section: string, limit?: number): Promise<MemoryItem[]>;
+  /** How many sections' latest decision on this agent's question is this answer. */
+  sectionsAnswered(
+    tenantId: string,
+    agentId: string,
+    questionId: string,
+    value: unknown,
+  ): Promise<MemoryItem[]>;
+  /** The tenant's fact for a key in this status: the active one, or the latest proposal. */
+  fact(
+    tenantId: string,
+    key: string,
+    status: "active" | "proposed",
+  ): Promise<MemoryItem | undefined>;
 }
+
+/** The key a decision is kept under: the asking agent, the question's id, the section. */
+export const decisionKey = (agentId: string, questionId: string, section: string) =>
+  `${agentId}:${questionId}@${section}`;
 
 /** Only the consolidation step and the review command hold a writer. */
 export interface MemoryWriter {
@@ -100,7 +126,36 @@ export interface MemoryWriter {
     content: string;
     confidence: number;
     sourceRunId: string | null;
+    /** The typed answer, when the fact comes from what a person answered (ADR 0033). */
+    value?: unknown;
+    /** The decisions it was promoted from. */
+    sources?: string[];
   }): Promise<MemoryItem>;
+  /**
+   * Records what a person answered to a question about one section (ADR 0033). The same answer
+   * again strengthens the decision and pushes back its expiry; a different one is a new decision,
+   * so the earlier stays as history and the latest is the one read.
+   */
+  recordDecision(d: {
+    tenantId: string;
+    /** The agent that asked. */
+    agentId: string;
+    key: string;
+    value: unknown;
+    content: string;
+    sourceRunId: string;
+    ttlDays: number;
+  }): Promise<MemoryItem & { reinforced: boolean }>;
+  /** Edits a proposal before a person approves it: its sentence and its value. */
+  reviseProposal(
+    tenantId: string,
+    id: string,
+    change: { content?: string; value?: unknown },
+  ): Promise<MemoryItem>;
+  /** Removes one episode, such as a decision a person takes back. */
+  forgetEpisode(tenantId: string, id: string): Promise<boolean>;
+  /** The tenant's live decisions, the latest per question and section, newest first. */
+  listDecisions(tenantId: string): Promise<MemoryItem[]>;
   listProposals(tenantId: string): Promise<MemoryItem[]>;
   /** Makes a proposal the active version of its key and retires the previous one. */
   activateFact(tenantId: string, id: string, reviewer: string): Promise<MemoryItem>;
@@ -111,12 +166,12 @@ export interface MemoryWriter {
   deleteBySourceRun(tenantId: string, runId: string): Promise<number>;
 }
 
-/** Facts, episodes and what people answered (ADR 0029): the one store a run reads and writes. */
-export type MemoryStore = MemoryReader & MemoryWriter & AnswerReader & AnswerWriter;
+/** Facts and episodes, decisions among them (ADR 0033): the one store a run reads and writes. */
+export type MemoryStore = MemoryReader & MemoryWriter;
 
 export const COLUMNS = `id, tenant_id, agent_id, kind, key, episode_type, version, content, status,
   confidence, strength, source_run_id, reviewed_by, created_at, last_seen_at, expires_at,
-  shared_scope, sources`;
+  shared_scope, sources, value`;
 
 export const LIVE = `status = 'active' and (expires_at is null or expires_at > now())`;
 
@@ -143,6 +198,7 @@ export const toItem = (r: Row): MemoryItem => ({
   expiresAt: r.expires_at ? new Date(r.expires_at as string).toISOString() : null,
   sharedScope: (r.shared_scope as string | null) ?? null,
   sources: (r.sources as string[] | null) ?? [],
+  value: r.value ?? null,
 });
 
 /**
@@ -248,7 +304,6 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
   };
 
   return {
-    ...createAnswerStore({ pool, embeddings }),
     activeFacts: (tenantId, groups = []) =>
       tx(tenantId, async (db) => {
         const { rows } = await db.query(
@@ -374,16 +429,172 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
         one(
           db,
           `insert into memory_items
-             (tenant_id, agent_id, kind, key, version, content, embedding, status, confidence, source_run_id)
+             (tenant_id, agent_id, kind, key, version, content, embedding, status, confidence,
+              source_run_id, value, sources)
            values ($1, $2, 'semantic', $3,
              (select coalesce(max(version), 0) + 1 from memory_items
               where tenant_id = $1 and kind = 'semantic' and key = $3),
-             $4, $5, 'proposed', $6, $7)
+             $4, $5, 'proposed', $6, $7, $8::jsonb, $9::uuid[])
            returning ${COLUMNS}`,
-          [f.tenantId, f.agentId, f.key, f.content, vector, f.confidence, f.sourceRunId],
+          [
+            f.tenantId,
+            f.agentId,
+            f.key,
+            f.content,
+            vector,
+            f.confidence,
+            f.sourceRunId,
+            f.value === undefined ? null : JSON.stringify(f.value),
+            f.sources ?? [],
+          ],
         ),
       );
     },
+
+    async recordDecision(d) {
+      const vector = await embedOne(d.content);
+      return tx(d.tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select id, value from memory_items
+           where tenant_id = $1 and episode_type = 'decision' and key = $2 and ${LIVE}
+           order by last_seen_at desc limit 1`,
+          [d.tenantId, d.key],
+        );
+        const latest = rows[0];
+        if (latest && sameValue(latest.value, d.value)) {
+          const item = await one(
+            db,
+            `update memory_items set strength = strength + 1, last_seen_at = now(),
+               source_run_id = $3, expires_at = greatest(expires_at, now() + make_interval(days => $2))
+             where id = $1 returning ${COLUMNS}`,
+            [latest.id, d.ttlDays, d.sourceRunId],
+          );
+          return { ...item, reinforced: true };
+        }
+        const item = await one(
+          db,
+          `insert into memory_items
+             (tenant_id, agent_id, kind, key, episode_type, content, embedding, status, confidence,
+              source_run_id, expires_at, value)
+           values ($1, $2, 'episodic', $3, 'decision', $4, $5, 'active', 1, $6,
+             now() + make_interval(days => $7), $8::jsonb)
+           returning ${COLUMNS}`,
+          [
+            d.tenantId,
+            d.agentId,
+            d.key,
+            d.content,
+            vector,
+            d.sourceRunId,
+            d.ttlDays,
+            JSON.stringify(d.value),
+          ],
+        );
+        return { ...item, reinforced: false };
+      });
+    },
+
+    decision: (tenantId, key) =>
+      tx(tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select ${COLUMNS} from memory_items
+           where tenant_id = $1 and episode_type = 'decision' and key = $2 and ${LIVE}
+           order by last_seen_at desc limit 1`,
+          [tenantId, key],
+        );
+        return rows[0] ? toItem(rows[0]) : undefined;
+      }),
+
+    decisionsOn: (tenantId, section, limit = 10) =>
+      tx(tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select * from (
+             select distinct on (key) ${COLUMNS} from memory_items
+             where tenant_id = $1 and episode_type = 'decision' and ${LIVE}
+               and right(key, length($2::text) + 1) = '@' || $2::text
+             order by key, last_seen_at desc
+           ) latest order by last_seen_at desc limit $3`,
+          [tenantId, section, limit],
+        );
+        return rows.map(toItem);
+      }),
+
+    sectionsAnswered: (tenantId, agentId, questionId, value) =>
+      tx(tenantId, async (db) => {
+        const prefix = `${agentId}:${questionId}@`;
+        const { rows } = await db.query(
+          `select * from (
+             select distinct on (key) ${COLUMNS} from memory_items
+             where tenant_id = $1 and episode_type = 'decision' and ${LIVE}
+               and left(key, length($2::text)) = $2::text
+             order by key, last_seen_at desc
+           ) latest where value = $3::jsonb`,
+          [tenantId, prefix, JSON.stringify(value)],
+        );
+        return rows.map(toItem);
+      }),
+
+    fact: (tenantId, key, status) =>
+      tx(tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select ${COLUMNS} from memory_items
+           where tenant_id = $1 and kind = 'semantic' and key = $2 and status = $3
+             and (expires_at is null or expires_at > now())
+           order by version desc limit 1`,
+          [tenantId, key, status],
+        );
+        return rows[0] ? toItem(rows[0]) : undefined;
+      }),
+
+    reviseProposal: (tenantId, id, change) =>
+      tx(tenantId, async (db) => {
+        const current = await one(
+          db,
+          `select ${COLUMNS} from memory_items where id = $1 and status = 'proposed' for update`,
+          [id],
+        );
+        const content = change.content ?? current.content;
+        const vector =
+          change.content === undefined
+            ? undefined
+            : toVector((await embeddings.embed([content]))[0] ?? []);
+        return one(
+          db,
+          `update memory_items set content = $2,
+             value = case when $3::boolean then $4::jsonb else value end,
+             embedding = coalesce($5::vector, embedding)
+           where id = $1 returning ${COLUMNS}`,
+          [
+            id,
+            content,
+            change.value !== undefined,
+            change.value === undefined ? null : JSON.stringify(change.value),
+            vector ?? null,
+          ],
+        );
+      }),
+
+    listDecisions: (tenantId) =>
+      tx(tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select * from (
+             select distinct on (key) ${COLUMNS} from memory_items
+             where tenant_id = $1 and episode_type = 'decision' and ${LIVE}
+             order by key, last_seen_at desc
+           ) latest order by last_seen_at desc`,
+          [tenantId],
+        );
+        return rows.map(toItem);
+      }),
+
+    forgetEpisode: (tenantId, id) =>
+      tx(tenantId, async (db) => {
+        const { rowCount } = await db.query(
+          "delete from memory_items where id = $1 and tenant_id = $2 and kind = 'episodic'",
+          [id, tenantId],
+        );
+        return rowCount === 1;
+      }),
 
     listProposals: (tenantId) =>
       tx(tenantId, async (db) => {
@@ -450,4 +661,20 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
         return rowCount ?? 0;
       }),
   };
+}
+
+/** Two answers are the same answer: jsonb from Postgres and a value from a run compare alike. */
+export function sameValue(a: unknown, b: unknown): boolean {
+  return canonical(a) === canonical(b);
+}
+
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v ?? null);
 }
