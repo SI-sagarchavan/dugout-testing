@@ -50,3 +50,17 @@ the person sees the gap. Small, and it can ship on its own.
 - **The steps budget is tight.** A failed slot fails the whole `page.build`, so the model calls it again. With `maxSteps: 8`, two failed tries of frame-match plus two each for two slots, then success and `final`, is exactly 8. Raise it to 12, or count tries per slot in code.
 - **Concurrency is 1.** Read-only hook look-ups could run in parallel while builds stay one at a time. That's worth doing when ticket 10 brings pages of 4+ slots, not before.
 - **No eval case with the fake Cast hub.** Add a two-slot case (Team) to the section-builder eval, so the fan-out is measured without Cast.
+
+## Follow-ups done (2026-11-09)
+
+- Budget: no `NeedsSetup` any more. When the slots with data could spend more than an hour of
+  Cast (6 runs a slot, 25 an hour), the pass asks once, `cast_budget`: bind the first 4 (proposed),
+  all, or none. Slots not bound are `skipped` in `slots` and listed in `remaining`. A pipeline can
+  now stop for a person itself: `Pipeline.run` gets `own.answered`, the answers to its own questions
+  (`packages/sdk/src/subagents.ts`, test `packages/sdk/tests/pipeline-answers.test.ts`).
+- `maxSteps` 8 → 12.
+- Not done: lowering the estimate for a slot whose hook a decision already names (the pass would
+  read the data-bind decisions from memory: worth it when pages bring 4+ slots); concurrency stays 1.
+- Not done: an eval case. section-builder and data-bind have no eval suite; a two-slot case needs
+  a scripted harness over frame-match, data-bind and hook-maker with the fake Cast hub. The fan-out
+  is covered by `tests/fan-out.test.ts` with faked children.

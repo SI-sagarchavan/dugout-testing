@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   type AgentSpec,
+  type Answers,
   AUTO_APPROVED,
   AwaitingAnswers,
   approve,
@@ -429,6 +430,15 @@ export interface PipelineCall {
   key?: string;
 }
 
+/** What a pipeline's own pause brought back: a person's answers to the questions it asked. */
+export interface PipelineContext {
+  /**
+   * The answers, when the pipeline itself stopped the run with questions (`AwaitingAnswers`) and
+   * runs again now that they came. Answers to a child's questions go to that child, not here.
+   */
+  answered?: { by: string; answers: Answers };
+}
+
 /** A fixed sequence of the agents a parent may call, run by code. */
 export interface Pipeline {
   /** The tool's name, e.g. `page.build`. */
@@ -441,11 +451,14 @@ export interface Pipeline {
   /**
    * Runs the agents. `call` runs one and answers with its output; it throws when that agent
    * failed. Calls with different keys may be started together (`Promise.all`); `concurrency` of
-   * them run at a time. `input` is the run's own input.
+   * them run at a time. `input` is the run's own input. The pipeline may stop the run for a person
+   * itself (throw `AwaitingAnswers`): it is run again with their answers in `own.answered`, and the
+   * children that completed are not run again.
    */
   run(
     call: (child: AnyAgent, input: unknown, opts?: PipelineCall) => Promise<unknown>,
     input: unknown,
+    own?: PipelineContext,
   ): Promise<unknown>;
 }
 
@@ -564,7 +577,9 @@ export function pipelineTool(pipeline: Pipeline, callers: ChildCaller[]): Tool {
       };
       let output: unknown;
       try {
-        output = await pipeline.run(call, ctx.input);
+        // answers that came from no child are to the pipeline's own questions
+        const answered = ctx.answered && !ctx.answered.from?.length ? ctx.answered : undefined;
+        output = await pipeline.run(call, ctx.input, answered ? { answered } : {});
       } finally {
         // no child is left running when this call ends: a pause or a failure waits for the rest
         await Promise.allSettled([...inflight]);

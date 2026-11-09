@@ -205,16 +205,54 @@ describe("section-builder on a frame of two slots", () => {
     ).rejects.toBe(asking);
   });
 
-  it("stops before a pass could spend more Cast runs than an hour holds", async () => {
-    const { pipeline } = fake();
+  describe("when the slots could spend more of Cast than an hour holds", () => {
     const many = Array.from({ length: 5 }, (_, i) => slot(`s${i}`, `slot-${i}`));
-    await expect(
-      pipeline.run(
-        async (child) =>
-          child.spec.id === "frame-match" ? { ...frame, slots: many } : bound("fx", "h"),
+    const runWith = async (answers?: Record<string, string>) => {
+      const { pipeline } = fake();
+      const keys: string[] = [];
+      const answer = await pipeline.run(
+        async (child, _input, opts) => {
+          if (child.spec.id === "frame-match") return { ...frame, slots: many };
+          keys.push(opts?.key ?? "");
+          return bound("fx", "h");
+        },
         { exportId: EXPORT, project: "default" },
-      ),
-    ).rejects.toThrow(/Cast live runs/);
+        answers ? { answered: { by: "sam", answers } } : {},
+      );
+      return {
+        answer: answer as { slots: Array<{ name: string; data: string }>; remaining: string[] },
+        keys,
+      };
+    };
+
+    it("asks a person once, before binding any, and proposes the first few", async () => {
+      const asked = await runWith().catch((e: unknown) => e);
+      expect(asked).toBeInstanceOf(AwaitingAnswers);
+      const [q] = (asked as AwaitingAnswers).questions;
+      expect(q).toMatchObject({ id: "cast_budget", kind: "choice", proposed: ["first"] });
+      expect(q?.why).toContain("slot-0, slot-1, slot-2, slot-3, slot-4");
+    });
+
+    it("binds the first four when that is the answer, and lists the rest as skipped", async () => {
+      const { answer, keys } = await runWith({ cast_budget: "first" });
+      expect(keys).toEqual(["s0", "s1", "s2", "s3"]);
+      // (the fake gives every slot the same plan, so the merge keeps one: what matters is who ran)
+      expect(answer.slots.map((s) => s.data === "skipped")).toEqual([
+        false,
+        false,
+        false,
+        false,
+        true,
+      ]);
+      expect(answer.remaining.some((r) => r.startsWith("data: slot-4: not bound:"))).toBe(true);
+    });
+
+    it("binds them all, or none, as the person chose", async () => {
+      expect((await runWith({ cast_budget: "all" })).keys).toHaveLength(5);
+      const none = await runWith({ cast_budget: "none" });
+      expect(none.keys).toEqual([]);
+      expect(none.answer.slots.every((s) => s.data === "skipped")).toBe(true);
+    });
   });
 
   it("hands over a frame of one slot as before, with a slots entry of one", async () => {

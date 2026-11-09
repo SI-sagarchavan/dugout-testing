@@ -94,9 +94,10 @@
             "enum": [
               "bound",
               "none",
-              "failed"
+              "failed",
+              "skipped"
             ],
-            "description": "none: nothing in it is data; failed: it could not be bound"
+            "description": "none: nothing in it is data; failed: it could not be bound; skipped: a person chose not to bind it in this pass, for Cast's live-run budget"
           },
           "hookId": {
             "description": "The Cast hook its data comes from",

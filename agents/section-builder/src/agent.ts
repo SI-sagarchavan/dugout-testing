@@ -12,8 +12,14 @@ import {
   agent as frameMatch,
   RunInput,
 } from "@dugout/agent-frame-match";
-import { type AgentSpec, AwaitingAnswers, type Message, NeedsSetup } from "@dugout/contracts";
-import { defineAgent, type Pipeline } from "@dugout/sdk";
+import {
+  type AgentSpec,
+  type AskedQuestion,
+  AwaitingAnswers,
+  type Message,
+  NeedsSetup,
+} from "@dugout/contracts";
+import { defineAgent, type Pipeline, type PipelineContext } from "@dugout/sdk";
 import { z } from "zod";
 import { mergeBindings, type PlanParts } from "./merge.ts";
 
@@ -41,7 +47,8 @@ export const spec: AgentSpec = {
   model: "haiku",
   memory: { read: [], write: [] },
   // frame-match and bind each have their own limit; this covers both, and bind's researcher and builder
-  budget: { usdPerRun: 3, maxSteps: 8, maxDepth: 1 },
+  // each failed try of a stage (three at most per stage, per slot) is one more call of page.build
+  budget: { usdPerRun: 3, maxSteps: 12, maxDepth: 1 },
   // starting the build asks nobody; a stage still stops for a person when it has a question
   approvals: [],
 };
@@ -57,8 +64,10 @@ const Choice = z.object({
 export const SlotOutput = z.object({
   name: z.string().describe("The slot's heading, slugged"),
   data: z
-    .enum(["bound", "none", "failed"])
-    .describe("none: nothing in it is data; failed: it could not be bound"),
+    .enum(["bound", "none", "failed", "skipped"])
+    .describe(
+      "none: nothing in it is data; failed: it could not be bound; skipped: a person chose not to bind it in this pass, for Cast's live-run budget",
+    ),
   hookId: z.string().optional().describe("The Cast hook its data comes from"),
   bound: z.number(),
   collapsed: z.number(),
@@ -243,7 +252,7 @@ export function threadNote(_input: unknown, output: unknown): string | undefined
     : "";
   const parts =
     o.slots.length > 1
-      ? ` Slots: ${o.slots.map((s) => `${s.name} ${s.data === "bound" ? `bound (${s.bound} props${s.hookId ? `, from ${s.hookId}` : ""})` : s.data === "none" ? "has no data" : "failed"}`).join("; ")}.`
+      ? ` Slots: ${o.slots.map((s) => `${s.name} ${s.data === "bound" ? `bound (${s.bound} props${s.hookId ? `, from ${s.hookId}` : ""})` : s.data === "none" ? "has no data" : s.data === "skipped" ? "not bound in this pass (Cast budget)" : "failed"}`).join("; ")}.`
       : "";
   return [
     o.data === "none"
@@ -269,10 +278,59 @@ export function verifyFinal(output: unknown, run: { messages: Message[] }): stri
 
 /**
  * Cast allows 25 live runs an hour to a person, shared by every agent. A slot looks its hook up (a
- * few runs) and may build one (more): the pass stops before it could spend what an hour holds.
+ * few runs) and may build one (more). When the slots of a pass could spend more than an hour
+ * holds, a person is asked once before any is bound (`cast_budget`): bind them all, the first few,
+ * or none. It is an estimate, not a count: Cast does not say what is left of the hour.
  */
 export const CAST_RUNS_PER_HOUR = 25;
 export const CAST_RUNS_PER_SLOT = 6;
+export const CAST_BUDGET_QUESTION = "cast_budget";
+
+/** How many slots an hour's live runs cover, at the estimate. */
+const slotsAnHourCovers = () => Math.max(1, Math.floor(CAST_RUNS_PER_HOUR / CAST_RUNS_PER_SLOT));
+
+export function castBudgetQuestion(slots: string[]): AskedQuestion {
+  const first = slotsAnHourCovers();
+  return {
+    id: CAST_BUDGET_QUESTION,
+    kind: "choice",
+    question: `Bind all ${slots.length} parts of this frame to Cast data now?`,
+    why: `${slots.length} parts show data (${slots.join(", ")}). Finding or building each one's hook may use about ${CAST_RUNS_PER_SLOT} of Cast's live runs, ${slots.length * CAST_RUNS_PER_SLOT} in all, and Cast allows ${CAST_RUNS_PER_HOUR} an hour to a person, shared with every agent.`,
+    options: [
+      {
+        value: "first",
+        label: `Bind the first ${first}`,
+        description: `The others are published with the designer's copy and listed as not bound.`,
+      },
+      {
+        value: "all",
+        label: "Bind them all",
+        description: "Some may fail if Cast's hour runs out; they are listed with why.",
+      },
+      {
+        value: "none",
+        label: "Bind none now",
+        description: "The frame is published as matched, with nothing bound.",
+      },
+    ],
+    allowOther: false,
+    proposed: ["first"],
+  };
+}
+
+/** Which of the slots with data to bind now: all, unless a person chose fewer for Cast's budget. */
+export function slotsToBind<T>(binding: T[], own: PipelineContext = {}): T[] {
+  if (binding.length * CAST_RUNS_PER_SLOT <= CAST_RUNS_PER_HOUR) return binding;
+  const answer = own.answered?.answers[CAST_BUDGET_QUESTION];
+  if (answer === undefined) {
+    throw new AwaitingAnswers([
+      castBudgetQuestion(binding.map((s) => (s as { name?: string }).name ?? "a part")),
+    ]);
+  }
+  if (answer === "all") return binding;
+  if (answer === "none") return [];
+  return binding.slice(0, slotsAnHourCovers());
+}
 
 /** The pass: the two agents, in this order, and nothing for the model to decide. */
 export function makePipeline(
@@ -287,7 +345,7 @@ export function makePipeline(
     concurrency: 1,
     description:
       "Runs the whole pass for this Handoff, in order: matches the frame to its screenshot and publishes it, then finds (or builds) the data in Cast and binds it, unless nothing on the section is data. A frame of several parts that each show data (a strip of fixtures over a squad) binds each part on its own and publishes once. Takes no arguments. Answers with the one preview and everything still off.",
-    async run(call, input) {
+    async run(call, input, own) {
       const { exportId, handoffId, project } = RunInput.parse(input);
       const frame = (await call(
         frameMatch,
@@ -300,7 +358,7 @@ export function makePipeline(
         const data = (await call(bind, { preview: frame.previewUrl })) as DataOutput;
         return assemble(frame, data);
       }
-      return fanOut(frame, call, planeOf(project), dslOf);
+      return fanOut(frame, call, planeOf(project), dslOf, own);
     },
   };
 }
@@ -313,15 +371,15 @@ async function fanOut(
   call: Parameters<Pipeline["run"]>[0],
   plane: ControlPlane,
   dslOf: () => Promise<Dsl>,
+  own: PipelineContext = {},
 ): Promise<Output> {
   const slots = frame.slots ?? [];
-  const binding = slots.filter((s) => s.content.data !== "none");
-  if (binding.length === 0) return assemble(frame, undefined, slots.map(noData));
-  if (binding.length * CAST_RUNS_PER_SLOT > CAST_RUNS_PER_HOUR) {
-    throw new NeedsSetup(
-      `${binding.length} slots with data may spend about ${binding.length * CAST_RUNS_PER_SLOT} Cast live runs, and Cast allows ${CAST_RUNS_PER_HOUR} an hour to a person: build fewer of them in one pass, or wait for the hour to turn`,
-    );
-  }
+  const withData = slots.filter((s) => s.content.data !== "none");
+  if (withData.length === 0) return assemble(frame, undefined, slots.map(noData));
+  // a person is asked once when the slots could spend more of Cast than an hour holds
+  const binding = slotsToBind(withData, own);
+  const chosen = new Set(binding.map((s) => s.id));
+  const deferred = withData.filter((s) => !chosen.has(s.id));
   const settled = await Promise.allSettled(
     binding.map((s) =>
       call(
@@ -354,9 +412,10 @@ async function fanOut(
   const open = settled.find((r) => r.status === "rejected" && !exhausted(r.reason));
   if (open?.status === "rejected") throw open.reason;
 
-  const reports = new Map<string, SlotOutput>(
-    slots.filter((s) => s.content.data === "none").map((s) => [s.name, noData(s)]),
-  );
+  const reports = new Map<string, SlotOutput>([
+    ...slots.filter((s) => s.content.data === "none").map((s) => [s.name, noData(s)] as const),
+    ...deferred.map((s) => [s.name, skipped(s)] as const),
+  ]);
   const parts: Array<{ name: string; data: DataOutput; report: SlotOutput }> = [];
   settled.forEach((r, i) => {
     const slot = binding[i];
@@ -392,7 +451,7 @@ async function fanOut(
       slots.map((s) => reports.get(s.name) as SlotOutput),
     );
   const failedLines = [...reports.values()]
-    .filter((r) => r.data === "failed")
+    .filter((r) => r.data === "failed" || r.data === "skipped")
     .map((r) => `${r.name}: not bound: ${r.remaining[0] ?? "it failed"}`);
   const notes = parts.flatMap((p) => p.data.notes);
   if (parts.length === 0) {
@@ -441,7 +500,7 @@ async function fanOut(
     remaining: [
       ...used.flatMap((p) => p.data.remaining.map((item) => `${p.name}: ${item}`)),
       ...[...reports.values()]
-        .filter((r) => r.data === "failed")
+        .filter((r) => r.data === "failed" || r.data === "skipped")
         .map((r) => `${r.name}: not bound: ${r.remaining[0] ?? "it failed"}`),
       ...problems.map((item) => `the merged plan: ${item}`),
     ],
@@ -456,6 +515,16 @@ const noData = (s: NonNullable<FrameOutput["slots"]>[number]): SlotOutput => ({
   bound: 0,
   collapsed: 0,
   remaining: [],
+});
+
+const skipped = (s: NonNullable<FrameOutput["slots"]>[number]): SlotOutput => ({
+  name: s.name,
+  data: "skipped",
+  bound: 0,
+  collapsed: 0,
+  remaining: [
+    "a person chose to spare Cast's live runs in this pass; it shows the designer's copy",
+  ],
 });
 
 /** The merged plan applied to the published tree: what would be wrong on the page, in words. */
