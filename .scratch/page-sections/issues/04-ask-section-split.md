@@ -1,6 +1,6 @@
 # 04 · Ask a person when the split is unsure, and remember it
 
-Status: ready-for-agent
+Status: done (2026-11-09)
 Type: task
 Blocked by: 02, 05
 
@@ -25,3 +25,23 @@ frame's structural signature, so a later Handoff of the same frame is not asked 
 
 - `packages/core` questions (`Question`, `AwaitingAnswers`), `packages/memory/src/decisions.ts`
 - `frame.layout` already asks about containers: same mechanism
+
+## Done (2026-11-09)
+
+- `frame.load` settles the split before it builds anything (`settleSplit`,
+  `agents/frame-match/src/tools.ts`): nothing when every slot is sure; else the person's answer
+  now, or the decision on this frame from an earlier run (`frame-match:section_split@<signature>`,
+  read with the memory store's `decision`); else it asks one `section_split` question (multi):
+  "Keep them apart", plus one "One section: A and B" per join the finder was unsure of. A heading
+  with nothing under it is proposed joined to the part below; two parts with no heading between
+  them are proposed apart. `--yes`, or answering nothing, takes the proposal.
+- The answer becomes joins (`findFrameSlots(tools, bundle, joins)`): the joined parts are one
+  sure slot, named by the one that was sure, signed again. A join naming a part that is gone is
+  dropped.
+- `section_split` is declared in frame-match's spec, so the answer is kept as a decision on the
+  frame.
+- Tests: `tests/slots.test.ts` (choices, question, joins), `tests/tools.test.ts` (asks before
+  building, applies an answer, takes the proposal, uses a decision and asks nothing).
+- None of the four eval frames is unsure, so none of them asks.
+- Not done: the question carries no picture of each part (questions are text); the
+  names and layers say which part is which.

@@ -10,6 +10,7 @@
  * slots its key is named for the slot (`squad_women_men`), so two slots' tabs never share state.
  */
 
+import type { AskedQuestion } from "@dugout/contracts";
 import { findSlots, holding, type IrDoc, type IrNode } from "@dugout/library";
 import { z } from "zod";
 import { Content } from "./content.ts";
@@ -36,7 +37,14 @@ export interface FoundSlots {
   background: string[];
 }
 
-export function findFrameSlots(tools: Toolchain, bundle: Bundle): FoundSlots {
+/** Two slots a person said are one section: by their ids, the upper one first. */
+export type Join = readonly [string, string];
+
+export function findFrameSlots(
+  tools: Toolchain,
+  bundle: Bundle,
+  joins: readonly Join[] = [],
+): FoundSlots {
   const doc = bundle.doc as unknown as IrDoc;
   const found = findSlots(doc, { layouts: tools.detectLayout(bundle.doc) });
   const within = (id: string): string[] => {
@@ -63,7 +71,121 @@ export function findFrameSlots(tools: Toolchain, bundle: Bundle): FoundSlots {
         signature: tools.sign && layers.length > 0 ? tools.sign(holding(layers) as never) : s.id,
       };
     });
-  return { slots, background: found.background.flatMap(within) };
+  const sign = (ids: string[]) => {
+    const layers = ids.map((id) => bundle.byId.get(id) as unknown as IrNode).filter(Boolean);
+    return tools.sign && layers.length > 0 ? tools.sign(holding(layers) as never) : (ids[0] ?? "");
+  };
+  return { slots: joined(slots, joins, sign), background: found.background.flatMap(within) };
+}
+
+/**
+ * The slots with the ones a person joined made one: their layers together, top to bottom, named
+ * by the one with a heading, signed again, and sure. A join naming a slot that is not there is
+ * left out (the frame changed since the answer).
+ */
+export function joined(
+  slots: FoundSlot[],
+  joins: readonly Join[],
+  sign: (ids: string[]) => string,
+): FoundSlot[] {
+  if (joins.length === 0) return slots;
+  const index = new Map(slots.map((s, i) => [s.id, i]));
+  const root = slots.map((_, i) => i);
+  const find = (i: number): number => (root[i] === i ? i : find(root[i] as number));
+  for (const [a, b] of joins) {
+    const ia = index.get(a);
+    const ib = index.get(b);
+    if (ia === undefined || ib === undefined) continue;
+    const [lo, hi] = [find(ia), find(ib)].sort((x, y) => x - y) as [number, number];
+    if (lo !== hi) root[hi] = lo;
+  }
+  const groups = new Map<number, FoundSlot[]>();
+  slots.forEach((s, i) => {
+    const r = find(i);
+    groups.set(r, [...(groups.get(r) ?? []), s]);
+  });
+  return [...groups.values()].map((group) => {
+    if (group.length === 1) return group[0] as FoundSlot;
+    const nodes = group.flatMap((s) => s.nodes);
+    const named = group.find((s) => s.confidence === "sure") ?? group[0];
+    return {
+      id: (group[0] as FoundSlot).id,
+      name: (named as FoundSlot).name,
+      nodes,
+      ir: group.flatMap((s) => s.ir),
+      confidence: "sure" as const,
+      signature: sign(nodes),
+    };
+  });
+}
+
+export const SPLIT_QUESTION = "section_split";
+/** The answer that keeps every part as it was found. */
+export const KEEP_APART = "apart";
+const joinValue = ([a, b]: Join) => `join:${a}+${b}`;
+
+/**
+ * The parts the finder was unsure of, as joins a person may make: a heading with nothing under it
+ * and the part below (proposed), or two parts with no heading between them (kept apart unless a
+ * person says otherwise). Nothing when every part is sure.
+ */
+export function splitChoices(found: FoundSlots): { joins: Join[]; proposed: Join[] } {
+  const slots = found.slots;
+  const joins: Join[] = [];
+  const proposed: Join[] = [];
+  const add = (a: number, b: number, propose: boolean) => {
+    const [x, y] = [slots[Math.min(a, b)], slots[Math.max(a, b)]];
+    if (!x || !y || x === y) return;
+    const pair: Join = [x.id, y.id];
+    if (joins.some(([p, q]) => p === pair[0] && q === pair[1])) return;
+    joins.push(pair);
+    if (propose) proposed.push(pair);
+  };
+  slots.forEach((slot, i) => {
+    if (slot.confidence !== "unsure") return;
+    if (slot.why?.startsWith("a heading with no content")) {
+      add(i, i + 1 < slots.length ? i + 1 : i - 1, true);
+      return;
+    }
+    // the finder names the neighbour: "no heading between it and <id>: one section or two?"
+    const neighbour = /between it and (.+?): /.exec(slot.why ?? "")?.[1];
+    const other = slots.findIndex((s) => s.id === neighbour);
+    if (other >= 0) add(i, other, false);
+  });
+  return { joins, proposed };
+}
+
+/** The question a person settles the split by, or nothing when the finder was sure. */
+export function splitQuestion(found: FoundSlots): AskedQuestion | undefined {
+  const { joins, proposed } = splitChoices(found);
+  if (joins.length === 0) return undefined;
+  const name = (id: string) => found.slots.find((s) => s.id === id)?.name ?? id;
+  const unsure = found.slots.filter((s) => s.confidence === "unsure");
+  return {
+    id: SPLIT_QUESTION,
+    kind: "multi",
+    question: "Which parts of this frame are one section?",
+    why: `The frame reads as ${found.slots.length} parts (${found.slots.map((s) => s.name).join(", ")}), and some are unclear: ${unsure.map((s) => `${s.name}: ${s.why ?? "unsure"}`).join("; ")}. Each section is bound to its own data, so parts joined here share one data source.`,
+    options: [
+      { value: KEEP_APART, label: "Keep them apart", description: "Each part is its own section." },
+      ...joins.map((pair) => ({
+        value: joinValue(pair),
+        label: `One section: ${name(pair[0])} and ${name(pair[1])}`,
+        description: "They are bound together, to one data source.",
+      })),
+    ],
+    allowOther: false,
+    proposed: proposed.length > 0 ? proposed.map(joinValue) : [KEEP_APART],
+  };
+}
+
+/** The joins an answer makes; an answer that is not one of the question's makes none. */
+export function joinsFrom(answer: unknown): Join[] {
+  const values = Array.isArray(answer) ? answer : typeof answer === "string" ? [answer] : [];
+  return values.flatMap((v) => {
+    const m = /^join:(.+)\+(.+)$/.exec(String(v));
+    return m ? [[m[1], m[2]] as Join] : [];
+  });
 }
 
 /** What a run says of one slot. */

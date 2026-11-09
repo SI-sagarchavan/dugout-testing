@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { type FoundSlots, keyPart, ownersOf, slotted } from "../src/slots.ts";
+import {
+  type FoundSlots,
+  joined,
+  joinsFrom,
+  keyPart,
+  ownersOf,
+  slotted,
+  splitChoices,
+  splitQuestion,
+} from "../src/slots.ts";
 
 const slot = (id: string, name: string, ir: string[]) => ({
   id,
@@ -129,5 +138,56 @@ describe("keyPart", () => {
   it("makes a page key of a slot's name", () => {
     expect(keyPart("the-brave-squad")).toBe("the_brave_squad");
     expect(keyPart("2024-squad")).toBe("s_2024_squad");
+  });
+});
+
+describe("settling which parts are one section (ticket 04)", () => {
+  const part = (id: string, name: string, why?: string) => ({
+    ...slot(id, name, [id, `${id}1`]),
+    ...(why ? { confidence: "unsure" as const, why } : {}),
+  });
+  const unsure: FoundSlots = {
+    slots: [
+      part("h", "the-brave-squad", "a heading with no content under it"),
+      part("c", "cards"),
+      part("x", "extras", "no heading between it and c: one section or two?"),
+    ],
+    background: [],
+  };
+
+  it("asks nothing when the finder is sure of every part", () => {
+    expect(splitQuestion(found)).toBeUndefined();
+  });
+
+  it("offers each join the finder was unsure of, proposing a heading's join to the part below", () => {
+    const q = splitQuestion(unsure);
+    expect(q).toMatchObject({ id: "section_split", kind: "multi", proposed: ["join:h+c"] });
+    expect(q?.options.map((o) => o.value)).toEqual(["apart", "join:h+c", "join:c+x"]);
+    expect(splitChoices(unsure).joins).toEqual([
+      ["h", "c"],
+      ["c", "x"],
+    ]);
+  });
+
+  it("proposes keeping them apart when no join is likelier", () => {
+    const q = splitQuestion({
+      slots: [part("c", "cards"), unsure.slots[2] as never],
+      background: [],
+    });
+    expect(q?.proposed).toEqual(["apart"]);
+  });
+
+  it("joins what a person joined into one sure part, signed again, and ignores what is gone", () => {
+    const joins = joinsFrom(["join:h+c", "apart", "join:gone+c"]);
+    expect(joins).toEqual([
+      ["h", "c"],
+      ["gone", "c"],
+    ]);
+    const out = joined(unsure.slots, joins, (ids) => `sig:${ids.join(",")}`);
+    expect(out.map((s) => [s.id, s.name, s.nodes, s.confidence, s.signature])).toEqual([
+      ["h", "cards", ["h", "c"], "sure", "sig:h,c"],
+      ["x", "extras", ["x"], "unsure", "sig-x"],
+    ]);
+    expect(out[0]?.ir).toEqual(["h", "h1", "c", "c1"]);
   });
 });

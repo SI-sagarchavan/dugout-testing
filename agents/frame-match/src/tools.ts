@@ -4,7 +4,7 @@ import { AwaitingAnswers, defineTool, type ToolContext } from "@dugout/contracts
 import { describeImage, describeText, REPO_ROOT } from "@dugout/core";
 import type { Pool } from "@dugout/db";
 import { recordPageChoices } from "@dugout/db/page-choices";
-import { BEFORE_RULE, decidedBefore, type MemoryReader } from "@dugout/memory";
+import { BEFORE_RULE, decidedBefore, decisionKey, type MemoryReader } from "@dugout/memory";
 import { z } from "zod";
 import { applyContentVerdict, Content, contentOf, contentPrompt, outlineOf } from "./content.ts";
 import { type ControlPlane, createControlPlane, webUrl } from "./control-plane.ts";
@@ -44,8 +44,22 @@ import {
 } from "./layout.ts";
 import { type Looked, LookInputError, look, type See } from "./look.ts";
 import { NOTES_RULE } from "./notes.ts";
-import { type FoundSlots, findFrameSlots, ownersOf, SlotReport, slotted } from "./slots.ts";
+
+import {
+  type FoundSlots,
+  findFrameSlots,
+  type Join,
+  joinsFrom,
+  ownersOf,
+  SlotReport,
+  SPLIT_QUESTION,
+  slotted,
+  splitQuestion,
+} from "./slots.ts";
 import { loadToolchain, type PageChoice, type Toolchain } from "./toolchain.ts";
+
+/** This agent's id, as its decisions are kept under (ADR 0033). */
+const AGENT_ID = "frame-match";
 
 /**
  * What a person calls a section: its frame's name, or, when Figma named it (`Frame 1984078815`),
@@ -104,7 +118,7 @@ export interface Engine {
   /** The page choices a built frame writes: its tabs (`@fanos/dsl` `pageChoices`). */
   choices?(built: Built): Promise<PageChoice[]>;
   /** The slots of the frame: the parts that each show one kind of data (`findSlots`). */
-  slots?(bundle: Bundle): Promise<FoundSlots>;
+  slots?(bundle: Bundle, joins?: readonly Join[]): Promise<FoundSlots>;
   /** A platform carousel config as Carousel props, its colours checked against the theme. */
   platform?(json: unknown, colors: ReadonlySet<string>): Promise<PlatformRead>;
 }
@@ -130,7 +144,7 @@ export function pipelineEngine(tools?: Toolchain): Engine {
     unpainted: (bundle, built) => unpaintedLayers(bundle, built.tree, built.themeRaw),
     layouts: async (bundle) => (await load()).detectLayout(bundle.doc),
     choices: async (built) => (await load()).pageChoices(built.tree),
-    slots: async (bundle) => findFrameSlots(await load(), bundle),
+    slots: async (bundle, joins) => findFrameSlots(await load(), bundle, joins),
     platform: async (json, colors) => (await load()).fromPlatformCarousel(json, { colors }),
   };
 }
@@ -516,13 +530,38 @@ export function createMatchTools(
      * built later to read (ADR 0032). Without it nothing is recorded.
      */
     pool?: Pool;
-    /** What people decided about a section before (ADR 0033), read for frame.load's `before`. */
-    decisions?: Pick<MemoryReader, "decisionsOn">;
+    /**
+     * What people decided about a section before (ADR 0033), read for frame.load's `before`, and
+     * the split a person settled for this frame (`section_split`), applied without asking again.
+     */
+    decisions?: Pick<MemoryReader, "decisionsOn"> & Partial<Pick<MemoryReader, "decision">>;
     /** Cast MCP client (ADR 0022). Its read tools are added; writes are never given to this agent. */
   } = {},
 ) {
   const dir = opts.dir ?? MATCH_DIR;
   const engine = opts.engine ?? pipelineEngine();
+
+  /**
+   * The joins the frame's parts get (ticket 04): none when the finder is sure of them; else what a
+   * person answered now, or decided on this frame before (`section_split`, ADR 0033); else the run
+   * stops and asks. A person who lets the agent decide gets the proposal.
+   */
+  const settleSplit = async (bundle: Bundle, ctx: ToolContext): Promise<Join[]> => {
+    const found = await engine.slots?.(bundle).catch(() => undefined);
+    const question = found ? splitQuestion(found) : undefined;
+    if (!question) return [];
+    if (ctx.answered && !ctx.answered.from?.length) {
+      const given = ctx.answered.answers[SPLIT_QUESTION];
+      return joinsFrom(given ?? question.proposed);
+    }
+    if (bundle.section && opts.decisions?.decision) {
+      const before = await opts.decisions
+        .decision(ctx.tenantId, decisionKey(AGENT_ID, SPLIT_QUESTION, bundle.section))
+        .catch(() => undefined);
+      if (before?.value !== undefined && before.value !== null) return joinsFrom(before.value);
+    }
+    throw new AwaitingAnswers([question]);
+  };
   const planeOf = opts.plane ?? ((project: string) => createControlPlane(project));
   const handoffsOf =
     opts.handoffs ??
@@ -722,6 +761,8 @@ export function createMatchTools(
         const earlier = decided.length > 0 ? { before: decided, beforeRule: BEFORE_RULE } : {};
         if (saved) return { ...standing(saved), ...designer, ...earlier };
 
+        // which parts are one section: settled before the frame is built, so a pause costs nothing
+        const joins = await settleSplit(bundle, ctx);
         const base = await engine.build(bundle, noOverrides());
         const before = await engine.measure(bundle, base);
         // nothing to compare against: the frame can still be published, as unmeasured
@@ -746,7 +787,7 @@ export function createMatchTools(
           ctx.signal,
         );
         // the frame's slots, and whether each shows data: a frame of two sections binds twice
-        const slots = await engine.slots?.(bundle).catch(() => undefined);
+        const slots = await engine.slots?.(bundle, joins).catch(() => undefined);
         const slotContent: Content[] = [];
         let framed = content;
         if (slots) {

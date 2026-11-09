@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Message } from "@dugout/contracts";
+import { AwaitingAnswers, type Message } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { completeFinal, verifyFinal } from "../src/agent.ts";
@@ -828,5 +828,87 @@ describe("verifyFinal", () => {
 
   it("refuses a final with nothing published", () => {
     expect(verifyFinal(final, { messages: [] })).toContain("Nothing was published");
+  });
+});
+
+describe("frame.load and an unsure split (ticket 04)", () => {
+  const part = (id: string, why?: string) => ({
+    id,
+    name: id,
+    nodes: [id],
+    ir: [id],
+    signature: `sig-${id}`,
+    confidence: (why ? "unsure" : "sure") as "sure" | "unsure",
+    ...(why ? { why } : {}),
+  });
+  const unsure = {
+    slots: [part("h", "a heading with no content under it"), part("c")],
+    background: [],
+  };
+  const sectioned = { ...bundle, section: "sig-frame" } as unknown as Bundle;
+
+  async function load(decided?: unknown) {
+    const { engine, plane } = setup(() => measured(90));
+    const joinsSeen: unknown[] = [];
+    let builds = 0;
+    const withSlots: Engine = {
+      ...engine,
+      bundle: async () => sectioned,
+      build: async (b, o) => {
+        builds++;
+        return engine.build(b, o);
+      },
+      slots: async (_b, joins) => {
+        joinsSeen.push(joins ?? []);
+        return unsure;
+      },
+    };
+    const keys: string[] = [];
+    const decisions = {
+      decisionsOn: async () => [],
+      decision: async (_t: string, key: string) => {
+        keys.push(key);
+        return decided === undefined ? undefined : ({ value: decided } as never);
+      },
+    };
+    const dir = await mkdtemp(join(tmpdir(), "frame-match-split-"));
+    const list = createMatchTools({ dir, engine: withSlots, plane: () => plane, decisions });
+    const tool = list.find((t) => t.name === "frame.load") as unknown as {
+      run(input: unknown, c: unknown): Promise<Record<string, unknown>>;
+    };
+    return { tool, joinsSeen, keys, builds: () => builds };
+  }
+
+  it("asks before it builds anything, when no one has settled it", async () => {
+    const { tool, builds, keys } = await load();
+    const asked = await tool.run({}, ctx("split-1")).catch((e: unknown) => e);
+    expect(asked).toBeInstanceOf(AwaitingAnswers);
+    expect((asked as AwaitingAnswers).questions[0]).toMatchObject({
+      id: "section_split",
+      proposed: ["join:h+c"],
+    });
+    expect(builds()).toBe(0);
+    expect(keys).toEqual(["frame-match:section_split@sig-frame"]);
+  });
+
+  it("applies the person's answer when it runs again", async () => {
+    const { tool, joinsSeen } = await load();
+    await tool.run(
+      {},
+      { ...ctx("split-2"), answered: { by: "sam", answers: { section_split: ["join:h+c"] } } },
+    );
+    expect(joinsSeen.at(-1)).toEqual([["h", "c"]]);
+  });
+
+  it("takes the proposal when the person lets the agent decide", async () => {
+    const { tool, joinsSeen } = await load();
+    await tool.run({}, { ...ctx("split-3"), answered: { by: "sam", answers: {} } });
+    expect(joinsSeen.at(-1)).toEqual([["h", "c"]]);
+  });
+
+  it("asks nothing on a frame a person settled before, and applies what they decided", async () => {
+    const { tool, joinsSeen } = await load(["apart"]);
+    await tool.run({}, ctx("split-4"));
+    expect(joinsSeen.at(-1)).toEqual([]);
   });
 });

@@ -66,6 +66,8 @@ export const spec: AgentSpec = {
       about: "whether a carousel wraps around after its last item",
     },
     platform: { scope: "section", about: "a platform carousel config to apply" },
+    // frame.load's, when the section finder is unsure which parts of the frame are one section
+    section_split: { scope: "section", about: "which parts of the frame are one section" },
   },
 };
 
