@@ -15,6 +15,7 @@
     "@dugout/core": "workspace:^",
     "@dugout/db": "workspace:*",
     "@dugout/evals": "workspace:^",
+    "@dugout/library": "workspace:^",
     "@dugout/memory": "workspace:^",
     "@dugout/sdk": "workspace:^",
     "zod": "^4.6.7"

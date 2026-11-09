@@ -9,6 +9,7 @@ import type { ControlPlane } from "./control-plane.ts";
 import type { LayoutJudge } from "./layout.ts";
 import type { See } from "./look.ts";
 import { listedNoteIds, NoteReport, unreportedNotes } from "./notes.ts";
+import { SlotReport } from "./slots.ts";
 import { createMatchTools, type Engine, PageChoiceSchema, RunInput } from "./tools.ts";
 
 export const spec: AgentSpec = {
@@ -108,6 +109,12 @@ export const Result = Output.extend({
     .describe(
       "What the section's tabs write to its page (_page.<key>), for other sections to read",
     ),
+  slots: z
+    .array(SlotReport)
+    .optional()
+    .describe(
+      "The parts of the frame that each show one kind of data, with the tree nodes each owns, whether it shows data, and the page keys it writes and reads",
+    ),
 });
 export type Result = z.infer<typeof Result>;
 
@@ -142,6 +149,7 @@ const PUBLISHED_KEYS = [
   "match",
   "content",
   "choices",
+  "slots",
 ] as const;
 
 /**

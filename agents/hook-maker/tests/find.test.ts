@@ -90,7 +90,16 @@ const runWith = async (
   const result = await start({
     tenantId: "demo-cricket",
     input: {
-      need: "A strip of matches: each shows both teams' short names, crests and scores, and whether it is a result or upcoming.",
+      need: {
+        list: "matches",
+        count: "data",
+        item: [
+          { field: "both teams' short names", example: "SB", required: true },
+          { field: "both teams' crests", required: false },
+          { field: "both teams' scores", example: "166/5", required: true },
+          { field: "result or upcoming", example: "RECENT", required: true },
+        ],
+      },
     },
     responder: async () => {
       throw new Error("finding a hook never asks anyone");

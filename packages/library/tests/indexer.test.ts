@@ -43,18 +43,18 @@ function page() {
   const tile = (x: number) =>
     node(
       "FRAME",
-      { x, y: 120, w: 100, h: 80 },
+      { x, y: 140, w: 100, h: 80 },
       {
         mode: "vertical",
         children: [
-          node("IMAGE", { x, y: 120, w: 100, h: 50 }),
-          node("TEXT", { x, y: 175, w: 100, h: 20 }),
+          node("IMAGE", { x, y: 140, w: 100, h: 50 }),
+          node("TEXT", { x, y: 195, w: 100, h: 20 }),
         ],
       },
     );
   const carousel = node(
     "FRAME",
-    { x: 20, y: 110, w: 360, h: 100 },
+    { x: 20, y: 130, w: 360, h: 100 },
     {
       id: "2:carousel",
       name: "Fixtures",
@@ -72,7 +72,7 @@ function page() {
       children: [
         node(
           "FRAME",
-          { x: 0, y: 0, w: 400, h: 60 },
+          { x: 0, y: 0, w: 400, h: 100 },
           {
             id: "2:header",
             mode: "horizontal",
@@ -81,11 +81,11 @@ function page() {
         ),
         node(
           "FRAME",
-          { x: 0, y: 60, w: 400, h: 180 },
+          { x: 0, y: 100, w: 400, h: 140 },
           {
             id: "2:band",
             mode: "vertical",
-            children: [node("TEXT", { x: 20, y: 70, w: 200, h: 30 }), carousel],
+            children: [node("TEXT", { x: 20, y: 105, w: 200, h: 20 }), carousel],
           },
         ),
         node(
@@ -94,7 +94,10 @@ function page() {
           {
             id: "2:footer",
             mode: "none",
-            children: [node("VECTOR", { x: 10, y: 250, w: 200, h: 40 })],
+            children: [
+              node("VECTOR", { x: 10, y: 250, w: 200, h: 40 }),
+              node("TEXT", { x: 220, y: 260, w: 100, h: 20 }),
+            ],
           },
         ),
       ],
@@ -107,7 +110,7 @@ function page() {
 function picture(): Buffer {
   const image = png.create(800, 600);
   for (let y = 0; y < 600; y++) {
-    const shade = y < 120 ? [200, 0, 0] : y < 480 ? [0, 200, 0] : [0, 0, 200];
+    const shade = y < 200 ? [200, 0, 0] : y < 480 ? [0, 200, 0] : [0, 0, 200];
     for (let x = 0; x < 800; x++) {
       const i = (y * 800 + x) * 4;
       image.data[i] = shade[0] ?? 0;

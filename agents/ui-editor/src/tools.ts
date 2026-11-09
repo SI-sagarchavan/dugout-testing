@@ -387,12 +387,20 @@ export function createEditTools(
             node: c.nodeId,
             path: c.path,
             ...(n ? { element: summary(tree, n) } : { missing: "this node is not in the tree" }),
-            onScreen: c.context.draft?.changed?.length
-              ? {
-                  draftedEdits: c.context.draft.changed,
-                  propsBeforeThem: shorten(c.context.draft.was),
-                }
-              : undefined,
+            onScreen:
+              c.context.draft?.changed?.length || c.context.draft?.removed?.length
+                ? {
+                    ...(c.context.draft.changed?.length
+                      ? {
+                          draftedEdits: c.context.draft.changed,
+                          propsBeforeThem: shorten(c.context.draft.was),
+                        }
+                      : {}),
+                    ...(c.context.draft.removed?.length
+                      ? { deletedByHand: c.context.draft.removed }
+                      : {}),
+                  }
+                : undefined,
           };
         }),
         outline: outline(tree),

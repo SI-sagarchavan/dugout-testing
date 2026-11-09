@@ -9,6 +9,7 @@
       "**",
       "!pnpm-lock.yaml",
       "!schemas",
+      "!agents/frame-match/evals/sections/*.ir.json",
       "!packages/tokens",
       "!packages/dsl",
       "!packages/conform",

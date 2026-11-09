@@ -1,13 +1,21 @@
 import { join } from "node:path";
-import { agent as bind, type Result as DataOutput } from "@dugout/agent-data-bind";
 import {
+  agent as bind,
+  type Result as DataOutput,
+  type Dsl,
+  loadDsl,
+} from "@dugout/agent-data-bind";
+import {
+  type ControlPlane,
+  createControlPlane,
   type Result as FrameOutput,
   agent as frameMatch,
   RunInput,
 } from "@dugout/agent-frame-match";
-import type { AgentSpec, Message } from "@dugout/contracts";
+import { type AgentSpec, AwaitingAnswers, type Message, NeedsSetup } from "@dugout/contracts";
 import { defineAgent, type Pipeline } from "@dugout/sdk";
 import { z } from "zod";
+import { mergeBindings, type PlanParts } from "./merge.ts";
 
 /** The one tool: it runs the whole pass, in a fixed order, and answers with the whole result. */
 const BUILD = "page.build";
@@ -21,10 +29,10 @@ export const spec: AgentSpec = {
   instructions: [
     "A designer pressed Handoff in the Figma plugin. The whole job is one tool: page.build. It runs in a fixed order, so you do not choose the steps: the frame is matched to its screenshot and published, then the data it shows is found in Cast, or built there, and bound to it. A section that shows no data skips the second stage. It takes no arguments.",
     "",
-    `1. Call ${BUILD} once. A person approves it once; that covers everything it does.`,
+    `1. Call ${BUILD} once. It starts without asking anyone; people are asked only the questions a stage raises.`,
     "2. Call final with a one-sentence summary of what page.build did. The result itself is page.build's, filled in by code: do not write a link or a number of your own.",
     "",
-    "If page.build fails, read why. It names the stage that failed and what it said. A stage that finished is not done again, so you may call page.build again, and a person approves that. After three failures of one stage it is not tried again: say so in your answer, with the reason, and stop. A failure that needs setup (a sign-in, a key) ends the run by itself: nothing you call changes it. Never invent a preview link or a result.",
+    "If page.build fails, read why. It names the stage that failed and what it said. A stage that finished is not done again, so you may call page.build again. After three failures of one stage it is not tried again: say so in your answer, with the reason, and stop. A failure that needs setup (a sign-in, a key) ends the run by itself: nothing you call changes it. Never invent a preview link or a result.",
   ].join("\n"),
   tools: [],
   skills: [],
@@ -34,14 +42,29 @@ export const spec: AgentSpec = {
   memory: { read: [], write: [] },
   // frame-match and bind each have their own limit; this covers both, and bind's researcher and builder
   budget: { usdPerRun: 3, maxSteps: 8, maxDepth: 1 },
-  approvals: ["effect:write"],
+  // starting the build asks nobody; a stage still stops for a person when it has a question
+  approvals: [],
 };
 
 const Choice = z.object({
   key: z.string(),
   options: z.array(z.object({ value: z.string(), label: z.string().optional() })),
   initial: z.string(),
+  owner: z.string().optional().describe("The slot that draws it"),
 });
+
+/** What became of one slot of the frame. */
+export const SlotOutput = z.object({
+  name: z.string().describe("The slot's heading, slugged"),
+  data: z
+    .enum(["bound", "none", "failed"])
+    .describe("none: nothing in it is data; failed: it could not be bound"),
+  hookId: z.string().optional().describe("The Cast hook its data comes from"),
+  bound: z.number(),
+  collapsed: z.number(),
+  remaining: z.array(z.string()),
+});
+export type SlotOutput = z.infer<typeof SlotOutput>;
 
 export const Output = z.object({
   previewUrl: z.string().describe("The preview with its data bound: the one thing handed over"),
@@ -59,6 +82,10 @@ export const Output = z.object({
     .describe(
       "What the section's tabs write to its page (_page.<key>), for other sections to read",
     ),
+  slots: z
+    .array(SlotOutput)
+    .default([])
+    .describe("Each part of the frame that shows one kind of data, and what became of it"),
   measured: z.boolean().describe("False when too little of the frame has a screenshot to compare"),
   coverage: z.number().describe("Share of the frame a compared screenshot covers, 0 to 100"),
   before: z.number().optional().describe("Match before the frame was fixed, 0 to 100"),
@@ -68,6 +95,12 @@ export const Output = z.object({
   remaining: z
     .array(z.string())
     .describe("Everything still off, each starting with the part it is about: frame or data"),
+  kept: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "What the binding left as designed on purpose, with why: the section's static parts, a look the data does not decide",
+    ),
   compilerFindings: z.array(z.string()).describe("What the compiler should have done"),
   notes: z
     .array(
@@ -112,8 +145,24 @@ export function mergeNotes(frame: StageNote[] = [], data: StageNote[] = []): Out
   });
 }
 
+/** A frame of one slot: what became of it, from the two stages' answers. */
+function oneSlot(frame: FrameOutput, data: DataOutput): SlotOutput[] {
+  const only = frame.slots?.[0];
+  const hook = data.sources?.find((s) => typeof s.hookId === "string");
+  return [
+    {
+      name: only?.name ?? "section",
+      data: data.static ? "none" : "bound",
+      ...(typeof hook?.hookId === "string" ? { hookId: hook.hookId } : {}),
+      bound: data.bound,
+      collapsed: data.collapsed,
+      remaining: data.remaining,
+    },
+  ];
+}
+
 /** One answer from the two stages, as the pass hands it over. No data stage: nothing was data. */
-export function assemble(frame: FrameOutput, given?: DataOutput): Output {
+export function assemble(frame: FrameOutput, given?: DataOutput, slots?: SlotOutput[]): Output {
   const data: DataOutput = given ?? {
     static: true,
     previewUrl: frame.previewUrl,
@@ -137,6 +186,7 @@ export function assemble(frame: FrameOutput, given?: DataOutput): Output {
         : (frame.content?.evidence ?? [])
       : [],
     choices: frame.choices ?? [],
+    slots: slots ?? oneSlot(frame, data),
     measured: frame.measured,
     coverage: frame.coverage,
     ...(frame.before !== undefined ? { before: frame.before } : {}),
@@ -153,6 +203,7 @@ export function assemble(frame: FrameOutput, given?: DataOutput): Output {
       ...frame.remaining.map((item) => `frame: ${item}`),
       ...data.remaining.map((item) => `data: ${item}`),
     ],
+    kept: data.kept ?? [],
     compilerFindings: frame.compilerFindings,
     notes,
   };
@@ -190,10 +241,14 @@ export function threadNote(_input: unknown, output: unknown): string | undefined
   const writes = o.choices.length
     ? ` Its tabs write ${o.choices.map((c) => `_page.${c.key} (${c.options.map((x) => x.value).join(", ")})`).join(", ")} for the page's other sections to read.`
     : "";
+  const parts =
+    o.slots.length > 1
+      ? ` Slots: ${o.slots.map((s) => `${s.name} ${s.data === "bound" ? `bound (${s.bound} props${s.hookId ? `, from ${s.hookId}` : ""})` : s.data === "none" ? "has no data" : "failed"}`).join("; ")}.`
+      : "";
   return [
     o.data === "none"
-      ? `Built the section from the Handoff and published its preview: ${match}; nothing on it is data, so nothing was bound.${writes}`
-      : `Built the section from the Handoff and published its preview with data bound: ${match}; ${o.bound} props bound to data, ${o.collapsed} lists.${writes}`,
+      ? `Built the section from the Handoff and published its preview: ${match}; nothing on it is data, so nothing was bound.${writes}${parts}`
+      : `Built the section from the Handoff and published its preview with data bound: ${match}; ${o.bound} props bound to data, ${o.collapsed} lists.${writes}${parts}`,
     missed.length
       ? `Designer notes not met: ${missed.map((n) => `${n.id} (${n.detail})`).join("; ")}.`
       : "",
@@ -212,23 +267,218 @@ export function verifyFinal(output: unknown, run: { messages: Message[] }): stri
     : `${BUILD} has not completed in this run. Call it first, and answer with what it returns.`;
 }
 
+/**
+ * Cast allows 25 live runs an hour to a person, shared by every agent. A slot looks its hook up (a
+ * few runs) and may build one (more): the pass stops before it could spend what an hour holds.
+ */
+export const CAST_RUNS_PER_HOUR = 25;
+export const CAST_RUNS_PER_SLOT = 6;
+
 /** The pass: the two agents, in this order, and nothing for the model to decide. */
-export const pipeline: Pipeline = {
-  name: BUILD,
-  description:
-    "Runs the whole pass for this Handoff, in order: matches the frame to its screenshot and publishes it, then finds (or builds) the data in Cast and binds it, unless nothing on the section is data. Takes no arguments. Answers with the one preview and everything still off.",
-  async run(call, input) {
-    const { exportId, handoffId, project } = RunInput.parse(input);
-    const frame = (await call(
-      frameMatch,
-      handoffId ? { handoffId, project } : { exportId, project },
-    )) as FrameOutput;
-    // a heading, tabs and a button: nothing to find in Cast, nothing to bind
-    if (frame.content?.data === "none") return assemble(frame);
-    const data = (await call(bind, { preview: frame.previewUrl })) as DataOutput;
-    return assemble(frame, data);
-  },
-};
+export function makePipeline(
+  deps: { plane?: (project: string) => ControlPlane; dsl?: () => Promise<Dsl> } = {},
+): Pipeline {
+  const planeOf = deps.plane ?? ((project: string) => createControlPlane(project));
+  const dslOf = deps.dsl ?? loadDsl;
+  return {
+    name: BUILD,
+    noApproval: true,
+    // one slot's hook is looked up, or built, at a time: Cast's live runs are few and shared
+    concurrency: 1,
+    description:
+      "Runs the whole pass for this Handoff, in order: matches the frame to its screenshot and publishes it, then finds (or builds) the data in Cast and binds it, unless nothing on the section is data. A frame of several parts that each show data (a strip of fixtures over a squad) binds each part on its own and publishes once. Takes no arguments. Answers with the one preview and everything still off.",
+    async run(call, input) {
+      const { exportId, handoffId, project } = RunInput.parse(input);
+      const frame = (await call(
+        frameMatch,
+        handoffId ? { handoffId, project } : { exportId, project },
+      )) as FrameOutput;
+      const slots = frame.slots ?? [];
+      if (slots.length < 2) {
+        // a heading, tabs and a button: nothing to find in Cast, nothing to bind
+        if (frame.content?.data === "none") return assemble(frame);
+        const data = (await call(bind, { preview: frame.previewUrl })) as DataOutput;
+        return assemble(frame, data);
+      }
+      return fanOut(frame, call, planeOf(project), dslOf);
+    },
+  };
+}
+
+/** Whether a call's failure is final: its child has been tried as often as it is tried. */
+const exhausted = (err: unknown) => /not tried again/.test((err as Error)?.message ?? "");
+
+async function fanOut(
+  frame: FrameOutput,
+  call: Parameters<Pipeline["run"]>[0],
+  plane: ControlPlane,
+  dslOf: () => Promise<Dsl>,
+): Promise<Output> {
+  const slots = frame.slots ?? [];
+  const binding = slots.filter((s) => s.content.data !== "none");
+  if (binding.length === 0) return assemble(frame, undefined, slots.map(noData));
+  if (binding.length * CAST_RUNS_PER_SLOT > CAST_RUNS_PER_HOUR) {
+    throw new NeedsSetup(
+      `${binding.length} slots with data may spend about ${binding.length * CAST_RUNS_PER_SLOT} Cast live runs, and Cast allows ${CAST_RUNS_PER_HOUR} an hour to a person: build fewer of them in one pass, or wait for the hour to turn`,
+    );
+  }
+  const settled = await Promise.allSettled(
+    binding.map((s) =>
+      call(
+        bind,
+        {
+          preview: frame.previewUrl,
+          slot: {
+            id: s.id,
+            name: s.name,
+            nodes: s.nodes,
+            signature: s.signature,
+            content: s.content,
+            readFrom: [],
+          },
+        },
+        { key: s.id },
+      ),
+    ),
+  );
+  // a pause for a person, or a setup, is the pass's: the answers come back to the one that asked
+  for (const r of settled) {
+    if (
+      r.status === "rejected" &&
+      (r.reason instanceof AwaitingAnswers || r.reason instanceof NeedsSetup)
+    ) {
+      throw r.reason;
+    }
+  }
+  // a slot with tries left is tried again by calling the pass again; the others are kept
+  const open = settled.find((r) => r.status === "rejected" && !exhausted(r.reason));
+  if (open?.status === "rejected") throw open.reason;
+
+  const reports = new Map<string, SlotOutput>(
+    slots.filter((s) => s.content.data === "none").map((s) => [s.name, noData(s)]),
+  );
+  const parts: Array<{ name: string; data: DataOutput; report: SlotOutput }> = [];
+  settled.forEach((r, i) => {
+    const slot = binding[i];
+    if (!slot) return;
+    if (r.status === "rejected") {
+      reports.set(slot.name, {
+        name: slot.name,
+        data: "failed",
+        bound: 0,
+        collapsed: 0,
+        remaining: [(r.reason as Error).message],
+      });
+      return;
+    }
+    const data = r.value as DataOutput;
+    const hook = data.sources?.find((x) => typeof x.hookId === "string");
+    const report: SlotOutput = {
+      name: slot.name,
+      data: data.static ? "none" : "bound",
+      ...(typeof hook?.hookId === "string" ? { hookId: hook.hookId } : {}),
+      bound: data.bound,
+      collapsed: data.collapsed,
+      remaining: data.remaining,
+    };
+    reports.set(slot.name, report);
+    if (!data.static) parts.push({ name: slot.name, data, report });
+  });
+
+  const out = (given: DataOutput | undefined) =>
+    assemble(
+      frame,
+      given,
+      slots.map((s) => reports.get(s.name) as SlotOutput),
+    );
+  const failedLines = [...reports.values()]
+    .filter((r) => r.data === "failed")
+    .map((r) => `${r.name}: not bound: ${r.remaining[0] ?? "it failed"}`);
+  const notes = parts.flatMap((p) => p.data.notes);
+  if (parts.length === 0) {
+    const none = out(undefined);
+    return { ...none, remaining: [...none.remaining, ...failedLines.map((l) => `data: ${l}`)] };
+  }
+
+  // the slots' plans, side by side, over every slot's data: published once
+  const loaded = await Promise.all(
+    parts.map(async (p) => ({
+      name: p.name,
+      plan: (await plane.json(p.data.planArtifactId)) as PlanParts,
+      bag: (await plane.json(p.data.dataArtifactId)) as Record<string, unknown>,
+    })),
+  );
+  const merged = mergeBindings(loaded);
+  const kept = new Set(merged.merged);
+  for (const refused of merged.refused) {
+    const report = reports.get(refused.name);
+    if (report) {
+      report.data = "failed";
+      report.remaining = [`left out of the page: ${refused.why}`];
+    }
+  }
+  const problems = await checkMerged(plane, dslOf, frame.treeArtifactId, merged.plan);
+  const used = parts.filter((p) => kept.has(p.name));
+  const sources = used.flatMap((p) => p.data.sources ?? []);
+  const meta = {
+    source: "dugout:section-builder",
+    preview: frame.previewUrl,
+    slots: used.map((p) => p.name),
+    data: sources,
+  };
+  const dataArtifactId = await plane.upload("sample_data", merged.bag, meta);
+  const planArtifactId = await plane.upload("binding_plan", merged.plan, meta);
+  const link = new URL(frame.previewUrl);
+  link.searchParams.set("data", dataArtifactId);
+  link.searchParams.set("plan", planArtifactId);
+  const given: DataOutput = {
+    previewUrl: link.toString(),
+    planArtifactId,
+    dataArtifactId,
+    bound: used.reduce((n, p) => n + p.data.bound, 0),
+    collapsed: used.reduce((n, p) => n + p.data.collapsed, 0),
+    kept: used.flatMap((p) => p.data.kept ?? []),
+    remaining: [
+      ...used.flatMap((p) => p.data.remaining.map((item) => `${p.name}: ${item}`)),
+      ...[...reports.values()]
+        .filter((r) => r.data === "failed")
+        .map((r) => `${r.name}: not bound: ${r.remaining[0] ?? "it failed"}`),
+      ...problems.map((item) => `the merged plan: ${item}`),
+    ],
+    notes,
+  };
+  return out(given);
+}
+
+const noData = (s: NonNullable<FrameOutput["slots"]>[number]): SlotOutput => ({
+  name: s.name,
+  data: "none",
+  bound: 0,
+  collapsed: 0,
+  remaining: [],
+});
+
+/** The merged plan applied to the published tree: what would be wrong on the page, in words. */
+async function checkMerged(
+  plane: ControlPlane,
+  dslOf: () => Promise<Dsl>,
+  treeArtifactId: string,
+  plan: PlanParts,
+): Promise<string[]> {
+  try {
+    const dsl = await dslOf();
+    const tree = (await plane.json(treeArtifactId)) as Parameters<Dsl["applyBindingPlan"]>[0];
+    const applied = dsl.applyBindingPlan(tree, plan);
+    return [
+      ...applied.drift.map((d) => `not applied: ${d.message}`),
+      ...dsl.check(applied.tree).map((i) => `the tree is invalid: ${i.message}`),
+    ];
+  } catch (err) {
+    return [`could not be checked: ${(err as Error).message}`];
+  }
+}
+
+export const pipeline: Pipeline = makePipeline();
 
 export const agent = defineAgent({
   spec,

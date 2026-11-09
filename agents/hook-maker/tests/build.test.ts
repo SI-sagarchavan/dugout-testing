@@ -191,7 +191,9 @@ describe("hook-maker", () => {
       mcp: createMcpHost({ hub }),
     })({
       tenantId: "demo-cricket",
-      input: { need: "A strip of matches, each with its venue." },
+      input: {
+        need: { list: "matches", count: "data", item: [{ field: "venue", required: true }] },
+      },
       responder: async (req) => {
         asked.push(req.tool);
         return approve("editor");
@@ -251,7 +253,9 @@ describe("hook-maker", () => {
       mcp: createMcpHost({ hub: cast() }),
     })({
       tenantId: "demo-cricket",
-      input: { need: "A strip of matches, each with its venue." },
+      input: {
+        need: { list: "matches", count: "data", item: [{ field: "venue", required: true }] },
+      },
       responder: async (req) => {
         asked.push(req.tool);
         return approve("editor");

@@ -61,6 +61,28 @@
     "static": {
       "description": "Nothing on the frame is data, so nothing was bound (bind.static)",
       "type": "boolean"
+    },
+    "kept": {
+      "description": "What the published plan keeps as designed, with why (bind.publish's, never the model's)",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "despite": {
+      "description": "Why it was published with problems open, when it was",
+      "type": "string"
+    },
+    "sources": {
+      "description": "Where the data came from, as the plan's artifacts record it (bind.publish's, never the model's)",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      }
     }
   },
   "required": [

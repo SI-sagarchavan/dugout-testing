@@ -12,7 +12,7 @@
  */
 
 import { syntheticSrc, type FlatNode, type FlatTree } from "./flat.js";
-import { mapRefPaths } from "./binding.js";
+import { conditionsOf, mapRefPaths, type Condition, type Scalar } from "./binding.js";
 
 export class TreeOpError extends Error {
   readonly nodeId: string | undefined;
@@ -507,4 +507,82 @@ function subtreeIds(tree: FlatTree, id: string): Set<string> {
     for (const child of kids.get(nodeId) ?? []) stack.push(child);
   }
   return ids;
+}
+
+
+// ---------------------------------------------------------------------------
+// Detaching one item of a list, data still bound
+// ---------------------------------------------------------------------------
+
+export interface DetachOptions {
+  /** The item field that tells this item apart, as the template reads it: `item.id`. */
+  key: string;
+  /** The value it has on the item being detached. */
+  value: Scalar;
+}
+
+/**
+ * Take one item out of the list's shared template WITHOUT leaving the data.
+ *
+ * The Repeater keeps drawing every item. This item gets a copy of the template of its own, beside
+ * it, behind `when: { key eq value }`, and the template stops drawing it (`ne`). Both draw in the
+ * Repeater's item scope, so the copy's bindings still resolve and the item still follows the data's
+ * count and order. Edit the copy freely: its shape no longer has to match the template's.
+ *
+ * Returns the tree and the copy's root id (`<template>__v<n>`). Detaching the same value twice, or
+ * a node that is not a direct child of a Repeater, throws. A detach is by a field value, not a
+ * position, so it holds when the data is reordered.
+ */
+export function detachAsVariant(
+  tree: FlatTree,
+  templateId: string,
+  options: DetachOptions,
+): { tree: FlatTree; id: string } {
+  const template = requireNode(tree, templateId);
+  const repeater = template.parent === null ? undefined : requireNode(tree, template.parent);
+  if (!repeater || repeater.type !== "Repeater") {
+    throw new TreeOpError(`detachAsVariant: "${templateId}" is not an item of a Repeater`, templateId);
+  }
+  const as = repeater.props.as;
+  if (typeof as !== "string" || !options.key.startsWith(`${as}.`)) {
+    throw new TreeOpError(`detachAsVariant: key "${options.key}" is not a field of "${String(as)}"`, templateId);
+  }
+
+  const taken = tree.nodes
+    .filter((n) => n.parent === repeater.id)
+    .flatMap((n) => conditionsOf((n.props.when ?? []) as Condition | Condition[]))
+    .some((c) => c.path === options.key && c.eq === options.value);
+  if (taken) {
+    throw new TreeOpError(`detachAsVariant: ${options.key} = ${JSON.stringify(options.value)} already has its own shape`, templateId);
+  }
+
+  const members = [...subtreeOf(tree, template.id)];
+  const n = tree.nodes.filter((x) => x.parent === repeater.id).length;
+  const rename = new Map(members.map((id) => [id, `${id}__v${n}`] as const));
+  const copy: FlatNode[] = tree.nodes
+    .filter((x) => rename.has(x.id))
+    .map((x) => {
+      const isRoot = x.id === template.id;
+      return {
+        ...x,
+        id: rename.get(x.id)!,
+        parent: isRoot ? repeater.id : rename.get(x.parent!)!,
+        idx: isRoot ? n : x.idx,
+        src: syntheticSrc(x.src, n),
+        props: isRoot ? { ...x.props, when: { path: options.key, eq: options.value } } : { ...x.props },
+      };
+    });
+  const clash = copy.find((c) => tree.nodes.some((x) => x.id === c.id));
+  if (clash) throw new TreeOpError(`detachAsVariant: node id "${clash.id}" is already taken`, clash.id);
+
+  const was = template.props.when === undefined ? [] : conditionsOf(template.props.when as Condition | Condition[]);
+  const excluded: Condition[] = [...was, { path: options.key, ne: options.value }];
+  const nodes = tree.nodes.map((x) =>
+    x.id === template.id ? { ...x, props: { ...x.props, when: excluded.length === 1 ? excluded[0] : excluded } } : x,
+  );
+  // After the Repeater's last child, so a flat file still reads top-down.
+  let at = nodes.length;
+  for (let i = nodes.length - 1; i >= 0; i--) if (subtreeOf({ ...tree, nodes }, repeater.id).has(nodes[i]!.id)) { at = i + 1; break; }
+  nodes.splice(at, 0, ...copy);
+  return { tree: withNodes(tree, nodes), id: rename.get(template.id)! };
 }

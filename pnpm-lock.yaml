@@ -81,6 +81,9 @@ importers:
       '@dugout/evals':
         specifier: workspace:^
         version: link:../../packages/evals
+      '@dugout/library':
+        specifier: workspace:^
+        version: link:../../packages/library
       '@dugout/memory':
         specifier: workspace:^
         version: link:../../packages/memory
@@ -127,30 +130,6 @@ importers:
       '@dugout/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
-      '@dugout/sdk':
-        specifier: workspace:^
-        version: link:../../packages/sdk
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-
-  agents/sitemap:
-    dependencies:
-      '@dugout/contracts':
-        specifier: workspace:^
-        version: link:../../packages/contracts
-      '@dugout/core':
-        specifier: workspace:^
-        version: link:../../packages/core
-      '@dugout/db':
-        specifier: workspace:^
-        version: link:../../packages/db
-      '@dugout/evals':
-        specifier: workspace:^
-        version: link:../../packages/evals
-      '@dugout/memory':
-        specifier: workspace:^
-        version: link:../../packages/memory
       '@dugout/sdk':
         specifier: workspace:^
         version: link:../../packages/sdk
@@ -267,9 +246,6 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
-      '@dugout/agent-sitemap':
-        specifier: workspace:^
-        version: link:../../agents/sitemap
       '@dugout/memory':
         specifier: workspace:^
         version: link:../../packages/memory
@@ -288,9 +264,6 @@ importers:
       '@dugout/agent-section-builder':
         specifier: workspace:^
         version: link:../../agents/section-builder
-      '@dugout/agent-sitemap':
-        specifier: workspace:^
-        version: link:../../agents/sitemap
       '@dugout/agent-ui-editor':
         specifier: workspace:^
         version: link:../../agents/ui-editor

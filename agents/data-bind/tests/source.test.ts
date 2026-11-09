@@ -132,7 +132,7 @@ describe("bind's data from Cast", () => {
     const data = uploads.find((u) => u.kind === "sample_data");
     expect(data?.json).toMatchObject({ fixtures: { items: output.data["1"] } });
     // with the flow id a page fetches the hook by at render time
-    expect(data?.meta.data).toEqual({ kind: "cast-hook", workflowId: WORKFLOW, ...chosen });
+    expect(data?.meta.data).toEqual([{ kind: "cast-hook", workflowId: WORKFLOW, ...chosen }]);
     // the source was fetched once: the publish binds what the plan was tried against
     expect(hub.calls).toHaveLength(2);
   });
@@ -187,6 +187,61 @@ describe("bind's data from Cast", () => {
     // the lists keep their own names, down to the inner list
     expect(shown.data).toContain("fixtures.days[].date");
     expect(shown.data).toContain("fixtures.days[].matches[].teams[].short_name");
+  });
+
+  it("reads two sources at once: one plan over both, and the published meta lists both", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bind-source-"));
+    const { fake, uploads } = plane();
+    const { mcp } = cast();
+    const tools = createBindTools({ dir, plane: () => fake, mcp });
+    const run = ctx("run-two");
+    await tool(tools, "bind.source").run(
+      { hookId: "dugout_schedule", input: { page_size: "2" }, as: "fixtures" },
+      run,
+    );
+    const shown = (await tool(tools, "bind.source").run(
+      { hookId: "dugout_squad", as: "squad" },
+      run,
+    )) as { data: string };
+    // the second source is added to the first, not put in its place
+    expect(shown.data).toContain("fixtures.items[]");
+    expect(shown.data).toContain("squad.items[]");
+    const loaded = (await tool(tools, "bind.load").run({}, run)) as { data: string };
+    expect(loaded.data).toBe(shown.data);
+
+    // asking for a source again with the same name replaces that one only
+    await tool(tools, "bind.source").run({ hookId: "dugout_schedule2", as: "fixtures" }, run);
+    const plan = {
+      bind: [
+        { src: "35:10551", prop: "content", path: "fixtures.items.0.match_id" },
+        { src: "35:10552", prop: "content", path: "squad.items.0.match_id" },
+      ],
+    };
+    const tried = (await tool(tools, "bind.try").run({ plan: JSON.stringify(plan) }, run)) as {
+      problems: string[] | string;
+    };
+    // neither path is faulted as a ref with nothing behind it
+    expect([tried.problems].flat().join("\n")).not.toMatch(/has nothing at/);
+
+    await tool(tools, "bind.publish").run({}, run);
+    const data = uploads.find((u) => u.kind === "sample_data");
+    expect(Object.keys(data?.json as object).sort()).toEqual(["fixtures", "squad"]);
+    expect(data?.meta.data).toMatchObject([
+      { kind: "cast-hook", hookId: "dugout_schedule2", as: "fixtures" },
+      { kind: "cast-hook", hookId: "dugout_squad", as: "squad" },
+    ]);
+  });
+
+  it("reads a run saved with one source as a list of one", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bind-source-"));
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(
+      join(dir, "run-old.json"),
+      JSON.stringify({ source: { hookId: "h", input: {}, as: "fixtures", sample: output } }),
+    );
+    const tools = createBindTools({ dir, plane: () => plane().fake, mcp: cast().mcp });
+    const loaded = (await tool(tools, "bind.load").run({}, ctx("run-old"))) as { data: string };
+    expect(loaded.data).toContain("fixtures.items[]");
   });
 
   it("refuses a source when the host named the data", () => {

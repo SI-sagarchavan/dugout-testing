@@ -225,6 +225,7 @@ export type { Shape } from "./contract.js";
 export {
   applyCollapse,
   collapseToRepeater,
+  detachAsVariant,
   insertBefore,
   moveNode,
   removeNode,
@@ -233,7 +234,7 @@ export {
   TreeOpError,
   wrapIn,
 } from "./ops.js";
-export type { Binding, CollapseOptions, RemoveOptions } from "./ops.js";
+export type { Binding, CollapseOptions, DetachOptions, RemoveOptions } from "./ops.js";
 
 // The property panel of a node: what a person can edit, from the field descriptors
 export { panelOf, propIssues, propNamesOf } from "./panel.js";

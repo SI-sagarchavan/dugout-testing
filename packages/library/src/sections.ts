@@ -15,15 +15,8 @@
  * the pictures from the returned plans itself.
  */
 
-import {
-  area,
-  contains,
-  type IrDoc,
-  type IrNode,
-  indexNodes,
-  pictureBox,
-  type Rect,
-} from "./ir.ts";
+import { contains, type IrDoc, type IrNode, indexNodes, pictureBox, type Rect } from "./ir.ts";
+import { findSlots, MIN_SECTION_HEIGHT, MIN_SECTION_WIDTH, unwrap } from "./slots.ts";
 
 /** A picture in the Handoff, of one layer. `ref` is how the caller reads its bytes. */
 export interface Plate {
@@ -78,13 +71,6 @@ export interface SkippedSection {
   reason: string;
 }
 
-/** Narrower than this is a control, not a section. */
-export const MIN_SECTION_WIDTH = 120;
-export const MIN_SECTION_HEIGHT = 40;
-/** A child this wide, of its frame, is a band of the page. */
-export const FULL_WIDTH = 0.8;
-/** A lone child covering this much of its parent is a wrapper, looked through. */
-const WRAPPER_COVER = 0.9;
 /** Pictures of layers inside a section must cover this much of it to make its picture. */
 export const COMPOSE_COVER = 0.9;
 /** How far, in a plate's pixels, its size may be from its layer's box at the plate's scale. */
@@ -121,7 +107,7 @@ export function findSections(
       skipped.push({ nodeId: node.id, name: node.name, reason: `the same shape as ${same}` });
       return false;
     }
-    const crop = cropFor(node, nodes, opts.plates);
+    const crop = cropFor(node, nodes, opts.plates, behind.get(node.id));
     if ("problem" in crop) {
       skipped.push({ nodeId: node.id, name: node.name, reason: crop.problem });
       return false;
@@ -141,14 +127,18 @@ export function findSections(
   };
 
   const frame = unwrap(doc.root);
-  // a band holds layers: a full-width picture or shape is the page's background, not a section
-  const bands = (frame.children ?? []).filter(
-    (child) =>
-      Boolean(child.children?.length) &&
-      child.geometry.bbox.w >= frame.geometry.bbox.w * FULL_WIDTH &&
-      child.geometry.bbox.h >= MIN_SECTION_HEIGHT,
+  // the slots of the frame, each as the one layer that holds it, or, for a slot of several
+  // layers, a layer made to hold them: its picture and shape are of all of them
+  const found = findSlots(doc, { layouts: opts.layouts ?? [] });
+  const slots = found.bands.flatMap((b) => b.slots);
+  // what the band paints behind a slot is part of the slot's picture
+  const behind = new Map(
+    found.bands.flatMap((b) => b.slots.map((slot) => [slot.id, b.background] as const)),
   );
-  const tops = bands.length >= 2 ? sortByY(bands) : [frame];
+  const tops =
+    slots.length >= 2
+      ? slots.map((slot) => holding(slot.nodes.map((id) => nodes.get(id)?.node as IrNode)))
+      : [frame];
 
   for (const top of tops) {
     if (!consider(top, 0, null)) continue;
@@ -167,19 +157,25 @@ export function findSections(
   return { sections, skipped };
 }
 
-/** Looks through a lone child that fills its parent: a page is often one frame inside another. */
-function unwrap(root: IrNode): IrNode {
-  let node = root;
-  for (;;) {
-    const only = node.children?.length === 1 ? node.children[0] : undefined;
-    if (!only?.children?.length) return node;
-    if (area(only.geometry.bbox) < area(node.geometry.bbox) * WRAPPER_COVER) return node;
-    node = only;
-  }
+/** One layer standing for several: the first one's id, a box around all, all as children. */
+export function holding(layers: IrNode[]): IrNode {
+  const [first] = layers;
+  if (!first || layers.length === 1) return first as IrNode;
+  const x0 = Math.min(...layers.map((n) => n.geometry.bbox.x));
+  const y0 = Math.min(...layers.map((n) => n.geometry.bbox.y));
+  const x1 = Math.max(...layers.map((n) => n.geometry.bbox.x + n.geometry.bbox.w));
+  const y1 = Math.max(...layers.map((n) => n.geometry.bbox.y + n.geometry.bbox.h));
+  const { renderBbox: _drop, ...geometry } = first.geometry;
+  // a plain, fixed-size frame around them, with the rest of the first layer's layout kept
+  return {
+    id: first.id,
+    name: first.name,
+    type: "FRAME",
+    layout: { ...first.layout, mode: "none", sizing: { w: "fixed", h: "fixed" } },
+    geometry: { ...geometry, bbox: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } },
+    children: layers,
+  };
 }
-
-const sortByY = (nodes: IrNode[]) =>
-  [...nodes].sort((a, b) => a.geometry.bbox.y - b.geometry.bbox.y);
 
 /**
  * The section's picture: cut from its own plate or the nearest one around it, or, when there is
@@ -191,6 +187,7 @@ export function cropFor(
   node: IrNode,
   nodes: ReturnType<typeof indexNodes>,
   plates: readonly Plate[],
+  behind: readonly string[] = [],
 ): CropPlan | { problem: string } {
   const byNode = new Map<string, Plate>();
   for (const plate of plates) if (!byNode.has(plate.nodeId)) byNode.set(plate.nodeId, plate);
@@ -212,7 +209,7 @@ export function cropFor(
     }
     problem = placed.problem;
   }
-  return compose(node, nodes, byNode) ?? { problem };
+  return compose(node, nodes, byNode, behind) ?? { problem };
 }
 
 /** A picture put together from several, at the scale of the least detailed of them. */
@@ -220,11 +217,18 @@ function compose(
   node: IrNode,
   nodes: ReturnType<typeof indexNodes>,
   byNode: Map<string, Plate>,
+  behind: readonly string[] = [],
 ): CropPlan | { problem: string } | undefined {
   const order = new Map([...nodes.keys()].map((id, i) => [id, i]));
+  // a section made of several layers (`holding`) is not in the index: its layers are its members
+  const made = nodes.get(node.id)?.node !== node;
+  const members = new Set(made ? (node.children ?? []).map((c) => c.id) : [node.id]);
+  // layers painted behind the section count, cut to it
+  for (const id of behind) members.add(id);
   const inside = (id: string) => {
+    if ((made || behind.includes(id)) && members.has(id)) return true;
     for (let up = nodes.get(id)?.parent ?? null; up; up = nodes.get(up)?.parent ?? null) {
-      if (up === node.id) return true;
+      if (members.has(up)) return true;
     }
     return false;
   };
@@ -234,7 +238,7 @@ function compose(
     .filter((p) => {
       for (
         let up = nodes.get(p.nodeId)?.parent ?? null;
-        up && up !== node.id;
+        up && !members.has(up);
         up = nodes.get(up)?.parent ?? null
       ) {
         if (byNode.has(up) && !byNode.get(up)?.name.startsWith("art-")) return false;

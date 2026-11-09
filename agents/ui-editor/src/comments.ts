@@ -17,7 +17,12 @@ export interface UiComment {
   context: {
     type?: string;
     props?: Record<string, unknown>;
-    draft?: { changed?: string[]; was?: Record<string, unknown> };
+    draft?: {
+      changed?: string[];
+      was?: Record<string, unknown>;
+      /** Elements the person deleted by hand (with what was under them), by the top of each cut. */
+      removed?: Array<{ id: string; type: string; parent: string | null }>;
+    };
     parent?: string | null;
     children?: Array<{ id: string; type: string }>;
   };

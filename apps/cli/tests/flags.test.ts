@@ -118,12 +118,10 @@ describe("command line", () => {
   });
 
   it("finds the agents in agents/ by folder", async () => {
-    expect(await agentIds()).toEqual(expect.arrayContaining(["frame-match", "sitemap"]));
-    const sitemap = await loadAgent("sitemap");
-    expect(sitemap.spec.id).toBe("sitemap");
-    expect(usage(sitemap)).toBe(
-      "pnpm agent sitemap --tenant <id> --brief <brief> [--sport <sports>]... [--input <json>] [--model <name>] [--effort <level>] [--yes]",
-    );
+    expect(await agentIds()).toEqual(expect.arrayContaining(["frame-match", "data-bind"]));
+    const dataBind = await loadAgent("data-bind");
+    expect(dataBind.spec.id).toBe("data-bind");
+    expect(usage(dataBind)).toContain("pnpm agent data-bind --tenant <id>");
     await expect(loadAgent("nope")).rejects.toThrow('no agent "nope"');
   });
 });

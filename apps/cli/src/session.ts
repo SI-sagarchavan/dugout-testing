@@ -375,15 +375,17 @@ export function shower(terminal: Terminal) {
   let source = "";
   return (e: RunEvent) => {
     const from = e.child?.runId ?? "";
+    // a pipeline's several calls to one child are told apart by their key
+    const who = e.child ? `${e.child.agentId}${e.child.key ? ` (${e.child.key})` : ""}` : "";
     if (from !== source) {
       source = from;
-      note(e.child ? `▸ ${e.child.agentId}` : "▸ back in the run");
+      note(e.child ? `▸ ${who}` : "▸ back in the run");
     }
     if (e.child && (e.type === "run.completed" || e.type === "run.failed")) {
       note(
         e.type === "run.completed"
-          ? `· ${e.child.agentId} ${e.data.status}`
-          : `· ${e.child.agentId} failed: ${e.data.message}`,
+          ? `· ${who} ${e.data.status}`
+          : `· ${who} failed: ${e.data.message}`,
         e.type === "run.completed" && e.data.status === "completed" ? "dim" : "bad",
       );
       return;

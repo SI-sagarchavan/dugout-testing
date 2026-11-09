@@ -17,14 +17,13 @@ pnpm agent --help
 pnpm agent history <runId> --tenant <tenant>
 pnpm agent fork <runId> --from <version> --tenant <tenant>
 pnpm agent frame-match --tenant demo-cricket --export <exportId>
-pnpm agent sitemap --tenant demo-cricket --sport cricket --brief "T20 club: news, fixtures, squad, standings"
 pnpm agent <id> --tenant <tenant> --<input field> <value>   # any agent in agents/
 # at an approval: Approve, Reject, or Request a change
 # a pipe answers y, n, or the change ("change the Fan Zone path to /fanzone")
 # Ctrl-C leaves the run going in the worker; attach again with:
 pnpm agent attach --run <runId> --tenant <tenant>
 
-pnpm eval sitemap
+pnpm eval frame-match
 pnpm eval frame-match
 ```
 
@@ -32,7 +31,7 @@ pnpm eval frame-match
 
 A worker that gets SIGTERM hands its runs to another worker, which resumes them from their last save; one that dies has its runs picked up once their lease (60 seconds) runs out (ADR 0006, ADR 0009). The worker image is `apps/worker/Dockerfile` (`docker build -f apps/worker/Dockerfile .`).
 
-New agents are written with `defineAgent` from `@dugout/sdk` (ADR 0007); `agents/sitemap` is a compact example. Add one to the list in `apps/worker/scripts/work.ts` for the worker to run it.
+New agents are written with `defineAgent` from `@dugout/sdk` (ADR 0007); `agents/frame-match` is an example. Add one to the list in `apps/worker/scripts/work.ts` for the worker to run it.
 
 ## The Figma-to-SDUI pipeline
 

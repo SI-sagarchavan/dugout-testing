@@ -145,12 +145,102 @@
           },
           "initial": {
             "type": "string"
+          },
+          "owner": {
+            "type": "string"
           }
         },
         "required": [
           "key",
           "options",
           "initial"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "slots": {
+      "description": "The parts of the frame that each show one kind of data, with the tree nodes each owns, whether it shows data, and the page keys it writes and reads",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Its heading, slugged: the-brave-squad"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The tree's node ids it owns"
+          },
+          "content": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "some",
+                  "unsure"
+                ],
+                "description": "none: nothing on it is data, so nothing is bound; some: it shows data; unsure: the signs do not say"
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "What says so, each one sign"
+              }
+            },
+            "required": [
+              "data",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The page keys its tabs write"
+          },
+          "reads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The page keys its nodes read"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "sure",
+              "unsure"
+            ]
+          },
+          "why": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "nodes",
+          "content",
+          "writes",
+          "reads",
+          "signature",
+          "confidence"
         ],
         "additionalProperties": false
       }

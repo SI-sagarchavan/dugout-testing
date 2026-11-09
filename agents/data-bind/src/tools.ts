@@ -28,6 +28,7 @@ import {
   unboundCopy,
 } from "./facts.ts";
 import { type DesignerNote, NOTES_RULE, notesOf } from "./notes.ts";
+import { pageKeysRead, plannedSrcs, type Scope, Slot, scopeOf, wordsOf } from "./slot.ts";
 
 export const BIND_DIR = join(REPO_ROOT, ".runs", "data-bind");
 /** The registry's server a `cast-hook` data source is read from (config/mcp/cast.json). */
@@ -49,6 +50,9 @@ export const RunInput = z.object({
     .describe(
       "The sample data: a sample_data artifact id, or the name of a dataset the API serves. Leave out to find the data in the tenant's Cast hooks and bind against their live output",
     ),
+  slot: Slot.optional().describe(
+    "Bind one slot of the frame (frame-match's slots): the run works on that slot's nodes only, and ends with bind.done instead of bind.publish",
+  ),
 });
 export type RunInput = z.infer<typeof RunInput>;
 
@@ -74,6 +78,10 @@ const Condition = z
     ne: Scalar.optional(),
     in: z.array(Scalar).optional(),
     exists: z.boolean().optional(),
+    eqPath: z
+      .string()
+      .optional()
+      .describe("Equals what a path holds: _page.<key>, the choice the page is at"),
     gt: z.number().optional(),
     gte: z.number().optional(),
     lt: z.number().optional(),
@@ -174,6 +182,22 @@ export const Plan = z
       .describe(
         "Literal props: textCase, a when that hides a node whose field is missing, a clock on the block that shows a time left",
       ),
+    keep: z
+      .array(
+        z
+          .object({
+            src: z.string().describe("The Figma id of the node, or of the static block around it"),
+            why: z
+              .string()
+              .min(8)
+              .describe("Why it stays as designed: a heading, a label, the design's own look"),
+          })
+          .strict(),
+      )
+      .optional()
+      .describe(
+        "What stays as the designer drew it, on purpose: the section's static parts (a heading, a button, a note) and differences the data does not decide. A problem bind.try reports on a node kept here, or under a kept block that holds nothing the plan binds, is accepted, not open",
+      ),
   })
   .strict();
 export type Plan = z.infer<typeof Plan>;
@@ -184,7 +208,10 @@ export type Plan = z.infer<typeof Plan>;
 
 const Tried = z.object({
   plan: Plan,
+  /** Problems still open: each a reason not to publish. */
   problems: z.array(z.string()),
+  /** What the plan keeps as designed, with why, and the problems each accepted. */
+  kept: z.array(z.string()).default([]),
   bound: z.number(),
   collapsed: z.number(),
 });
@@ -196,6 +223,11 @@ const Published = z.object({
   bound: z.number(),
   collapsed: z.number(),
   problems: z.array(z.string()),
+  kept: z.array(z.string()).default([]),
+  /** Why it was published with problems open, when bind.publish said so. */
+  despite: z.string().optional(),
+  /** Where the data came from, as the plan's artifacts record it: one entry for each source. */
+  sources: z.array(z.record(z.string(), z.unknown())).default([]),
 });
 
 /** A Cast hook's live output the run chose as its data, fetched once and kept. */
@@ -214,7 +246,8 @@ const State = z.object({
   tried: Tried.optional(),
   refusals: z.number().default(0),
   published: Published.optional(),
-  source: Source.optional(),
+  /** The Cast hooks whose live output the run chose as data, by the name the plan reads each by. */
+  sources: z.record(z.string(), Source).default({}),
   /** Nothing on the frame is data: what the run said why, when it said so (bind.static). */
   static: z.object({ why: z.string() }).optional(),
 });
@@ -223,7 +256,14 @@ type State = z.infer<typeof State>;
 const stateFile = (dir: string, runId: string) => join(dir, `${runId}.json`);
 function readState(dir: string, runId: string): State {
   try {
-    return State.parse(JSON.parse(readFileSync(stateFile(dir, runId), "utf8")));
+    const saved = JSON.parse(readFileSync(stateFile(dir, runId), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    // a run saved with one `source` has a list of one
+    const legacy = saved.source as { as?: string } | undefined;
+    if (legacy?.as && saved.sources === undefined) saved.sources = { [legacy.as]: legacy };
+    return State.parse(saved);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return State.parse({});
     throw err;
@@ -322,6 +362,8 @@ interface Frame {
   /** The section's structural signature (ADR 0033), and its name, when the IR could be read. */
   signature?: string;
   name?: string;
+  /** The slot this run binds, when it binds one: everything below is about its nodes. */
+  scope?: Scope;
 }
 
 interface Loaded extends Frame {
@@ -332,8 +374,27 @@ interface Loaded extends Frame {
 const NO_DATA =
   "This run has no data yet. If the frame shows data, call agent.hookMaker with what it shows, then bind.source with the hook and input it returned. If nothing on it is data (a heading, labels, tabs, a button), call bind.static instead.";
 
-/** Problems a person would see on the page: each is a reason not to publish. */
-export function problemsOf(
+/**
+ * One thing a person would see wrong on the page. `src` is the node it is about; `keep` says a plan
+ * may accept it by keeping that node as designed (a label, the design's own look), where the rest
+ * show broken on the page (a picture that loads nothing, a ref with nothing behind it) and are fixed.
+ */
+export interface Problem {
+  message: string;
+  src?: string;
+  keep?: true;
+}
+
+const keepable = (src: string, message: string): Problem => ({ message, src, keep: true });
+const fixOnly = (message: string, src?: string): Problem => (src ? { message, src } : { message });
+
+/** Problems a person would see on the page, as words: each is a reason not to publish. */
+export function problemsOf(...args: Parameters<typeof findingsOf>): string[] {
+  return findingsOf(...args).map((p) => p.message);
+}
+
+/** Problems a person would see on the page, each with the node it is about. */
+export function findingsOf(
   applied: { drift: Array<{ src: string; message: string; reason?: string }>; tree?: Tree },
   structure: Array<{ message: string }>,
   run: DryRun,
@@ -341,8 +402,8 @@ export function problemsOf(
   design?: Tree,
   left: LeftAsDesigned[] = [],
   unbound: Unbound[] = [],
-  unreachable: string[] = [],
-): string[] {
+  unreachable: Array<string | Problem> = [],
+): Problem[] {
   // looks by place (the rule every row but the last has) the fold keeps on its template: not lost
   const kept = new Set(
     (applied.tree?.nodes ?? []).filter((n) => n.props.at !== undefined).map((n) => n.src),
@@ -355,9 +416,13 @@ export function problemsOf(
       c.members.filter((m, i) => i === 0 || !variantRoots.has(m)),
       kept,
     );
+    const template = c.members[0] ?? "";
     return differ.length
       ? [
-          `the members of ${c.over} differ in look, and a collapse draws every item like ${c.members[0]}: ${differ.slice(0, 3).join("; ")}. When a list always holds the same number of items and the design gives each position its own look, bind each member by position (${c.over.split(".").pop()}.0, .1) instead of collapsing`,
+          keepable(
+            template,
+            `the members of ${c.over} differ in look, and a collapse draws every item like ${template}: ${differ.slice(0, 3).join("; ")}. When a list always holds the same number of items and the design gives each position its own look, bind each member by position (${c.over.split(".").pop()}.0, .1) instead of collapsing; when the difference is not one the data decides (the designer restyled one card), keep ${template} with why`,
+          ),
         ]
       : [];
   });
@@ -379,38 +444,52 @@ export function problemsOf(
     ...samePicture,
     ...overflow,
     ...partial,
-    ...left.map(placeholdersLeft),
-    ...unbound.map(unboundMessage),
-    ...unreachable,
-    ...run.repeated.map(
-      (r) =>
-        `${r.src} shows the design's "${r.copy}" in all ${r.times} items it draws in: a placeholder. Bind it to what it stands for (time left until an instant is a clock), or say in remaining why it stays`,
+    ...left.map((l) => keepable(l.src, placeholdersLeft(l))),
+    ...unbound.map((u) => keepable(u.src, unboundMessage(u))),
+    ...unreachable.map((u) => (typeof u === "string" ? fixOnly(u) : u)),
+    ...run.repeated.map((r) =>
+      keepable(
+        r.src,
+        `${r.src} shows the design's "${r.copy}" in all ${r.times} items it draws in: a placeholder. Bind it to what it stands for (time left until an instant is a clock), hide it with a when when the data has nothing for it, or keep it with why it stays`,
+      ),
     ),
-    ...run.relative.map(
-      (r) =>
+    ...run.relative.map((r) =>
+      fixOnly(
         `${r.src} src shows "${r.shows}" for ${r.times} item(s): a path with no domain, which no browser loads. Bind it with a template that puts the site's domain in front ("https://domain{item.image}"; ask which domain if the question was left unanswered), and read shows to see the whole URL`,
+        r.src,
+      ),
     ),
-    ...run.breaks.map(
-      (b) =>
+    ...run.breaks.map((b) =>
+      fixOnly(
         `${b.src} shows "${b.shows}" on one line where the design breaks it (${JSON.stringify(b.design)}): put the break in the template where the design has it ("{item.first}\\n{item.last}")`,
+        b.src,
+      ),
     ),
-    ...run.capitals.map(
-      (c) =>
+    ...run.capitals.map((c) =>
+      fixOnly(
         `${c.src} shows "${c.shows}" where the design writes capitals ("${c.design}"): set textCase "upper"`,
+        c.src,
+      ),
     ),
     ...applied.drift.map((d) =>
-      d.reason === "stranded" ? d.message : `not applied: ${d.message}`,
+      fixOnly(d.reason === "stranded" ? d.message : `not applied: ${d.message}`, d.src),
     ),
-    ...structure.map((s) => `the tree is invalid: ${s.message}`),
+    ...structure.map((s) => fixOnly(`the tree is invalid: ${s.message}`)),
     ...run.variants.map((v) =>
-      v.drew === 0
-        ? `${v.times} item(s) of ${v.template} draw no variant, e.g. ${v.example}: no when matches them`
-        : `${v.times} item(s) of ${v.template} draw ${v.drew} variants at once, e.g. ${v.example}: the whens overlap`,
+      fixOnly(
+        v.drew === 0
+          ? `${v.times} item(s) of ${v.template} draw no variant, e.g. ${v.example}: no when matches them`
+          : `${v.times} item(s) of ${v.template} draw ${v.drew} variants at once, e.g. ${v.example}: the whens overlap`,
+        v.template,
+      ),
     ),
     ...run.unresolved.map((u) =>
-      u.prop === "clock.to"
-        ? `${u.src} clock reads no instant at ${u.value} for ${u.times} item(s), e.g. ${u.example}: point "to" at a field the data shows as (instant), or hide the block with a when exists`
-        : `${u.src} ${u.prop} "${u.value}" has nothing at ${u.missing.join(", ")} for ${u.times} item(s), e.g. ${u.example}: a wrong path, or a field some items lack (hide the node with a when exists, or give the ref a default pipe)`,
+      fixOnly(
+        u.prop === "clock.to"
+          ? `${u.src} clock reads no instant at ${u.value} for ${u.times} item(s), e.g. ${u.example}: point "to" at a field the data shows as (instant), or hide the block with a when exists`
+          : `${u.src} ${u.prop} "${u.value}" has nothing at ${u.missing.join(", ")} for ${u.times} item(s), e.g. ${u.example}: a wrong path, or a field some items lack (hide the node with a when exists, or give the ref a default pipe)`,
+        u.src,
+      ),
     ),
   ];
 }
@@ -428,8 +507,8 @@ const fixedPx = (value: unknown): number | undefined =>
  * own count and that does not wrap: three stats in a 249 px strip, and the data has five. The
  * extra ones draw past its end or squeeze the rest. A carousel scrolls them: never reported.
  */
-function overflowProblems(tree: Tree, plan: Plan | undefined, run: DryRun): string[] {
-  const out: string[] = [];
+function overflowProblems(tree: Tree, plan: Plan | undefined, run: DryRun): Problem[] {
+  const out: Problem[] = [];
   for (const c of plan?.collapse ?? []) {
     const drew = run.repeats.find((r) => r.template === c.members[0]);
     if (!drew || drew.most <= c.members.length) continue;
@@ -445,14 +524,17 @@ function overflowProblems(tree: Tree, plan: Plan | undefined, run: DryRun): stri
     const length = fixedPx(row ? size?.w : size?.h);
     if (length === undefined) continue;
     out.push(
-      `${c.over} draws up to ${drew.most} items where the design drew ${c.members.length}, in ${box.src}: a ${row ? "row" : "column"} ${Math.round(length)} px long that does not wrap, so ${drew.most - c.members.length} more draw past its end or squeeze the rest. Draw as many as the design (slice [0, ${c.members.length}] on the collapse), or say in remaining that the box should grow`,
+      keepable(
+        box.src,
+        `${c.over} draws up to ${drew.most} items where the design drew ${c.members.length}, in ${box.src}: a ${row ? "row" : "column"} ${Math.round(length)} px long that does not wrap, so ${drew.most - c.members.length} more draw past its end or squeeze the rest. Draw as many as the design (slice [0, ${c.members.length}] on the collapse), or keep ${box.src} with why (the box should grow)`,
+      ),
     );
   }
   return out;
 }
 
 const PICTURE_FIX =
-  'Bind its src to the item\'s picture URL. When the data has none, a house fact media.<what> gives the URL from an item field ("https://…/{id}.png"): use it as a template. With no such fact, ask the person for the URL pattern; if there is none, hide it with a when, or say in remaining why it stays';
+  'Bind its src to the item\'s picture URL (CMS assets put the ratio before the id: with media.image-ratio set, write it in the template, like /media/{ratio}-{id}.jpg). When the data has none, a house fact media.<what> gives the URL from an item field ("https://…/{id}.png"): use it as a template. With no such fact, ask the person for the URL pattern; if there is none, hide it with a when, or keep it with why it stays';
 
 /**
  * Pictures the design gives each item its own of (a photo, a crest, a thumbnail) that the plan
@@ -460,9 +542,10 @@ const PICTURE_FIX =
  * by position keep the designer's, each the wrong one beside its data. One picture on every item
  * is decoration and never reported.
  */
-function pictureProblems(design: Tree, plan: Plan | undefined, handled: Set<string>): string[] {
-  const out: string[] = [];
-  const named = (p: { alt: string }) => (p.alt ? ` "${p.alt}"` : "");
+function pictureProblems(design: Tree, plan: Plan | undefined, handled: Set<string>): Problem[] {
+  const out: Problem[] = [];
+  const named = (p: { alt: string; ratio?: string | undefined }) =>
+    (p.alt ? ` "${p.alt}"` : "") + (p.ratio ? ` (box ratio ${p.ratio})` : "");
   const collapsed = new Set<string>();
   for (const c of plan?.collapse ?? []) {
     for (const m of c.members) collapsed.add(m);
@@ -470,7 +553,10 @@ function pictureProblems(design: Tree, plan: Plan | undefined, handled: Set<stri
       const src = p.srcs[0] ?? "";
       if (handled.has(src)) continue;
       out.push(
-        `${src} picture${named(p)} is ${p.distinct} different pictures across the design's ${p.srcs.length} items, and the plan draws ${c.members[0]}'s in every item of ${c.over}: the wrong picture on all but one. ${PICTURE_FIX}`,
+        keepable(
+          src,
+          `${src} picture${named(p)} is ${p.distinct} different pictures across the design's ${p.srcs.length} items, and the plan draws ${c.members[0]}'s in every item of ${c.over}: the wrong picture on all but one. ${PICTURE_FIX}`,
+        ),
       );
     }
   }
@@ -487,7 +573,10 @@ function pictureProblems(design: Tree, plan: Plan | undefined, handled: Set<stri
       });
       if (left.length === 0) continue;
       out.push(
-        `${left.join(", ")} still show the design's picture${named(p)} beside data bound by position: the design gives each item its own (${p.distinct} different), so each is the designer's, not the item's. ${PICTURE_FIX}`,
+        keepable(
+          left[0] ?? "",
+          `${left.join(", ")} still show the design's picture${named(p)} beside data bound by position: the design gives each item its own (${p.distinct} different), so each is the designer's, not the item's. ${PICTURE_FIX}`,
+        ),
       );
     }
   }
@@ -498,7 +587,7 @@ function pictureProblems(design: Tree, plan: Plan | undefined, handled: Set<stri
  * Parts the design shows on some items only (a captain's badge, an overseas flag) that the plan
  * draws on every item, or on none: a `when` on the data decides them, or a variant draws them.
  */
-function partProblems(design: Tree, plan: Plan | undefined): string[] {
+function partProblems(design: Tree, plan: Plan | undefined): Problem[] {
   const byId = new Map(design.nodes.map((n) => [n.id, n]));
   const bySrc = new Map(design.nodes.map((n) => [n.src, n]));
   const hidden = new Set((plan?.set ?? []).filter((s) => s.prop === "when").map((s) => s.src));
@@ -517,12 +606,18 @@ function partProblems(design: Tree, plan: Plan | undefined): string[] {
       if (part.inTemplate) {
         if (decided(part.src)) return [];
         return [
-          `${what} is ${where}, and the plan draws it on every item of ${c.over}. Something in each item decides it: set a when on the field that does (is_captain, has_video), or say in remaining why every item shows it`,
+          keepable(
+            part.src,
+            `${what} is ${where}, and the plan draws it on every item of ${c.over}. Something in each item decides it: set a when on the field that does (is_captain, has_video), or keep ${part.src} with why every item shows it`,
+          ),
         ];
       }
       if (part.in.some((m) => variants.has(m))) return [];
       return [
-        `${what} is ${where}, not on ${c.members[0]}, the template, so the plan draws it on none of ${c.over}. If a field decides it, make ${part.in[0]} a variant with a when on that field; otherwise say in remaining that it is left out`,
+        keepable(
+          part.src,
+          `${what} is ${where}, not on ${c.members[0]}, the template, so the plan draws it on none of ${c.over}. If a field decides it, make ${part.in[0]} a variant with a when on that field; otherwise keep ${part.src} with why it is left out`,
+        ),
       ];
     });
   });
@@ -530,7 +625,7 @@ function partProblems(design: Tree, plan: Plan | undefined): string[] {
 
 /** Design copy beside data, said so a plan can act on it. */
 function unboundMessage(u: Unbound): string {
-  return `${u.src} still shows the design's "${u.copy}" inside ${u.within}, which shows data: bind it to what it stands for, hide it with a when if the data has nothing for it, or say in remaining why it stays (a label)`;
+  return `${u.src} still shows the design's "${u.copy}" inside ${u.within}, which shows data: bind it to what it stands for, hide it with a when if the data has nothing for it, or keep it (or the static block around it) with why it stays (a label)`;
 }
 
 const clipUrl = (url: string) => (url.length > 90 ? `${url.slice(0, 89)}…` : url);
@@ -626,13 +721,89 @@ export function pictureTrouble(
 function placeholdersLeft(l: LeftAsDesigned): string {
   const shows = `${l.src} still shows the design's placeholders${l.copy ? ` ("${l.copy}")` : ""} beside ${l.like}, which ${l.over ? `draws ${l.over}` : "draws data"}`;
   if (!l.over || l.items.length === 0) {
-    return `${shows}. Give it data as ${l.like} has it, or say in remaining why it stays`;
+    return `${shows}. Give it data as ${l.like} has it, or keep ${l.src} with why it stays`;
   }
   const rows = l.slices?.map(([src, [a, b]]) => `${src} [${a}, ${b}]`).join(", ");
   const fields = l.fields.map(([from, to]) => `${to} as ${from}`).join(", ");
   return `${shows}: one grid drawn as rows, and the data's list is flat. Collapse each row's items over ${l.over} with its own slice, in order${rows ? ` (${rows})` : ""}: here members ${l.items.join(", ")}${fields ? `, fields ${fields}` : ""}, and its own copy of each set entry`;
 }
 
+/** What a plan's `keep` does to bind.try's problems. */
+export interface Kept {
+  /** Problems still open: fixed in the plan, or published `despite`. */
+  open: Problem[];
+  /** Each keep, with why and the problems it accepted, for the person approving the publish. */
+  kept: string[];
+  /** A keep that names no node of the frame, or one too wide to accept what is under it. */
+  notes: string[];
+}
+
+/**
+ * Accepts the problems a plan keeps: one on a kept node, or under a kept block that holds nothing
+ * the plan binds (the section's heading and button, a newsletter's note beside its form). A block
+ * that holds data accepts only problems on itself, so keeping the section's root never hides what
+ * is wrong with its cards. Problems that show broken on the page are never accepted.
+ */
+export function applyKeep(problems: Problem[], design: Tree, plan: Plan): Kept {
+  const keep = plan.keep ?? [];
+  if (keep.length === 0) return { open: problems, kept: [], notes: [] };
+  const bySrc = new Map(design.nodes.map((n) => [n.src, n]));
+  const byId = new Map(design.nodes.map((n) => [n.id, n]));
+  const under = (src: string, block: string) => {
+    for (let at = bySrc.get(src); at; at = at.parent === null ? undefined : byId.get(at.parent)) {
+      if (at.src === block) return true;
+    }
+    return false;
+  };
+  const bound = [
+    ...(plan.bind ?? []).map((f) => f.src),
+    ...(plan.collapse ?? []).flatMap((c) => [
+      ...c.members,
+      ...(c.fields ?? []).map((f) => f.src),
+      ...(c.variants ?? []).flatMap((v) => [v.src, ...(v.fields ?? []).map((f) => f.src)]),
+    ]),
+  ];
+  const notes: string[] = [];
+  const valid = keep.filter((k) => {
+    if (bySrc.has(k.src)) return true;
+    notes.push(`keep names ${k.src}, which is not a node of the frame: use an id from the outline`);
+    return false;
+  });
+  const wide = new Set(
+    valid.filter((k) => bound.some((b) => b !== k.src && under(b, k.src))).map((k) => k.src),
+  );
+  const accepted = new Map<string, Problem[]>();
+  const open = problems.filter((p) => {
+    if (!p.keep || !p.src) return true;
+    const src = p.src;
+    const by = valid.find((k) => k.src === src || (!wide.has(k.src) && under(src, k.src)));
+    if (!by) return true;
+    accepted.set(by.src, [...(accepted.get(by.src) ?? []), p]);
+    return false;
+  });
+  for (const k of valid) {
+    if (wide.has(k.src) && !accepted.has(k.src)) {
+      notes.push(
+        `keep ${k.src} holds nodes the plan binds, so it accepts only problems on ${k.src} itself: keep the static block inside it, or the node`,
+      );
+    }
+  }
+  const clipped = (m: string) => (m.length > 120 ? `${m.slice(0, 119)}…` : m);
+  const kept = valid.map((k) => {
+    const took = accepted.get(k.src) ?? [];
+    return `${k.src} kept as designed: ${k.why}${took.length ? ` (accepts: ${took.map((p) => clipped(p.message)).join(" | ")})` : ""}`;
+  });
+  return { open, kept, notes };
+}
+
+/** `the-brave-squad` → `theBraveSquad`: a slot's name as the name its data is read by. */
+export const camel = (name: string): string => {
+  const out = name.replace(/[^A-Za-z0-9]+([A-Za-z0-9])/g, (_, c: string) => c.toUpperCase());
+  const first = out.charAt(0).toLowerCase() + out.slice(1);
+  return /^[a-z]/.test(first) ? first : `s${out}`;
+};
+
+/** "Not yet"s bind.publish answers before it lets a plan with open problems through anyway. */
 const MAX_REFUSALS = 2;
 
 export function createBindTools(
@@ -682,11 +853,17 @@ export function createBindTools(
             ? await plane.exportIr(exportId)
             : undefined;
         const byId = ir ? indexIr(ir.root) : new Map<string, IrNode>();
-        // the section's signature, as frame-match signed it: what a person's decisions are about
-        const signature = ir ? (await loadSigner())(ir.doc ?? ir) : undefined;
-        const content = meta.content as Frame["content"];
-        const writes = Array.isArray(meta.choices) ? (meta.choices as KnownChoice[]) : [];
-        // the page's choices other sections write: this one may follow them
+        // the section's signature, as frame-match signed it: what a person's decisions are about;
+        // a slot's own when the run binds one slot, so its answers are about that slot
+        const signed = ir ? (await loadSigner())(ir.doc ?? ir) : undefined;
+        const scope = input.slot ? scopeOf(input.slot) : undefined;
+        const signature = input.slot?.signature ?? signed;
+        const content = (input.slot?.content ?? meta.content) as Frame["content"];
+        const written = Array.isArray(meta.choices) ? (meta.choices as KnownChoice[]) : [];
+        // a slot follows the choices it draws; a frame's tabs belong to the slot that has them
+        const writes = input.slot ? written.filter((w) => w.owner === input.slot?.id) : written;
+        // the page's choices other sections write: this one may follow them (a slot only the
+        // ones it was told to read)
         const section = typeof meta.handoffId === "string" ? meta.handoffId : exportId;
         const choices = opts.pool
           ? (
@@ -697,7 +874,8 @@ export function createBindTools(
                 section ? { except: section } : {},
               )
             )
-              .filter((c) => !writes.some((w) => w.key === c.key))
+              .filter((c) => !written.some((w) => w.key === c.key))
+              .filter((c) => !input.slot || input.slot.readFrom.includes(c.key))
               .map((c) => ({
                 key: c.key,
                 options: c.options,
@@ -705,11 +883,14 @@ export function createBindTools(
                 section: c.sectionName,
               }))
           : [];
+        const mine = scope?.srcs(tree);
+        const notes = ir ? notesOf(ir, byId) : [];
         return {
           tree,
           byId,
-          ...(signature ? { signature, name: ir?.root.name ?? "" } : {}),
-          notes: ir ? notesOf(ir, byId) : [],
+          ...(signature ? { signature, name: input.slot?.name ?? ir?.root.name ?? "" } : {}),
+          ...(scope ? { scope } : {}),
+          notes: mine ? notes.filter((n) => mine.has(n.src)) : notes,
           dsl,
           writes,
           choices,
@@ -724,16 +905,22 @@ export function createBindTools(
   };
 
   /** A Cast hook's output under the name the plan reads it by, unwrapped as a page unwraps it. */
-  const sourceBag = (source: z.infer<typeof Source>, dsl: Dsl) =>
-    asBag({ [source.as]: { castFlow: source.sample } }, dsl);
+  const sourceBag = (sources: Record<string, z.infer<typeof Source>>, dsl: Dsl) =>
+    asBag(
+      Object.fromEntries(Object.values(sources).map((s) => [s.as, { castFlow: s.sample }])),
+      dsl,
+    );
 
   const loaded = async (
     ctx: Pick<ToolContext, "input" | "runId" | "tenantId">,
   ): Promise<Loaded> => {
     const frame = await frameOf(ctx);
     if (inputOf(ctx).data) return { ...frame, bag: asBag(frame.dataset, frame.dsl) };
-    const source = readState(dir, ctx.runId).source;
-    return { ...frame, bag: source ? sourceBag(source, frame.dsl) : undefined };
+    const { sources } = readState(dir, ctx.runId);
+    return {
+      ...frame,
+      bag: Object.keys(sources).length > 0 ? sourceBag(sources, frame.dsl) : undefined,
+    };
   };
   /** The data, for the tools that cannot work without it. */
   const withData = async (ctx: Pick<ToolContext, "input" | "runId" | "tenantId">) => {
@@ -758,7 +945,7 @@ export function createBindTools(
     block(_input, ctx) {
       const state = readState(dir, ctx.runId);
       if (state.published) return "A plan was published: this frame is bound, so it is not static.";
-      if (state.source)
+      if (Object.keys(state.sources).length > 0)
         return "This run chose a data source with bind.source: bind it, or say in remaining why it does not fit.";
       return undefined;
     },
@@ -781,7 +968,9 @@ export function createBindTools(
     timeoutMs: 60_000,
     alwaysInline: true,
     async run(_input, ctx) {
-      const { tree, byId, bag } = await loaded(ctx);
+      const { tree: whole, byId, bag, scope } = await loaded(ctx);
+      // a slot sees its own nodes: what repeats and the outline are about them
+      const tree = scope ? scope.view(whole) : whole;
       const all = groups(tree, byId);
       const found = all.map((g) => {
         const line =
@@ -803,6 +992,16 @@ export function createBindTools(
       return {
         ...(notes.length > 0 ? { designerNotes: notes, designerNotesRule: NOTES_RULE } : {}),
         ...(decided.length > 0 ? { before: decided, beforeRule: BEFORE_RULE } : {}),
+        ...(scope
+          ? {
+              slot: {
+                id: scope.slot.id,
+                name: scope.slot.name,
+                about: `This run binds one slot of the frame: ${scope.slot.name}. Everything here is about its nodes; the rest of the frame belongs to other slots and is not yours to bind, read or ask about. When you look for its data, call agent.hookMaker for this slot alone, with its words as hints.`,
+                words: wordsOf(tree),
+              },
+            }
+          : {}),
         ...(content
           ? {
               content: `frame-match read it as ${content.data === "none" ? "showing no data" : content.data === "some" ? "showing data" : "unsure"}: ${content.evidence.join("; ")}`,
@@ -819,7 +1018,9 @@ export function createBindTools(
             }
           : {}),
         data: bag ? shapeOf(bag).join("\n") : NO_DATA,
-        ...(bag && choices.length ? linked(bag, choices) : {}),
+        ...(bag && (choices.length || (scope && writes.length))
+          ? linked(bag, scope ? [...writes, ...choices] : choices)
+          : {}),
       };
     },
   });
@@ -838,8 +1039,9 @@ export function createBindTools(
         as: z
           .string()
           .regex(/^[a-z][a-zA-Z0-9]*$/)
+          .optional()
           .describe(
-            "The name the plan reads the data by: fixtures. A plain list is fixtures.items; any other shape keeps its own keys (fixtures.days)",
+            "The name the plan reads the data by: fixtures. A plain list is fixtures.items; any other shape keeps its own keys (fixtures.days). Left out when the run binds a slot: the slot's name",
           ),
       })
       .strict(),
@@ -848,7 +1050,10 @@ export function createBindTools(
     alwaysInline: true,
     block: (_input, ctx) =>
       inputOf(ctx).data ? "This run was given its data: bind.load has it." : undefined,
-    async run({ hookId, input, as }, ctx) {
+    async run({ hookId, input, as: named }, ctx) {
+      const slot = inputOf(ctx).slot;
+      const as = named ?? (slot ? camel(slot.name) : undefined);
+      if (!as) throw new Error("name the data: as is the name the plan reads it by (fixtures)");
       // the data is a Cast hook's output: the registry's cast server, under the run's tenant
       const { hook, output } = await hookOutput(
         (tool, args) => mcp.call(CAST, ctx.tenantId, tool, args, ctx.signal),
@@ -862,10 +1067,14 @@ export function createBindTools(
         as,
         sample: output,
       };
-      writeState(dir, ctx.runId, { ...readState(dir, ctx.runId), source: chosen });
-      const { dsl, choices } = await frameOf(ctx);
-      const bag = sourceBag(chosen, dsl);
-      return { data: shapeOf(bag).join("\n"), ...(choices.length ? linked(bag, choices) : {}) };
+      // a source with this name is replaced; the others stay, and the plan reads them all
+      const state = readState(dir, ctx.runId);
+      const sources = { ...state.sources, [as]: chosen };
+      writeState(dir, ctx.runId, { ...state, sources });
+      const { dsl, choices, writes, scope } = await frameOf(ctx);
+      const bag = sourceBag(sources, dsl);
+      const follow = scope ? [...writes, ...choices] : choices;
+      return { data: shapeOf(bag).join("\n"), ...(follow.length ? linked(bag, follow) : {}) };
     },
   });
 
@@ -877,7 +1086,12 @@ export function createBindTools(
     effect: "read",
     timeoutMs: 30_000,
     async run({ src }, ctx) {
-      const { tree, byId } = await frameOf(ctx);
+      const { tree, byId, scope } = await frameOf(ctx);
+      if (scope && !scope.srcs(tree).has(src)) {
+        throw new Error(
+          `${src} is outside the slot ${scope.slot.name}: it belongs to another slot`,
+        );
+      }
       const ir = byId.get(src);
       const nodes = tree.nodes.filter((n) => n.src === src);
       if (!ir && nodes.length === 0) throw new Error(`no node has src ${src}`);
@@ -903,7 +1117,7 @@ export function createBindTools(
   const tryPlan = defineTool({
     name: "bind.try",
     description:
-      "Apply a binding plan to the frame and draw it against every item of the sample, without publishing. Returns what was bound, what each repeat drew, what the page would show, and every problem: a node the plan could not reach, an invalid tree, a ref with nothing behind it, an item that draws no variant or two. Fix them and try again; the last plan tried is the one bind.publish stores.",
+      "Apply a binding plan to the frame and draw it against every item of the sample, without publishing. Returns what was bound, what each repeat drew, what the page would show, every problem still open (a node the plan could not reach, an invalid tree, a ref with nothing behind it, design copy beside data), what the plan's keep accepted, and publishable. Fix the problems, or keep what stays as designed, and try again; the last plan tried is the one bind.publish stores. Read its result before calling bind.publish: never call both in one turn.",
     // A JSON string, not a schema: a plan's nested conditions are more optional fields than a
     // model provider takes in one tool schema. It is parsed against `Plan` here instead.
     input: z
@@ -912,7 +1126,7 @@ export function createBindTools(
           .string()
           .min(2)
           .describe(
-            'The whole plan as JSON: {"note","collapse":[{"over","as","members","slice","shape","when","variants":[{"src","when","fields"}],"fields":[{"src","prop","path"|"template"}]}],"bind":[…],"set":[{"src","prop","value"}]}',
+            'The whole plan as JSON: {"note","collapse":[{"over","as","members","slice","shape","when","variants":[{"src","when","fields"}],"fields":[{"src","prop","path"|"template"}]}],"bind":[…],"set":[{"src","prop","value"}],"keep":[{"src","why"}]}',
           ),
       })
       .strict(),
@@ -942,9 +1156,23 @@ export function createBindTools(
           ? { collapse: parsed.data.collapse.map((c) => ({ ...c, shape: c.shape ?? "varies" })) }
           : {}),
       };
-      const { tree, bag, dsl, byId } = await withData(ctx);
-      const applied = dsl.applyBindingPlan(tree, plan);
-      const structure = dsl.check(applied.tree);
+      const { tree: whole, bag, dsl, byId, scope, writes } = await withData(ctx);
+      // keep is the plan's record of what stays as designed: the page never reads it
+      const { keep: _keep, ...binding } = plan;
+      const full = dsl.applyBindingPlan(whole, binding);
+      // a slot's plan is checked on the slot's nodes: the rest of the frame is not its to judge
+      const mine = scope?.srcs(whole);
+      const tree = scope ? scope.view(whole) : whole;
+      const applied = scope
+        ? {
+            ...full,
+            tree: scope.view(full.tree),
+            drift: full.drift.filter((d) => mine?.has(d.src)),
+          }
+        : full;
+      const structure = dsl
+        .check(full.tree)
+        .filter((i) => !scope || !i.nodeId || scope.has(full.tree, i.nodeId));
       const run = dryRun(applied.tree, bag, dsl, tree);
       // the first items' pictures of each node: a domain the site does not serve shows as a 404,
       // an id the site does not know as its empty stand-in, or the same picture on every item
@@ -957,25 +1185,47 @@ export function createBindTools(
                 return typeof a === "number" ? { status: a } : a;
               }),
             );
-            return pictureTrouble(p.src, p.urls, answers);
+            const trouble = pictureTrouble(p.src, p.urls, answers);
+            return trouble ? fixOnly(trouble, p.src) : undefined;
           }),
         )
       ).filter((m) => m !== undefined);
       const left = leftAsDesigned(tree, applied.tree, byId, dsl.hasRef);
-      const problems = problemsOf(
+      const found = findingsOf(
         applied,
         structure,
         run,
-        plan,
+        binding,
         tree,
         left,
         unboundCopy(applied.tree, dsl.hasRef),
         broken,
       );
+      const { open, kept, notes } = applyKeep(found, tree, plan);
+      // a slot's plan touches its own nodes, and reads the choices it owns or was told to read
+      const outside = scope
+        ? [
+            ...plannedSrcs(plan)
+              .filter((src) => !mine?.has(src))
+              .map(
+                (src) =>
+                  `the plan names ${src}, which is outside the slot ${scope.slot.name}: bind only the slot's own nodes`,
+              ),
+            ...pageKeysRead(plan)
+              .filter(
+                (key) => !writes.some((w) => w.key === key) && !scope.slot.readFrom.includes(key),
+              )
+              .map(
+                (key) =>
+                  `the plan reads _page.${key}, a choice slot ${scope.slot.name} does not draw and was not told to read: another slot's tabs filter that slot's items, not this one's`,
+              ),
+          ]
+        : [];
+      const problems = [...outside, ...notes, ...open.map((p) => p.message)];
       const state = readState(dir, ctx.runId);
       writeState(dir, ctx.runId, {
         ...state,
-        tried: { plan, problems, bound: applied.bound, collapsed: applied.collapsed },
+        tried: { plan, problems, kept, bound: applied.bound, collapsed: applied.collapsed },
       });
       return {
         bound: applied.bound,
@@ -985,92 +1235,149 @@ export function createBindTools(
           (s) => `${s.src} ${s.prop}: ${s.values.map((v) => JSON.stringify(v)).join(", ")}`,
         ),
         problems: problems.length ? problems : "none",
+        ...(kept.length ? { kept } : {}),
+        publishable: problems.length === 0,
+        next:
+          problems.length === 0
+            ? "Ready: read shows, then call bind.publish with {}."
+            : "Not ready. Fix each problem in the plan, or keep what stays as designed on purpose (keep: [{src, why}]), and call bind.try again with the whole plan. Only when one can be neither fixed nor kept, call bind.publish with despite saying why.",
       };
     },
   });
 
-  const publish = defineTool<
-    Record<string, never>,
-    z.infer<typeof Published>,
-    Record<string, unknown>
-  >({
-    name: "bind.publish",
-    description:
-      "Store the last plan bind.try applied, with the sample data, and return the preview link of the bound frame. Refused while that plan has problems, at most twice.",
-    input: z.object({}).strict(),
-    effect: "write",
-    timeoutMs: 60_000,
-    // "not yet" sends the run back to bind.try, so asking again is the run working: the repeated
-    // refused call must not end it. MAX_REFUSALS bounds the loop, so it still ends with a preview
-    advisoryBlock: true,
-    // the approval shows what code measured, never the model's account of it
-    resolve(_input, ctx) {
-      const tried = readState(dir, ctx.runId).tried;
-      return tried
-        ? {
-            note: tried.plan.note ?? "",
-            bound: tried.bound,
-            collapsed: tried.collapsed,
-            problems: tried.problems,
-          }
-        : {};
-    },
-    block(_input, ctx) {
-      const state = readState(dir, ctx.runId);
-      if (state.published) return undefined;
-      if (!state.tried) return "Nothing to publish. Call bind.try with a plan first.";
-      if (state.tried.problems.length === 0 || state.refusals >= MAX_REFUSALS) return undefined;
-      writeState(dir, ctx.runId, { ...state, refusals: state.refusals + 1 });
-      return `Not yet (${state.refusals + 1} of ${MAX_REFUSALS}). The plan has problems: ${state.tried.problems.slice(0, 5).join(" | ")}. Fix their cause and call bind.try with the whole plan, then bind.publish again: calling bind.publish again without a new bind.try only uses up a refusal. If they cannot be fixed, call bind.try with the plan as it is, then bind.publish; after ${MAX_REFUSALS} refusals it goes through with them listed.`;
-    },
-    async run(_input, ctx) {
-      const state = readState(dir, ctx.runId);
-      if (state.published) return state.published;
-      if (!state.tried) throw new Error("nothing was tried");
-      const { bag } = await withData(ctx);
-      const input = inputOf(ctx);
-      const { url, project } = previewOf(input.preview);
-      const plane = planeOf(project);
-      const chosen = state.source;
-      const meta = {
-        source: "dugout:bind",
-        runId: ctx.runId,
-        preview: input.preview,
-        // where the data came from: what a page fetches live once trees declare their data
-        data: input.data
-          ? { kind: "dataset", name: input.data }
-          : chosen
-            ? {
+  const PublishInput = z
+    .object({
+      despite: z
+        .string()
+        .min(10)
+        .optional()
+        .describe(
+          "Only when bind.try's last plan still lists problems that can be neither fixed nor kept: why, in one sentence. A person reads it at the approval",
+        ),
+    })
+    .strict();
+  /**
+   * bind.publish stores the plan and answers the preview link. bind.done is the same for a run that
+   * binds one slot of a pass: it stores the plan and the data, and answers them as they are; the
+   * preview of the whole frame, with every slot's plan, is published once by the pass.
+   */
+  const publishAs = (name: "bind.publish" | "bind.done") => {
+    const forSlot = name === "bind.done";
+    return defineTool<
+      z.infer<typeof PublishInput>,
+      z.infer<typeof Published>,
+      Record<string, unknown>
+    >({
+      name,
+      description: forSlot
+        ? "End a run that binds one slot: store the last plan bind.try applied, with the sample data, and return their ids. The frame's preview is published once by the pass, with every slot's plan. Call it with {} once bind.try said publishable; with despite only when it still lists problems that can be neither fixed nor kept."
+        : "Store the last plan bind.try applied, with the sample data, and return the preview link of the bound frame. Call it with {} once bind.try said publishable; with despite only when it still lists problems that can be neither fixed nor kept.",
+      input: PublishInput,
+      effect: "write",
+      timeoutMs: 60_000,
+      // a "not yet" sends the run back to bind.try, so asking again is the run working: the repeated
+      // refused call must not end it. MAX_REFUSALS bounds the loop, so it still ends with a preview
+      advisoryBlock: true,
+      // the approval shows what code measured, never the model's account of it
+      resolve(input, ctx) {
+        const tried = readState(dir, ctx.runId).tried;
+        return tried
+          ? {
+              note: tried.plan.note ?? "",
+              bound: tried.bound,
+              collapsed: tried.collapsed,
+              problems: tried.problems,
+              kept: tried.kept,
+              ...(input.despite && tried.problems.length ? { despite: input.despite } : {}),
+            }
+          : {};
+      },
+      // reads what resolve made of the call: despite is there only when problems were open
+      block(resolved, ctx) {
+        const state = readState(dir, ctx.runId);
+        if (state.published) return undefined;
+        const slot = inputOf(ctx).slot;
+        if (slot && !forSlot) {
+          return `This run binds one slot (${slot.name}) of a pass, which publishes the frame once: call bind.done.`;
+        }
+        if (!slot && forSlot)
+          return "bind.done ends a run that binds a slot; this one binds the whole frame: call bind.publish.";
+        if (!state.tried) return "Nothing to publish. Call bind.try with a plan first.";
+        const open = state.tried.problems;
+        if (open.length === 0 || resolved.despite || state.refusals >= MAX_REFUSALS)
+          return undefined;
+        writeState(dir, ctx.runId, { ...state, refusals: state.refusals + 1 });
+        return `Not yet: the last plan bind.try applied has ${open.length} open problem(s): ${open.slice(0, 5).join(" | ")}. Fix each in the plan, or keep what stays as designed on purpose (keep: [{src, why}]), and call bind.try with the whole plan; publish once it says publishable. When one can be neither fixed nor kept, call bind.publish with despite saying why.`;
+      },
+      // what resolve showed the person: despite is there only when problems were open
+      async run(resolved, ctx) {
+        const despite = typeof resolved.despite === "string" ? resolved.despite : undefined;
+        const state = readState(dir, ctx.runId);
+        if (state.published) return state.published;
+        if (!state.tried) throw new Error("nothing was tried");
+        const { bag } = await withData(ctx);
+        const input = inputOf(ctx);
+        const { url, project } = previewOf(input.preview);
+        const plane = planeOf(project);
+        const chosen = Object.values(state.sources);
+        const meta = {
+          source: "dugout:bind",
+          runId: ctx.runId,
+          preview: input.preview,
+          ...(input.slot ? { slot: { id: input.slot.id, name: input.slot.name } } : {}),
+          // where the data came from: what a page fetches live once trees declare their data
+          // (a list: a frame of several slots reads several; an older reader takes one object as
+          // a list of one)
+          data: input.data
+            ? [{ kind: "dataset", name: input.data }]
+            : chosen.map((c) => ({
                 kind: "cast-hook",
-                hookId: chosen.hookId,
-                ...(chosen.workflowId ? { workflowId: chosen.workflowId } : {}),
-                input: chosen.input,
-                as: chosen.as,
-              }
-            : null,
-      };
-      const dataArtifactId = await plane.upload("sample_data", bag, meta);
-      const planArtifactId = await plane.upload("binding_plan", state.tried.plan, meta);
-      const link = new URL(url.toString());
-      if (opts.web) {
-        const web = new URL(opts.web);
-        link.protocol = web.protocol;
-        link.host = web.host;
-      }
-      link.searchParams.set("data", dataArtifactId);
-      link.searchParams.set("plan", planArtifactId);
-      const published = {
-        previewUrl: link.toString(),
-        planArtifactId,
-        dataArtifactId,
-        bound: state.tried.bound,
-        collapsed: state.tried.collapsed,
-        problems: state.tried.problems,
-      };
-      writeState(dir, ctx.runId, { ...state, published });
-      return published;
-    },
-  });
+                hookId: c.hookId,
+                ...(c.workflowId ? { workflowId: c.workflowId } : {}),
+                input: c.input,
+                as: c.as,
+              })),
+        };
+        // what stays as designed is a record for people, beside the plan: the page never reads it
+        const { keep, ...binding } = state.tried.plan;
+        const record = keep?.length ? { ...meta, keep } : meta;
+        const dataArtifactId = await plane.upload("sample_data", bag, meta);
+        const planArtifactId = await plane.upload("binding_plan", binding, record);
+        const link = new URL(url.toString());
+        if (opts.web) {
+          const web = new URL(opts.web);
+          link.protocol = web.protocol;
+          link.host = web.host;
+        }
+        // a slot's pass links the frame once, with all the plans: here the preview stays as it was
+        if (!forSlot) {
+          link.searchParams.set("data", dataArtifactId);
+          link.searchParams.set("plan", planArtifactId);
+        }
+        const published = {
+          previewUrl: link.toString(),
+          planArtifactId,
+          dataArtifactId,
+          bound: state.tried.bound,
+          collapsed: state.tried.collapsed,
+          problems: state.tried.problems,
+          kept: state.tried.kept,
+          sources: meta.data,
+          ...(despite ? { despite } : {}),
+        };
+        writeState(dir, ctx.runId, { ...state, published });
+        return published;
+      },
+    });
+  };
 
-  return [load, source, node, tryPlan, publish, staticTool];
+  return [
+    load,
+    source,
+    node,
+    tryPlan,
+    publishAs("bind.publish"),
+    publishAs("bind.done"),
+    staticTool,
+  ];
 }

@@ -1,6 +1,6 @@
 // pnpm worker — runs agents (ADR 0009). It claims runs from Postgres (queued by a host, decided,
 // or left by a worker that died), runs them, and writes their events to Valkey and Postgres. It has
-// no port. AGENTS=sitemap,... limits it to some agents, so an agent can have workers of its own.
+// no port. AGENTS=frame-match,... limits it to some agents, so an agent can have workers of its own.
 // After each completed preview or binding run it puts the Handoff's sections in the section
 // library and shares them (`.scratch/section-library/`); LIBRARY=off leaves that out, and
 // LIBRARY_CAPTION_MODEL=off adds sections without a vision model's caption (haiku unless named).
@@ -10,7 +10,6 @@ import { agent as bind } from "@dugout/agent-data-bind";
 import { agent as frameMatch } from "@dugout/agent-frame-match";
 import { agent as hookMaker } from "@dugout/agent-hook-maker";
 import { agent as sectionBuilder } from "@dugout/agent-section-builder";
-import { agent as sitemap } from "@dugout/agent-sitemap";
 import { agent as uiEditor } from "@dugout/agent-ui-editor";
 import { REPO_ROOT } from "@dugout/core";
 import {
@@ -30,7 +29,7 @@ import { createValkeyEventLog, createWorker, hostAgents, LOCAL_VALKEY_URL } from
 // every agent a worker can run, by id. hook-maker also runs inside bind, and
 // frame-match and bind inside section-builder, as children: a worker that serves the parent runs them
 // there whether or not it serves them on their own
-const all = [sitemap, frameMatch, bind, hookMaker, sectionBuilder, uiEditor];
+const all = [frameMatch, bind, hookMaker, sectionBuilder, uiEditor];
 const only = process.env.AGENTS?.split(",").map((id) => id.trim());
 const unknown = only?.filter((id) => !all.some((a) => a.spec.id === id)) ?? [];
 if (unknown.length) {

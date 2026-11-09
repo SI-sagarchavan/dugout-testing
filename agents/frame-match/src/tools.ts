@@ -44,6 +44,7 @@ import {
 } from "./layout.ts";
 import { type Looked, LookInputError, look, type See } from "./look.ts";
 import { NOTES_RULE } from "./notes.ts";
+import { type FoundSlots, findFrameSlots, ownersOf, SlotReport, slotted } from "./slots.ts";
 import { loadToolchain, type PageChoice, type Toolchain } from "./toolchain.ts";
 
 /**
@@ -64,6 +65,8 @@ export const PageChoiceSchema = z.object({
   key: z.string(),
   options: z.array(z.object({ value: z.string(), label: z.string().optional() })),
   initial: z.string(),
+  /** The slot that draws it: only its nodes read the choice, unless a read from elsewhere was asked for. */
+  owner: z.string().optional(),
 });
 
 export const MATCH_DIR = join(REPO_ROOT, ".runs", "frame-match");
@@ -100,6 +103,8 @@ export interface Engine {
   layouts?(bundle: Bundle): Promise<LayoutIntent[]>;
   /** The page choices a built frame writes: its tabs (`@fanos/dsl` `pageChoices`). */
   choices?(built: Built): Promise<PageChoice[]>;
+  /** The slots of the frame: the parts that each show one kind of data (`findSlots`). */
+  slots?(bundle: Bundle): Promise<FoundSlots>;
   /** A platform carousel config as Carousel props, its colours checked against the theme. */
   platform?(json: unknown, colors: ReadonlySet<string>): Promise<PlatformRead>;
 }
@@ -125,6 +130,7 @@ export function pipelineEngine(tools?: Toolchain): Engine {
     unpainted: (bundle, built) => unpaintedLayers(bundle, built.tree, built.themeRaw),
     layouts: async (bundle) => (await load()).detectLayout(bundle.doc),
     choices: async (built) => (await load()).pageChoices(built.tree),
+    slots: async (bundle) => findFrameSlots(await load(), bundle),
     platform: async (json, colors) => (await load()).fromPlatformCarousel(json, { colors }),
   };
 }
@@ -150,6 +156,8 @@ const Published = z.object({
   content: Content.optional(),
   /** What the section's tabs write to its page, for any section to read (`_page.<key>`). */
   choices: z.array(PageChoiceSchema).default([]),
+  /** The parts of the frame that each show one kind of data, and what each owns. */
+  slots: z.array(SlotReport).default([]),
 });
 
 /** A run's work so far. On disk, so a run resumed after an approval keeps its overrides. */
@@ -186,9 +194,60 @@ const State = z.object({
   layouts: z.array(z.custom<LayoutReport>()).default([]),
   /** Whether anything on the section is data, read by frame.load. */
   content: Content.optional(),
+  /** The frame's slots with whether each shows data, read by frame.load. */
+  slots: z.custom<FoundSlots>().optional(),
+  slotContent: z.array(Content).default([]),
   published: Published.optional(),
 });
 type State = z.infer<typeof State>;
+
+type SlottedNode = Parameters<typeof slotted>[0]["nodes"][number];
+
+/** The slots' choices: each slot's own nodes asked what they write. */
+async function slottedBy(
+  choicesOf: NonNullable<Engine["choices"]>,
+  built: Built,
+  found: FoundSlots,
+) {
+  const tree = built.tree as unknown as { nodes: SlottedNode[] };
+  const byNodes = new Map<SlottedNode[], PageChoice[]>();
+  // slotted asks synchronously, so the answers are read first: each slot's nodes in turn
+  const owners = ownersOf(tree.nodes, found);
+  const several = found.slots.length > 1;
+  const sets = several
+    ? found.slots.map((_, i) => tree.nodes.filter((n) => owners.get(n.id) === i))
+    : [tree.nodes];
+  for (const nodes of sets) {
+    byNodes.set(
+      nodes,
+      await choicesOf({ ...built, tree: { ...built.tree, nodes } as Built["tree"] }),
+    );
+  }
+  return slotted(tree, found, (nodes) => {
+    for (const [set, answer] of byNodes) {
+      if (set.length === nodes.length && set.every((n, i) => n === nodes[i])) return answer;
+    }
+    return [];
+  });
+}
+
+/** What the run says of each slot: the tree nodes it owns, what it writes and reads. */
+function reportOf(
+  state: State,
+  split: { owners: Map<string, number>; writes: string[][]; reads: string[][] },
+): SlotReport[] {
+  return (state.slots?.slots ?? []).map((s, i) => ({
+    id: s.id,
+    name: s.name,
+    nodes: [...split.owners].filter(([, at]) => at === i).map(([id]) => id),
+    content: state.slotContent[i] ?? { data: "unsure", evidence: [] },
+    writes: split.writes[i] ?? [],
+    reads: split.reads[i] ?? [],
+    signature: s.signature,
+    confidence: s.confidence,
+    ...(s.why ? { why: s.why } : {}),
+  }));
+}
 
 const stateFile = (dir: string, runId: string) => join(dir, `${runId}.json`);
 
@@ -686,6 +745,40 @@ export function createMatchTools(
           laid.layouts,
           ctx.signal,
         );
+        // the frame's slots, and whether each shows data: a frame of two sections binds twice
+        const slots = await engine.slots?.(bundle).catch(() => undefined);
+        const slotContent: Content[] = [];
+        let framed = content;
+        if (slots) {
+          const tree = (laid.built ?? first.built).tree as unknown as {
+            nodes: Array<{
+              id: string;
+              parent: string | null;
+              type: string;
+              props: Record<string, unknown>;
+            }>;
+          };
+          const owners = ownersOf(tree.nodes, slots);
+          for (const [i, slot] of slots.slots.entries()) {
+            const inside = new Set(slot.ir);
+            slotContent.push(
+              await readContent(
+                bundle,
+                { nodes: tree.nodes.filter((n) => owners.get(n.id) === i) } as Built["tree"],
+                laid.layouts.filter((l) => inside.has(l.src)),
+                ctx.signal,
+              ),
+            );
+          }
+          // the frame has data when any slot has
+          const withData = slots.slots.filter((_, i) => slotContent[i]?.data === "some");
+          if (withData.length > 0 && content.data !== "some") {
+            framed = {
+              data: "some",
+              evidence: [...content.evidence, ...withData.map((s) => `${s.name} shows data`)],
+            };
+          }
+        }
         const state: State = {
           exportId: bundle.exportId,
           themeArtifactId: bundle.themeArtifactId,
@@ -708,7 +801,9 @@ export function createMatchTools(
           examinedSurfaces: [],
           publishRefusals: 0,
           layouts: laid.layouts,
-          content,
+          content: framed,
+          slotContent,
+          ...(slots ? { slots } : {}),
         };
         writeState(dir, ctx.runId, state);
         return {
@@ -736,11 +831,11 @@ export function createMatchTools(
               }
             : {}),
           content: {
-            ...content,
+            ...framed,
             note:
-              content.data === "none"
+              framed.data === "none"
                 ? "Nothing on this section is data: it is published as it is, and nothing is bound to a source."
-                : content.data === "some"
+                : framed.data === "some"
                   ? "This section shows data: the binding stage finds its source after you publish."
                   : "The signs do not say whether this section shows data: the binding stage looks again.",
           },
@@ -1107,19 +1202,28 @@ export function createMatchTools(
             ? await plane.upload("token_set", built.themeRaw, meta)
             : state.themeArtifactId;
         const surfaceArtifactId = await plane.upload("surface_set", built.surfaces, meta);
-        const choices = (await engine.choices?.(built)) ?? [];
+        const written = (await engine.choices?.(built)) ?? [];
         const content = state.content;
-        const treeArtifactId = await plane.upload("dsl_tree", built.tree, {
+        // each choice belongs to the slot that draws it, and is named for it when there are several
+        const split =
+          state.slots && engine.choices
+            ? await slottedBy(engine.choices, built, state.slots)
+            : undefined;
+        const choices = split ? split.choices : written;
+        const tree = split ? (split.tree as unknown as Built["tree"]) : built.tree;
+        const slots = split && state.slots ? reportOf(state, split) : [];
+        const treeArtifactId = await plane.upload("dsl_tree", tree, {
           ...meta,
           ...(content ? { content } : {}),
           ...(choices.length ? { choices } : {}),
+          ...(slots.length ? { slots } : {}),
         });
         // what this section's tabs write, for a section built later to read
         if (opts.pool) {
           await recordPageChoices(opts.pool, ctx.tenantId, {
             project,
             section: input.handoffId ?? state.exportId,
-            name: sectionName(bundle.rootName, built.tree),
+            name: sectionName(bundle.rootName, tree),
             treeArtifactId,
             runId: ctx.runId,
             choices,
@@ -1145,6 +1249,7 @@ export function createMatchTools(
           ...(state.unmeasured ? {} : { before: state.before.match, match: state.current.match }),
           ...(content ? { content } : {}),
           choices,
+          slots,
         };
         writeState(dir, ctx.runId, { ...state, published });
         return published;

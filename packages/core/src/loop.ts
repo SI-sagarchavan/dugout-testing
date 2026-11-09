@@ -620,14 +620,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       // The call stopped the run with questions (a tool's own, or a child run's) and the answers
       // came: it runs again with them, already approved and already started. A write waiting for
       // a yes is the same pause with a review question, and goes on below.
-      let withAnswers: { by: string; answers: Answers } | undefined;
+      let withAnswers: { by: string; answers: Answers; from?: string[] } | undefined;
       const waitedHere = state.waiting?.callId === call.id ? state.waiting : undefined;
       if (decision && waitedHere && !waitedHere.subject) {
         const settled = await settle(call, checked.input, waitedHere.questions, decision);
         decision = undefined;
         if ("ended" in settled) return settled.ended;
         if ("changes" in settled) throw new Error("a question was answered as a review");
-        withAnswers = settled;
+        withAnswers = { ...settled, from: waitedHere.from };
       }
 
       // approved before a crash: the reviewer is not asked twice

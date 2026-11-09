@@ -205,7 +205,7 @@ describe("a plan drawn against the sample", () => {
     );
     const { problems } = check(plan);
     expect(problems).toContain(
-      'I35:10547;18621:42579 shows the design\'s "02" in all 2 items it draws in: a placeholder. Bind it to what it stands for (time left until an instant is a clock), or say in remaining why it stays',
+      'I35:10547;18621:42579 shows the design\'s "02" in all 2 items it draws in: a placeholder. Bind it to what it stands for (time left until an instant is a clock), hide it with a when when the data has nothing for it, or keep it with why it stays',
     );
   });
 
@@ -604,5 +604,16 @@ describe("the preview link", () => {
     );
     expect([p.project, p.tree]).toEqual(["default", "05a86969-3145-45d0-95c4-1228e82be342"]);
     expect(() => previewOf("http://localhost:3000/preview/default/not-a-tree")).toThrow();
+  });
+});
+
+describe("pictureRatio", () => {
+  it("snaps a box to the CMS ratio, width first", async () => {
+    const { pictureRatio } = await import("../src/facts");
+    expect(pictureRatio(360, 640)).toBe("9-16");
+    expect(pictureRatio(1280, 720)).toBe("16-9");
+    expect(pictureRatio(200, 200)).toBe("1-1");
+    expect(pictureRatio(500, 300)).toBeUndefined();
+    expect(pictureRatio(0, 10)).toBeUndefined();
   });
 });

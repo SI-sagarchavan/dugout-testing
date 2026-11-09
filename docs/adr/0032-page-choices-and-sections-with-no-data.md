@@ -43,3 +43,12 @@ Values on the page compare loosely (`choiceValue`): a feed's "Women" is the togg
 - Not yet: a hook that answers one option at a time (a `gender` input). The strip then holds one option's items and does not follow the toggle; `bind` says so in `remaining`. The general answer is a data source per option, fetched by the host, and needs the page renderer's `surface_section` to fetch live data first.
 - A section built before the section whose choice it follows does not see it. Re-run `bind` on it (a follow-up in its thread) once the other is published.
 - `grid` is still recorded, not lowered.
+
+## Amendment (2026-11-09): a choice belongs to the slot that draws it
+
+A frame can hold several sections over one background (`.scratch/page-sections/spec.md`): the Team frame is a fixtures strip and a squad with WOMEN | MEN tabs. Each part that shows one kind of data is a **slot**, and the tabs' header is part of the slot whose cards they filter. Scoping every choice to the page was right when the header and the cards were thought of as two sections; with slots it let the squad's tabs filter the fixtures, whose cards carry WOMEN and MEN badges.
+
+- The page still holds every choice (`_page.<key>`); owning a choice is about who may read it, not where it is stored.
+- A choice records its **owner**, the slot that draws it. Only that slot's nodes read it, unless a read from elsewhere was asked for on purpose (a designer's note, or a person's answer).
+- When a frame has several slots, a choice's key is named for its slot (`the_brave_squad_women_men`), so two slots' tabs never share state. A frame of one slot keeps the key as compiled.
+- frame-match's result adds `slots`: each with its tree nodes, whether it shows data, the keys it writes and reads. Whether a slot reads another's key is reported there; refusing it is the binding stage's job.

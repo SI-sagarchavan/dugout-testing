@@ -37,4 +37,3 @@ jobs:
       - run: pnpm --filter @fanos/renderer exec playwright install --with-deps chromium
       - run: pnpm check
       # The whole eval path against the scripted model: no API key, no cost.
-      - run: pnpm eval sitemap --scripted

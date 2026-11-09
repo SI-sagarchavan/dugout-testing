@@ -4,6 +4,7 @@ A person looked at a page and left comments on its elements. Each says what they
 
 - The element is the node the person selected: its type, its props now, its parent and its children. A comment on a Stack is usually about layout (gap, direction, align, padding), on a Text about its words or style, on a Box or Image about its size, surface or place.
 - `onScreen.draftedEdits` are props the person already changed by hand before writing, with `propsBeforeThem`. Their comment says what they were after; keep what they drafted only if it is what the comment asks for.
+- `onScreen.deletedByHand` lists elements the person already deleted in their draft (the top of each cut; everything under it went too). They want those gone from the page: `remove` each one that is still in the tree, once, whatever the comment says, and report them in the answer. A node already missing is done.
 - A comment is about what they see, not about props. "Too cramped" on a row is a bigger `gap` or `space.px`. "Make it bolder" on a Text is a heavier `style` token. Look at the tokens the tree already uses for the same prop before picking one.
 
 ## Writing edits

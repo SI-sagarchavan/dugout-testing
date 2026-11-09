@@ -610,10 +610,42 @@ export function lostLooks(
   return found;
 }
 
+/** The ratios CMS pictures are cut in, as their file names write them (`9-16-<id>.jpg`). */
+const RATIOS: Array<[number, number]> = [
+  [1, 1],
+  [4, 3],
+  [3, 4],
+  [3, 2],
+  [2, 3],
+  [16, 9],
+  [9, 16],
+  [21, 9],
+  [4, 5],
+  [5, 4],
+  [2, 1],
+  [1, 2],
+];
+
+/**
+ * The CMS ratio a picture box of w x h px is nearest, written as the file name prefix ("9-16"), or
+ * undefined when the box is not near any (more than 6% off). Width comes first, as in `16-9`.
+ */
+export function pictureRatio(w: unknown, h: unknown): string | undefined {
+  if (typeof w !== "number" || typeof h !== "number" || w <= 0 || h <= 0) return undefined;
+  let best: { name: string; off: number } | undefined;
+  for (const [a, b] of RATIOS) {
+    const off = Math.abs(Math.log(w / h / (a / b)));
+    if (!best || off < best.off) best = { name: `${a}-${b}`, off };
+  }
+  return best && best.off <= 0.06 ? best.name : undefined;
+}
+
 export interface OwnPicture {
   /** The picture's node in each member, the first member's first: the place it is in a card. */
   srcs: string[];
   alt: string;
+  /** The CMS ratio of the picture's box in the design ("9-16"), when it is near one. */
+  ratio?: string | undefined;
   /** How many different pictures the design gives that place across the members. */
   distinct: number;
 }
@@ -705,6 +737,10 @@ export function ownPictures(tree: Tree, members: string[]): OwnPicture[] {
       out.push({
         srcs: at.map((n) => n.src),
         alt: String(node.props.alt ?? ""),
+        ratio: (() => {
+          const size = node.props.size as { w?: unknown; h?: unknown } | undefined;
+          return pictureRatio(size?.w, size?.h);
+        })(),
         distinct: distinct.size,
       });
     }
@@ -870,7 +906,8 @@ export interface Unbound {
  * hid, inside a container that otherwise shows data (a count on a card whose title and date are
  * bound), is a placeholder far more often than a label: labels sit beside other labels, not beside
  * the data they would describe. It looks up at most three containers and never as far as the root,
- * so a page's own headings and buttons stay out. Nodes inside a repeat, a button or a node the
+ * so a page's own headings and buttons stay out, and a block beside a list that holds no data (the
+ * section's heading over its cards) is the section's static part, never reported. Nodes inside a repeat, a button or a node the
  * plan gave a `when` are not reported (`dryRun.repeated` has the repeats).
  */
 export function unboundCopy(
@@ -893,6 +930,14 @@ export function unboundCopy(
     shows.set(id, yes);
     return yes;
   };
+  const lists = new Map<string, boolean>();
+  const holdsList = (id: string): boolean => {
+    const known = lists.get(id);
+    if (known !== undefined) return known;
+    const yes = (kids.get(id) ?? []).some((k) => k.type === "Repeater" || holdsList(k.id));
+    lists.set(id, yes);
+    return yes;
+  };
   const SKIPPED = new Set(["Repeater", "Button", "Link", "Tag"]);
   const out: Unbound[] = [];
   for (const node of applied.nodes) {
@@ -907,13 +952,16 @@ export function unboundCopy(
       at = up.parent;
     }
     if (chain.some((up) => SKIPPED.has(up.type) || up.props.when !== undefined)) continue;
-    for (const up of chain.slice(0, maxUp)) {
-      if (up.parent === null) break;
-      if (showsData(up.id)) {
-        out.push({ src: node.src, copy: clip(copy), within: up.src });
-        break;
-      }
-    }
+    chain.slice(0, maxUp).some((up, i) => {
+      if (up.parent === null) return true;
+      if (!showsData(up.id)) return false;
+      // the block beside a list that holds no data of its own (a heading and its button above
+      // the cards, a footer's note) is the section's static part, not a placeholder in an item
+      const branch = i === 0 ? node : chain[i - 1];
+      if (branch && !showsData(branch.id) && holdsList(up.id)) return true;
+      out.push({ src: node.src, copy: clip(copy), within: up.src });
+      return true;
+    });
   }
   return out;
 }

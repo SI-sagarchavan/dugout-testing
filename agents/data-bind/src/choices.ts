@@ -16,6 +16,8 @@ export interface KnownChoice {
   initial: string;
   /** The section that writes it, as a person names it. */
   section?: string | null;
+  /** The slot of its frame that draws it: only that slot follows it unless told to. */
+  owner?: string;
 }
 
 /** As `choiceValue` in `@fanos/dsl`: what the page compares. */

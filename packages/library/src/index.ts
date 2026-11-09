@@ -14,6 +14,7 @@ export * from "./palette.ts";
 export * from "./previews.ts";
 export * from "./sections.ts";
 export * from "./skeleton.ts";
+export * from "./slots.ts";
 export * from "./source.ts";
 export * from "./store.ts";
 export * from "./summary.ts";

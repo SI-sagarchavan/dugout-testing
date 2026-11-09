@@ -24,5 +24,6 @@ export const EVAL_TOOLS: ToolTable = {
   measure: "agents/frame-match/scripts/measure.ts",
   vision: "agents/frame-match/scripts/vision-bench.ts",
   layout: "agents/frame-match/scripts/layout-eval.ts",
+  sections: "agents/frame-match/scripts/sections-eval.ts",
   binding: "agents/frame-match/scripts/binding-experiment.ts",
 };

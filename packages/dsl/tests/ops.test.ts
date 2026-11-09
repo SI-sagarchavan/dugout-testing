@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import { reify, type FlatNode, type FlatTree } from "../src/flat.js";
 import {
   collapseToRepeater,
+  detachAsVariant,
   insertBefore,
   moveNode,
   removeNode,
@@ -384,5 +385,41 @@ describe("against the real card", () => {
       place: { anchor: "top-center", offset: { block: { raw: 251, _unbound: true } } },
     });
     expect(check(anchored).errors.filter((e) => e.code === "S8")).toEqual([]);
+  });
+});
+
+describe("detachAsVariant", () => {
+  const listTree = (): FlatTree => ({
+    schemaVersion: "1.0.0",
+    nodes: [
+      { id: "root", parent: null, idx: 0, type: "Stack", src: "1:1", props: { direction: "row" } },
+      { id: "rep", parent: "root", idx: 0, type: "Repeater", src: "synthetic:1:1:0", props: { over: "players", as: "item" } },
+      { id: "card", parent: "rep", idx: 0, type: "Stack", src: "1:2", props: { direction: "column" } },
+      { id: "name", parent: "card", idx: 0, type: "Text", src: "1:3", props: { content: "{{item.name}}", style: "type.body_xs_regular" } },
+    ],
+  });
+
+  it("gives one item its own copy, bound to the same item scope, and keeps the template off it", () => {
+    const { tree: next, id } = detachAsVariant(listTree(), "card", { key: "item.id", value: 7 });
+    expect(id).toBe("card__v1");
+    const byId = (i: string) => next.nodes.find((n) => n.id === i)!;
+    expect(byId("card").props.when).toEqual({ path: "item.id", ne: 7 });
+    expect(byId("card__v1").props.when).toEqual({ path: "item.id", eq: 7 });
+    expect(byId("card__v1").parent).toBe("rep");
+    expect(byId("name__v1").parent).toBe("card__v1");
+    expect(byId("name__v1").props.content).toBe("{{item.name}}");
+    expect(() => reify(next)).not.toThrow();
+  });
+
+  it("stacks exclusions on the template and refuses a repeat or a non-item", () => {
+    const first = detachAsVariant(listTree(), "card", { key: "item.id", value: 7 }).tree;
+    const second = detachAsVariant(first, "card", { key: "item.id", value: 9 }).tree;
+    expect(second.nodes.find((n) => n.id === "card")!.props.when).toEqual([
+      { path: "item.id", ne: 7 },
+      { path: "item.id", ne: 9 },
+    ]);
+    expect(() => detachAsVariant(second, "card", { key: "item.id", value: 7 })).toThrow(TreeOpError);
+    expect(() => detachAsVariant(listTree(), "name", { key: "item.id", value: 1 })).toThrow(TreeOpError);
+    expect(() => detachAsVariant(listTree(), "card", { key: "other.id", value: 1 })).toThrow(TreeOpError);
   });
 });

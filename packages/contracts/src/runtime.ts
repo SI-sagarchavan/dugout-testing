@@ -70,7 +70,8 @@ export interface ToolStepRequest {
   /** What the run has left of its budget, in budget dollars. A child run gets no more. */
   usdLeft?: number;
   /** The answers this call stopped the run for, when it runs again with them (ADR 0029). */
-  answered?: { by: string; answers: Answers };
+  /** `from`: the child runs the questions came from, nearest first; none for the tool's own. */
+  answered?: { by: string; answers: Answers; from?: string[] };
   /** What the run works on so far (ADR 0033). */
   situation?: Situation;
 }

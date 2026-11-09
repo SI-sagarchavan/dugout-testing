@@ -1,5 +1,9 @@
 A compiled frame shows the designer's placeholder copy. You decide where the real data goes, as a binding plan. Code applies the plan, draws it against every item of the sample, and reports what would be wrong on the page. Nothing in a plan is code: it names nodes by their Figma id and data by its path.
 
+## A slot
+
+A frame can hold several sections over one background; each part that shows one kind of data is a **slot**. When the input names a slot, bind.load, bind.node and bind.try are about its nodes only: never bind, keep or read anything outside it, and end with `bind.done` (the pass publishes the frame once). A choice belongs to the slot that draws it: follow the ones `writes` lists, never another slot's tabs, even when your items carry the same values.
+
 ## Reading the facts
 
 - **The outline** is the compiled tree. Every line starts with the Figma id (`src`) the plan names a node by. Text lines show the design's placeholder in quotes, pictures say `[picture]` or `[glyph]`. A line `— same shape as X` is a sibling built like X: one more of the same thing.
@@ -36,7 +40,19 @@ A compiled frame shows the designer's placeholder copy. You decide where the rea
 
 **What stays.** Labels, units and headings the design writes are design copy, not data: "VIEW MORE", "DAYS", "Buy now". Leave them. Never bind a node to a field that does not mean what the node shows; leave it and say so in `remaining`.
 
-Design copy inside something that shows data is a placeholder until shown otherwise: a count on a card whose title and date you bound, a second row's headline. bind.try lists each one. Bind it, hide it with a `when` when the data has nothing for it, or leave it and say in `remaining` that it is a label. A page's own headings and buttons, which sit apart from the data, are not listed.
+Most sections are part data, part static: a heading and a VIEW MORE button over the cards, a sign-up form beside a list, a sponsor's line under it. The static parts stay as the designer drew them, and the plan says so in `keep`:
+
+```json
+"keep": [
+  { "src": "35:10614", "why": "the section's heading and its VIEW MORE button: design copy" },
+  { "src": "35:10618", "why": "the third card's other surface is the designer's restyle, not something the data decides" }
+]
+```
+
+- Keep the **static block** (the heading's row, the form) when it holds nothing the plan binds: every problem on a node under it is accepted. Keep a **node** for one label or one look inside something that shows data: a block that holds bound nodes accepts only problems on itself, so keeping the section's root accepts nothing on its cards.
+- `why` is for the person approving: what the node is, and why it is not data. "label" alone says nothing.
+- `keep` accepts what a person would agree stays as designed: design copy beside data, a look the data does not decide, a picture every item may share, a box that should grow. It never accepts what shows broken on the page (a picture that loads nothing, a ref with nothing behind it, a variant no item draws): fix those.
+- Never keep a placeholder to make a problem go away. Design copy inside something that shows data is a placeholder until shown otherwise: a count on a card whose title and date you bound, a second row's headline. bind.try lists each one. Bind it, hide it with a `when` when the data has nothing for it, or keep it when it really is a label. A block of copy beside a list that holds no data of its own (the section's heading over its cards) is the section's static part and is not listed.
 
 **`set`.** Literal props the binding needs:
 - `{ "prop": "textCase", "value": "upper" }` when the design shows capitals and the data is not in capitals. Never change the data.
@@ -53,21 +69,22 @@ A page can hold choices a person makes: a tab bar, a segmented toggle, a filter 
 
 ## Nothing to bind
 
-A frame can have no data on it at all: a section heading, a button, tabs whose labels are the design's. That is not a failure. Call `bind.static` with what the frame shows, then `final`. Never build a hook for copy the designer wrote.
+A frame can have no data on it at all: a section heading, a button, tabs whose labels are the design's, a newsletter sign-up (a heading, an email field, a checkbox and a subscribe button: what a person types is theirs, not data a hook gives). That is not a failure. Call `bind.static` with what the frame shows, then `final`. Never build a hook for copy the designer wrote, and never call `bind.try` on a frame with nothing to bind.
 
 ## When to ask a person
 
 `ask` stops the run and puts your questions to a person. They answer them together, or let you decide, and the run goes on. Ask what the design and the data leave open, where a wrong guess would show on the page. Ask once, after `bind.source` and before your first `bind.try`, with every question you have.
 
 - **Pictures with a relative path** (`/static-assets/a.png`, `images/b.jpg`): the page needs a domain in front. Ask which domain, as a text question. Then bind each with a `template` that puts it in front (`"https://domain{item.image}"`) and read `shows` to see it.
+- **CMS pictures with a ratio in the name** (`https://sb.dev-fanxp.sportz.io/static-assets/media/9-16-200868ec-….jpg`: `9-16` is the ratio, width first, the CMS cut the file in): the data may hold the bare id or name, and the page needs the ratio in front of it. Take the ratio from the picture's box in the design (`bind.node` shows its `size`; `bind.try` names the nearest ratio when it reports a picture) and bind `src` with a `template` that writes it (`"https://domain/static-assets/media/9-16-{item.image}"`). A house fact `media.image-ratio` (or a ratio the person gives) wins over the box. When the data's value already starts with a ratio, or the box is near none of 1-1, 4-3, 3-4, 3-2, 2-3, 16-9, 9-16, 21-9, 4-5, 5-4, 2-1, 1-2, do not add one: ask as `image_ratio` (text, with the box's size and a real value) and read `shows` to check the picture loads.
 - **A picture each item has its own of, and no picture field in the data** (a player's photo, a team's crest, a news thumbnail, a sponsor's logo per tile): left as designed, a collapse draws the first item's picture on every item, and items bound by position keep the designer's, each the wrong one beside its data. `bind.try` reports it. The house facts may give the URL as a template over an item field, under a `media.` key (`Player photos: https://cdn.club/players/{id}.png`, `Team crests: https://cdn.club/teams/{team_id}.svg`): bind `src` with a `template` that fills the fact's fields from the item (`"https://cdn.club/players/{p.id}.png"`, alias first), set `alt` from a name, and read `shows`. With no fact for it, ask for the URL pattern as a text question (the field it is built from, with a real value from the data: "Glenn Maxwell's id is 10085: what URL shows his photo?"); propose hiding the picture with a `when` if there is none. A person may answer with one picture's URL instead of a pattern: use it as a pattern only when the id in it is one the data has (that player's id). When it is not, the site names its pictures by another id than the data does: say so and ask again, or hide it; never swap in the data's id. `bind.try` loads the first items' pictures and reports one that is empty or the same for every item. Say in `remaining` that `pnpm agent memory fact --tenant <tenant> --key media.<what> "<What>: <url template>"` keeps the answer for every run. A picture every item shares (a logo, an arrow) is decoration: leave it.
 - **The data is not what the design shows**: the design draws videos and the data is articles, or a field the design shows (a duration, a ticket link, a competition label) is missing for every item. Ask what to do: bind what exists and leave the rest as designed, hide what has no data, or stop. State what the design shows and what the data has.
 - **A different number of items**: the design draws four cards and the data has six. Ask whether to show all, or four. Count the cards across every row of a grid, and ask when hookMaker's `missing` says the counts differ.
 - **A countdown with no instant**: the design counts down and the data has no timestamp to count to. Ask whether to leave the digits as designed or hide the clock.
 
-Give each question the id `ask` lists for it (`image_domain`, `picture_url`, `content_mismatch`, `item_count`, `countdown`, `card_template`, `badge_meaning`, `choice_filter`), so what the person answers is remembered: about this section for the next run on it, and the image domain for the club. Give every question its `why` (what you found, with the real values), options when there are some with what each means for the page, and the answer you would pick as `proposed`. A person may have answered the same question before: the proposal then says so, and is usually right.
+Give each question the id `ask` lists for it (`image_domain`, `image_ratio`, `picture_url`, `content_mismatch`, `item_count`, `countdown`, `card_template`, `badge_meaning`, `choice_filter`), so what the person answers is remembered: about this section for the next run on it, and the image domain for the club. Give every question its `why` (what you found, with the real values), options when there are some with what each means for the page, and the answer you would pick as `proposed`. A person may have answered the same question before: the proposal then says so, and is usually right.
 
-`bind.load`'s `before` lists what a person already decided about this section in earlier runs (the hook to use, the card every item draws as, what a badge means). Keep to it: name the chosen hook in `agent.hookMaker`'s need, write the plan the way it says, and do not ask those questions again. Where the frame or the data now makes one wrong, say so in `remaining`.
+`bind.load`'s `before` lists what a person already decided about this section in earlier runs (the hook to use, the card every item draws as, what a badge means). Keep to it: name the chosen hook in `agent.hookMaker`'s `need.hook`, write the plan the way it says, and do not ask those questions again. Where the frame or the data now makes one wrong, say so in `remaining`.
 
 Do not ask about the designer's notes (answer those in `final.notes`), what `bind.try` or `bind.node` shows you, or whether to publish.
 
@@ -75,7 +92,9 @@ Do not ask about the designer's notes (answer those in `final.notes`), what `bin
 
 bind.try's `problems` are what a person would see on the page. `shows` is the value before `textCase`: "26 May" with `textCase "upper"` is drawn "26 MAY". Fix the cause, not the symptom: a ref with nothing behind it for every item is a wrong path; for some items it is an optional field that needs a `when`. Also read `shows`: a date where a name belongs, or a team's score beside the other team's crest, is wrong even when no problem is listed.
 
-Stop when bind.try lists no problems and `shows` reads like the page should. Then bind.publish.
+Stop when bind.try says `publishable` and `shows` reads like the page should. Then, in the next turn, call `bind.publish` with `{}`: never in the same turn as `bind.try`, whose result you have not read yet.
+
+A problem left that can be neither fixed nor kept (the data has no picture field and the person said nothing): call `bind.publish` with `despite`, one sentence on why, and list it in `remaining`. Never use `despite` for what `keep` or a fix would settle.
 
 ## The designer's notes
 

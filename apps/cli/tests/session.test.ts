@@ -1,7 +1,6 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agent as sitemap } from "@dugout/agent-sitemap";
 import type { RunEvent } from "@dugout/contracts";
 import { requestChange } from "@dugout/contracts";
 import { createScriptedModel, scriptedModelConfig } from "@dugout/core";
@@ -19,7 +18,7 @@ import {
 import { Valkey } from "iovalkey";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { followRun, type Terminal } from "../src/session.ts";
-import { askingWriter, sitemapWriter, writer } from "./fixtures.ts";
+import { askingWriter, writer } from "./fixtures.ts";
 
 const pool = createPool(inject("databaseUrl"));
 const valkey = new Valkey(process.env.VALKEY_TEST_URL || "redis://localhost:56379/1");
@@ -41,18 +40,6 @@ const agents: Record<string, AgentEntry> = {
         models: scriptedModelConfig(),
         runsDir,
         draftsDir: join(runsDir, "drafts"),
-        consolidate: false,
-      })(opts),
-  },
-  sitemap: {
-    input: sitemap.input,
-    run: (opts) =>
-      sitemap.create({
-        store,
-        client: createScriptedModel(sitemapWriter()),
-        models: scriptedModelConfig(),
-        runsDir,
-        sitemapsDir: join(runsDir, "sitemaps"),
         consolidate: false,
       })(opts),
   },
@@ -122,8 +109,6 @@ const approvals = (es: RunEvent[]) =>
   });
 const contiguous = (es: RunEvent[]) =>
   expect(es.map((e) => e.seq)).toEqual(es.map((_, i) => i + 1));
-const brief = { brief: "A T20 club with a fan zone.", sports: ["cricket"] };
-const fanZone = { name: "Fan Zone", url: "/fanzone" };
 
 describe("the CLI", () => {
   it("follows a run a worker carries out, through its approval to the end", async () => {
@@ -153,48 +138,12 @@ describe("the CLI", () => {
     expect(decided).toMatchObject({ data: { by: "editor (auto)" } });
   });
 
-  it("sends a change back into the same run, and approves what comes back", async () => {
-    const runId = await queue.start(TENANT, "sitemap", brief);
-    const { terminal, asked, text } = scripted(["Use /fanzone for the Fan Zone.", "y"]);
-    const ending = await follow(sitemap, runId, terminal);
-
-    expect(asked).toHaveLength(2);
-    expect(text()).toContain("skill sitemap (loaded in full)");
-    expect(text()).toContain("Readers are T20 cricket followers.");
-    expect(text()).toContain("· answered by editor: review change: Use /fanzone for the Fan Zone.");
-    expect(ending).toMatchObject({
-      type: "run.completed",
-      data: {
-        status: "completed",
-        output: {
-          navigation: { nodes: expect.arrayContaining([expect.objectContaining(fanZone)]) },
-        },
-      },
-    });
-    const pages = await readFile(join(runsDir, "sitemaps", TENANT, "pages.json"), "utf8");
-    expect(pages).toContain('"slug": "fanzone"');
-  });
-
   it("rejects with a reason", async () => {
     const runId = await queue.start(TENANT, "drafter", { topicId: "t-101" });
     const { terminal, asked } = scripted(["n", "not this week"]);
     const ending = await follow(drafter, runId, terminal);
     expect(asked).toEqual([expect.stringContaining("y approve"), "Reason for rejecting: "]);
     expect(ending).toMatchObject({ type: "run.completed", data: { status: "rejected" } });
-  });
-
-  it("attaches to a run already waiting, asking only about the approval still open", async () => {
-    const runId = await queue.start(TENANT, "sitemap", brief);
-    const [first] = approvals(await eventsUntil(runId, (es) => approvals(es).length === 1));
-    const changes = requestChange("editor", "Use /fanzone.");
-    expect(await queue.decide(TENANT, runId, first?.data.callId ?? "", changes)).toBeDefined();
-    await eventsUntil(runId, (es) => approvals(es).length === 2);
-
-    // from the start: the first approval was decided before, so only the second is asked
-    const { terminal, asked } = scripted(["y"]);
-    const ending = await follow(sitemap, runId, terminal);
-    expect(asked).toHaveLength(1);
-    expect(ending).toMatchObject({ type: "run.completed", data: { status: "completed" } });
   });
 
   it("replays an ended run from Postgres once its live stream has expired", async () => {

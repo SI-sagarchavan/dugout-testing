@@ -91,14 +91,22 @@ const ONCE = "once:";
  */
 export const MAX_WRITING_ATTEMPTS = 3;
 
-/** The run id of the n-th try of a writing child: the first keeps the id it always had. */
-const attemptId = (parentRunId: string, agentId: string, attempt: number) =>
-  childRunId(parentRunId, attempt === 1 ? `${ONCE}${agentId}` : `${ONCE}${agentId}:${attempt}`);
+/**
+ * The run id of the n-th try of a writing child: the first keeps the id it always had. A call
+ * with a `key` is a child of its own, one per key (a pipeline's several bindings, one per slot);
+ * no key is the one-thing-per-run child it always was.
+ */
+const attemptId = (parentRunId: string, agentId: string, attempt: number, key?: string) => {
+  const who = key === undefined ? agentId : `${agentId}@${key}`;
+  return childRunId(parentRunId, attempt === 1 ? `${ONCE}${who}` : `${ONCE}${who}:${attempt}`);
+};
 
 /** What a person is shown on a repeat call to a writing child: which try this is, and the last failure. */
 interface Retry {
   /** The agent that failed, when a pipeline runs several. */
   stage?: string;
+  /** Which of its keyed calls, where it was called with keys. */
+  key?: string;
   attempt: number;
   of: number;
   lastFailure: string;
@@ -120,21 +128,39 @@ export interface ChildCaller {
   readonly child: AnyAgent;
   readonly writes: boolean;
   /** One try. Throws when the child failed, or when it was tried `MAX_WRITING_ATTEMPTS` times. */
-  call(input: unknown, ctx: ToolContext, stage?: string): Promise<ChildAnswer>;
-  completedFor(parentRunId: string): ChildAnswer | undefined;
-  failuresFor(parentRunId: string): string[];
+  call(input: unknown, ctx: ToolContext, opts?: CallOptions): Promise<ChildAnswer>;
+  completedFor(parentRunId: string, key?: string): ChildAnswer | undefined;
+  failuresFor(parentRunId: string, key?: string): string[];
+  /** The keys this parent run has called the child with. */
+  keysFor(parentRunId: string): string[];
+}
+
+export interface CallOptions {
+  /** Which of a pipeline's runs of one stage this is, where it runs several. */
+  stage?: string;
+  /**
+   * Names this call among several to one writing child (a slot's name). Each key is a child of
+   * its own: its own run, its own answer once completed, its own three tries.
+   */
+  key?: string;
 }
 
 /** A child run's sink: each of its events, written to the stream of the run that called it. */
 function relayTo(
   relay: NonNullable<ToolContext["relay"]>,
-  child: { runId: string; agentId: string; parentOf: { runId: string; callId: string } },
+  child: {
+    runId: string;
+    agentId: string;
+    parentOf: { runId: string; callId: string };
+    key?: string;
+  },
 ): EventSink {
   const ref: ChildRef = {
     runId: child.runId,
     agentId: child.agentId,
     parentRunId: child.parentOf.runId,
     callId: child.parentOf.callId,
+    ...(child.key !== undefined ? { key: child.key } : {}),
   };
   return { write: (event) => relay({ ...event, child: event.child ?? ref }) };
 }
@@ -148,18 +174,27 @@ export function childCaller(
 ): ChildCaller {
   // a writing child's completed answer, and how each failed try failed, by parent run: this
   // invocation's memory (the store, when there is one, is what a restarted worker goes by)
+  // (a call with a key is its own child: its memory is of the parent run and the key)
   const completed = new Map<string, ChildAnswer>();
   const failures = new Map<string, string[]>();
   const answered = new Map<string, AgentResult>();
-  const failedTries = (parentRunId: string) => failures.get(parentRunId) ?? [];
+  const keys = new Map<string, Set<string>>();
+  const scope = (parentRunId: string, key?: string) =>
+    key === undefined ? parentRunId : `${parentRunId}\0${key}`;
+  const failedTries = (parentRunId: string, key?: string) =>
+    failures.get(scope(parentRunId, key)) ?? [];
 
   return {
     child,
     writes: opts.writes,
-    completedFor: (parentRunId) => completed.get(parentRunId),
+    completedFor: (parentRunId, key) => completed.get(scope(parentRunId, key)),
     failuresFor: failedTries,
-    async call(input, ctx, stage) {
-      const done = completed.get(ctx.runId);
+    keysFor: (parentRunId) => [...(keys.get(parentRunId) ?? [])],
+    async call(input, ctx, callOpts = {}) {
+      const { stage, key } = callOpts;
+      const mine = scope(ctx.runId, key);
+      if (key !== undefined) keys.set(ctx.runId, (keys.get(ctx.runId) ?? new Set()).add(key));
+      const done = completed.get(mine);
       if (done) return done;
       const depth = (ctx.depth ?? 0) + 1;
       if (depth > parent.budget.maxDepth) {
@@ -177,16 +212,19 @@ export function childCaller(
       // without a new child; one that failed is skipped, and the next try is a child of its own.
       // A child that reads runs per call (and per stage, where one call runs several).
       let attempt = 1;
-      let runId = childRunId(ctx.runId, stage ? `${ctx.callId}:${stage}` : ctx.callId);
+      let runId = childRunId(
+        ctx.runId,
+        [ctx.callId, stage, key].filter((part) => part !== undefined && part !== "").join(":"),
+      );
       if (opts.writes) {
-        attempt = failedTries(ctx.runId).length + 1;
+        attempt = failedTries(ctx.runId, key).length + 1;
         if (run.store) {
           // the store is what a restarted worker has: the tries that ended without completing
           attempt = 1;
           const ended: string[] = [];
           for (;;) {
             const saved = await run.store.load({
-              runId: attemptId(ctx.runId, child.spec.id, attempt),
+              runId: attemptId(ctx.runId, child.spec.id, attempt, key),
               tenantId: ctx.tenantId,
             });
             const over = saved?.checkpoint.ended;
@@ -198,12 +236,14 @@ export function childCaller(
             );
             attempt++;
           }
-          if (ended.length > failedTries(ctx.runId).length) failures.set(ctx.runId, ended);
+          if (ended.length > failedTries(ctx.runId, key).length) failures.set(mine, ended);
         }
         if (attempt > MAX_WRITING_ATTEMPTS) {
-          throw new Error(needsAPerson(child, attempt - 1, failedTries(ctx.runId).at(-1)));
+          throw new Error(
+            needsAPerson(child, attempt - 1, failedTries(ctx.runId, key).at(-1), key),
+          );
         }
-        runId = attemptId(ctx.runId, child.spec.id, attempt);
+        runId = attemptId(ctx.runId, child.spec.id, attempt, key);
       }
       const childCtx = { runId, tenantId: ctx.tenantId };
       const opened = await run.children?.open({
@@ -214,7 +254,9 @@ export function childCaller(
       });
       const saved = await run.store?.load(childCtx);
       // the child stopped to ask a person, and the answers came down with this call
-      const answering = saved?.checkpoint.waiting?.questions && ctx.answered;
+      // (several children may be waiting under one call: the answers are for the one they came from)
+      const theirs = !ctx.answered?.from?.length || ctx.answered.from.includes(runId);
+      const answering = theirs && saved?.checkpoint.waiting?.questions && ctx.answered;
       const earlier = answered.get(runId);
       const result =
         earlier ??
@@ -233,7 +275,16 @@ export function childCaller(
           // one stream per invocation: the child's events go to this run's stream, tagged as
           // the child's; a grandchild's come up through the child, keeping their own tag
           ...(ctx.relay
-            ? { sinks: [relayTo(ctx.relay, { runId, agentId: child.spec.id, parentOf })] }
+            ? {
+                sinks: [
+                  relayTo(ctx.relay, {
+                    runId,
+                    agentId: child.spec.id,
+                    parentOf,
+                    ...(key !== undefined ? { key } : {}),
+                  }),
+                ],
+              }
             : run.sinks
               ? { sinks: run.sinks }
               : {}),
@@ -264,7 +315,7 @@ export function childCaller(
       if (!earlier) ctx.spend?.(result.usage);
       if (result.status === "completed") {
         const answer = { runId, output: result.output };
-        if (opts.writes) completed.set(ctx.runId, answer);
+        if (opts.writes) completed.set(mine, answer);
         return answer;
       }
       const reason =
@@ -277,17 +328,17 @@ export function childCaller(
       if (result.status === "failed" && result.message.startsWith(NEEDS_SETUP)) {
         if (opts.writes) {
           failures.set(
-            ctx.runId,
+            mine,
             Array.from({ length: MAX_WRITING_ATTEMPTS }, () => reason),
           );
         }
         throw new NeedsSetup(result.message.slice(NEEDS_SETUP.length).trim());
       }
       if (opts.writes) {
-        failures.set(ctx.runId, [...failedTries(ctx.runId).slice(0, attempt - 1), reason]);
+        failures.set(mine, [...failedTries(ctx.runId, key).slice(0, attempt - 1), reason]);
         const left = MAX_WRITING_ATTEMPTS - attempt;
         throw new Error(
-          `${child.spec.id} (run ${runId}) ${why}. Try ${attempt} of ${MAX_WRITING_ATTEMPTS}; ${
+          `${child.spec.id}${key !== undefined ? ` for ${key}` : ""} (run ${runId}) ${why}. Try ${attempt} of ${MAX_WRITING_ATTEMPTS}; ${
             left > 0
               ? "it may be called again, and a person approves that."
               : "it is not tried again: a person has to look."
@@ -299,8 +350,8 @@ export function childCaller(
   };
 }
 
-const needsAPerson = (child: AnyAgent, n: number, last: string | undefined) =>
-  `${child.spec.id} failed ${n} time(s) in this run and is not tried again: a person has to look.${last ? ` The last failure: ${last}` : ""}`;
+const needsAPerson = (child: AnyAgent, n: number, last: string | undefined, key?: string) =>
+  `${child.spec.id}${key !== undefined ? ` for ${key}` : ""} failed ${n} time(s) in this run and is not tried again: a person has to look.${last ? ` The last failure: ${last}` : ""}`;
 
 /** The input a tool that fronts children takes back out of its resolved form: the retry note is for the person. */
 const withoutRetry = (given: unknown): unknown => {
@@ -368,17 +419,32 @@ export function agentTool(caller: ChildCaller): Tool {
   }) as Tool;
 }
 
+/** How a pipeline calls one child. */
+export interface PipelineCall {
+  /**
+   * Names the call among several to one writing child, so each is a child of its own: its own
+   * run, its own answer once completed, its own tries (ADR 0025, amendment). Without one, the
+   * child builds one thing per run.
+   */
+  key?: string;
+}
+
 /** A fixed sequence of the agents a parent may call, run by code. */
 export interface Pipeline {
   /** The tool's name, e.g. `page.build`. */
   name: string;
   description: string;
+  /** Start without a person approving the call; the children's writes still go through under it. */
+  noApproval?: boolean;
+  /** How many calls may run at once, where the pipeline starts several together. Default 2. */
+  concurrency?: number;
   /**
-   * Runs the agents in order. `call` runs one and answers with its output; it throws when that
-   * agent failed. `input` is the run's own input.
+   * Runs the agents. `call` runs one and answers with its output; it throws when that agent
+   * failed. Calls with different keys may be started together (`Promise.all`); `concurrency` of
+   * them run at a time. `input` is the run's own input.
    */
   run(
-    call: (child: AnyAgent, input: unknown) => Promise<unknown>,
+    call: (child: AnyAgent, input: unknown, opts?: PipelineCall) => Promise<unknown>,
     input: unknown,
   ): Promise<unknown>;
 }
@@ -386,23 +452,53 @@ export interface Pipeline {
 /** Longer than one child's wait: a pipeline runs several. */
 export const PIPELINE_TIMEOUT_MS = 45 * 60_000;
 
+/** The most calls a pipeline runs at once unless it says otherwise. */
+export const PIPELINE_CONCURRENCY = 2;
+
+/** At most `limit` of the functions passed run at once; the rest wait their turn. */
+function limiter(limit: number) {
+  let running = 0;
+  const queue: Array<() => void> = [];
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (running >= limit) await new Promise<void>((go) => queue.push(go));
+    running++;
+    try {
+      return await fn();
+    } finally {
+      running--;
+      queue.shift()?.();
+    }
+  };
+}
+
 /**
- * A tool that runs several agents in a fixed order, in code: the steps are known, so the model
- * does not decide them (the spec's R5: prefer a program when the steps are known). It is one
- * write a person approves once; the children's writes go through under that yes. A stage that
- * completed stays done when the tool is called again after a later stage failed, and a stage that
- * failed is tried again, each call approved, up to MAX_WRITING_ATTEMPTS per stage.
+ * A tool that runs several agents in code: the steps are known, so the model does not decide
+ * them (the spec's R5: prefer a program when the steps are known). It is one write a person
+ * approves once; the children's writes go through under that yes. A stage that completed stays
+ * done when the tool is called again after a later stage failed, and a stage that failed is tried
+ * again, each call approved, up to MAX_WRITING_ATTEMPTS per stage and key.
+ *
+ * Calls with different keys to one child may run together. When one of them asks a person, the
+ * others are let finish or ask first, so no child is left running while the run waits; the pause
+ * carries the first one's questions, and the answers go to that child alone (`answered.from`
+ * names it). The others that were waiting ask again, one pause each (ADR 0029's one pause at a time).
  */
 export function pipelineTool(pipeline: Pipeline, callers: ChildCaller[]): Tool {
   const byId = new Map(callers.map((c) => [c.child.spec.id, c]));
   const writes = callers.some((c) => c.writes);
   const done = new Map<string, unknown>();
+  /** Every (caller, key) that has state in this parent run; the unkeyed one first. */
+  const calls = (runId: string) =>
+    callers.flatMap((caller) =>
+      [undefined, ...caller.keysFor(runId)].map((key) => ({ caller, key })),
+    );
   const lastFailure = (runId: string): Retry | undefined => {
-    for (const caller of callers) {
-      const failed = caller.failuresFor(runId);
-      if (failed.length > 0 && !caller.completedFor(runId)) {
+    for (const { caller, key } of calls(runId)) {
+      const failed = caller.failuresFor(runId, key);
+      if (failed.length > 0 && !caller.completedFor(runId, key)) {
         return {
           stage: caller.child.spec.id,
+          ...(key !== undefined ? { key } : {}),
           attempt: failed.length + 1,
           of: MAX_WRITING_ATTEMPTS,
           lastFailure: failed.at(-1) ?? "",
@@ -416,6 +512,7 @@ export function pipelineTool(pipeline: Pipeline, callers: ChildCaller[]): Tool {
     description: pipeline.description,
     input: z.object({}).strict(),
     effect: writes ? "write" : "read",
+    ...(pipeline.noApproval ? { noApproval: true } : {}),
     resumable: true,
     timeoutMs: PIPELINE_TIMEOUT_MS,
     resolve(input: unknown, ctx: { runId: string }) {
@@ -426,22 +523,52 @@ export function pipelineTool(pipeline: Pipeline, callers: ChildCaller[]): Tool {
       if (done.has(ctx.runId)) {
         return `${pipeline.name} already completed in this run, with this answer: ${JSON.stringify(done.get(ctx.runId))}`;
       }
-      const spent = callers.find((c) => c.failuresFor(ctx.runId).length >= MAX_WRITING_ATTEMPTS);
+      const spent = calls(ctx.runId).find(
+        ({ caller, key }) => caller.failuresFor(ctx.runId, key).length >= MAX_WRITING_ATTEMPTS,
+      );
       return spent
         ? needsAPerson(
-            spent.child,
-            spent.failuresFor(ctx.runId).length,
-            spent.failuresFor(ctx.runId).at(-1),
+            spent.caller.child,
+            spent.caller.failuresFor(ctx.runId, spent.key).length,
+            spent.caller.failuresFor(ctx.runId, spent.key).at(-1),
+            spent.key,
           )
         : undefined;
     },
     async run(_given, ctx) {
-      const call = async (child: AnyAgent, input: unknown) => {
+      const limit = limiter(Math.max(1, pipeline.concurrency ?? PIPELINE_CONCURRENCY));
+      const inflight = new Set<Promise<unknown>>();
+      const call = (child: AnyAgent, input: unknown, opts: PipelineCall = {}) => {
         const caller = byId.get(child.spec.id);
-        if (!caller) throw new Error(`${child.spec.id} is not an agent ${pipeline.name} may run`);
-        return (await caller.call(input, ctx, child.spec.id)).output;
+        if (!caller) {
+          return Promise.reject(
+            new Error(`${child.spec.id} is not an agent ${pipeline.name} may run`),
+          );
+        }
+        const { key } = opts;
+        const turn = limit(
+          async () =>
+            (
+              await caller.call(input, ctx, {
+                stage: child.spec.id,
+                ...(key !== undefined ? { key } : {}),
+              })
+            ).output,
+        );
+        inflight.add(turn);
+        turn.then(
+          () => inflight.delete(turn),
+          () => inflight.delete(turn),
+        );
+        return turn;
       };
-      const output = await pipeline.run(call, ctx.input);
+      let output: unknown;
+      try {
+        output = await pipeline.run(call, ctx.input);
+      } finally {
+        // no child is left running when this call ends: a pause or a failure waits for the rest
+        await Promise.allSettled([...inflight]);
+      }
       done.set(ctx.runId, output);
       return output;
     },

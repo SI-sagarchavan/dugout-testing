@@ -980,4 +980,317 @@ describe("subagents (ADR 0025)", () => {
       expect(oneTurns).toHaveLength(2);
     });
   });
+
+  describe("a pipeline calls one writing child several times, each under a key", () => {
+    const WORK = "You are the worker.";
+    const LEAD = "You are the page builder.";
+    const QUESTION = {
+      id: "source",
+      question: "Which feed?",
+      why: "Two fit",
+      kind: "choice" as const,
+      options: [
+        { value: "a", label: "A", description: "" },
+        { value: "b", label: "B", description: "" },
+      ],
+      allowOther: false,
+      proposed: ["a"],
+    };
+    /** What a worker's model does, from what it was asked (the question is its input). */
+    interface Plan {
+      /** Questions that contain this fail: a wrong answer on every turn. */
+      failing?: string | undefined;
+      /** Questions that contain this ask a person before they answer. */
+      asking?: string | undefined;
+    }
+    const plan: Plan = {};
+    const active = { now: 0, max: 0 };
+
+    const worker = () =>
+      defineAgent({
+        spec: {
+          id: "worker",
+          version: 1,
+          owner: "test",
+          description: "Builds one slot.",
+          instructions: WORK,
+          tools: ["facts.save"],
+          skills: [],
+          onDemandSkills: [],
+          model: "nova-lite",
+          memory: { read: [], write: [] },
+          budget: { usdPerRun: 0.5, maxSteps: 4, maxDepth: 0 },
+          approvals: [],
+        },
+        input: z.object({ question: z.string() }),
+        output: z.object({ answer: z.string() }),
+        dir,
+        tools: () => [
+          defineTool({
+            name: "facts.save",
+            description: "Saves a fact.",
+            input: z.object({}),
+            effect: "write",
+            timeoutMs: 1_000,
+            async run() {
+              active.now++;
+              active.max = Math.max(active.max, active.now);
+              await new Promise((done) => setTimeout(done, 20));
+              active.now--;
+              return { saved: true };
+            },
+          }),
+        ],
+      });
+
+    /** The worker's model: save, then answer with its question; per the plan. */
+    const workerModel = (req: ModelRequest) => {
+      const question = String(req.messages[1]?.content ?? "");
+      const tools = req.messages.filter((m) => m.role === "tool");
+      if (plan.failing && question.includes(plan.failing)) {
+        return { toolCalls: [{ name: "final", arguments: { wrong: true } }] };
+      }
+      if (
+        plan.asking &&
+        question.includes(plan.asking) &&
+        !tools.some((m) => m.content.includes("source"))
+      ) {
+        return { toolCalls: [{ name: "ask", arguments: { questions: [QUESTION] } }] };
+      }
+      if (!tools.some((m) => m.content.includes("saved"))) {
+        return { toolCalls: [{ name: "facts.save", arguments: {} }] };
+      }
+      return { toolCalls: [{ name: "final", arguments: { answer: `built ${question}` } }] };
+    };
+
+    const builder = (
+      w: AnyAgent,
+      opts: { concurrency?: number; keys?: string[]; run?: "all" | "pairs" } = {},
+    ) =>
+      defineAgent({
+        spec: {
+          id: "builder",
+          version: 1,
+          owner: "test",
+          instructions: LEAD,
+          tools: [],
+          skills: [],
+          onDemandSkills: [],
+          model: "nova-lite",
+          memory: { read: [], write: [] },
+          budget: { usdPerRun: 1, maxSteps: 6, maxDepth: 1 },
+          approvals: [],
+        },
+        input: z.object({ topic: z.string() }),
+        output: z.object({ summary: z.string() }),
+        agents: [w],
+        pipeline: {
+          name: "page.build",
+          description: "Builds each slot.",
+          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          async run(call) {
+            const keys = opts.keys ?? ["squad", "fixtures"];
+            return await Promise.all(
+              keys.map((key) => call(w, { question: `slot ${key}` }, { key })),
+            );
+          },
+        },
+        dir,
+        tools: () => [],
+      });
+
+    const buildCall = { toolCalls: [{ name: "page.build", arguments: {} }] };
+    const finalCall = { toolCalls: [{ name: "final", arguments: { summary: "done" } }] };
+    const modelFor = (lead: ScriptStep[]) => {
+      const leadModel = createScriptedModel(lead);
+      const requests: ModelRequest[] = [];
+      const client: ModelClient & { requests: ModelRequest[] } = {
+        requests,
+        complete(req, onToken, onToolInput) {
+          const { signal: _, ...rest } = req;
+          requests.push(structuredClone(rest));
+          const system = String(req.messages[0]?.content ?? "");
+          if (system.startsWith(WORK)) {
+            return createScriptedModel([workerModel]).complete(req, onToken, onToolInput);
+          }
+          return leadModel.complete(req, onToken, onToolInput);
+        },
+      };
+      return client;
+    };
+    const reset = () => {
+      plan.failing = undefined;
+      plan.asking = undefined;
+      active.now = 0;
+      active.max = 0;
+    };
+
+    it("gives each key a child run of its own, with its own answer, and tags its events with the key", async () => {
+      reset();
+      const sink = createMemorySink();
+      const asked: string[] = [];
+      const result = await builder(worker()).create(deps(modelFor([buildCall, finalCall])))({
+        tenantId: "club-a",
+        input: { topic: "t" },
+        responder: async (req) => {
+          asked.push(req.tool);
+          return approve("editor");
+        },
+        runId: "keyed-two",
+        store: createMemoryRunStore(),
+        sinks: [sink],
+      });
+      expect(result).toMatchObject({ status: "completed" });
+      // one approval for the whole pipeline
+      expect(asked).toEqual(["page.build"]);
+      const started = sink.events.filter((e) => e.type === "run.started" && e.child);
+      expect(started.map((e) => [e.child?.key, e.child?.runId]).sort()).toEqual(
+        [
+          ["fixtures", childRunId("keyed-two", "once:worker@fixtures")],
+          ["squad", childRunId("keyed-two", "once:worker@squad")],
+        ].sort(),
+      );
+      const built = sink.events
+        .filter((e) => e.type === "tool.completed" && e.data.tool === "page.build")
+        .map((e) => (e.type === "tool.completed" ? e.data.content : ""));
+      expect(built.join("")).toContain("slot squad");
+      expect(built.join("")).toContain("slot fixtures");
+    });
+
+    it("runs two at once, or one at a time when the pipeline limits it", async () => {
+      reset();
+      const run = async (concurrency?: number) => {
+        active.now = 0;
+        active.max = 0;
+        const result = await builder(worker(), concurrency ? { concurrency } : {}).create(
+          deps(modelFor([buildCall, finalCall])),
+        )({
+          tenantId: "club-a",
+          input: { topic: "t" },
+          responder: async () => approve("editor"),
+          runId: `keyed-par-${concurrency ?? "default"}`,
+          store: createMemoryRunStore(),
+        });
+        expect(result).toMatchObject({ status: "completed" });
+        return active.max;
+      };
+      expect(await run()).toBe(2);
+      expect(await run(1)).toBe(1);
+    });
+
+    it("retries only the key that failed, and keeps the other's answer", async () => {
+      reset();
+      plan.failing = "slot squad";
+      const client = modelFor([
+        buildCall,
+        // the person is shown the second call, and the squad is the one tried again
+        () => {
+          plan.failing = undefined;
+          return buildCall;
+        },
+        finalCall,
+      ]);
+      const asked: unknown[] = [];
+      const sink = createMemorySink();
+      const result = await builder(worker()).create(deps(client))({
+        tenantId: "club-a",
+        input: { topic: "t" },
+        responder: async (req) => {
+          asked.push(req.input);
+          return approve("editor");
+        },
+        runId: "keyed-retry",
+        store: createMemoryRunStore(),
+        sinks: [sink],
+      });
+      expect(result).toMatchObject({ status: "completed", output: { summary: "done" } });
+      expect(asked[1]).toMatchObject({
+        retry: { stage: "worker", key: "squad", attempt: 2, of: 3 },
+      });
+      const started = sink.events
+        .filter((e) => e.type === "run.started" && e.child)
+        .map((e) => e.child?.runId);
+      // the fixtures ran once; the squad twice, the second try named for its number
+      expect(
+        started.filter((id) => id === childRunId("keyed-retry", "once:worker@fixtures")),
+      ).toHaveLength(1);
+      expect(started).toContain(childRunId("keyed-retry", "once:worker@squad:2"));
+    });
+
+    it("finds each key's tries in the store when a worker restarts", async () => {
+      reset();
+      plan.failing = "slot squad";
+      const runStore = createMemoryRunStore();
+      // the second call to page.build waits for a person's yes, and the worker stops there
+      const first = await builder(worker()).create(deps(modelFor([buildCall, buildCall])))({
+        tenantId: "club-a",
+        input: { topic: "t" },
+        responder: (() => {
+          let n = 0;
+          return async () => (++n === 1 ? approve("editor") : { pending: true as const });
+        })(),
+        runId: "keyed-restart",
+        store: runStore,
+      });
+      expect(first).toMatchObject({ status: "waiting" });
+
+      // a new worker, with no memory of the first: it reads the tries from the store
+      plan.failing = undefined;
+      const sink = createMemorySink();
+      const client = modelFor([finalCall]);
+      const second = await builder(worker()).create(deps(client))({
+        tenantId: "club-a",
+        input: { topic: "t" },
+        responder: never,
+        runId: "keyed-restart",
+        store: runStore,
+        sinks: [sink],
+        resume: { reason: "answered", decision: approve("editor") },
+      });
+      expect(second).toMatchObject({ status: "completed" });
+      const started = sink.events
+        .filter((e) => e.type === "run.started" && e.child)
+        .map((e) => e.child?.runId);
+      // the squad's second try is a new child; the fixtures, already complete, is not run again
+      expect(started).toContain(childRunId("keyed-restart", "once:worker@squad:2"));
+      expect(started).not.toContain(childRunId("keyed-restart", "once:worker@squad"));
+    });
+
+    it("asks one pause at a time when two keys ask, and gives the answer to the one that asked", async () => {
+      reset();
+      plan.asking = "slot";
+      const runStore = createMemoryRunStore();
+      const input = { topic: "t" };
+      const first = await builder(worker()).create(deps(modelFor([buildCall])))({
+        tenantId: "club-a",
+        input,
+        responder: async (req) => (req.subject ? approve("editor") : { pending: true as const }),
+        runId: "keyed-ask",
+        store: runStore,
+        sinks: [createMemorySink()],
+      });
+      expect(first).toMatchObject({
+        status: "waiting",
+        waiting: { questions: [{ id: "source" }] },
+      });
+      const askedFirst = (first as { waiting: { from: string[] } }).waiting.from[0];
+      // nothing is left running while the run waits: both children are saved, not in flight
+      const second = await builder(worker()).create(deps(modelFor([finalCall])))({
+        tenantId: "club-a",
+        input,
+        responder: async () => ({ pending: true as const }),
+        runId: "keyed-ask",
+        store: runStore,
+        sinks: [createMemorySink()],
+        resume: { reason: "answered", decision: { by: "editor", answers: { source: "b" } } },
+      });
+      // the other child asks again: a second pause, with its own question
+      expect(second).toMatchObject({
+        status: "waiting",
+        waiting: { questions: [{ id: "source" }] },
+      });
+      const askedSecond = (second as { waiting: { from: string[] } }).waiting.from[0];
+      expect(askedSecond).not.toBe(askedFirst);
+    });
+  });
 });

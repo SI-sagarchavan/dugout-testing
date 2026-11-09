@@ -122,7 +122,8 @@ export function preflight(
     }
   }
 
-  const needsApproval = tool.effect === "write" || spec.approvals.includes(tool.name);
+  const needsApproval =
+    (tool.effect === "write" && !tool.noApproval) || spec.approvals.includes(tool.name);
   return { ok: true, tool, input: value, needsApproval };
 }
 

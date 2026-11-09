@@ -11,6 +11,63 @@
       "description": "The sample data: a sample_data artifact id, or the name of a dataset the API serves. Leave out to find the data in the tenant's Cast hooks and bind against their live output",
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    },
+    "slot": {
+      "description": "Bind one slot of the frame (frame-match's slots): the run works on that slot's nodes only, and ends with bind.done instead of bind.publish",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The slot's id, from frame-match's slots"
+        },
+        "name": {
+          "type": "string",
+          "description": "Its heading, slugged: the-brave-squad. The data's name defaults to it"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The tree node ids the slot owns"
+        },
+        "signature": {
+          "description": "Its structural signature: what a person's answers about it are kept under",
+          "type": "string"
+        },
+        "content": {
+          "description": "frame-match's read of whether the slot shows data",
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "string"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "data",
+            "evidence"
+          ]
+        },
+        "readFrom": {
+          "default": [],
+          "description": "Page keys of other slots' choices it reads on purpose (a designer's note or a person's answer said so)",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "nodes"
+      ]
     }
   },
   "required": [

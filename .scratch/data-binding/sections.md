@@ -1,6 +1,6 @@
 # Pages with several sections (deferred)
 
-Status: designed 2026-11-04, **not built**. Deferred by the user until one section binds end to end perfectly (mapping, binding, calling and creating hooks, shipped templates functional). Do not start before that.
+Status: designed 2026-11-04; picked up 2026-11-09 in `.scratch/page-sections/` (spec and tickets 01–10).
 
 ## The problem, seen live
 

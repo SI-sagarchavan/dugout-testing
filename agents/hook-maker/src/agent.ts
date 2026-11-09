@@ -11,14 +11,14 @@ export const spec: AgentSpec = {
   version: 3,
   owner: "fanos-content",
   description:
-    "Gets the data a design shows out of Cast: finds the hook (workflow, ids that start dugout_) that gives it, runs it once against its live APIs, and says which of the design's fields it gives and which it lacks; and builds a new hook from the tenant's API connectors, as dugout_<name>, when none fits, shaped by a transform checked against a live run, and published. It writes only hooks in dugout's namespace; existing hooks are only read. Give it the need in words: the list the design shows and what each item shows. A person approves the call.",
+    "Gets the data a design shows out of Cast: finds the hook (workflow, ids that start dugout_) that gives it, runs it once against its live APIs, and says which of the design's fields it gives and which it lacks; and builds a new hook from the tenant's API connectors, as dugout_<name>, when none fits, shaped by a transform checked against a live run, and published. It writes only hooks in dugout's namespace; existing hooks are only read. Give it the need: the list the design shows, how many, what one card gathers them by, what each item shows (and which of those the design cannot do without), and which team and competition the data must be about. A person approves the call.",
   instructions: [
     'You get the data a design shows out of Cast. You find the hook (also called a workflow) that gives it, and when none does you build one. A hook calls partner API connectors and shapes their answer for the page. Yours are the hooks whose id starts dugout_ (names start "dugout: "): the tools show you no other. You write only those; connectors and other hooks are only read. Cast\'s own guidance about its tools follows; work as it says.',
     "",
     `1. Find. List your hooks (cast.listHooks) and pick the ones whose name or description is about what the need describes. Describe the best one or two: their inputs, and the fields their output has. Run the best with the transform applied (${RUN} with applyTransform true), with only the inputs the need asks for (how many items the design shows, say). Its answer shows the output's shape with example values: check every thing the need lists against it. If it lacks most of the need, run the next best. Run at most three hooks.`,
-    "2. Decide. A hook fits when its output has the fields the need asks for, grouped the way the design reads them. Judge it by its fields and grouping, never by its envelope (`data`, a page key, `meta`: the page binds any shape), so never build another to change that. What no connector has (a ticket link, a countdown with no start time) is no reason to build: it goes in missing.",
+    "2. Decide. A hook fits when its output has the need's required items, grouped by its groupBy (one entry per card, the items it gathers inside), about its must (team, competition). Judge it by its fields and grouping, never by its envelope (`data`, a page key, `meta`: the page binds any shape), so never build another to change that. What no connector has (a ticket link, a countdown with no start time) is no reason to build: it goes in missing.",
     "   - A hook fits: it is finished. Call final with it and built false. Create, change and publish nothing.",
-    "   - None fits, and a connector could give the need, or the best hook lacks a field a connector could give: build it, from step 3. When some hook gave part of the need, ask the person first (ask), once, with the id hook_choice: what it gives, what it lacks and which connector would give the rest, with the choices to build a fuller hook or to use it as it is, proposing the build. When the need says a person already chose a hook for this section, start from that hook. Use what they answer. When no hook gave any of it, build without asking.",
+    "   - None fits, and a connector could give the need, or the best hook lacks a field a connector could give: build it, from step 3. When some hook gave part of the need, ask the person first (ask), once, with the id hook_choice: what it gives, what it lacks and which connector would give the rest, with the choices to build a fuller hook or to use it as it is, proposing the build. When the need names a hook a person already chose for this section (need.hook), start from that hook. Use what they answer. When no hook gave any of it, build without asking.",
     "   - None fits and no connector could give it: call final with hookId null, built false, everything in missing, and why.",
     "3. Read the connectors (cast.listApis, then describe the ones whose name, path and inputs say they could give it; cast.fetchSample shows what one really answers, at most two samples) and pick the one whose answer has what the need asks for. Prefer one a published hook already calls: its inputs are known to work.",
     "4. Its fixed values (client, series, team ids) are in a hook that already calls it: describe that hook and copy what it passes. Never change it.",
@@ -34,7 +34,7 @@ export const spec: AgentSpec = {
   requires: ["hooks.author"],
   skills: ["hook-maker"],
   onDemandSkills: [],
-  model: "haiku",
+  model: "sonnet",
   memory: { read: ["procedural"], write: [] },
   budget: { usdPerRun: 1, maxSteps: 36, maxDepth: 0 },
   approvals: ["effect:write"],
@@ -48,17 +48,60 @@ export const spec: AgentSpec = {
   },
 };
 
-export const RunInput = z.object({
-  need: z
+/** One thing each item of the list shows. */
+const NeedField = z.object({
+  field: z
     .string()
-    .min(20)
+    .min(1)
+    .describe("What the design shows, in plain words: team name, team crest, score, kickoff time"),
+  example: z
+    .string()
+    .optional()
+    .describe('The design\'s placeholder for it, as drawn: "166/5", "WOMEN", "21 JULY"'),
+  required: z
+    .boolean()
     .describe(
-      "What the design shows, in words: the list (a strip of matches, a grid of articles), how many items, and what each item shows: names, pictures, numbers, dates, states",
+      "true when the design is wrong without it (teams, scores); false for what it can do without (a tickets link, a crest)",
+    ),
+});
+
+/** What a design shows as data, in parts a hook's output can be checked against. */
+export const Need = z.object({
+  list: z.string().min(1).describe("What the list is: fixtures, articles, players"),
+  count: z
+    .union([z.number().int().positive(), z.literal("data")])
+    .describe(
+      'How many items the design draws, or "data" when a person chose to show whatever the data holds',
+    ),
+  groupBy: z
+    .string()
+    .optional()
+    .describe(
+      "What one card gathers several items by, when it does: date (one card per day, its matches inside). Left out when each card is one item",
+    ),
+  item: z.array(NeedField).min(1).describe("Every thing each item shows"),
+  must: z
+    .object({
+      team: z.string().optional(),
+      competition: z.string().optional(),
+    })
+    .optional()
+    .describe(
+      "What the data has to be about, from the design: the team, the competition. Data about another one does not give the need",
     ),
   hints: z
     .array(z.string())
     .optional()
-    .describe("The design's own words that name the data: a heading, a label, a placeholder value"),
+    .describe("The design's own words that name the data: a heading, a label, a designer's note"),
+  hook: z
+    .string()
+    .optional()
+    .describe("A hook a person already chose for this section: start from it"),
+});
+export type Need = z.infer<typeof Need>;
+
+export const RunInput = z.object({
+  need: Need.describe("What the design shows as data"),
 });
 export type RunInput = z.infer<typeof RunInput>;
 

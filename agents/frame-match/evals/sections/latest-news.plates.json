@@ -1,0 +1,69 @@
+{
+  "exportId": "5dc38ed8-7add-427f-afad-3e2a94b84b11",
+  "rootNodeId": "35:10231",
+  "plates": [
+    {
+      "nodeId": "35:10232",
+      "name": "Frame 1984079048-35-10232.png",
+      "ref": "f65368e3-75b1-4da6-a575-c79a069e033c",
+      "width": 2340,
+      "height": 888
+    },
+    {
+      "nodeId": "35:10231",
+      "name": "art-root-LATEST NEWS-35-10231.png",
+      "ref": "7ee3164a-8610-4e42-b598-ee147b829008",
+      "width": 2732,
+      "height": 1076
+    },
+    {
+      "nodeId": "35:10409",
+      "name": "art-image-image-35-10409.png",
+      "ref": "8cc5971f-961b-4211-96a8-a048d3f838f9",
+      "width": 380,
+      "height": 214
+    },
+    {
+      "nodeId": "35:10428",
+      "name": "art-image-image-35-10428.png",
+      "ref": "d6d3084f-d5d1-4fd4-be27-7e3e9d6e3042",
+      "width": 182,
+      "height": 182
+    },
+    {
+      "nodeId": "35:10444",
+      "name": "art-image-image-35-10444.png",
+      "ref": "fc804eb0-d9bd-49dd-9dde-5b269f5b7f44",
+      "width": 116,
+      "height": 116
+    },
+    {
+      "nodeId": "35:10459",
+      "name": "art-image-image-35-10459.png",
+      "ref": "fc804eb0-d9bd-49dd-9dde-5b269f5b7f44",
+      "width": 116,
+      "height": 116
+    },
+    {
+      "nodeId": "35:10474",
+      "name": "art-image-image-35-10474.png",
+      "ref": "fc804eb0-d9bd-49dd-9dde-5b269f5b7f44",
+      "width": 116,
+      "height": 116
+    },
+    {
+      "nodeId": "35:10415",
+      "name": "art-image-image 649-35-10415.png",
+      "ref": "ac923995-ea8e-458d-a1e5-c5d42f22b1cc",
+      "width": 182,
+      "height": 182
+    },
+    {
+      "nodeId": "I35:10235;13031:7717;13031:7621",
+      "name": "art-vector-atom_icon_arrow_up_right-I35-10235;13031-7717;13031-7621.png",
+      "ref": "2781c283-a52a-4d76-a6a7-23d992bc9e53",
+      "width": 36,
+      "height": 36
+    }
+  ]
+}

@@ -17,7 +17,7 @@ describe("tools", () => {
   });
 
   it("leaves an agent id and the host's own commands to the host", () => {
-    expect(resolveTool(AGENT_TOOLS, ["sitemap", "--tenant", "t"])).toBeUndefined();
+    expect(resolveTool(AGENT_TOOLS, ["frame-match", "--tenant", "t"])).toBeUndefined();
     expect(resolveTool(AGENT_TOOLS, ["attach", "--run", "r"])).toBeUndefined();
     expect(resolveTool(AGENT_TOOLS, [])).toBeUndefined();
   });

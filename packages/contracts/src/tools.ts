@@ -22,7 +22,12 @@ export interface ToolContext {
    * The person's answers, when this call stopped the run with questions (`AwaitingAnswers`) and
    * runs again now that they came (ADR 0029). A child run waiting on them resumes with them.
    */
-  readonly answered?: { readonly by: string; readonly answers: Answers };
+  /** `from`: the child runs the questions came from, nearest first; none when the tool's own. */
+  readonly answered?: {
+    readonly by: string;
+    readonly answers: Answers;
+    readonly from?: readonly string[];
+  };
   /**
    * Writes a child run's event to this run's stream, as the next of its events (ADR 0025): a
    * child started by this call is part of this run's invocation, not a stream of its own.
@@ -52,6 +57,8 @@ export interface Tool<I = unknown, O = unknown, R = I> {
    * the run cannot tell finished is reported as an unknown outcome and not run again.
    */
   resumable?: boolean;
+  /** Writes, but starts without asking: only the questions it raises reach a person. */
+  noApproval?: boolean;
   /** Output is never swapped for a reference, however long: the model needs all of it (a skill). */
   alwaysInline?: boolean;
   /**

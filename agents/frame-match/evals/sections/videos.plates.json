@@ -1,0 +1,90 @@
+{
+  "exportId": "9dd3cdb3-c324-4d0a-af08-c5527df0b95d",
+  "rootNodeId": "35:10611",
+  "plates": [
+    {
+      "nodeId": "35:10612",
+      "name": "Vector 100-35-10612.png",
+      "ref": "21be4a4b-6b1f-407b-8965-215db0853540",
+      "width": 2732,
+      "height": 1300
+    },
+    {
+      "nodeId": "35:10613",
+      "name": "Frame 1984078943-35-10613.png",
+      "ref": "2b4dabde-c1df-4e57-8e18-d06ee921a950",
+      "width": 2344,
+      "height": 878
+    },
+    {
+      "nodeId": "35:10611",
+      "name": "art-root-Videos-35-10611.png",
+      "ref": "c4a06ff8-85ea-4597-82ba-48b167a8a2aa",
+      "width": 2732,
+      "height": 1300
+    },
+    {
+      "nodeId": "I35:10618;10090:3696",
+      "name": "art-image-Rectangle 3464205-I35-10618;10090-3696.png",
+      "ref": "97dd570b-8a7a-46f3-bc72-b536a4bf5113",
+      "width": 281,
+      "height": 375
+    },
+    {
+      "nodeId": "I35:10619;10090:3696",
+      "name": "art-image-Rectangle 3464205-I35-10619;10090-3696.png",
+      "ref": "0f637714-fce2-4355-9654-499c8a3b0fd2",
+      "width": 281,
+      "height": 375
+    },
+    {
+      "nodeId": "I35:10620;10090:3696",
+      "name": "art-image-Rectangle 3464205-I35-10620;10090-3696.png",
+      "ref": "c8702a61-833b-40da-9a66-3ff873843f19",
+      "width": 281,
+      "height": 375
+    },
+    {
+      "nodeId": "I35:10621;10090:3696",
+      "name": "art-image-Rectangle 3464205-I35-10621;10090-3696.png",
+      "ref": "9b14cb9d-9354-47bc-8765-4c03dfbc5e82",
+      "width": 281,
+      "height": 375
+    },
+    {
+      "nodeId": "I35:10618;13089:25705",
+      "name": "art-vector-video icon-I35-10618;13089-25705.png",
+      "ref": "251de186-5be2-4a97-a3c6-3e50fb2e16a9",
+      "width": 120,
+      "height": 120
+    },
+    {
+      "nodeId": "I35:10619;13089:25705",
+      "name": "art-vector-video icon-I35-10619;13089-25705.png",
+      "ref": "251de186-5be2-4a97-a3c6-3e50fb2e16a9",
+      "width": 120,
+      "height": 120
+    },
+    {
+      "nodeId": "I35:10620;13089:25705",
+      "name": "art-vector-video icon-I35-10620;13089-25705.png",
+      "ref": "251de186-5be2-4a97-a3c6-3e50fb2e16a9",
+      "width": 120,
+      "height": 120
+    },
+    {
+      "nodeId": "I35:10621;13089:25705",
+      "name": "art-vector-video icon-I35-10621;13089-25705.png",
+      "ref": "251de186-5be2-4a97-a3c6-3e50fb2e16a9",
+      "width": 120,
+      "height": 120
+    },
+    {
+      "nodeId": "I35:10616;14027:2719;13031:7621",
+      "name": "art-vector-atom_icon_arrow_up_right-I35-10616;14027-2719;13031-7621.png",
+      "ref": "2781c283-a52a-4d76-a6a7-23d992bc9e53",
+      "width": 36,
+      "height": 36
+    }
+  ]
+}

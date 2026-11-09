@@ -64,12 +64,63 @@
           },
           "initial": {
             "type": "string"
+          },
+          "owner": {
+            "description": "The slot that draws it",
+            "type": "string"
           }
         },
         "required": [
           "key",
           "options",
           "initial"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "slots": {
+      "default": [],
+      "description": "Each part of the frame that shows one kind of data, and what became of it",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The slot's heading, slugged"
+          },
+          "data": {
+            "type": "string",
+            "enum": [
+              "bound",
+              "none",
+              "failed"
+            ],
+            "description": "none: nothing in it is data; failed: it could not be bound"
+          },
+          "hookId": {
+            "description": "The Cast hook its data comes from",
+            "type": "string"
+          },
+          "bound": {
+            "type": "number"
+          },
+          "collapsed": {
+            "type": "number"
+          },
+          "remaining": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "data",
+          "bound",
+          "collapsed",
+          "remaining"
         ],
         "additionalProperties": false
       }
@@ -104,6 +155,14 @@
         "type": "string"
       },
       "description": "Everything still off, each starting with the part it is about: frame or data"
+    },
+    "kept": {
+      "default": [],
+      "description": "What the binding left as designed on purpose, with why: the section's static parts, a look the data does not decide",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "compilerFindings": {
       "type": "array",
@@ -150,11 +209,13 @@
     "data",
     "dataWhy",
     "choices",
+    "slots",
     "measured",
     "coverage",
     "bound",
     "collapsed",
     "remaining",
+    "kept",
     "compilerFindings",
     "notes"
   ],

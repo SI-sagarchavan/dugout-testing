@@ -32,8 +32,8 @@ export const COMMANDS = [
       "pnpm agent <agent> --help lists that agent's flags.",
     ],
     examples: [
-      'pnpm agent run sitemap --tenant demo-cricket --brief "T20 club: news, fixtures, squad"',
-      'pnpm agent sitemap --tenant demo-cricket --brief "T20 club: news, fixtures, squad"',
+      "pnpm agent run frame-match --tenant demo-cricket --export <id>",
+      "pnpm agent frame-match --tenant demo-cricket --export <id>",
     ],
   },
   {

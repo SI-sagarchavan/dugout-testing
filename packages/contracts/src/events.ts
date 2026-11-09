@@ -29,6 +29,8 @@ export const ChildRef = z.object({
   agentId: z.string(),
   parentRunId: z.string(),
   callId: z.string(),
+  /** Which of a pipeline's calls to one child this is (ADR 0025, amendment): a slot's name. */
+  key: z.string().optional(),
 });
 export type ChildRef = z.infer<typeof ChildRef>;
 

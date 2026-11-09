@@ -1,4 +1,4 @@
-import { agent as sitemap } from "@dugout/agent-sitemap";
+import { agent as frameMatch } from "@dugout/agent-frame-match";
 import { describe, expect, it } from "vitest";
 import {
   historyLine,
@@ -24,27 +24,27 @@ describe("commands", () => {
     expect(parseIntent(["--version"])).toEqual({ kind: "version" });
     expect(parseIntent(["agents"])).toEqual({ kind: "agents" });
     expect(isCommand("runs")).toBe(true);
-    expect(isCommand("sitemap")).toBe(false);
+    expect(isCommand("frame-match")).toBe(false);
   });
 
   it("sends --help on a run to that agent", () => {
-    expect(parseIntent(["sitemap", "--help"])).toEqual({ kind: "help", topic: "sitemap" });
-    expect(parseIntent(["run", "sitemap", "--brief", "A club", "--help"])).toEqual({
+    expect(parseIntent(["frame-match", "--help"])).toEqual({ kind: "help", topic: "frame-match" });
+    expect(parseIntent(["run", "frame-match", "--help"])).toEqual({
       kind: "help",
-      topic: "sitemap",
+      topic: "frame-match",
     });
     expect(parseIntent(["run", "--help"])).toEqual({ kind: "help", topic: "run" });
   });
 
   it("keeps the old run, attach, and cancel forms", () => {
-    expect(parseIntent(["sitemap", "--tenant", "demo-cricket", "--brief", "A club"])).toEqual({
+    expect(parseIntent(["frame-match", "--tenant", "demo-cricket", "--export", "e"])).toEqual({
       kind: "run",
-      agentId: "sitemap",
-      argv: ["--tenant", "demo-cricket", "--brief", "A club"],
+      agentId: "frame-match",
+      argv: ["--tenant", "demo-cricket", "--export", "e"],
     });
-    expect(parseIntent(["run", "sitemap", "--tenant", "demo-cricket"])).toEqual({
+    expect(parseIntent(["run", "frame-match", "--tenant", "demo-cricket"])).toEqual({
       kind: "run",
-      agentId: "sitemap",
+      agentId: "frame-match",
       argv: ["--tenant", "demo-cricket"],
     });
     expect(parseIntent(["run"])).toEqual({ kind: "run", argv: [] });
@@ -149,11 +149,9 @@ describe("commands", () => {
   });
 
   it("shows an agent's flags", () => {
-    const help = plain(renderAgentHelp(sitemap));
-    expect(help).toContain("sitemap");
-    expect(help).toContain("pnpm agent sitemap --tenant <id> --brief <brief>");
-    expect(help).toContain("--brief <brief>");
-    expect(help).toContain("Required");
+    const help = plain(renderAgentHelp(frameMatch));
+    expect(help).toContain("frame-match");
+    expect(help).toContain("pnpm agent frame-match --tenant <id>");
     expect(help).toContain("--input <json>");
   });
 
@@ -164,7 +162,7 @@ describe("commands", () => {
         step: 3,
         savedAfter: "waiting",
         messages: 8,
-        waiting: { callId: "call-1", tool: "sitemap.build" },
+        waiting: { callId: "call-1", tool: "page.build" },
         savedAt: "2026-10-30T12:00:00.000Z",
       }),
     );
@@ -172,7 +170,7 @@ describe("commands", () => {
     expect(line).toContain("waiting");
     expect(line).toContain("step   3");
     expect(line).toContain("8 messages");
-    expect(line).toContain("waiting on sitemap.build");
+    expect(line).toContain("waiting on page.build");
     expect(line).toContain("2026-10-30 12:00");
   });
 });

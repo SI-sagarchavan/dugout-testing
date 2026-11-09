@@ -17,6 +17,11 @@
  *
  * Values on the page compare as `choiceValue`s: a feed's "Women" is the toggle's `women`.
  *
+ * A choice belongs to the SLOT that draws it (ADR 0032, amendment): the header with the tabs and the
+ * cards under them are one slot, and only its nodes read the choice unless a read from elsewhere
+ * was asked for on purpose. The page still holds every choice; with several slots in one frame,
+ * a key is named for its slot (`squad_women_men`), so two slots' tabs never share state.
+ *
  * The scope is the PAGE, not the tree: the header that draws the WOMEN | MEN toggle and the strip
  * of players under it are two sections, published by two runs, and the strip reads the key the
  * header writes. So a read is never checked against the tree it is in: the key may be another

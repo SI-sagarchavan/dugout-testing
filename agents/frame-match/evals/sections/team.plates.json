@@ -1,0 +1,76 @@
+{
+  "exportId": "1b10c408-e76d-4407-9282-ab2dee825d4e",
+  "rootNodeId": "35:10501",
+  "plates": [
+    {
+      "nodeId": "35:10502",
+      "name": "D_Team-35-10502.png",
+      "ref": "04a79560-4f3c-4f95-a341-d803930b7422",
+      "width": 2732,
+      "height": 2158
+    },
+    {
+      "nodeId": "35:10512",
+      "name": "Frame 1984078815-35-10512.png",
+      "ref": "b2f45deb-bb1f-44cd-8451-87b1c1bf57ad",
+      "width": 2340,
+      "height": 80
+    },
+    {
+      "nodeId": "35:10526",
+      "name": "Frame 1321314934-35-10526.png",
+      "ref": "e54299c3-7b0a-4d6e-9c68-e41c4fd40459",
+      "width": 192,
+      "height": 80
+    },
+    {
+      "nodeId": "35:10529",
+      "name": "Frame 1984078918-35-10529.png",
+      "ref": "b2f4887f-2dfe-4a4c-b8b8-77a512b8c2dd",
+      "width": 2536,
+      "height": 824
+    },
+    {
+      "nodeId": "35:10541",
+      "name": "Group 1321315017-35-10541.png",
+      "ref": "12293af6-39c2-447a-996e-e8ef4dc904a9",
+      "width": 2732,
+      "height": 624
+    },
+    {
+      "nodeId": "35:10501",
+      "name": "art-root-Team-35-10501.png",
+      "ref": "09584b73-f688-49cf-ac28-f345582ab4bf",
+      "width": 2732,
+      "height": 2158
+    },
+    {
+      "nodeId": "35:10503",
+      "name": "art-mask-Mask group-35-10503.png",
+      "ref": "fb930618-6995-4e1a-8206-b51271bf8378",
+      "width": 1366,
+      "height": 1079
+    },
+    {
+      "nodeId": "I35:10530;10111:12374",
+      "name": "art-mask-PLAYER-I35-10530;10111-12374.png",
+      "ref": "2fbc27fc-bc63-4be1-9b9d-8d2819407b19",
+      "width": 562,
+      "height": 824
+    },
+    {
+      "nodeId": "I35:10534;10111:12374",
+      "name": "art-mask-PLAYER-I35-10534;10111-12374.png",
+      "ref": "949c3932-188b-414a-bd97-ef5cce1bfbc9",
+      "width": 160,
+      "height": 824
+    },
+    {
+      "nodeId": "I35:10534;10111:12391",
+      "name": "art-vector-Subtract-I35-10534;10111-12391.png",
+      "ref": "186bcc71-3656-4bbb-8727-bb7e9bc9ea79",
+      "width": 58,
+      "height": 288
+    }
+  ]
+}
