@@ -1,6 +1,6 @@
 # 03 · A designer marks a section in the plugin
 
-Status: ready-for-agent
+Status: done (2026-11-09)
 Type: task
 Blocked by: 02
 
@@ -29,3 +29,21 @@ an error.
 
 - `packages/surface-canvas/src/annotations.ts`, `src/ui/Notes.tsx`, `src/ir/schema.ts`
 - Rebuild `@fanos/*` after (`pnpm build`); the agents read its `dist`
+
+## Done (2026-11-09)
+
+- Plugin (`packages/surface-canvas`): note kinds `section` (its text is the section's name) and
+  `background`, in the Notes kind picker; IR 1.13.0. Health: rule S2 `sections-unmarked`, a hint
+  when two or more parts look like sections and nothing is marked, shown in the Check tab's Fix
+  queue with a button to Notes.
+- Finder (`packages/library/src/slots.ts`): `marksOf` reads layer names (`section/<name>`,
+  `background`, `background/…`) and Section/Background notes; a mark on a layer inside a child of
+  the frame marks that child; a child marked two ways keeps no mark. Marks come before every rule:
+  layers marked with one name are one sure slot named as marked; an unmarked heading just above a
+  marked part joins it.
+- frame-match and data-bind skip Section/Background notes in their designer-notes lists: they are
+  what the frame is made of, not requirements for the build.
+- Tests: library `tests/slots.test.ts` (4), plugin `tests/rules.test.ts` (S2); the acceptance page
+  now fires S2 too. `pnpm eval sections` has `team-marked`, the same answer as unmarked: 5 of 5.
+- Not done: a note on several selected layers at once. The plugin pins a note to one layer; the
+  same Section name on each layer does the same.

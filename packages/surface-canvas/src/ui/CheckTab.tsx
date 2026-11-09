@@ -114,6 +114,7 @@ export function CheckTab({
               toolbar={<Autofix state={state} />}
             />
             <PinnedText state={state} />
+            <SectionsUnmarked state={state} onNotes={() => setView("notes")} />
             <div className="fs-card is-list" style={{ marginTop: "auto" }}>
               <StatusLine state={state} />
               <Reconciliation state={state} />
@@ -173,6 +174,35 @@ function PinnedText({ state }: { state: StudioState }): JSX.Element | null {
           title="Sets text auto-resize to height. Width stays. One undo reverts all of it."
         >
           Hug {pinned.length}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Several sections, none marked (S2). The agents bind each section of a frame to its own data and
+ * find the sections from the layout; a Section note on each settles it before anyone is asked.
+ */
+function SectionsUnmarked({
+  state,
+  onNotes,
+}: {
+  state: StudioState;
+  onNotes: () => void;
+}): JSX.Element | null {
+  const finding = state.report?.structure.find((f) => f.ruleId === "sections-unmarked");
+  if (!finding) return null;
+  const parts = typeof finding.detail?.parts === "number" ? finding.detail.parts : 2;
+
+  return (
+    <div className="fs-row is-quiet">
+      <div className="fs-row-head" style={{ minHeight: 38 }}>
+        <span className="t-body" style={{ flex: 1 }} title={finding.hint}>
+          {parts} parts look like separate sections. Mark each with a Section note.
+        </span>
+        <button className="fs-btn" onClick={onNotes} title={finding.hint}>
+          Notes
         </button>
       </div>
     </div>

@@ -21,7 +21,8 @@ const show = (slots: string[][]) =>
     .join(" ");
 
 for (const c of SECTION_CASES) {
-  const doc = tools.parseIr(read(`${c.id}.ir.json`));
+  const raw = read<Record<string, unknown>>(`${c.ir ?? c.id}.ir.json`);
+  const doc = tools.parseIr(c.annotations ? { ...raw, annotations: c.annotations } : raw);
   const layouts = tools.detectLayout(doc);
   const found = findSlots(doc as unknown as IrDoc, { layouts });
   for (const slot of found.bands.flatMap((b) => b.slots))

@@ -21,6 +21,11 @@ const KIND_LABEL: Record<AnnotationKind, { label: string; hint: string }> = {
   data: { label: "Data", hint: "where this content comes from, or what it shows" },
   behaviour: { label: "Behaviour", hint: "what it does: swipes, opens, updates live" },
   ignore: { label: "Ignore", hint: "leave this out or keep it static" },
+  section: {
+    label: "Section",
+    hint: "this layer is a section: write its name; layers with one name are one section",
+  },
+  background: { label: "Background", hint: "behind the sections: never a section, never bound" },
 };
 
 export function NotesView({ state }: { state: StudioState }): JSX.Element {

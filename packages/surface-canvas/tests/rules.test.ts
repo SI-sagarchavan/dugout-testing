@@ -92,6 +92,30 @@ describe("S1 groups-instead-of-frames", () => {
   });
 });
 
+describe("S2 sections-unmarked", () => {
+  const s2 = ruleById("sections-unmarked")!;
+  const part = (children = [node({ type: "TEXT" })]) => node({ width: 900, height: 300, children });
+  const art = () => node({ width: 1000, height: 900, children: [node({ type: "IMAGE" })] });
+
+  it("hints when two parts look like sections and none is marked", () => {
+    const root = node({ width: 1000, height: 900, children: [art(), part(), part()] });
+    const finding = runRule(s2, root)[0]!;
+    expect(finding.detail).toMatchObject({ parts: 2 });
+    expect(finding.nodeIds).toHaveLength(2);
+  });
+
+  it("stays quiet with one part, or when the designer marked them", () => {
+    expect(runRule(s2, node({ width: 1000, height: 900, children: [art(), part()] }))).toHaveLength(0);
+    const named = node({ width: 1000, height: 900, children: [part(), { ...part(), name: "section/squad" }] });
+    expect(runRule(s2, named)).toHaveLength(0);
+    const root = node({ width: 1000, height: 900, children: [part(), part()] });
+    const noted = document(withDepths(root), {
+      annotations: [{ id: "a", targetId: root.children![0]!.id, targetName: "x", kind: "section", text: "squad" }],
+    });
+    expect(s2.check(noted, ctx)).toHaveLength(0);
+  });
+});
+
 describe("F1 unbound-fill", () => {
   it("proposes an exact colour token and names the consequence", () => {
     const root = node({ fill: looseFill("#ffffff") });

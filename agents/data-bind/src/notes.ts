@@ -54,6 +54,8 @@ export function notesOf(
       continue;
     const layer = byId.get(note.targetId);
     if (!layer) continue;
+    // what a frame is made of (IR 1.13.0): the section finder reads these, the binding does not
+    if (note.kind === "section" || note.kind === "background") continue;
     out.push({
       id: note.id,
       kind: (NOTE_KINDS as readonly unknown[]).includes(note.kind)

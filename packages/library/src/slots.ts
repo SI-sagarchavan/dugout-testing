@@ -79,20 +79,45 @@ export function findSlots(
     (a, b) => a.geometry.bbox.y - b.geometry.bbox.y || a.geometry.bbox.x - b.geometry.bbox.x,
   );
 
+  // what the designer marked comes before every rule below
+  const marked = marksOnChildren(frame, marksOf(doc));
   const background: IrNode[] = [];
   const rest: IrNode[] = [];
   for (const child of children) {
-    (isBackground(child, width) ? background : rest).push(child);
+    const mark = marked.get(child.id);
+    const behind = mark ? mark.kind === "background" : isBackground(child, width);
+    (behind ? background : rest).push(child);
   }
 
   // slots: a heading waits for the content under it; controls join the slot around them
-  type Draft = { nodes: IrNode[]; heading: boolean; content: boolean; lead: boolean };
+  type Draft = {
+    nodes: IrNode[];
+    heading: boolean;
+    content: boolean;
+    lead: boolean;
+    /** The section name a designer marked it with. */
+    mark?: string;
+  };
   const drafts: Draft[] = [];
   let waiting: IrNode[] = [];
   const controls: IrNode[] = [];
   for (const child of rest) {
     const box = child.geometry.bbox;
-    if (box.w < MIN_SECTION_WIDTH || box.h < MIN_SECTION_HEIGHT) {
+    const mark = marked.get(child.id)?.name;
+    if (mark) {
+      // layers marked alike are one section, wherever they are; an unmarked heading above joins it
+      const same = drafts.find((d) => d.mark === mark);
+      if (same) same.nodes.push(...waiting, child);
+      else
+        drafts.push({
+          nodes: [...waiting, child],
+          heading: waiting.length > 0 || holdsHeading(child),
+          content: true,
+          lead: waiting.length > 0,
+          mark,
+        });
+      waiting = [];
+    } else if (box.w < MIN_SECTION_WIDTH || box.h < MIN_SECTION_HEIGHT) {
       controls.push(child);
     } else if (isHeading(child, width)) {
       waiting.push(child);
@@ -113,7 +138,7 @@ export function findSlots(
   for (let i = drafts.length - 1; i > 0; i--) {
     const a = drafts[i - 1] as Draft;
     const b = drafts[i] as Draft;
-    if (!a.content || !b.content || b.lead) continue;
+    if (!a.content || !b.content || b.lead || a.mark || b.mark) continue;
     const row = spanOf(a.nodes.slice(-1));
     if (sameRow(row, (b.nodes[0] as IrNode).geometry.bbox)) {
       a.nodes.push(...b.nodes);
@@ -135,7 +160,7 @@ export function findSlots(
     const first = nodes[0] as IrNode;
     return {
       id: first.id,
-      name: nameOf(nodes),
+      name: d.mark ?? nameOf(nodes),
       nodes: nodes.map((n) => n.id),
       layout: layoutIn(nodes, layoutOf),
       heading: d.heading,
@@ -143,6 +168,12 @@ export function findSlots(
     };
   });
   judge(slots, drafts);
+  // a section the designer marked is what they said it is
+  slots.forEach((slot, i) => {
+    if (!drafts[i]?.mark) return;
+    slot.confidence = "sure";
+    delete slot.why;
+  });
 
   // a band: the slots a background lies behind; the others are bands of their own
   const bands: Band[] = [];
@@ -300,10 +331,76 @@ function nameOf(nodes: IrNode[]): string {
       (b.text?.fontSize ?? 0) - (a.text?.fontSize ?? 0) || a.geometry.bbox.x - b.geometry.bbox.x,
   );
   const title = texts[0]?.text?.characters?.trim();
-  const slug = (s: string) =>
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
   return slug(title && title.length <= 60 ? title : (nodes[0]?.name ?? "")) || "section";
+}
+
+const slug = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+/**
+ * What a designer marked (ticket 03): a layer that is a section, with its name, or one that is
+ * background. Marked by a layer name (`section/<name>`, `background` or `background/…`) or by a
+ * designer note of kind `section` (its text is the section's name) or `background`. Layers marked
+ * with the same section name are one section.
+ */
+export interface Mark {
+  target: string;
+  kind: "section" | "background";
+  name?: string;
+}
+
+export function marksOf(doc: IrDoc): Mark[] {
+  const marks: Mark[] = [];
+  const walk = (n: IrNode) => {
+    const named = /^\s*(section|background)\s*(?:\/\s*(.*))?$/i.exec(n.name ?? "");
+    if (named) {
+      const kind = (named[1] as string).toLowerCase() as Mark["kind"];
+      const name = named[2]?.trim();
+      if (kind === "background") marks.push({ target: n.id, kind });
+      else if (name) marks.push({ target: n.id, kind, name });
+    }
+    for (const c of n.children ?? []) walk(c);
+  };
+  walk(doc.root);
+  const notes = Array.isArray(doc.annotations) ? doc.annotations : [];
+  for (const note of notes) {
+    if (!note || typeof note !== "object") continue;
+    const { targetId, kind, text } = note as { targetId?: unknown; kind?: unknown; text?: unknown };
+    if (typeof targetId !== "string") continue;
+    if (kind === "background") marks.push({ target: targetId, kind });
+    if (kind === "section" && typeof text === "string" && text.trim()) {
+      marks.push({ target: targetId, kind, name: text.trim() });
+    }
+  }
+  return marks;
+}
+
+/**
+ * The marks, each on the frame's child that holds its layer. A child marked two ways (two section
+ * names, or a section and background) keeps no mark: the finder's own rules decide it.
+ */
+function marksOnChildren(frame: IrNode, marks: Mark[]): Map<string, Mark> {
+  const top = new Map<string, string>();
+  for (const child of frame.children ?? []) {
+    const walk = (n: IrNode) => {
+      top.set(n.id, child.id);
+      for (const c of n.children ?? []) walk(c);
+    };
+    walk(child);
+  }
+  const on = new Map<string, Mark>();
+  const clash = new Set<string>();
+  for (const mark of marks) {
+    const child = top.get(mark.target);
+    if (!child) continue;
+    const had = on.get(child);
+    const named = mark.name ? slug(mark.name) || "section" : undefined;
+    if (had && (had.kind !== mark.kind || had.name !== named)) clash.add(child);
+    else on.set(child, { ...mark, ...(named ? { name: named } : {}) });
+  }
+  for (const child of clash) on.delete(child);
+  return on;
 }

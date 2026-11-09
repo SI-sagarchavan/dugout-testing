@@ -43,6 +43,8 @@ export interface IrDoc {
   rootNodeId: string;
   fileKey?: string | null;
   root: IrNode;
+  /** The designer's notes on layers (IR 1.11.0): read for the section marks, nothing else. */
+  annotations?: unknown[];
 }
 
 /** Every node by id, with its parent's id. */

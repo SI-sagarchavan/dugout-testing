@@ -54,6 +54,8 @@ export function notesOf(
       !byName.has(note.targetId)
     )
       continue;
+    // what a frame is made of (IR 1.13.0): the section finder reads these, the build does not
+    if (note.kind === "section" || note.kind === "background") continue;
     const names: string[] = [];
     for (let at: string | null | undefined = note.targetId; at; at = parents.get(at)) {
       names.unshift(byName.get(at) ?? at);

@@ -26,6 +26,8 @@ export const ANNOTATION_KINDS: readonly AnnotationKind[] = [
   "data",
   "behaviour",
   "ignore",
+  "section",
+  "background",
 ];
 
 export function parseAnnotations(raw: string): Annotation[] {

@@ -40,8 +40,11 @@ describe("the reference page", () => {
 });
 
 describe("structure", () => {
-  it("fires the one rule left: groups", () => {
-    expect(report.structure.map((finding) => finding.ruleId)).toEqual(["groups-instead-of-frames"]);
+  it("fires groups, and the hint that the page's sections are not marked", () => {
+    expect(report.structure.map((finding) => finding.ruleId)).toEqual([
+      "groups-instead-of-frames",
+      "sections-unmarked",
+    ]);
   });
 
   it("S1 counts 79 groups holding 516 layers", () => {

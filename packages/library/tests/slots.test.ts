@@ -206,3 +206,51 @@ describe("findSlots", () => {
     expect(slotsOf(found)).toEqual([["0:root"]]);
   });
 });
+
+describe("a designer's marks (ticket 03)", () => {
+  const named = (n: IrNode, name: string) => Object.assign(n, { name });
+
+  it("makes layers marked with one section name one section, named as marked, and sure", () => {
+    // two content blocks with no heading between them would be unsure; marked alike they are one
+    const found = findSlots(
+      frame([
+        named(content("a", 100), "section/Squad"),
+        named(content("b", 420), "section/squad"),
+        content("c", 760),
+      ]),
+    );
+    expect(slotsOf(found)).toEqual([["a", "b"], ["c"]]);
+    const [squad] = found.bands.flatMap((b) => b.slots);
+    expect(squad).toMatchObject({ name: "squad", confidence: "sure" });
+  });
+
+  it("reads a section or background note on a layer the same as its name", () => {
+    const d = frame([content("a", 100), content("b", 420), content("c", 760)]);
+    d.annotations = [
+      { targetId: "a", kind: "background", text: "the pattern" },
+      { targetId: "b", kind: "section", text: "Fixtures" },
+      { targetId: "c", kind: "must-do", text: "keep it" },
+    ];
+    const found = findSlots(d);
+    expect(found.background).toEqual(["a"]);
+    expect(found.bands.flatMap((b) => b.slots).map((s) => s.name)).toContain("fixtures");
+  });
+
+  it("takes a mark on a layer inside a child as a mark on that child", () => {
+    const inner = content("b", 420);
+    named((inner.children ?? [])[0] as IrNode, "section/cards");
+    const found = findSlots(frame([content("a", 100), inner]));
+    expect(found.bands.flatMap((b) => b.slots).find((s) => s.nodes.includes("b"))).toMatchObject({
+      name: "cards",
+      confidence: "sure",
+    });
+  });
+
+  it("keeps no mark on a child marked two ways, and lets the rules decide it", () => {
+    const d = frame([heading("h", 100, "A"), named(content("c", 160), "section/one")]);
+    d.annotations = [{ targetId: "c", kind: "background", text: "x" }];
+    const found = findSlots(d);
+    expect(found.background).toEqual([]);
+    expect(slotsOf(found)).toEqual([["h", "c"]]);
+  });
+});

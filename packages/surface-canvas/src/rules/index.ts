@@ -27,6 +27,7 @@ import { isStructuralProposal } from "../health/types.js";
 import type { FrameIRDocument } from "../ir/schema.js";
 
 import { groupsInsteadOfFrames } from "./s1-groups-instead-of-frames.js";
+import { sectionsUnmarked } from "./s2-sections-unmarked.js";
 import { unboundFill } from "./f1-unbound-fill.js";
 import { unboundStroke } from "./f2-unbound-stroke.js";
 import { unboundTextStyle } from "./f3-unbound-text-style.js";
@@ -39,7 +40,7 @@ import { unboundEffect } from "./f6-unbound-effect.js";
  * from the sizing report, not a rule, because its fix is a bulk property change
  * and not a finding with a proposal.
  */
-export const STRUCTURE: readonly Rule[] = [groupsInsteadOfFrames];
+export const STRUCTURE: readonly Rule[] = [groupsInsteadOfFrames, sectionsUnmarked];
 
 /** Whether each value follows a theme. */
 export const TOKENS: readonly Rule[] = [

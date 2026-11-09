@@ -16,6 +16,16 @@ export interface SlotLabel {
 
 export interface SectionsCase {
   id: string;
+  /** The IR file it reads, when it is another case's (`<ir>.ir.json`); its own id otherwise. */
+  ir?: string;
+  /** Designer notes added to the IR before the finder reads it (ticket 03's marks). */
+  annotations?: Array<{
+    id: string;
+    targetId: string;
+    targetName: string;
+    kind: string;
+    text: string;
+  }>;
   what: string;
   /** Layers painted behind the slots. Never a section. */
   background: string[];
@@ -43,6 +53,44 @@ export const SECTION_CASES: SectionsCase[] = [
     what: "Fixtures (1:6213): a title over three match cards side by side, one slot",
     background: [],
     bands: [{ slots: [{ name: "fixtures", nodes: ["1:6394", "1:6214", "1:6257", "1:6320"] }] }],
+  },
+  {
+    id: "team-marked",
+    ir: "team",
+    what: "Team, with the designer's marks: a Background note on D_Team, a Section note on each part",
+    annotations: [
+      { id: "m1", targetId: "35:10502", targetName: "D_Team", kind: "background", text: "pattern" },
+      {
+        id: "m2",
+        targetId: "35:10541",
+        targetName: "Group",
+        kind: "section",
+        text: "The Road Ahead",
+      },
+      {
+        id: "m3",
+        targetId: "35:10512",
+        targetName: "heading",
+        kind: "section",
+        text: "The Brave Squad",
+      },
+      {
+        id: "m4",
+        targetId: "35:10529",
+        targetName: "cards",
+        kind: "section",
+        text: "The Brave Squad",
+      },
+    ],
+    background: ["35:10502"],
+    bands: [
+      {
+        slots: [
+          { name: "the-road-ahead", nodes: ["35:10541"] },
+          { name: "the-brave-squad", nodes: ["35:10512", "35:10526", "35:10529"] },
+        ],
+      },
+    ],
   },
   {
     id: "latest-news",

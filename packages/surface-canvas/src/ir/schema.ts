@@ -126,7 +126,13 @@ import { z } from "zod";
  * took the top side's weight: 0, a border on no side. Absent when every side is the same, and on
  * older documents, where `weight` is the whole story.
  */
-export const IR_VERSION = "1.12.0" as const;
+/**
+ * 1.13.0 — adds two note kinds, `section` and `background`: a designer saying which layers are one
+ * section (the note's text is its name; layers noted with one name are one section) and which are
+ * behind the sections. They tell the agents' section finder what the frame is made of, and are
+ * never requirements for the build. Older readers took an unknown kind as `must-do`.
+ */
+export const IR_VERSION = "1.13.0" as const;
 export const IR_VERSIONS = [
   "1.1.0",
   "1.2.0",
@@ -140,6 +146,7 @@ export const IR_VERSIONS = [
   "1.10.0",
   "1.11.0",
   "1.12.0",
+  "1.13.0",
 ] as const;
 
 /**
@@ -154,7 +161,14 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
 export const ANNOTATION_PLUGIN_KEY = "fanos/annotations";
 
 /** What a note asks of the builder, so each agent can pick out the ones for it. */
-export const annotationKindSchema = z.enum(["must-do", "data", "behaviour", "ignore"]);
+export const annotationKindSchema = z.enum([
+  "must-do",
+  "data",
+  "behaviour",
+  "ignore",
+  "section",
+  "background",
+]);
 export type AnnotationKind = z.infer<typeof annotationKindSchema>;
 
 export const ANNOTATION_MAX_CHARS = 1000;
