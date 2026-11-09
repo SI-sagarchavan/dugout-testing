@@ -468,7 +468,7 @@ export function dryRun(
     if (node.props.clock !== undefined) {
       const clock = dsl.clockScope(node.props.clock, outer, now);
       const key = `${node.src}|clock`;
-      if (!clock || !clock.values) {
+      if (!clock?.values) {
         const u = unresolved.get(key) ?? {
           src: node.src,
           prop: "clock.to",

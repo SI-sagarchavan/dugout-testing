@@ -1,8 +1,7 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunEvent } from "@dugout/contracts";
-import { requestChange } from "@dugout/contracts";
 import { createScriptedModel, scriptedModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
@@ -95,18 +94,6 @@ const follow = (
   });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function eventsUntil(runId: string, done: (events: RunEvent[]) => boolean) {
-  for (let i = 0; i < 200; i++) {
-    const all = await events.read(runId, 0);
-    if (done(all)) return all;
-    await sleep(25);
-  }
-  throw new Error(`run ${runId} did not get there`);
-}
-const approvals = (es: RunEvent[]) =>
-  es.filter((e): e is Extract<RunEvent, { type: "question.asked" }> => {
-    return e.type === "question.asked";
-  });
 const contiguous = (es: RunEvent[]) =>
   expect(es.map((e) => e.seq)).toEqual(es.map((_, i) => i + 1));
 

@@ -1,4 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src", "tests", "evals", "scripts"]
+  "include": ["src", "tests", "evals", "scripts"],
+  // reads the plugin's own lint from @fanos/surface-canvas's source, which is checked under
+  // tsconfig.fanos.json (exactOptionalPropertyTypes off), not under the harness's settings
+  "exclude": ["scripts/binding-experiment.ts"]
 }
