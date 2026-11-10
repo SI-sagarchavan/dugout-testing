@@ -15,7 +15,7 @@ import type { Node } from "@fanos/dsl";
 import { cssVar } from "@fanos/tokens";
 import { resolveNode } from "../resolve/style.js";
 import { formatUnresolvedWarnings, interpolate } from "../resolve/data.js";
-import type { NodeRenderContext } from "../context.js";
+import { localeOf, type NodeRenderContext } from "../context.js";
 import { styleToReact } from "./dom.js";
 import { renderIcon } from "./icons.js";
 
@@ -30,7 +30,7 @@ export function Checkbox({ node, ctx }: { node: Node; ctx: NodeRenderContext }) 
 
   let label: string | undefined;
   if (typeof props.label === "string") {
-    const { value, unresolved } = interpolate(props.label, ctx.data, { timeZone: ctx.timeZone });
+    const { value, unresolved } = interpolate(props.label, ctx.data, localeOf(ctx));
     for (const w of formatUnresolvedWarnings(node.id, "label", unresolved)) console.warn(w);
     label = value;
   }

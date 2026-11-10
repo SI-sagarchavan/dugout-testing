@@ -12,11 +12,13 @@ export const SECRET_RULES: RedactionRule[] = [
 ];
 
 // Order matters: Aadhaar (12 digits) runs before phone (10 digits) so a phone match never splits one.
+// The digit rules stop at a hyphen joined to a word as well as at the word: an id (a UUID's last group
+// is often all digits) is not a number a person wrote.
 export const PII_RULES: RedactionRule[] = [
   { label: "email", pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
   { label: "pan", pattern: /\b[A-Z]{5}[0-9]{4}[A-Z]\b/g },
-  { label: "aadhaar", pattern: /\b[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}\b/g },
-  { label: "phone", pattern: /(?:\+91[\s-]?)?\b[6-9]\d{4}[\s-]?\d{5}\b/g },
+  { label: "aadhaar", pattern: /(?<![\w-])[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}(?![\w-])/g },
+  { label: "phone", pattern: /(?:\+91[\s-]?)?(?<![\w-])[6-9]\d{4}[\s-]?\d{5}(?![\w-])/g },
   { label: "phone", pattern: /\+\d{1,3}[\s-]?\d(?:[\s-]?\d){6,13}\b/g },
 ];
 

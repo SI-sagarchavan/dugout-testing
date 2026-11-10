@@ -303,7 +303,7 @@ function cut(tools: Toolchain, image: PngImage, region: Rect, scale: number): Pn
 }
 
 /** Area-averaged resize to a width, keeping the shape. Only ever used to shrink. */
-function resizeTo(tools: Toolchain, image: PngImage, width: number): PngImage {
+export function resizeTo(tools: Toolchain, image: PngImage, width: number): PngImage {
   if (width >= image.width) return image;
   const ratio = image.width / width;
   const height = Math.max(1, Math.round(image.height / ratio));

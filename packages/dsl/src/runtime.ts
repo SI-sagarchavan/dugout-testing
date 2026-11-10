@@ -6,7 +6,10 @@
 
 export {
   conditionsOf,
+  EACH_SCOPE,
   evaluateCondition,
+  heldBy,
+  itemScope,
   evaluateWhen,
   lookup,
   parseRefs,
@@ -30,6 +33,10 @@ export {
   pageScope,
   pageValueOf,
   readsPage,
+  overChoice,
+  overFor,
+  overList,
+  overLists,
   selectOf,
   selectSchema,
   splitPageWhen,

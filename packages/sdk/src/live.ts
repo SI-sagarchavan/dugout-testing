@@ -1,5 +1,5 @@
 import { createBedrockClient, loadEnv, loadModelConfig } from "@dugout/core";
-import { createPool } from "@dugout/db";
+import { createPool, type Pool } from "@dugout/db";
 import { defaultMcpHost } from "@dugout/mcp";
 import {
   createMemoryStore,
@@ -8,9 +8,20 @@ import {
   loadEmbeddings,
 } from "@dugout/memory";
 import { loadTracing } from "@dugout/tracing";
+import { sharedWritesAuto } from "./subagents.ts";
 
 /** The model that turns a reviewer's words into a lesson: a short rewrite, so the cheapest one. */
 export const LESSON_MODEL = "nova-micro";
+
+/**
+ * Reads whether a tenant opted in to shared writes under one approval (`sharedWritesAuto`), from
+ * its house facts in Postgres: for a host that approves without asking (`--yes`), which reads it
+ * for the tenant it verified.
+ */
+export function sharedWritesOptIn(pool: Pool): (tenantId: string) => Promise<boolean> {
+  const store = createMemoryStore({ pool, embeddings: loadEmbeddings() });
+  return (tenantId) => sharedWritesAuto(store, tenantId);
+}
 
 /** Real deps for CLI and API runs: .env, model client, Postgres-backed memory, lessons, tracing. */
 export function liveDeps() {

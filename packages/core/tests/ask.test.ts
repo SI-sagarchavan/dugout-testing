@@ -341,6 +341,93 @@ describe("a run that asks a person (ADR 0029)", () => {
     expect(event?.data).toMatchObject({ tool: "images.save", subject: { input: {} } });
   });
 
+  it("a write says why: the model's reason is the review's wording, and not the tool's input", async () => {
+    const seen: unknown[] = [];
+    const strict = defineTool({
+      name: "images.save",
+      description: "Saves the images",
+      input: z.object({ album: z.string() }).strict(),
+      effect: "write",
+      timeoutMs: 1_000,
+      async run(input) {
+        seen.push(input);
+        return { saved: true };
+      },
+    });
+    const store = createMemoryRunStore();
+    const asked: InterruptRequest[] = [];
+    const reason =
+      "Saves the 4 southern-brave photos to the squad album so the cards can show them";
+    const first = await invoke({
+      runId: "reason-1",
+      store,
+      script: [call("images.save", { album: "squad", reason })],
+      responder: async (req) => {
+        asked.push(req);
+        return { pending: true };
+      },
+      tools: [strict],
+      specTools: ["images.save"],
+    });
+    expect(first.result).toMatchObject({ status: "waiting" });
+    const review = asked[0]?.questions[0];
+    expect(review?.why).toBe(reason);
+    expect(review?.question).toBe("Approve images.save?");
+    // the call's input is shown beside it, without the reason
+    expect(asked[0]?.subject).toEqual({ input: { album: "squad" } });
+    // the tool is offered with a required reason
+    const offered = first.model.requests[0]?.tools.find((t) => t.name === "images.save");
+    expect(offered?.parameters).toMatchObject({
+      required: expect.arrayContaining(["album", "reason"]),
+    });
+
+    const done = await invoke({
+      runId: "reason-1",
+      store,
+      script: [final("saved")],
+      responder: async () => approve("editor"),
+      tools: [strict],
+      specTools: ["images.save"],
+      resume: { reason: "answered", decision: approve("editor") },
+    });
+    expect(done.result).toMatchObject({ status: "completed" });
+    // the tool saw its own input only
+    expect(seen).toEqual([{ album: "squad" }]);
+  });
+
+  it("refuses a write with no reason, saying what to add, and the run goes on", async () => {
+    const store = createMemoryRunStore();
+    const { result, model } = await invoke({
+      runId: "reason-2",
+      store,
+      script: [
+        {
+          toolCalls: [
+            // a script that says nothing: the scripted model would fill it, so name it empty
+            { name: "images.save", arguments: { reason: "  " } },
+          ],
+        },
+        final("gave up"),
+      ],
+      responder: later,
+      tools: [imagesSave],
+      specTools: ["images.save"],
+    });
+    expect(result).toMatchObject({ status: "completed" });
+    const refusal = model.requests[1]?.messages.at(-1);
+    expect(refusal).toMatchObject({ role: "tool", isError: true });
+    expect(String(refusal?.content)).toContain("reason: required");
+  });
+
+  it("a review with no reason (saved before writes carried one) says only that the call writes", () => {
+    const old = reviewQuestion("images.save");
+    expect(old.why).toBe("images.save: It writes.");
+    expect(reviewQuestion("images.save", { shared: true }).shared).toBe(true);
+    expect(reviewQuestion("images.save", { reason: "Saves them", shared: true }).why).toContain(
+      "Saves them",
+    );
+  });
+
   it("refuses badly formed questions with the reason, and the run goes on", async () => {
     const { result, model } = await invoke({
       runId: "q5",

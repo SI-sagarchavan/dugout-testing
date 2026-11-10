@@ -15,7 +15,26 @@
  *   { path: "_page.squad", eq: "men" }            a panel per tab
  *   { path: "item.team", eqPath: "_page.squad" }  the items of the chosen one
  *
- * Values on the page compare as `choiceValue`s: a feed's "Women" is the toggle's `women`.
+ * Values on the page compare as `choiceValue`s: a feed's "Women" is the toggle's `women`. An option's
+ * value is made from its label by `pageValueOf`, the one rule for it.
+ *
+ * A LIST A CHOICE FILTERS, two ways:
+ *
+ *   { path: "it.category", eqPath: "_page.tab" }   one list, each item holding its option's value
+ *   over: "table.{_page.view}"                     lists side by side, one per option, by key
+ *
+ * Either way, an option that names no value in the data shows EVERY item: an ALL tab, "Everything",
+ * "Both", or a page whose key no section has set yet. For a filter, the page's value is held by no
+ * item of the list (`heldBy`: the Repeater puts its list in each item's scope, `_each`), so every
+ * item passes; for lists side by side, the value names no list, so every list is drawn, one after
+ * another. Nothing marks such an option: what it shows follows from the data, so the same rule
+ * holds for tabs drawn in another section. The cost is that an option whose items the data lacks
+ * shows everything instead of nothing; a binding check reports an option no item holds.
+ *
+ * For lists side by side, the lists are the data's: every key under the part before the choice
+ * whose value is a list (`overLists`), compared as `choiceValue`s, so the list drawn is the one the
+ * page is at whichever section writes the choice, with no option list needed. A key is ONE segment
+ * even with a dot in it (`seasons["2025.26"]`).
  *
  * A choice belongs to the SLOT that draws it (ADR 0032, amendment): the header with the tabs and the
  * cards under them are one slot, and only its nodes read the choice unless a read from elsewhere
@@ -39,6 +58,7 @@ import {
   choiceValue,
   type Condition,
   conditionsOf,
+  heldBy,
   lookup,
   PAGE_SCOPE,
   type Predicate,
@@ -77,6 +97,78 @@ export const readsPage = (c: Condition): boolean => isPagePath(c.path) || (c.eqP
 export function selectOf(node: Pick<FlatNode, "props">): Select | undefined {
   const parsed = selectSchema.safeParse((node.props as Record<string, unknown>).select);
   return parsed.success ? parsed.data : undefined;
+}
+
+/** The page choice a Repeater's `over` reads: `squad.{_page.squad}` reads `squad`. */
+export function overChoice(over: string): string | undefined {
+  return /\{_page\.([A-Za-z0-9_]+)\}/.exec(over)?.[1];
+}
+
+/** The parts of an `over` that reads a choice: `table.{_page.view}.items` → `table`, `view`, `items`. */
+function overParts(over: string): { key: string; before: string; after: string } | undefined {
+  const key = overChoice(over);
+  if (!key) return undefined;
+  const token = `{_page.${key}}`;
+  const at = over.indexOf(token);
+  return { key, before: over.slice(0, at).replace(/\.$/, ""), after: over.slice(at + token.length).replace(/^\./, "") };
+}
+
+/**
+ * The name the data gives the option's list: the key under the part before the choice whose
+ * normalised name is the option's ("Men's" and `mens` are one), else the option as written.
+ */
+function keyFor(names: readonly string[], value: string): string {
+  const wanted = choiceValue(value);
+  return names.find((k) => choiceValue(k) === wanted) ?? value;
+}
+
+/**
+ * `over` for one option of the choice it reads: `squad.{_page.squad}` for `men` is `squad.men`, by
+ * the key the data has (`keyFor`). `data` is the scope the Repeater is drawn in (an item's, inside
+ * another Repeater). A key with a dot in it cannot be a path: read the list with `overList`.
+ */
+export function overFor(over: string, data: unknown, value: string): string {
+  const parts = overParts(over);
+  if (!parts) return over;
+  const parent = parts.before ? lookup(data, parts.before) : data;
+  const names = parent && typeof parent === "object" ? Object.keys(parent) : [];
+  return over.replace(`{_page.${parts.key}}`, keyFor(names, value));
+}
+
+/**
+ * The lists an `over` that reads a choice can draw, in the data's order: each key under the part
+ * before the choice whose value (and the part after it) is a list. Keys that normalise alike are one
+ * option, the first. `scope` is the scope the Repeater is drawn in.
+ */
+export function overLists(over: string, scope: unknown): Array<{ value: string; items: unknown[] }> {
+  const parts = overParts(over);
+  if (!parts) return [];
+  const parent = parts.before ? lookup(scope, parts.before) : scope;
+  if (!parent || typeof parent !== "object" || Array.isArray(parent)) return [];
+  const seen = new Set<string>();
+  const out: Array<{ value: string; items: unknown[] }> = [];
+  for (const [name, value] of Object.entries(parent)) {
+    if (name.startsWith("_")) continue; // the page, a Repeater's lists: never data
+    const list = parts.after ? lookup(value, parts.after) : value;
+    const norm = choiceValue(name);
+    if (!Array.isArray(list) || seen.has(norm)) continue;
+    seen.add(norm);
+    out.push({ value: name, items: list });
+  }
+  return out;
+}
+
+/**
+ * The items an `over` that reads a choice draws while the page is at `value`: the list the value
+ * names, else (an ALL option, or none chosen) every list, one after another. Undefined when the
+ * data has no list there.
+ */
+export function overList(over: string, scope: unknown, value: string | undefined): unknown[] | undefined {
+  const lists = overLists(over, scope);
+  if (lists.length === 0) return undefined;
+  const wanted = value === undefined ? undefined : choiceValue(value);
+  const hit = lists.find((l) => choiceValue(l.value) === wanted);
+  return hit ? hit.items : lists.flatMap((l) => l.items);
 }
 
 export interface PageOption {
@@ -212,7 +304,21 @@ export function splitPageWhen(when: unknown, data: unknown): { now: unknown; pag
     // one side is the page, the other is data the server already has
     const [pagePath, dataPath] = isPagePath(c.path) ? [c.path, c.eqPath] : [c.eqPath, c.path];
     const value = lookup(data, dataPath);
-    page.push({ path: pagePath, eq: (typeof value === "object" ? null : (value ?? null)) as Scalar });
+    const held = heldBy(data, dataPath);
+    if (!held) {
+      page.push({ path: pagePath, eq: (typeof value === "object" ? null : (value ?? null)) as Scalar });
+      continue;
+    }
+    // a filter over the item's list: drawn while the page is at the item's value, or at a value no
+    // item holds (an ALL option) — that is, while it is at none of the OTHER values the items hold
+    const mine = value === undefined || value === null || typeof value === "object" ? undefined : choiceValue(value);
+    const others = new Map<string, Scalar>();
+    for (const h of held) {
+      if (h === undefined || h === null || typeof h === "object") continue;
+      const norm = choiceValue(h);
+      if (norm !== mine && !others.has(norm)) others.set(norm, h as Scalar);
+    }
+    for (const other of others.values()) page.push({ path: pagePath, ne: other });
   }
   return { now: now.length ? now : undefined, page };
 }

@@ -58,6 +58,26 @@
       },
       "description": "One entry for each note the designer left (bind.load lists them): met, or why not. [] when it listed none"
     },
+    "created": {
+      "description": "Providers and connectors this run had hook-maker create in Cast, which every hook there can use (code's, from hook-maker's answers)",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "data": {
+      "description": "bound: its data is the design's; stand-in: bound to data about something else (another team), shown for the shape; none: nothing was bound. Set by code, never by the model",
+      "type": "string",
+      "enum": [
+        "bound",
+        "stand-in",
+        "none"
+      ]
+    },
+    "dataWhy": {
+      "description": "Why the data is a stand-in, or why nothing was bound (code's, never the model's)",
+      "type": "string"
+    },
     "static": {
       "description": "Nothing on the frame is data, so nothing was bound (bind.static)",
       "type": "boolean"

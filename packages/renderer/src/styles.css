@@ -610,6 +610,17 @@
 .fos-carousel[data-fos-align="end"] .swiper-wrapper { align-items: flex-end; }
 .fos-carousel[data-fos-align="stretch"] .swiper-wrapper { align-items: stretch; }
 
+/*
+ * First paint of a carousel that shows a number of slides: each is its share of the row, less the
+ * gaps, as Swiper will size it. Without this a slide is as wide as what is in it, and a slide of
+ * layers placed where they are drawn (a hero's photo and words) is none at all.
+ */
+.fos-carousel[data-fos-per-view]:not([data-fos-swiper]) .swiper-slide {
+  width: calc(
+    (100% - (var(--fos-carousel-per-view) - 1) * var(--fos-carousel-gap, 0px)) / var(--fos-carousel-per-view)
+  );
+}
+
 /* First paint: the gap, and the first slide where the design starts it. */
 .fos-carousel:not([data-fos-swiper]) .swiper-wrapper {
   gap: var(--fos-carousel-gap, 0px);

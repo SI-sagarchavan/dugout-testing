@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ControlPlane } from "../src/control-plane.ts";
 import type { Built, Bundle, Measurement } from "../src/frame.ts";
-import { createHandoffSource, type FrameSource } from "../src/handoff.ts";
+import { createHandoffSource, type FrameSource, readTenantTheme } from "../src/handoff.ts";
 import { createMatchTools, type Engine, RunInput } from "../src/tools.ts";
 
 const HANDOFF = "6f1d2c1e-7a3b-4c7e-9a10-0000000000aa";
@@ -171,12 +171,12 @@ describe("a run for a Handoff", () => {
 
   it("loads it through the run's tenant, and stores its IR beside the tree for bind", async () => {
     const sources: Array<{ tenant: string; id: string }> = [];
-    const loaded: Array<{ id: string; source?: FrameSource }> = [];
+    const loaded: Array<{ id: string; theme?: string; source?: FrameSource }> = [];
     const uploads: Array<{ kind: string; meta: Record<string, unknown> }> = [];
     const handoff = {} as FrameSource;
     const engine: Engine = {
-      bundle: async (_plane, id, _theme, from) => {
-        loaded.push({ id, ...(from ? { source: from } : {}) });
+      bundle: async (_plane, id, theme, from) => {
+        loaded.push({ id, ...(theme ? { theme } : {}), ...(from ? { source: from } : {}) });
         return bundle;
       },
       build: async () => built,
@@ -197,6 +197,10 @@ describe("a run for a Handoff", () => {
         sources.push({ tenant, id });
         return handoff;
       },
+      tenantTheme: async (tenant) => ({
+        raw: { tokens: { [`theme-of-${tenant}`]: { color: { light: {} } } } },
+        theme: { themeId: `theme-of-${tenant}`, themeName: "IBL", tokens: {} },
+      }),
       web: "http://web",
     }) as unknown as Array<{ name: string; run(i: unknown, c: unknown): Promise<unknown> }>;
     const run = (name: string) => {
@@ -219,10 +223,76 @@ describe("a run for a Handoff", () => {
     // every load reads it afresh (new signed URLs), always for the run's own tenant
     expect(sources.length).toBeGreaterThan(0);
     expect(sources.every((s) => s.tenant === "ibl" && s.id === HANDOFF)).toBe(true);
-    expect(loaded[0]).toEqual({ id: HANDOFF, source: handoff });
-    expect(uploads.map((u) => u.kind)).toEqual(["figma_ir", "surface_set", "dsl_tree"]);
+    // built against the tenant's FanXP theme, stored so the preview reads the same tokens
+    expect(loaded[0]).toEqual({ id: HANDOFF, theme: "token_set-id", source: handoff });
+    expect(uploads[0]).toEqual({
+      kind: "token_set",
+      meta: {
+        source: "dugout:fanxp-theme",
+        client: "ibl",
+        themeId: "theme-of-ibl",
+        themeName: "IBL",
+      },
+    });
+    expect(uploads.slice(1).map((u) => u.kind)).toEqual(["figma_ir", "surface_set", "dsl_tree"]);
     const tree = uploads.find((u) => u.kind === "dsl_tree");
     expect(tree?.meta).toMatchObject({ handoffId: HANDOFF, irArtifactId: "figma_ir-id" });
     expect(tree?.meta).not.toHaveProperty("exportId");
+  });
+
+  it("ends as needing setup when the tenant has no active FanXP theme", async () => {
+    const list = createMatchTools({
+      dir: await mkdtemp(join(tmpdir(), "fm-handoff-")),
+      engine: { bundle: async () => bundle } as unknown as Engine,
+      plane: () => ({}) as ControlPlane,
+      handoffs: () => ({}) as FrameSource,
+      tenantTheme: async () => {
+        throw new Error("FanXP has no theme for ibl: Theme not found");
+      },
+    }) as unknown as Array<{ name: string; run(i: unknown, c: unknown): Promise<unknown> }>;
+    const load = list.find((t) => t.name === "frame.load");
+    await expect(
+      load?.run(
+        {},
+        {
+          tenantId: "ibl",
+          runId: "h2",
+          signal: new AbortController().signal,
+          input: { handoffId: HANDOFF, project: "default" },
+        },
+      ),
+    ).rejects.toMatchObject({ name: "NeedsSetup" });
+  });
+});
+
+describe("readTenantTheme", () => {
+  it("asks for the run's tenant with the service key, and wraps the answer as a token set", async () => {
+    const asked: Array<{ url: string; headers: Record<string, string> }> = [];
+    const tokens = { color: { light: { core_neu_00: "#ffffff" } } };
+    const send = (async (url: string, init?: RequestInit) => {
+      asked.push({ url, headers: init?.headers as Record<string, string> });
+      return new Response(
+        JSON.stringify({ data: { themeId: "t1", themeName: "Southern Brave", tokens } }),
+      );
+    }) as typeof fetch;
+    const got = await readTenantTheme("sb", { url: "http://fanxp/api/v1/", key: "k", fetch: send });
+    expect(asked).toEqual([
+      {
+        url: "http://fanxp/api/v1/surface/service/theme",
+        headers: { "x-surface-service-key": "k", client: "sb", accept: "application/json" },
+      },
+    ]);
+    expect(got.raw).toEqual({ tokens: { t1: tokens } });
+    expect(got.theme.themeName).toBe("Southern Brave");
+  });
+
+  it("says why when FanXP has no theme for the tenant", async () => {
+    const send = (async () =>
+      new Response(JSON.stringify({ meta: { message: "sb has no active theme." } }), {
+        status: 404,
+      })) as unknown as typeof fetch;
+    await expect(
+      readTenantTheme("sb", { url: "http://fanxp", key: "k", fetch: send }),
+    ).rejects.toThrow("FanXP has no theme for sb: sb has no active theme.");
   });
 });

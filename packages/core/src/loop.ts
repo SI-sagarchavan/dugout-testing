@@ -216,6 +216,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         pendingChanges: {},
         // a child starts on what its parent works on (ADR 0033)
         ...(opts.ctx.situation ? { situation: opts.ctx.situation } : {}),
+        ...(opts.ctx.inputHash ? { inputHash: opts.ctx.inputHash } : {}),
+        ...(opts.ctx.parent ? { parentCallId: opts.ctx.parent.callId } : {}),
       };
   carryOverLegacyState(state);
   const hooks = createHooks([...harnessHooks(agent), ...(agent.hooks ?? [])], state);
@@ -569,7 +571,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       const checked = preflight(call, spec, registry, {
         tenantId: opts.ctx.tenantId,
         runId: opts.ctx.runId,
+        callId: call.id,
         ...(opts.ctx.input !== undefined ? { input: opts.ctx.input } : {}),
+        // a call a person already saw may have been saved before writes said why
+        replay: state.waiting?.callId === call.id || turn.approved.includes(call.id),
       });
       if (!checked.ok) {
         turn.failed = call.name;
@@ -632,7 +637,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
 
       // approved before a crash: the reviewer is not asked twice
       if (checked.needsApproval && !turn.approved.includes(call.id) && !withAnswers) {
-        const review = [reviewQuestion(call.name)];
+        const review = [
+          reviewQuestion(call.name, {
+            shared: registry.get(call.name)?.shared === true,
+            ...(checked.reason ? { reason: checked.reason } : {}),
+          }),
+        ];
         let got: Decision;
         if (decision && state.waiting?.callId === call.id) {
           got = decision;

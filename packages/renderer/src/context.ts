@@ -30,6 +30,8 @@ export interface RenderConfig {
   origin?: string;
   /** IANA zone for the `date` pipe. Defaults to UTC, so SSR is deterministic. */
   timeZone?: string;
+  /** Which comes first in a date-only value that could be read either way (`07/08/2026`). */
+  dateOrder?: "mdy" | "dmy";
   /**
    * The time the page is drawn at, epoch ms, for a node's `clock`. Defaults to the time of the
    * render; a test or a screenshot fixes it so the digits are the same every time.
@@ -55,4 +57,15 @@ export interface NodeRenderContext extends RenderConfig {
   clocks?: Record<string, ClockRef>;
   /** Where the item being drawn sits in the nearest Repeater: what a node's `at` reads. */
   place?: { index: number; count: number };
+}
+
+/** The locale a tree's dates and times are drawn in: what `resolveTemplate` takes as options. */
+export function localeOf(ctx: Pick<RenderConfig, "timeZone" | "dateOrder">): {
+  timeZone?: string;
+  dateOrder?: "mdy" | "dmy";
+} {
+  return {
+    ...(ctx.timeZone ? { timeZone: ctx.timeZone } : {}),
+    ...(ctx.dateOrder ? { dateOrder: ctx.dateOrder } : {}),
+  };
 }

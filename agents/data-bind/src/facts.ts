@@ -12,6 +12,10 @@
  *   would not resolve, and which item draws no variant or two.
  */
 
+import { type About, formOf, hasForm, holdsWords } from "@dugout/agent-hook-maker";
+
+export { type About, formOf, hasForm, holdsWords };
+
 import type { Dsl, IrNode, Tree, TreeNode } from "./dsl.ts";
 
 // ---------------------------------------------------------------------------
@@ -59,6 +63,8 @@ export interface Group {
   /** One skeleton: a plain repeat. Several: variants of one component (`shape: "varies"`). */
   shapes: string[][];
   component?: string;
+  /** A carousel that draws only its slide on show: the one member is repeated for every item. */
+  oneSlide?: boolean;
 }
 
 /**
@@ -84,6 +90,12 @@ export function groups(tree: Tree, byId: Map<string, IrNode>): Group[] {
     if (removed.has(parent)) continue;
     const parentNode = tree.nodes.find((n) => n.id === parent);
     const parentSrc = parentNode?.src ?? parent;
+    // a carousel that draws only its slide on show: that slide is a list of one, repeated per item
+    const only = list.length === 1 ? list[0] : undefined;
+    if (parentNode?.type === "Carousel" && only && hasContent(only, kids)) {
+      out.push({ parent: parentSrc, members: [only.src], shapes: [[only.src]], oneSlide: true });
+      continue;
+    }
     // instances of one component, by its name
     const byComponent = new Map<string, TreeNode[]>();
     for (const node of list) {
@@ -345,6 +357,584 @@ export interface DryRun {
   pictures: Array<{ src: string; url: string; urls: string[] }>;
   /** Unbound texts with figures in them, drawn the same in every item of a list: placeholders. */
   repeated: Array<{ src: string; copy: string; times: number }>;
+  /**
+   * Short texts with a number in them (a date, a time, a score) that the data draws in another
+   * form than the design's, with the pipe or template that would write the design's.
+   */
+  formats: Array<{ src: string; design: string; shows: string; fix: string }>;
+  /**
+   * Variants of a list's items (children that each carry a `when`) that no item of the sample
+   * draws. `made` says it was drawn once on an item made from the sample's shape, so its refs
+   * were checked too; not made when its `when` is not one an item's own field decides.
+   */
+  unseen: Array<{
+    template: string;
+    src: string;
+    when: string;
+    made: boolean;
+    /**
+     * Refs that read nothing on the item made for it: fields only that shape's items have, which
+     * a copy of another item cannot hold. Unseen, not wrong.
+     */
+    missing?: string[];
+  }>;
+}
+
+/** What one thing a card shows is, read from its placeholder by code. */
+export type FieldKind = "date" | "time" | "score" | "number" | "image" | "text";
+
+/** One thing each card shows, as code reads it from the design: the model names it. */
+export interface NeedField {
+  /** The Figma id of the node that shows it. */
+  node: string;
+  kind: FieldKind;
+  /** The design's placeholder, as drawn: "21 JULY", "166/5". */
+  example: string;
+  /** Other things the design's cards say at this place (a bowler's card, a batter's): the item decides. */
+  alternatives?: string[];
+}
+
+/** A month's name or its short form, as a date writes it: "July", "JUL", "Sept.". */
+const MONTH =
+  "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?";
+/** A weekday in front of a date: "Sat", "Sunday,". */
+const WEEKDAY = "(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?,?\\s+)?";
+const ORDINAL = "(?:st|nd|rd|th)?";
+/** A day and a month's name, either way round, with a year or not: "21 JULY", "Jul 21, 2026". */
+const DAY_MONTH = new RegExp(
+  `^${WEEKDAY}(?:\\d{1,2}${ORDINAL}\\s+${MONTH}(?:,?\\s+\\d{2,4})?|${MONTH}\\s+\\d{1,2}${ORDINAL}(?:,?\\s+\\d{4})?)$`,
+  "i",
+);
+
+/** The kind of a placeholder: a date, a time, a score, a number, or text. */
+export function kindOf(placeholder: string): FieldKind {
+  const t = placeholder.trim();
+  if (/^\d{1,2}:\d{2}(:\d{2})?(\s?[AaPp][Mm])?$/.test(t)) return "time";
+  if (/^\d+\/\d+(\s*\(.*\))?$|^\d+\s?-\s?\d+$/.test(t)) return "score";
+  // a date only where a month is named beside a day, or the digits are a date's: "Round 3" and
+  // "12 GOALS" are a word and a number
+  if (
+    DAY_MONTH.test(t) ||
+    /^\d{4}-\d{2}-\d{2}/.test(t) ||
+    /^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$/.test(t)
+  ) {
+    return "date";
+  }
+  if (/^[+-]?\d+([.,]\d+)?%?$/.test(t)) return "number";
+  return "text";
+}
+
+/**
+ * Labels that differ from card to card at the same place (a bowler's card says "Wickets" where a
+ * batter's says "Runs"): the first card's node, and what each card says there. Only text with no
+ * number in it, so a name or a figure the data fills is not a label.
+ */
+export function varyingLabels(
+  tree: Tree,
+  members: string[],
+): Array<{ src: string; texts: string[] }> {
+  const kids = childrenOf(tree);
+  const textsOf = (src: string): Array<{ src: string; text: string }> => {
+    const start = tree.nodes.find((n) => n.src === src);
+    if (!start) return [];
+    const out: Array<{ src: string; text: string }> = [];
+    const walk = (n: TreeNode) => {
+      const c = n.props.content;
+      if (n.type === "Text" && typeof c === "string" && c.trim()) out.push({ src: n.src, text: c });
+      for (const k of kids.get(n.id) ?? []) walk(k);
+    };
+    walk(start);
+    return out;
+  };
+  const cards = members.map(textsOf);
+  const first = cards[0] ?? [];
+  if (cards.length < 2 || cards.some((c) => c.length !== first.length)) return [];
+  return first.flatMap((node, i) => {
+    const texts = cards.map((c) => c[i]?.text ?? "");
+    const label = (t: string) => !/\d/.test(t) && t.length <= 24;
+    return texts.every(label) && new Set(texts).size > 1 ? [{ src: node.src, texts }] : [];
+  });
+}
+
+/**
+ * The draft of a need that code can build from the design: how many items the list draws and
+ * what its first card shows, each with its kind and the design's placeholder. The model names the
+ * list and each field and adds `must`; it does not have to find these again.
+ */
+export function draftNeed(
+  tree: Tree,
+  group: { members: string[] },
+  /** Every repeat of the frame: an inner one's fields are its own list's, never this one's. */
+  repeats: ReadonlyArray<{ parent: string; members: string[] }> = [],
+): { count: number | "data"; item: NeedField[] } | undefined {
+  const first = tree.nodes.find((n) => n.src === group.members[0]);
+  if (!first) return undefined;
+  // the cards of a carousel are what fits on view, not how many the list has: a looping rail of
+  // only those it draws leaves a gap where it bleeds past its box
+  const scrolls = tree.nodes.find((n) => n.id === first.parent)?.type === "Carousel";
+  const kids = childrenOf(tree);
+  // the members of a repeat inside the card (two match panels in a day card): their fields go to
+  // that list's own draft
+  const under = new Set(subtree(first.id, kids));
+  const insideSrcs = new Set(tree.nodes.filter((n) => under.has(n.id)).map((n) => n.src));
+  const inner = new Set(
+    repeats
+      .filter((r) => r.members !== group.members && insideSrcs.has(r.parent))
+      .flatMap((r) => r.members),
+  );
+  const item: NeedField[] = [];
+  const walkCard = (node: TreeNode) => {
+    if (node !== first && inner.has(node.src)) return;
+    if (
+      node.type === "Text" &&
+      typeof node.props.content === "string" &&
+      node.props.content.trim()
+    ) {
+      item.push({
+        node: node.src,
+        kind: kindOf(node.props.content),
+        example: clip(node.props.content, 40),
+      });
+    } else if (node.type === "Image") {
+      item.push({ node: node.src, kind: "image", example: "" });
+    }
+    for (const child of kids.get(node.id) ?? []) walkCard(child);
+  };
+  walkCard(first);
+  const varying = new Map(varyingLabels(tree, group.members).map((v) => [v.src, v.texts]));
+  for (const field of item) {
+    const texts = varying.get(field.node);
+    if (texts) field.alternatives = [...new Set(texts)];
+  }
+  return { count: scrolls ? "data" : group.members.length, item };
+}
+
+/** `@fanos/dsl`'s `readDate`: a date as epoch ms, read as every part of the page reads it. */
+export type ReadDate = (
+  value: unknown,
+  options?: { timeZone?: string; dateOrder?: "dmy" | "mdy" },
+) => number | undefined;
+
+/**
+ * A value as the instant it names (epoch ms), by the DSL's own date reading; undefined for what is
+ * no date (a score, a name, "Round 3") or cannot be read (a day with no year).
+ */
+export function dateKey(
+  readDate: ReadDate,
+  options: { timeZone?: string; dateOrder?: "dmy" | "mdy" } = {},
+): (value: unknown) => number | undefined {
+  return (value) => {
+    // a number is an instant only when it is that large: a count or a score is not a date
+    if (typeof value === "number") return value >= 1e9 ? readDate(value, options) : undefined;
+    if (typeof value !== "string" || kindOf(value) !== "date") return undefined;
+    return readDate(value, options);
+  };
+}
+
+/** The item fields a collapse binds, in the plan's order, without the alias or any pipe. */
+function fieldPaths(c: {
+  as: string;
+  fields?: Array<{ path?: string; template?: string }>;
+  variants?: Array<{ fields?: Array<{ path?: string; template?: string }> }>;
+}): string[] {
+  const own = (path: string) => {
+    const bare = (path.split("|")[0] ?? "").trim();
+    return bare.startsWith(`${c.as}.`) ? bare.slice(c.as.length + 1) : bare;
+  };
+  const out: string[] = [];
+  for (const f of [...(c.fields ?? []), ...(c.variants ?? []).flatMap((v) => v.fields ?? [])]) {
+    if (f.path) out.push(own(f.path));
+    for (const [, ref] of (f.template ?? "").matchAll(/\{([^{}]+)\}/g)) {
+      const path = (ref ?? "").split("|")[0]?.trim() ?? "";
+      if (path.startsWith(`${c.as}.`)) out.push(own(path));
+    }
+  }
+  return [...new Set(out.filter(Boolean))];
+}
+
+const at = (value: unknown, path: string): unknown =>
+  path
+    .split(".")
+    .filter(Boolean)
+    .reduce<unknown>(
+      (v, key) => (v && typeof v === "object" ? (v as Record<string, unknown>)[key] : undefined),
+      value,
+    );
+
+/** An item started less than this long ago may still be on: soonest first may start with it. */
+const STILL_ON_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whether each list a plan draws is in the order the design means, read from the data the plan
+ * binds (`data`, by the names the plan reads it by): the first field the plan binds from each item
+ * that the DSL reads as a date is the one it is ordered by. Items whose date cannot be read are
+ * left out. Each problem is on the list's template, so a plan may keep it with why.
+ */
+export function orderProblems(
+  order: ListOrder | undefined,
+  plan:
+    | {
+        collapse?: Array<{
+          over: string;
+          as: string;
+          members?: string[];
+          fields?: Array<{ path?: string; template?: string }>;
+          variants?: Array<{ fields?: Array<{ path?: string; template?: string }> }>;
+        }>;
+      }
+    | undefined,
+  data: unknown,
+  keyOf: (value: unknown) => number | undefined,
+  now: number = Date.now(),
+): Array<{ src: string; message: string }> {
+  if (!order || order === "as-is") return [];
+  const problems: Array<{ src: string; message: string }> = [];
+  const nowKey = now;
+  const startedKey = now - STILL_ON_MS;
+  for (const c of plan?.collapse ?? []) {
+    const list = at(data, c.over);
+    if (!Array.isArray(list) || list.length < 2) continue;
+    for (const path of fieldPaths(c)) {
+      const values = list.map((item) => at(item, path));
+      const dated = values.flatMap((v) => {
+        const key = keyOf(v);
+        return key === undefined ? [] : [{ key, value: v }];
+      });
+      // a field the DSL reads as a date for most items: what the list is ordered by
+      if (dated.length < 2 || dated.length < values.filter((v) => v != null).length / 2) continue;
+      const keys = dated.map((d) => d.key);
+      const seen = dated
+        .slice(0, 4)
+        .map((d) => JSON.stringify(d.value))
+        .join(", ");
+      const up = keys.every((k, i) => i === 0 || (keys[i - 1] ?? k) <= k);
+      const down = keys.every((k, i) => i === 0 || (keys[i - 1] ?? k) >= k);
+      let wrong: string | undefined;
+      let tail = `ask hook-maker for the list in that order (it sorts, then cuts to the count), or keep ${c.members?.[0] ?? "the list"} with why the order stays`;
+      if (order === "soonest-first") {
+        if (!up) wrong = "is not soonest first: the dates go back and forth";
+        else if ((keys[0] ?? nowKey) < startedKey && keys.some((k) => k >= nowKey)) {
+          wrong = "starts with past items while later ones are still to come";
+        }
+      } else if (order === "newest-first") {
+        if (!down) wrong = "is not newest first: the dates are not from the latest back";
+      } else {
+        // upcoming first (soonest), then what has happened (the latest first)
+        const split = keys.findIndex((k) => k < nowKey);
+        const coming = split === -1 ? keys : keys.slice(0, split);
+        const past = split === -1 ? [] : keys.slice(split);
+        const ordered =
+          coming.every((k, i) => i === 0 || (coming[i - 1] ?? k) <= k) &&
+          past.every((k, i) => k < nowKey && (i === 0 || (past[i - 1] ?? k) >= k));
+        if (!ordered) wrong = "is not what is next (soonest first), then the latest results";
+      }
+      // a list that wants what is next but holds only what is past: the cut came before the sort,
+      // or the feed has nothing to come (then a stand-in, or keep the list with why)
+      if (!wrong && order !== "newest-first" && keys.every((k) => k < startedKey)) {
+        wrong = "holds only past items, and the design wants what is next";
+        tail = `ask hook-maker to sort before it cuts and to look in the feed for items still to come; when the feed has none, keep ${c.members?.[0] ?? "the list"} with why (nothing upcoming exists), or settle data_source`;
+      }
+      if (wrong) {
+        problems.push({
+          src: c.members?.[0] ?? "",
+          message: `${c.over} ${wrong} (${path}: ${seen}). The design means ${order}: ${tail}`,
+        });
+      }
+      break;
+    }
+  }
+  return problems;
+}
+
+/**
+ * What a person or the model needs to settle a picture the data does not give each item: the
+ * item's id field with two real values, the fields that look like picture URLs, and the club's
+ * `media.*` facts that build a URL from a field. Read from the sample alone.
+ */
+export function pictureEvidence(
+  sample: unknown,
+  mediaFacts: ReadonlyArray<{ key: string | null; content: string }> = [],
+): string {
+  let items: Array<Record<string, unknown>> | undefined;
+  const find = (value: unknown, depth: number) => {
+    if (items || depth > 5 || value === null || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      const objects = value.filter(
+        (v): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v),
+      );
+      if (objects.length >= 2) items = objects;
+      else for (const v of value) find(v, depth + 1);
+      return;
+    }
+    for (const v of Object.values(value)) find(v, depth + 1);
+  };
+  find(sample, 0);
+  const rows = (items ?? []) as Array<Record<string, unknown>>;
+  const fields = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  const idField = fields.find(
+    (f) =>
+      /^(id|.*_?id)$/i.test(f) &&
+      rows.some((r) => typeof r[f] === "string" || typeof r[f] === "number"),
+  );
+  const idValues = idField
+    ? rows
+        .slice(0, 2)
+        .map((r) => JSON.stringify(r[idField]))
+        .join(", ")
+    : "";
+  const urlish = fields.filter((f) =>
+    rows.some(
+      (r) =>
+        typeof r[f] === "string" &&
+        /^(https?:\/\/|\/).*\.(png|jpe?g|webp|svg|gif|avif)\b/i.test(String(r[f])),
+    ),
+  );
+  const media = mediaFacts
+    .filter((f) => f.key?.startsWith("media.") && !/image-(domain|ratio)$/.test(f.key))
+    .map((f) => `${f.key}: ${f.content}`);
+  return [
+    idField ? `The items carry ${idField} (e.g. ${idValues}).` : "The items carry no id field.",
+    urlish.length
+      ? `Fields that look like picture URLs: ${urlish.join(", ")}.`
+      : "No field looks like a picture URL.",
+    media.length
+      ? `House facts that build one: ${media.join(" | ")}.`
+      : "No media.* house fact builds one.",
+  ].join(" ");
+}
+
+export type ListOrder = "soonest-first" | "newest-first" | "upcoming-then-latest" | "as-is";
+
+/** Whether data is about what the design is about, as far as its own fields say. */
+export type Reading = "about" | "other" | "unknown";
+
+/** A field whose key names a team or club, and one whose key names a competition. */
+const NAMES = {
+  team: /team|club|franchise/i,
+  competition: /competition|league|series|tournament|championship/i,
+} as const;
+
+/**
+ * Whether the data is about the team and competition the design is about (ticket 09), from the
+ * lists whose items name one: a field whose key says so (`team`, `home_team.name`, `league`). A
+ * list whose items name none (articles, a squad's players) says nothing either way, so it is not
+ * judged. `about` when some item of such a list names the must (a league table names every
+ * club, one row is the club's), `other` when none does, `unknown` when no list names one.
+ */
+export function entityReading(
+  data: unknown,
+  about: About | undefined,
+): { reading: Reading; why?: string; lists: string[] } {
+  const wants = (Object.entries(about ?? {}) as Array<[keyof typeof NAMES, unknown]>).filter(
+    (e): e is [keyof typeof NAMES, string] => typeof e[1] === "string" && e[1].trim() !== "",
+  );
+  if (wants.length === 0) return { reading: "unknown", lists: [] };
+  // each list of objects, by its path, with the values its items' naming fields hold
+  const lists: Array<{ path: string; items: Array<Record<keyof typeof NAMES, string[]>> }> = [];
+  const namesOf = (item: unknown) => {
+    const found = { team: [] as string[], competition: [] as string[] };
+    const walk = (value: unknown, keys: string[], depth: number) => {
+      if (depth > 4) return;
+      if (typeof value === "string") {
+        const v = value.trim();
+        if (!v || v.length > 60 || !/\p{L}/u.test(v) || /^(https?:)?\/\//i.test(v)) return;
+        for (const kind of Object.keys(NAMES) as Array<keyof typeof NAMES>) {
+          if (keys.some((k) => NAMES[kind].test(k))) found[kind].push(v);
+        }
+      } else if (Array.isArray(value)) {
+        for (const v of value.slice(0, 20)) walk(v, keys, depth + 1);
+      } else if (value && typeof value === "object") {
+        for (const [k, v] of Object.entries(value)) walk(v, [...keys, k], depth + 1);
+      }
+    };
+    walk(item, [], 0);
+    return found;
+  };
+  const visit = (value: unknown, path: string, depth: number) => {
+    if (depth > 6 || value === null || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      const objects = value.filter(
+        (v): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v),
+      );
+      if (objects.length > 0) {
+        lists.push({ path, items: objects.slice(0, 200).map(namesOf) });
+        visit(objects[0], `${path}[]`, depth + 1);
+      }
+      return;
+    }
+    for (const [k, v] of Object.entries(value)) visit(v, path ? `${path}.${k}` : k, depth + 1);
+  };
+  visit(data, "", 0);
+  const verdicts = wants.map(([kind, must]) => {
+    const naming = lists.filter((l) => l.items.some((i) => i[kind].length > 0));
+    if (naming.length === 0) return { kind, must, reading: "unknown" as Reading, naming };
+    const holds = naming.some((l) => l.items.some((i) => i[kind].some((v) => holdsWords(v, must))));
+    return { kind, must, reading: (holds ? "about" : "other") as Reading, naming };
+  });
+  const wrong = verdicts.filter((v) => v.reading === "other");
+  const judged = [...new Set(verdicts.flatMap((v) => v.naming.map((l) => l.path)))];
+  if (wrong.length > 0) {
+    const counts = new Map<string, number>();
+    for (const v of wrong)
+      for (const l of v.naming)
+        for (const i of l.items) for (const n of i[v.kind]) counts.set(n, (counts.get(n) ?? 0) + 1);
+    const holds = [...counts]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([n]) => n);
+    return {
+      reading: "other",
+      lists: judged,
+      why: `the data is about ${holds.join(", ")}, the design is about ${wrong.map((v) => v.must).join(" and ")}: no item of ${[...new Set(wrong.flatMap((v) => v.naming.map((l) => l.path)))].join(", ")} names ${wrong.map((v) => `the ${v.kind} ${v.must}`).join(" or ")}`,
+    };
+  }
+  return {
+    reading: verdicts.some((v) => v.reading === "about") ? "about" : "unknown",
+    lists: judged,
+  };
+}
+
+/**
+ * Which items a list shows and in what order, from its section's own words (its heading), and only
+ * from words that name time: "AHEAD", "UPCOMING" want what is coming, soonest first; "LATEST",
+ * "RECENT", "RESULTS" want the newest first; a heading with both wants what is next, then what
+ * just happened. Undefined when no word names time: the list has no order of its own.
+ */
+export function orderOf(words: string[]): ListOrder | undefined {
+  const text = words.join(" ").toLowerCase();
+  const coming = /\b(ahead|upcoming|coming up|forthcoming|soon)\b/.test(text);
+  const recent = /\b(latest|recent|results?|newest|previous|past)\b/.test(text);
+  return coming && recent
+    ? "upcoming-then-latest"
+    : coming
+      ? "soonest-first"
+      : recent
+        ? "newest-first"
+        : undefined;
+}
+
+/**
+ * The words of a list's own section: the texts around it that are no item's (its heading, a
+ * label beside it), up to the widest block that holds no other list. A "Next" arrow or a column
+ * header inside the cards, or another list's heading, is not its.
+ */
+export function sectionWords(
+  tree: Tree,
+  group: { parent: string; members: string[] },
+  repeats: ReadonlyArray<{ parent: string; members: string[] }>,
+): string[] {
+  const kids = childrenOf(tree);
+  const byId = new Map(tree.nodes.map((n) => [n.id, n]));
+  const bySrc = new Map(tree.nodes.map((n) => [n.src, n]));
+  const srcsUnder = (node: TreeNode) =>
+    new Set(subtree(node.id, kids).map((id) => byId.get(id)?.src ?? id));
+  // every item's content, of every list: not a heading
+  const items = new Set(
+    repeats.flatMap((r) =>
+      r.members.flatMap((m) => {
+        const node = bySrc.get(m);
+        return node ? [...srcsUnder(node)] : [];
+      }),
+    ),
+  );
+  const start = bySrc.get(group.parent);
+  if (!start) return [];
+  const mine = srcsUnder(start);
+  // another list: one neither inside this one's block nor holding it (a day card's matches are
+  // inside the days, and the days' heading is theirs too)
+  const holdsThis = (r: { members: string[] }) =>
+    r.members.some((m) => {
+      const node = bySrc.get(m);
+      return node !== undefined && srcsUnder(node).has(group.parent);
+    });
+  const others = repeats.filter(
+    (r) => r.parent !== group.parent && !mine.has(r.parent) && !holdsThis(r),
+  );
+  let block = start;
+  for (
+    let up = start.parent === null ? undefined : byId.get(start.parent);
+    up;
+    up = up.parent === null ? undefined : byId.get(up.parent)
+  ) {
+    const holds = srcsUnder(up);
+    if (others.some((r) => holds.has(r.parent))) break;
+    block = up;
+  }
+  const words: string[] = [];
+  for (const id of subtree(block.id, kids)) {
+    const node = byId.get(id);
+    const text = node?.type === "Text" ? node.props.content : undefined;
+    if (!node || items.has(node.src) || typeof text !== "string" || !text.trim()) continue;
+    if (!words.includes(text.trim())) words.push(text.trim());
+  }
+  return words;
+}
+
+/**
+ * How many items of one shape sit inside the first card of a list (two match panels in one
+ * card, a day's matches): the design groups its items, and a hook that gives one item at a time
+ * hides all but the first. 0 when the card holds no such inner repeat.
+ */
+export function cardHolds(
+  tree: Tree,
+  repeats: Array<{ parent: string; members: string[] }>,
+  group: { members: string[] },
+): number {
+  const first = tree.nodes.find((n) => n.src === group.members[0]);
+  if (!first) return 0;
+  const under = new Set(subtree(first.id, childrenOf(tree)));
+  const inside = new Set(tree.nodes.filter((n) => under.has(n.id)).map((n) => n.src));
+  return Math.max(
+    0,
+    ...repeats
+      .filter((r) => r.members !== group.members && inside.has(r.parent) && r.members.length >= 2)
+      .map((r) => r.members.length),
+  );
+}
+
+/** The pipe or template that writes what the design writes, for the forms code can name. */
+function fixForm(design: string, shows: string): string {
+  const shout = shouts(design) ? ' and set textCase "upper"' : "";
+  if (/^\d{1,2}:\d{2}(?::\d{2})?$/.test(design)) {
+    return `format it with the date pipe: {item.field | date:"HH:mm"}`;
+  }
+  // a day and a month's name: "12 GOALS" is a count with a word, not a date
+  const t = design.trim();
+  if (DAY_MONTH.test(t)) {
+    const isMonth = (w: string) => new RegExp(`^${MONTH}$`, "i").test(w);
+    const words = t.match(/\p{L}+/gu) ?? [];
+    const month = words.find(isMonth) ?? "";
+    const name = month.length <= 4 && !/^(june|july)$/i.test(month) ? "MMM" : "MMMM";
+    // a weekday in front: "Sat 21 July"
+    const first = words[0] ?? "";
+    const weekday =
+      /^\p{L}/u.test(t) && !isMonth(first) ? (first.length <= 3 ? "DDD " : "DDDD ") : "";
+    const rest = weekday ? t.slice(t.indexOf(first) + first.length).replace(/^[.,\s]+/, "") : t;
+    const pattern = `${weekday}${/^\d/.test(rest) ? `DD ${name}` : `${name} DD`}`;
+    return `format it with the date pipe: {item.field | date:"${pattern}"}${shout}`;
+  }
+  if (/^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$/.test(design)) {
+    return `format it with the date pipe in the design's order: {item.field | date:"DD/MM/YYYY"}`;
+  }
+  // letters joined to the number ("2nd", "3-1W"): a suffix that may change with the value, which
+  // a template's fixed word would get wrong for every other value
+  if (/\d\p{L}|\p{L}\d/u.test(design)) {
+    return /\d\p{L}|\p{L}\d/u.test(shows)
+      ? "the data writes a word joined to its number too: compare shows with the design and set textCase if only the case differs"
+      : "the design joins a word to the number, which may change with the value: have the hook give the text as the design writes it (hook-maker), or write the word in a template only when it is the same for every value";
+  }
+  if (/[()[\]]/.test(design) || /\p{L}/u.test(design)) {
+    const unit = (t: string) =>
+      t
+        .replace(/[\d.,\s()[\]+-]+/g, " ")
+        .trim()
+        .toLowerCase();
+    const drawn = unit(shows);
+    return unit(design) !== drawn && drawn !== ""
+      ? `the data counts in "${drawn}" where the design counts in "${unit(design)}": if they are different units, have the hook derive the design's (hook-maker: ask for the field in "${unit(design)}"), and if only the word differs write it in a template ("${design.replace(/\d+(?:[.,]\d+)?/, "{item.field}")}")`
+      : `write the words and brackets the design has around the value with a template ("${design.replace(/\d+(?:[.,]\d+)?/, "{item.field}")}"), and bind only the value (${JSON.stringify(shows)} is the whole text now)`;
+  }
+  return "bind it with a template that writes the value in the design's form";
 }
 
 /** The refs of a template that read nothing (absent, null or empty) and have no `default` pipe. */
@@ -376,7 +966,17 @@ function labelOf(item: unknown): string {
 export function dryRun(
   tree: Tree,
   data: unknown,
-  dsl: Pick<Dsl, "resolveTemplate" | "evaluateWhen" | "lookup" | "hasRef" | "clockScope">,
+  dsl: Pick<
+    Dsl,
+    | "resolveTemplate"
+    | "evaluateWhen"
+    | "lookup"
+    | "hasRef"
+    | "clockScope"
+    | "overChoice"
+    | "overLists"
+    | "itemScope"
+  >,
   /** The frame before binding: its copy is what each text looked like in the design. */
   design?: Tree,
   /** The time clocks are read at, epoch ms. */
@@ -390,6 +990,7 @@ export function dryRun(
     }
   }
   const capitals = new Map<string, DryRun["capitals"][number]>();
+  const formats = new Map<string, DryRun["formats"][number]>();
   const breaks = new Map<string, DryRun["breaks"][number]>();
   const repeated = new Map<string, DryRun["repeated"][number]>();
   const root = tree.nodes.find((n) => n.parent === null);
@@ -399,6 +1000,21 @@ export function dryRun(
   const samples = new Map<string, DryRun["samples"][number]>();
   const relative = new Map<string, DryRun["relative"][number]>();
   const pictures = new Map<string, string[]>();
+  // the variants of each list's items, which an item of the sample drew, and one item to make more from
+  const choices = new Map<
+    string,
+    {
+      as: string;
+      kids: TreeNode[];
+      drew: Set<string>;
+      first?: { scope: Record<string, unknown>; item: unknown };
+    }
+  >();
+  // true while a variant no item draws is drawn once on an item made for it: its refs are checked,
+  // what it shows is not what the data shows
+  let making = false;
+  /** What the refs drawn on a made item read nothing at: reported with the variant, not as holes. */
+  let madeMissing = new Set<string>();
 
   const props = (node: TreeNode, scope: unknown, item: string) => {
     for (const [prop, value] of Object.entries(node.props)) {
@@ -419,6 +1035,26 @@ export function dryRun(
       ) {
         capitals.set(node.src, { src: node.src, design: placeholder, shows: clip(drawn, 40) });
       }
+      // a date, a time or a score in another form than the design's: "5/26/2026" for "21 JULY"
+      if (
+        prop === "content" &&
+        placeholder !== undefined &&
+        hasForm(placeholder) &&
+        // a dash is the default a template falls back to for a value an item lacks, not a form
+        !/^[\p{P}\p{S}\s]*$/u.test(drawn) &&
+        !formats.has(node.src)
+      ) {
+        // case is the capitals check's (and textCase's): the form is compared case-folded on
+        // both sides, so "21 July" drawn upper is "21 JULY"'s form
+        if (formOf(drawn.toLowerCase()) !== formOf(placeholder.toLowerCase())) {
+          formats.set(node.src, {
+            src: node.src,
+            design: placeholder,
+            shows: clip(drawn, 40),
+            fix: fixForm(placeholder, drawn),
+          });
+        }
+      }
       // a heading the designer broke by hand ("Ben\nMcKinney"): a paragraph wraps, it is not broken
       if (
         prop === "content" &&
@@ -432,7 +1068,9 @@ export function dryRun(
       ) {
         breaks.set(node.src, { src: node.src, design: placeholder, shows: clip(drawn, 40) });
       }
-      if (missing.length) {
+      if (missing.length && making) {
+        for (const m of missing) madeMissing.add(m);
+      } else if (missing.length) {
         const u = unresolved.get(key) ?? {
           src: node.src,
           prop,
@@ -455,9 +1093,11 @@ export function dryRun(
           if (urls.length < 3 && !urls.includes(drawn)) urls.push(drawn);
           pictures.set(node.src, urls);
         }
-        const s = samples.get(key) ?? { src: node.src, prop, values: [] };
-        if (s.values.length < 4 && !s.values.includes(drawn)) s.values.push(clip(drawn, 60));
-        samples.set(key, s);
+        if (!making) {
+          const s = samples.get(key) ?? { src: node.src, prop, values: [] };
+          if (s.values.length < 4 && !s.values.includes(drawn)) s.values.push(clip(drawn, 60));
+          samples.set(key, s);
+        }
       }
     }
   };
@@ -468,7 +1108,9 @@ export function dryRun(
     if (node.props.clock !== undefined) {
       const clock = dsl.clockScope(node.props.clock, outer, now);
       const key = `${node.src}|clock`;
-      if (!clock?.values) {
+      if (!clock?.values && making) {
+        madeMissing.add(clock ? "an instant" : "a clock");
+      } else if (!clock?.values) {
         const u = unresolved.get(key) ?? {
           src: node.src,
           prop: "clock.to",
@@ -487,53 +1129,71 @@ export function dryRun(
     }
     if (node.props.when !== undefined && !dsl.evaluateWhen(node.props.when, scope)) return;
     if (node.type === "Repeater") {
-      const over = String(node.props.over ?? "");
-      const as = String(node.props.as ?? "item");
-      const list = dsl.lookup(scope, over);
-      // what it draws between items (`separator`) is no item's: not one of its shapes
-      const between = new Set(
-        Array.isArray(node.props.separator) ? (node.props.separator as string[]) : [],
-      );
-      const children = (kids.get(node.id) ?? []).filter((c) => !between.has(c.id));
-      const template = children[0]?.src ?? node.src;
-      const items = Array.isArray(list) ? sliceOf(list, node.props) : [];
-      const r = repeats.get(template) ?? { over, items: 0, most: 0 };
-      r.items += items.length;
-      r.most = Math.max(r.most, items.length);
-      repeats.set(template, r);
-      if (!Array.isArray(list)) {
-        const key = `${node.src}|over`;
-        const u = unresolved.get(key) ?? {
-          src: template,
-          prop: "over",
-          value: over,
-          missing: [over],
-          times: 0,
-          example: item,
-        };
-        u.times += 1;
-        unresolved.set(key, u);
-      }
-      const choosy = children.length > 1 && children.every((c) => c.props.when !== undefined);
-      for (const each of items) {
-        const inner = { ...(scope as object), [as]: each };
-        const label = labelOf(each);
-        if (choosy) {
-          // a card's own clock is in scope in its `when`, as the renderer reads it
-          const drew = children.filter((c) => {
-            const clock =
-              c.props.clock === undefined ? undefined : dsl.clockScope(c.props.clock, inner, now);
-            const at = clock?.values ? { ...inner, [clock.as]: clock.values } : inner;
-            return dsl.evaluateWhen(c.props.when, at);
-          }).length;
-          if (drew !== 1) {
-            const key = `${template}|${drew}`;
-            const v = variants.get(key) ?? { template, drew, times: 0, example: label };
-            v.times += 1;
-            variants.set(key, v);
-          }
+      const given = String(node.props.over ?? "");
+      // a list that follows a page choice is drawn once for each option's list
+      // a list that follows a page choice (`squad.{_page.squad}`) is drawn once for each list the
+      // data has there, as the page draws it for each option (an ALL option draws them all)
+      const lists = dsl.overChoice(given)
+        ? dsl.overLists(given, scope).map((l) => ({ over: `${given} (${l.value})`, list: l.items }))
+        : [];
+      const drawing =
+        lists.length > 0 ? lists : [{ over: given, list: dsl.lookup(scope, given) as unknown }];
+      for (const { over, list } of drawing) {
+        const as = String(node.props.as ?? "item");
+        // what it draws between items (`separator`) is no item's: not one of its shapes
+        const between = new Set(
+          Array.isArray(node.props.separator) ? (node.props.separator as string[]) : [],
+        );
+        const children = (kids.get(node.id) ?? []).filter((c) => !between.has(c.id));
+        const template = children[0]?.src ?? node.src;
+        const items = Array.isArray(list) ? sliceOf(list, node.props) : [];
+        const r = repeats.get(template) ?? { over, items: 0, most: 0 };
+        r.items += items.length;
+        r.most = Math.max(r.most, items.length);
+        repeats.set(template, r);
+        if (!Array.isArray(list)) {
+          const key = `${node.src}|over`;
+          const u = unresolved.get(key) ?? {
+            src: template,
+            prop: "over",
+            value: over,
+            missing: [over],
+            times: 0,
+            example: item,
+          };
+          u.times += 1;
+          unresolved.set(key, u);
         }
-        for (const child of children) walk(child, inner, label);
+        const choosy = children.length > 1 && children.every((c) => c.props.when !== undefined);
+        const mark = choosy
+          ? (choices.get(template) ?? { as, kids: children, drew: new Set<string>() })
+          : undefined;
+        if (mark) choices.set(template, mark);
+        for (const each of items) {
+          // as the renderer scopes an item: the item by its name, and its list under `_each`
+          const inner = dsl.itemScope(scope, as, each, items);
+          const label = labelOf(each);
+          if (choosy) {
+            // a card's own clock is in scope in its `when`, as the renderer reads it
+            const drawn = children.filter((c) => {
+              const clock =
+                c.props.clock === undefined ? undefined : dsl.clockScope(c.props.clock, inner, now);
+              const at = clock?.values ? { ...inner, [clock.as]: clock.values } : inner;
+              return dsl.evaluateWhen(c.props.when, at);
+            });
+            const drew = drawn.length;
+            for (const c of drawn) mark?.drew.add(c.id);
+            if (mark && !mark.first)
+              mark.first = { scope: inner as Record<string, unknown>, item: each };
+            if (drew !== 1) {
+              const key = `${template}|${drew}`;
+              const v = variants.get(key) ?? { template, drew, times: 0, example: label };
+              v.times += 1;
+              variants.set(key, v);
+            }
+          }
+          for (const child of children) walk(child, inner, label);
+        }
       }
       return;
     }
@@ -554,6 +1214,35 @@ export function dryRun(
   };
   if (root) walk(root, data, "page");
 
+  // A variant no item of the sample draws (every match was a result, so the upcoming card never
+  // was): said, and drawn once on an item made from the sample's shape with the variant's state,
+  // so its refs are checked too.
+  const unseen: DryRun["unseen"] = [];
+  for (const [template, choice] of choices) {
+    for (const kid of choice.kids.filter((k) => !choice.drew.has(k.id))) {
+      const when = JSON.stringify(kid.props.when);
+      let made = false;
+      if (choice.first) {
+        const item = madeFor(kid.props.when, choice.as, choice.first.item);
+        const at = item === undefined ? undefined : { ...choice.first.scope, [choice.as]: item };
+        if (at && dsl.evaluateWhen(kid.props.when, at)) {
+          made = true;
+          making = true;
+          madeMissing = new Set();
+          walk(kid, at, `(an item made for ${when})`);
+          making = false;
+        }
+      }
+      unseen.push({
+        template,
+        src: kid.src,
+        when,
+        made,
+        ...(made && madeMissing.size > 0 ? { missing: [...madeMissing] } : {}),
+      });
+    }
+  }
+
   return {
     repeats: [...repeats.entries()].map(([template, r]) => ({ template, ...r })),
     unresolved: [...unresolved.values()],
@@ -564,7 +1253,34 @@ export function dryRun(
     capitals: [...capitals.values()],
     breaks: [...breaks.values()],
     repeated: [...repeated.values()].filter((r) => r.times > 1),
+    formats: [...formats.values()],
+    unseen,
   };
+}
+
+/**
+ * A copy of `item` that the variant's `when` matches: each `eq` condition on one of the item's
+ * own fields (`match.state eq "U"`) set. Undefined when the `when` reads anything else (a clock,
+ * a page choice, an `exists`): no item can be made for it from the sample's shape.
+ */
+function madeFor(when: unknown, as: string, item: unknown): unknown {
+  if (!item || typeof item !== "object") return undefined;
+  const copy = structuredClone(item) as Record<string, unknown>;
+  for (const cond of Array.isArray(when) ? when : [when]) {
+    const c = cond as { path?: unknown; eq?: unknown };
+    if (typeof c?.path !== "string" || c.eq === undefined || !c.path.startsWith(`${as}.`)) {
+      return undefined;
+    }
+    const keys = c.path.slice(as.length + 1).split(".");
+    let at: Record<string, unknown> = copy;
+    for (const key of keys.slice(0, -1)) {
+      const next = at[key];
+      at[key] = next && typeof next === "object" ? next : {};
+      at = at[key] as Record<string, unknown>;
+    }
+    at[keys.at(-1) as string] = c.eq;
+  }
+  return copy;
 }
 
 // The props that are how a node looks, not where it sits: instances of one card differ in sizes
@@ -648,6 +1364,8 @@ export interface OwnPicture {
   ratio?: string | undefined;
   /** How many different pictures the design gives that place across the members. */
   distinct: number;
+  /** A glyph (an Icon), not a picture file: a mark the design draws, which a plan may keep with why. */
+  icon?: true;
 }
 
 /** What a picture shows: an Image's file, an Icon's glyph (a crest drawn as a vector is an Icon). */
@@ -742,6 +1460,7 @@ export function ownPictures(tree: Tree, members: string[]): OwnPicture[] {
           return pictureRatio(size?.w, size?.h);
         })(),
         distinct: distinct.size,
+        ...(node.type === "Icon" ? { icon: true as const } : {}),
       });
     }
   }

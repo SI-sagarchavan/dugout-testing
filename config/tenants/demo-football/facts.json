@@ -35,6 +35,10 @@
     {
       "key": "site.sports-pages",
       "content": "Club site: when the club has a soccer team, give it Fixtures, Squad and Standings pages. Skip Statistics unless the brief asks for it."
+    },
+    {
+      "key": "locale.timezone",
+      "content": "Europe/London"
     }
   ]
 }

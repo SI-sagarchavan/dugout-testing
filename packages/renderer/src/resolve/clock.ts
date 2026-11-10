@@ -17,7 +17,7 @@ import {
   type Condition,
 } from "@fanos/dsl";
 import type { ClockRef } from "@fanos/renderer/client";
-import type { NodeRenderContext } from "../context.js";
+import { localeOf, type NodeRenderContext } from "../context.js";
 
 const aliasOf = (path: string) => path.split(".")[0] ?? "";
 
@@ -25,7 +25,8 @@ const aliasOf = (path: string) => path.split(".")[0] ?? "";
 export function withClock(props: Record<string, unknown>, ctx: NodeRenderContext): NodeRenderContext {
   if (props.clock === undefined) return ctx;
   const now = ctx.now ?? Date.now();
-  const clock = clockScope(props.clock, ctx.data, now);
+  // a time the data writes with no zone is one on the clocks of the zone the page is shown in
+  const clock = clockScope(props.clock, ctx.data, now, localeOf(ctx));
   if (!clock) {
     console.warn("[fos-render] clock is not { to, as?, units? } — ignored");
     return ctx;
@@ -100,7 +101,7 @@ export function clockParts(
       parts.push({ ref: match[0] });
       paths.push(path);
     } else {
-      parts.push(resolveTemplate(match[0], ctx.data, ctx.timeZone ? { timeZone: ctx.timeZone } : {}).value);
+      parts.push(resolveTemplate(match[0], ctx.data, localeOf(ctx)).value);
     }
     last = at + match[0].length;
   }

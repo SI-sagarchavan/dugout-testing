@@ -41,6 +41,7 @@ import {
   childCaller,
   type Pipeline,
   pipelineTool,
+  sharedWritesAuto,
 } from "./subagents.ts";
 
 /** What the host (CLI, API, evals, tests) supplies: the model, memory, and where runs are written. */
@@ -95,6 +96,8 @@ export interface RunOptions<Input> {
   parent?: { runId: string; callId: string };
   /** Set by the harness on a child run: what its parent works on at the call (ADR 0033). */
   situation?: Situation;
+  /** Set by the harness on a child run: its input as its parent hashed it (ADR 0025). */
+  inputHash?: string;
   /** Caps the spec's budget for this run: a child gets no more than its parent has left. */
   usdPerRun?: number;
 }
@@ -335,50 +338,71 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
       };
 
       /** The tools that run the agents it may call, with this run's own memory of how they went. */
-      const childToolsFor = (opts: RunOptions<z.input<Input>>): Tool[] => {
+      const childToolsFor = async (opts: RunOptions<z.input<Input>>): Promise<Tool[]> => {
         const callers = childRuns.map(({ child, runChild, writes }) =>
-          childCaller(spec, child, runChild, opts, { writes }),
+          childCaller(
+            spec,
+            child,
+            runChild,
+            {
+              ...opts,
+              // a tenant opts in to shared writes under one approval with a house fact's value,
+              // read for the run's verified tenant
+              sharedWrites: (tenantId) => sharedWritesAuto(deps.store, tenantId),
+            },
+            { writes },
+          ),
         );
+        // a run taken up again knows what its writing children already built, before a person
+        // is asked to approve the same again
+        const { runId } = opts;
+        if (runId) await Promise.all(callers.map((c) => c.load(runId, opts.tenantId)));
         return config.pipeline
           ? [pipelineTool(config.pipeline, callers)]
           : callers.map((caller) => agentTool(caller));
       };
 
-      const runAgent = (opts: RunOptions<z.input<Input>>) =>
-        runLocal({
-          agent: definitionFor(opts.model, opts.usdPerRun),
-          input: config.input.parse(opts.input),
-          tenantId: opts.tenantId,
-          ...(opts.depth ? { depth: opts.depth } : {}),
-          ...(opts.parent ? { parent: opts.parent } : {}),
-          ...(opts.situation ? { situation: opts.situation } : {}),
-          tools: [...tools, ...childToolsFor(opts)],
-          client: deps.client,
-          models: deps.models,
-          responder: opts.responder,
-          context: memory.context,
-          // what people decided before, and the house facts, go into the questions this run asks (ADR 0033)
-          learned: createDecisionMemory(deps.store, opts.tenantId),
-          afterRun: async (run) => {
-            // The agent's hook can fail (a disk, a missing checkout) and the run's lessons, examples
-            // and record must still be written; its failure is reported after, not instead.
-            let hookError: unknown;
-            try {
-              await config.afterRun?.(run, deps);
-            } catch (err) {
-              hookError = err;
-            }
-            await memory.afterRun(run);
-            if (hookError !== undefined) throw hookError;
-          },
-          runsDir: deps.runsDir ?? join(REPO_ROOT, ".runs"),
-          sinks: [...(opts.sinks ?? []), ...(deps.tracing ? [deps.tracing.sink()] : [])],
-          ...(config.maxInlineChars ? { maxInlineChars: config.maxInlineChars } : {}),
-          ...(opts.runId ? { runId: opts.runId } : {}),
-          ...(opts.store ? { store: opts.store } : {}),
-          ...(deps.retryDelayMs ? { retryDelayMs: deps.retryDelayMs } : {}),
-          ...(opts.resume ? { resume: opts.resume } : {}),
-        });
+      const runAgent = (opts: RunOptions<z.input<Input>>) => {
+        // input that does not fit is refused at once, before anything is read
+        const input = config.input.parse(opts.input);
+        return childToolsFor(opts).then((childTools) =>
+          runLocal({
+            agent: definitionFor(opts.model, opts.usdPerRun),
+            input,
+            tenantId: opts.tenantId,
+            ...(opts.depth ? { depth: opts.depth } : {}),
+            ...(opts.parent ? { parent: opts.parent } : {}),
+            ...(opts.situation ? { situation: opts.situation } : {}),
+            ...(opts.inputHash ? { inputHash: opts.inputHash } : {}),
+            tools: [...tools, ...childTools],
+            client: deps.client,
+            models: deps.models,
+            responder: opts.responder,
+            context: memory.context,
+            // what people decided before, and the house facts, go into the questions this run asks (ADR 0033)
+            learned: createDecisionMemory(deps.store, opts.tenantId),
+            afterRun: async (run) => {
+              // The agent's hook can fail (a disk, a missing checkout) and the run's lessons, examples
+              // and record must still be written; its failure is reported after, not instead.
+              let hookError: unknown;
+              try {
+                await config.afterRun?.(run, deps);
+              } catch (err) {
+                hookError = err;
+              }
+              await memory.afterRun(run);
+              if (hookError !== undefined) throw hookError;
+            },
+            runsDir: deps.runsDir ?? join(REPO_ROOT, ".runs"),
+            sinks: [...(opts.sinks ?? []), ...(deps.tracing ? [deps.tracing.sink()] : [])],
+            ...(config.maxInlineChars ? { maxInlineChars: config.maxInlineChars } : {}),
+            ...(opts.runId ? { runId: opts.runId } : {}),
+            ...(opts.store ? { store: opts.store } : {}),
+            ...(deps.retryDelayMs ? { retryDelayMs: deps.retryDelayMs } : {}),
+            ...(opts.resume ? { resume: opts.resume } : {}),
+          }),
+        );
+      };
       return Object.assign(runAgent, { tools: tools as readonly Tool[], spec: run.spec });
     },
   };

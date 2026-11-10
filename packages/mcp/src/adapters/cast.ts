@@ -114,4 +114,13 @@ export const castAdapter: ServerAdapter = {
     if (tool !== "cast_run_hook" || result.structured === undefined) return undefined;
     return runFailure(result.structured as RunData);
   },
+  // a hook run with its transform applied: the output a page would get, for the final check
+  observe(tool, args, result) {
+    if (tool !== "cast_run_hook" || args.applyTransform !== true) return undefined;
+    const run = result.structured as RunData | undefined;
+    if (!run?.outputComputed || run.output === undefined || typeof args.hookId !== "string") {
+      return undefined;
+    }
+    return { key: `hookRun:${args.hookId}`, value: run.output };
+  },
 };

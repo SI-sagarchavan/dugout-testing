@@ -4,7 +4,7 @@ import type { Decision, SavePoint } from "@dugout/contracts";
 import { approve, reject, requestChange } from "@dugout/contracts";
 import { type ForkChange, loadEnv, loadModelConfig, loadTenants, runModel } from "@dugout/core";
 import { createPool } from "@dugout/db";
-import { type AnyAgent, agentIds, loadAgent } from "@dugout/sdk";
+import { type AnyAgent, agentIds, loadAgent, sharedWritesOptIn } from "@dugout/sdk";
 import {
   createRunQueue,
   createValkeyEventLog,
@@ -150,6 +150,8 @@ interface Session {
   prompter?: Prompter;
   cancelMessage: { current: string };
   command?: string;
+  /** Whether a tenant let shared writes through under `--yes` (its house fact), from Postgres. */
+  sharedWrites: (tenantId: string) => Promise<boolean>;
 }
 
 async function withHost(
@@ -172,6 +174,7 @@ async function withHost(
     : createInterface({ input: process.stdin })[Symbol.asyncIterator]();
   const host: Session = {
     queue: createRunQueue({ pool, events }),
+    sharedWrites: sharedWritesOptIn(pool),
     terminal: createTerminal({
       interactive: opts.interactive,
       gate: opts.gate,
@@ -646,7 +649,8 @@ async function followAndReport(
       terminal: host.terminal,
       by: userInfo().username,
       signal: stop.signal,
-      ...(autoApprove ? { autoApprove } : {}),
+      // under --yes a shared write still asks, unless this tenant (the one the host verified) opted in
+      ...(autoApprove ? { autoApprove, sharedWrites: host.sharedWrites } : {}),
     });
     return ending ? report(ending, agent, tenantId, host.interactive) : 1;
   } finally {

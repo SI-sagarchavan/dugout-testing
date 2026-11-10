@@ -22,7 +22,7 @@
               "const": "data"
             }
           ],
-          "description": "How many items the design draws, or \"data\" when a person chose to show whatever the data holds"
+          "description": "How many items the design draws, a positive number. \"data\" is the value for whatever the data holds (a person chose it, or the design draws no fixed number): never send 0"
         },
         "groupBy": {
           "description": "What one card gathers several items by, when it does: date (one card per day, its matches inside). Left out when each card is one item",
@@ -42,6 +42,25 @@
               "example": {
                 "description": "The design's placeholder for it, as drawn: \"166/5\", \"WOMEN\", \"21 JULY\"",
                 "type": "string"
+              },
+              "kind": {
+                "description": "What kind of value the design draws there, when known (bind.load's draftNeed has it): the output is checked to hold that kind",
+                "type": "string",
+                "enum": [
+                  "date",
+                  "time",
+                  "score",
+                  "number",
+                  "image",
+                  "text"
+                ]
+              },
+              "alternatives": {
+                "description": "What the design's cards say at this place when they differ by kind of item (a bowler's card, a batter's): the output gives every one, and each item the ones its kind has",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "required": {
                 "type": "boolean",
@@ -77,6 +96,71 @@
         "hook": {
           "description": "A hook a person already chose for this section: start from it",
           "type": "string"
+        },
+        "order": {
+          "description": "Which items and in what order, from the design's words: soonest-first (a list of what is coming: AHEAD, NEXT, UPCOMING), newest-first (results, news, recent), upcoming-then-latest (a strip that shows what is next and then what just happened), as-is when nothing says. Sort, filter and cut to the count after sorting",
+          "type": "string",
+          "enum": [
+            "soonest-first",
+            "newest-first",
+            "upcoming-then-latest",
+            "as-is"
+          ]
+        },
+        "filterBy": {
+          "description": "A page choice (tabs, a toggle, a filter) that decides which items of the list show. The output is ONE list whose items carry a field holding the option each belongs to, written as the options are",
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The page choice that filters the list: its key"
+            },
+            "options": {
+              "minItems": 2,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "The choice's option values, as the page writes and compares them (`_page.<key>`): the items' field holds exactly these"
+            }
+          },
+          "required": [
+            "key",
+            "options"
+          ]
+        },
+        "sources": {
+          "description": "Feeds a person gave for this data: build on them first, before looking for a hook or a connector that already exists",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Which part of the design it is for, as the person said it: women, men, fixtures"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "description": "The feed's full URL, query included, as the person gave it"
+              },
+              "method": {
+                "description": "GET when not said",
+                "type": "string",
+                "enum": [
+                  "GET",
+                  "POST"
+                ]
+              }
+            },
+            "required": [
+              "label",
+              "url"
+            ]
+          }
         }
       },
       "required": [

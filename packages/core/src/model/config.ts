@@ -6,13 +6,14 @@ import { REPO_ROOT } from "../tenants.ts";
 import { ModelPrice } from "./pricing.ts";
 
 /** Decides how effort, reasoning and cache points go over the wire. Read from the Bedrock id. */
-export type ModelFamily = "claude" | "nova-2" | "nova" | "openai";
+export type ModelFamily = "claude" | "nova-2" | "nova" | "openai" | "moonshot";
 
 export function modelFamily(id: string): ModelFamily | undefined {
   if (/(^|\.)anthropic\.claude-/.test(id)) return "claude";
   if (/(^|\.)amazon\.nova-2-/.test(id)) return "nova-2";
   if (/(^|\.)amazon\.nova-/.test(id)) return "nova";
   if (/(^|\.)openai\.gpt-/.test(id)) return "openai";
+  if (/(^|\.)moonshotai\.kimi-/.test(id)) return "moonshot";
   return undefined;
 }
 
@@ -26,6 +27,8 @@ export const FAMILIES: Record<
   nova: { efforts: [], strictTools: false, forcedTools: false },
   // effort per the user, wire format untried on si-main; strict and forced tools unmeasured
   openai: { efforts: Effort.options, strictTools: false, forcedTools: false },
+  // Kimi K3.1: tool calls and reasoning text tried on si-main on 2026-11-10; it reasons on its own, with no effort setting
+  moonshot: { efforts: [], strictTools: false, forcedTools: false },
 };
 
 export const ModelEntry = z
@@ -57,7 +60,7 @@ const ModelList = z
         ctx.addIssue({
           code: "custom",
           path: ["models", name, "id"],
-          message: `${model.id} is of no known family (claude, nova-2, nova, openai)`,
+          message: `${model.id} is of no known family (claude, nova-2, nova, openai, moonshot)`,
         });
         continue;
       }

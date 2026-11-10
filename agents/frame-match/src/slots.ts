@@ -10,7 +10,7 @@
  * slots its key is named for the slot (`squad_women_men`), so two slots' tabs never share state.
  */
 
-import type { AskedQuestion } from "@dugout/contracts";
+import type { OpenItem } from "@dugout/contracts";
 import { findSlots, holding, type IrDoc, type IrNode } from "@dugout/library";
 import { z } from "zod";
 import { Content } from "./content.ts";
@@ -40,13 +40,25 @@ export interface FoundSlots {
 /** Two slots a person said are one section: by their ids, the upper one first. */
 export type Join = readonly [string, string];
 
+/** What the reading says of the frame's shape: each container's kind, and the layers that are one part. */
+export interface SlotShape {
+  layouts: ReadonlyArray<{ src: string; kind: string }>;
+  groups: ReadonlyArray<ReadonlyArray<string>>;
+}
+
 export function findFrameSlots(
   tools: Toolchain,
   bundle: Bundle,
   joins: readonly Join[] = [],
+  shape?: SlotShape,
 ): FoundSlots {
   const doc = bundle.doc as unknown as IrDoc;
-  const found = findSlots(doc, { layouts: tools.detectLayout(bundle.doc) });
+  const found = findSlots(
+    doc,
+    shape
+      ? { layouts: shape.layouts, groups: shape.groups }
+      : { layouts: tools.detectLayout(bundle.doc) },
+  );
   const within = (id: string): string[] => {
     const out: string[] = [];
     const walk = (n: IrNode) => {
@@ -120,9 +132,10 @@ export function joined(
 }
 
 export const SPLIT_QUESTION = "section_split";
-/** The answer that keeps every part as it was found. */
+/** The candidate that keeps every part as it was found. */
 export const KEEP_APART = "apart";
-const joinValue = ([a, b]: Join) => `join:${a}+${b}`;
+/** A join as a candidate's value: the ids of the two parts, joined by `+`. */
+export const joinValue = ([a, b]: Join) => `${a}+${b}`;
 
 /**
  * The parts the finder was unsure of, as joins a person may make: a heading with nothing under it
@@ -155,37 +168,33 @@ export function splitChoices(found: FoundSlots): { joins: Join[]; proposed: Join
   return { joins, proposed };
 }
 
-/** The question a person settles the split by, or nothing when the finder was sure. */
-export function splitQuestion(found: FoundSlots): AskedQuestion | undefined {
+/**
+ * What is open about the split (ADR 0029, 0033 amendment), as data and never as a question: the
+ * parts the finder was unsure of, each join a tool can make, the finder's own proposal and what
+ * memory holds. Nothing when the finder was sure. The agent's model settles it from memory, from
+ * the evidence, or by asking a person in its own words, and passes the joins to `frame.split`.
+ */
+export function splitOpen(found: FoundSlots, before?: string): OpenItem | undefined {
   const { joins, proposed } = splitChoices(found);
   if (joins.length === 0) return undefined;
   const name = (id: string) => found.slots.find((s) => s.id === id)?.name ?? id;
   const unsure = found.slots.filter((s) => s.confidence === "unsure");
   return {
     id: SPLIT_QUESTION,
-    kind: "multi",
-    question: "Which parts of this frame are one section?",
-    why: `The frame reads as ${found.slots.length} parts (${found.slots.map((s) => s.name).join(", ")}), and some are unclear: ${unsure.map((s) => `${s.name}: ${s.why ?? "unsure"}`).join("; ")}. Each section is bound to its own data, so parts joined here share one data source.`,
-    options: [
-      { value: KEEP_APART, label: "Keep them apart", description: "Each part is its own section." },
+    about: "which parts of the frame are one section",
+    evidence: `The frame reads as ${found.slots.length} parts (${found.slots.map((s) => `${s.name} [${s.id}]`).join(", ")}), and some are unclear: ${unsure.map((s) => `${s.name}: ${s.why ?? "unsure"}`).join("; ")}. Each section is bound to its own data, so parts joined here share one data source.`,
+    candidates: [
+      { value: KEEP_APART, does: "each part is its own section (joins [])" },
       ...joins.map((pair) => ({
         value: joinValue(pair),
-        label: `One section: ${name(pair[0])} and ${name(pair[1])}`,
-        description: "They are bound together, to one data source.",
+        does: `${name(pair[0])} and ${name(pair[1])} are one section, bound together to one data source`,
       })),
     ],
-    allowOther: false,
-    proposed: proposed.length > 0 ? proposed.map(joinValue) : [KEEP_APART],
+    proposed: proposed.length > 0 ? proposed.map(joinValue).join(", ") : KEEP_APART,
+    canTake:
+      "frame.split's joins: [{ upper, lower }, ...], any pairs of the parts' ids above (the upper one first); [] keeps every part apart",
+    ...(before ? { before } : {}),
   };
-}
-
-/** The joins an answer makes; an answer that is not one of the question's makes none. */
-export function joinsFrom(answer: unknown): Join[] {
-  const values = Array.isArray(answer) ? answer : typeof answer === "string" ? [answer] : [];
-  return values.flatMap((v) => {
-    const m = /^join:(.+)\+(.+)$/.exec(String(v));
-    return m ? [[m[1], m[2]] as Join] : [];
-  });
 }
 
 /** What a run says of one slot. */
@@ -230,6 +239,20 @@ export function ownersOf(nodes: TreeNode[], found: FoundSlots): Map<string, numb
     return at;
   };
   for (const n of nodes) of(n);
+  // A node the lowering made (a carousel around one drawn slide, `synthetic:` src) is in no slot by
+  // its own src: it is the slot's whose layers it holds, when they are all one slot's.
+  const kids = new Map<string, TreeNode[]>();
+  for (const n of nodes)
+    if (n.parent !== null) kids.set(n.parent, [...(kids.get(n.parent) ?? []), n]);
+  const held = (n: TreeNode): number => {
+    if (!n.src?.startsWith("synthetic:") || (owner.get(n.id) ?? -1) >= 0)
+      return owner.get(n.id) ?? -1;
+    const under = (kids.get(n.id) ?? []).map(held).filter((i) => i >= 0);
+    const at = under.length > 0 && under.every((i) => i === under[0]) ? (under[0] as number) : -1;
+    owner.set(n.id, at);
+    return at;
+  };
+  for (const n of nodes) held(n);
   return owner;
 }
 

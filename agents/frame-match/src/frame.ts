@@ -47,8 +47,11 @@ const MAX_SURFACES = 5;
 const MIN_SURFACE_MISMATCH = 200;
 /** Below this a placement by search is a guess, not a measurement. */
 const MIN_ESTIMATED_MATCH = 50;
-/** More words than this and a group is content, not art. */
-const MAX_ART_WORDS = 2;
+/**
+ * More words than this and a group is content, not art. None: a picture with words in it is a
+ * screenshot of text that no data can change, and the tree draws words as Text.
+ */
+const MAX_ART_WORDS = 0;
 /** How far apart, in pixels of a screenshot, lines can be and still line up. */
 const ALIGN_SLACK = 6;
 /** How far a pixel, summed over red, green and blue, can be from a text's colour and be its ink. */
@@ -75,6 +78,11 @@ export interface Bundle {
   notes: DesignerNote[];
   themeRaw: unknown;
   themeArtifactId: string;
+  /**
+   * The theme is the tenant's (a Handoff's FanXP theme), the one its pages are drawn with: a frame
+   * can't add a token to it, so a paint with no token in it is reported and not drawn.
+   */
+  themeFixed?: boolean;
   plates: Array<{ nodeId: string; name: string; png: Buffer }>;
 }
 
@@ -489,6 +497,18 @@ function themeGradients(raw: unknown): Array<{ name: string; gradient: RawGradie
  * opacity never differ by more than a person would see. Stops may be placed differently: a fade
  * that reaches nothing at 83% and one that adds a stop at 100% are the same fade.
  */
+/**
+ * The theme's token for a layer's tokenless gradient, when it has one with the same paint. Undefined
+ * when the layer has no linear gradient, or the theme none like it.
+ */
+export function themeGradientFor(bundle: Pick<Bundle, "byId" | "themeRaw">, src: string) {
+  const ir = bundle.byId.get(src);
+  const gradient = ir && gradientOf(ir);
+  if (!gradient) return undefined;
+  return themeGradients(bundle.themeRaw).find((token) => sameGradient(token.gradient, gradient))
+    ?.name;
+}
+
 export function sameGradient(a: RawGradient, b: RawGradient): boolean {
   if ((((a.degree - b.degree) % 360) + 360) % 360 !== 0) return false;
   for (let at = 0; at <= 100; at += 2) {
@@ -552,10 +572,83 @@ function deleteDescendants(nodes: TreeNode[], id: string): TreeNode[] {
   return nodes.filter((node) => !gone.has(node.id));
 }
 
-/** The screenshot to crop a layer from: its own, else the smallest one that holds it. */
-function plateFor(tools: Toolchain, bundle: Bundle, node: IrNode) {
+/**
+ * What a plate is used for. `look` reads pixels to measure or to find text's alignment, from any
+ * picture. `source` takes pixels that go into the tree as an Image, and only a layer's own picture
+ * gives those: a section's screenshot (or the frame's) holds everything painted over the layer, and
+ * a card backdrop cut from one came with its photo, name, role, stats and badge baked in, under the
+ * same words drawn again from data.
+ */
+type PlateUse = "look" | "source";
+
+/**
+ * A layer with paint of its own on the page: words, a shape, a fill or a stroke. A mask's shape
+ * clips and paints nothing; a group or a frame with no paint only holds what its children paint.
+ */
+function irPaints(node: IrNode): boolean {
+  if (node.isMask === true || (typeof node.opacity === "number" && node.opacity <= 0)) return false;
+  if (node.type === "TEXT") return true;
+  if (node.image?.hasImageFill) return true;
+  if (node.fill != null || node.stroke != null) return true;
+  return node.type === "VECTOR" || node.type === "IMAGE";
+}
+
+/** Two boxes that share more than this, in px on both sides, overlap: under it is antialiasing. */
+const OVERLAP_PX = 1;
+
+/**
+ * Layers in `plateId`'s picture, besides `node` and what it holds, that paint where `node` shows: a
+ * layer over it, beside it, or a frame around it with a fill of its own (in the picture wherever the
+ * layer is see-through). Their pixels are in any cut of `node` from that picture.
+ */
+export function paintedWith(bundle: Bundle, plateId: string, node: IrNode): string[] {
+  const want = visibleBox(bundle, node.id);
+  if (!want) return [];
+  const own = subtreeOf(bundle, node.id);
+  const out: string[] = [];
+  for (const id of subtreeOf(bundle, plateId)) {
+    if (own.has(id)) continue;
+    const other = bundle.byId.get(id);
+    if (!other || !irPaints(other)) continue;
+    const seen = visibleBox(bundle, id);
+    const hit = seen && overlap(seen, want);
+    if (hit && hit.w > OVERLAP_PX && hit.h > OVERLAP_PX) out.push(id);
+  }
+  return out;
+}
+
+/**
+ * Whether a layer can be drawn as a picture, and from which: its own picture when it holds no words,
+ * or the picture of a layer around it (a masked card, a pair of arrows exported as one section) when
+ * nothing else in that picture paints where the layer shows. So a picture is only ever the layer:
+ * a card backdrop is never cut from the card's screenshot with the name and stats on it.
+ */
+export function pictureSource(bundle: Bundle, id: string): string | undefined {
+  const node = bundle.byId.get(id);
+  if (!node) return undefined;
+  const own = subtreeOf(bundle, id);
+  const words = [...own].some((inner) => bundle.byId.get(inner)?.type === "TEXT");
+  if (bundle.plates.some((plate) => plate.nodeId === id)) return words ? undefined : id;
+  let best: { id: string; size: number } | undefined;
+  for (const plate of bundle.plates) {
+    const inside = subtreeOf(bundle, plate.nodeId);
+    if (!inside.has(id) || paintedWith(bundle, plate.nodeId, node).length > 0) continue;
+    if (!best || inside.size < best.size) best = { id: plate.nodeId, size: inside.size };
+  }
+  return best?.id;
+}
+
+/**
+ * The screenshot to crop a layer from: its own, else the smallest one that holds it. For `source`
+ * only the art picture `pictureSource` names.
+ */
+function plateFor(tools: Toolchain, bundle: Bundle, node: IrNode, use: PlateUse = "look") {
+  const from = use === "source" ? pictureSource(bundle, node.id) : undefined;
+  if (use === "source" && !from) return undefined;
+  const plates =
+    use === "source" ? bundle.plates.filter((plate) => plate.nodeId === from) : bundle.plates;
   // the visible part of a layer running off the frame may be all of its screenshot
-  const own = bundle.plates.find((plate) => plate.nodeId === node.id);
+  const own = plates.find((plate) => plate.nodeId === node.id);
   const part = own && placeOf(bundle, node.id, plateImage(tools, own.png));
   if (own && part?.partial && "scale" in part.fit) {
     return { plate: own, vis: part.box, scale: part.fit.scale, rank: 0 };
@@ -563,7 +656,7 @@ function plateFor(tools: Toolchain, bundle: Bundle, node: IrNode) {
   const want = visibleBox(bundle, node.id);
   if (!want) return undefined;
   let best: { plate: Bundle["plates"][number]; vis: Rect; scale: number; rank: number } | undefined;
-  for (const plate of bundle.plates) {
+  for (const plate of plates) {
     // A picture of a single layer holds that layer alone. Over another layer's box it has none of
     // what is really there: a breadcrumb's chevron came out as a square of the banner's texture.
     if (isArtPlate(bundle, plate) && !subtreeOf(bundle, plate.nodeId).has(node.id)) continue;
@@ -599,25 +692,25 @@ function plateFor(tools: Toolchain, bundle: Bundle, node: IrNode) {
 }
 
 /**
- * A plate's pixels under one Figma node, keeping transparency, padded where the node runs off the
- * plate. "offscreen" means no screenshot shows it, so nothing can be wrong with it.
+ * A layer's own picture under one Figma node, keeping transparency, padded where the node runs off
+ * the picture. "offscreen" means the layer doesn't show, so nothing can be wrong with it; undefined
+ * means the export has no picture of it alone (`pictureSource`).
  */
 function cropFromPlates(
   tools: Toolchain,
   bundle: Bundle,
   node: IrNode,
-  gradients: string[],
   window?: Rect,
-): string | "offscreen" {
-  const found = plateFor(tools, bundle, node);
-  if (!found) return "offscreen";
+): string | "offscreen" | undefined {
+  if (!visibleBox(bundle, node.id)) return "offscreen";
+  const found = plateFor(tools, bundle, node, "source");
+  if (!found) return undefined;
   // a picture that fills its clipping frame is the part of the layer inside that frame
   const box = window ?? node.geometry.bbox;
   // Past a clipping edge the layer shows nothing, but the plate holds whatever else is there. Only
   // what the ancestors let through is the layer's: the rest of the crop stays transparent.
   const shows = clipOf(bundle, node.id);
   if (!shows) return "offscreen";
-  const over = fadesOver(bundle, node, gradients);
   const { vis, scale } = found;
   const image = plateImage(tools, found.plate.png);
   const left = Math.round((box.x - vis.x) * scale);
@@ -634,96 +727,17 @@ function cropFromPlates(
       if (sx < 0 || sx >= image.width) continue;
       const from = (sy * image.width + sx) * 4;
       const to = (y * w + x) * 4;
-      image.data.copy(out.data, to, from, from + 4);
       const pageX = vis.x + (sx + 0.5) / scale;
       const pageY = vis.y + (sy + 0.5) / scale;
-      if (
-        pageX < shows.x ||
-        pageY < shows.y ||
-        pageX >= shows.x + shows.w ||
-        pageY >= shows.y + shows.h
-      ) {
-        out.data.fill(0, to, to + 4);
-        continue;
-      }
-      for (const fade of over) lift(out.data, to, fade, pageX, pageY);
+      const inside =
+        pageX >= shows.x &&
+        pageY >= shows.y &&
+        pageX < shows.x + shows.w &&
+        pageY < shows.y + shows.h;
+      if (inside) image.data.copy(out.data, to, from, from + 4);
     }
   }
   return `data:image/png;base64,${tools.png.write(out).toString("base64")}`;
-}
-
-export interface Fade {
-  box: { x: number; y: number; w: number; h: number };
-  gradient: RawGradient;
-}
-
-/** The gradients painted above this layer: the screenshot's pixels of it already have them in. */
-function fadesOver(bundle: Bundle, node: IrNode, gradients: string[]): Fade[] {
-  const at = bundle.order.get(node.id) ?? 0;
-  const box = node.geometry.bbox;
-  const fades: Fade[] = [];
-  for (const src of gradients) {
-    const ir = bundle.byId.get(src);
-    const gradient = ir && gradientOf(ir);
-    if (!ir || !gradient || (bundle.order.get(src) ?? 0) < at) continue;
-    const over = ir.geometry.bbox;
-    if (
-      box.x < over.x + over.w &&
-      over.x < box.x + box.w &&
-      box.y < over.y + over.h &&
-      over.y < box.y + box.h
-    ) {
-      fades.push({ box: over, gradient });
-    }
-  }
-  return fades;
-}
-
-/** A gradient's colour and cover at a point on the page. */
-function fadeAt(fade: Fade, x: number, y: number) {
-  const { box, gradient } = fade;
-  const along = {
-    90: (x - box.x) / box.w,
-    270: 1 - (x - box.x) / box.w,
-    180: (y - box.y) / box.h,
-    0: 1 - (y - box.y) / box.h,
-  }[gradient.degree];
-  const t = (along ?? 0) * 100;
-  const { stops } = gradient;
-  let low = stops[0] as RawGradient["stops"][number];
-  let high = stops[stops.length - 1] as RawGradient["stops"][number];
-  for (const stop of stops) {
-    if (stop.percent <= t) low = stop;
-    if (stop.percent >= t) {
-      high = stop;
-      break;
-    }
-  }
-  const span = high.percent - low.percent;
-  const mix = span > 0 ? Math.min(1, Math.max(0, (t - low.percent) / span)) : 0;
-  const [r, g, b] = channels(low.color);
-  const [r2, g2, b2] = channels(high.color);
-  return {
-    rgb: [r + (r2 - r) * mix, g + (g2 - g) * mix, b + (b2 - b) * mix],
-    cover: (low.opacity + (high.opacity - low.opacity) * mix) / 100,
-  };
-}
-
-/** Takes a gradient back out of a pixel, so the gradient drawn over the crop doesn't land twice. */
-export function lift(data: Buffer, at: number, fade: Fade, x: number, y: number) {
-  // A gradient paints only its own box. Outside it nothing was painted over this pixel, and
-  // clamping to the nearest stop would take out a colour that was never there.
-  const { box } = fade;
-  if (x < box.x || y < box.y || x >= box.x + box.w || y >= box.y + box.h) return;
-  const { rgb, cover } = fadeAt(fade, x, y);
-  // under a nearly solid fade nothing is left to recover, and nothing will show through either
-  if (cover <= 0 || cover > 0.97) return;
-  for (let c = 0; c < 3; c++) {
-    const seen = data[at + c] ?? 0;
-    data[at + c] = Math.round(
-      Math.min(255, Math.max(0, (seen - (rgb[c] ?? 0) * cover) / (1 - cover))),
-    );
-  }
 }
 
 /** What a surface the agent adds may be called. */
@@ -801,6 +815,12 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
       tokenOf.set(src, same.name);
       continue;
     }
+    if (bundle.themeFixed) {
+      missing.push(
+        `${src} (the tenant's theme has no token for this gradient: add it to the FanXP theme)`,
+      );
+      continue;
+    }
     gradients.set(gradientName(src), gradient);
     tokenOf.set(src, gradientName(src));
   }
@@ -842,9 +862,13 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
       : parent && found.some((node) => (node.props.place as { anchor?: string })?.anchor === "fill")
         ? visibleBox(bundle, parent)
         : undefined;
-    const crop = ir && cropFromPlates(tools, bundle, ir, overrides.gradients, window);
+    const crop = ir && cropFromPlates(tools, bundle, ir, window);
     if (!ir || !crop || found.length === 0) {
-      missing.push(src);
+      missing.push(
+        ir && found.length > 0
+          ? `${src} (the export has no picture of this layer alone: re-export it from the plugin)`
+          : src,
+      );
       continue;
     }
     if (crop === "offscreen") continue;
@@ -1767,6 +1791,17 @@ export interface FirstPass {
   measurement: Measurement;
   /** Fixes the code took back out because the frame scored worse with them. */
   undone: string[];
+  /**
+   * Pictures and icons the export holds no picture of on their own. They are left as the compiler
+   * drew them (an empty Image, a placeholder icon), never cut from a section's screenshot.
+   */
+  noPicture: string[];
+  /**
+   * Gradients the tenant's theme has no token for (a Handoff's theme is fixed), said so a person adds
+   * the token to the FanXP theme, which every page draws with. Until then each is drawn as its own
+   * picture from the export when it has one, and left unpainted when it has none.
+   */
+  noToken: string[];
 }
 
 /** Leaving a fix out has to gain this much, in points of match, before it is taken out. */
@@ -1829,8 +1864,11 @@ export async function keepWhatHelps(
 }
 
 /**
- * The fixes that need no judgement: every tokenless gradient kept raw, every placeholder icon and
- * picture the export has no file for drawn from the screenshot. Both are reported, so a reader can see what is a stand-in.
+ * The fixes that need no judgement: every tokenless gradient painted with its theme token (or, the
+ * theme lacking one, drawn as its own picture and listed in `noToken`), every placeholder icon and
+ * picture the export has no file for drawn from its own picture in the export. Never from a
+ * section's screenshot: one with no picture of its own is left as compiled and listed in
+ * `noPicture`. Both are reported, so a reader can see what is a stand-in.
  */
 export async function firstPass(
   tools: Toolchain,
@@ -1840,40 +1878,42 @@ export async function firstPass(
   plain?: Measurement,
 ): Promise<FirstPass> {
   const base = buildFrame(tools, bundle, start);
-  // finds where screenshots with padding sit, so art can be cropped from them too
+  // finds where screenshots with padding sit
   const plainMeasured = plain ?? (await measureFrame(tools, bundle, base));
   const art = artGroups(tools, bundle, base);
-  const baked = bakedArt(tools, bundle, base);
   const vectorPictures = vectorArt(tools, bundle, base);
+  // a layer running off the frame with a picture of its own: that part of it, as one picture
   const parts = bundle.plates
+    .filter((plate) => isArtPlate(bundle, plate))
     .filter((plate) => placeOf(bundle, plate.nodeId, plateImage(tools, plate.png))?.partial)
     .filter((plate) => base.tree.nodes.some((node) => node.src === plate.nodeId))
     .map((plate) => plate.nodeId);
   const inArt = new Set(
-    [...art, ...vectorPictures, ...baked.crops, ...baked.drops, ...parts].flatMap((id) => [
-      ...subtreeOf(bundle, id),
-    ]),
+    [...art, ...vectorPictures, ...parts].flatMap((id) => [...subtreeOf(bundle, id)]),
   );
   const outside = (src: string) => !inArt.has(src);
+  // pictures and icons with no picture of their own stay as compiled, and are said
+  const wanted = [
+    ...placeholderIcons(base).filter(outside),
+    ...missingImages(base).filter(outside),
+  ];
+  const noPicture = wanted.filter((src) => visibleBox(bundle, src) && !pictureSource(bundle, src));
+  const pictured = wanted.filter((src) => !noPicture.includes(src));
   const texts = base.notes
     .filter((n) => n.kind === "unresolved-text-style")
     .map((n) => n.irId ?? "")
     .filter((src) => src && outside(src) && visibleBox(bundle, src));
+  const unbound = unboundGradients(bundle, base.tree).filter(outside);
+  const noToken = bundle.themeFixed ? unbound.filter((src) => !themeGradientFor(bundle, src)) : [];
+  // until the theme has the token, the gradient is drawn as its own picture: exactly the paint, see-through where it is
+  const standIns = noToken.filter((src) => visibleBox(bundle, src) && pictureSource(bundle, src));
   const overrides: Overrides = {
     ...start,
-    gradients: [...start.gradients, ...unboundGradients(bundle, base.tree).filter(outside)],
+    gradients: [...start.gradients, ...unbound.filter((src) => !noToken.includes(src))],
     crops: [
-      ...new Set([
-        ...start.crops,
-        ...art,
-        ...vectorPictures,
-        ...baked.crops,
-        ...parts,
-        ...placeholderIcons(base).filter(outside),
-        ...missingImages(base).filter(outside),
-      ]),
+      ...new Set([...start.crops, ...art, ...vectorPictures, ...parts, ...pictured, ...standIns]),
     ],
-    drops: [...new Set([...start.drops, ...baked.drops])],
+    drops: start.drops,
     texts: [...new Set([...start.texts, ...texts])],
     surfaces: { ...start.surfaces, ...roundSurfaces(bundle, base) },
     props: [...start.props, ...alignedTexts(tools, bundle, inArt)],
@@ -1911,7 +1951,7 @@ export async function firstPass(
       measurement = await measureFrame(tools, bundle, built);
     }
   }
-  return { overrides: kept, built, measurement, undone };
+  return { overrides: kept, built, measurement, undone, noPicture, noToken };
 }
 
 /**
@@ -1975,54 +2015,6 @@ export function gradientRectangle(node: IrNode): boolean {
     node.stroke == null &&
     gradientOf(node) !== undefined
   );
-}
-
-/**
- * The same masked art when the only screenshot is of the whole card around it. The first group with
- * a picture becomes that part of the screenshot, which has everything above it baked in too, so art
- * groups inside what it covers are left out. Real layers still paint over it, so a name that lines
- * up with its baked self reads as one and a change of data shows as two.
- */
-function bakedArt(tools: Toolchain, bundle: Bundle, base: Built) {
-  const vectors = new Set(
-    base.notes.filter((n) => n.kind === "decorative-vector").map((n) => n.irId),
-  );
-  const pictures = new Set(missingImages(base));
-  const hasPlate = new Set(bundle.plates.map((plate) => plate.nodeId));
-  const crops: string[] = [];
-  const drops: string[] = [];
-  for (const plate of bundle.plates) {
-    const card = bundle.byId.get(plate.nodeId);
-    if (!card || card.type === "GROUP" || card.type === "TEXT") continue;
-    const place = placeOf(bundle, plate.nodeId, plateImage(tools, plate.png));
-    if (!place || place.partial || "problem" in place.fit || place.fit.extraW !== undefined) {
-      continue;
-    }
-    let painted: Rect | undefined;
-    for (const child of card.children ?? []) {
-      if (child.type !== "GROUP" || hasPlate.has(child.id)) continue;
-      const seen = visibleBox(bundle, child.id);
-      if (!seen || !base.tree.nodes.some((node) => node.src === child.id)) continue;
-      const layer = [...subtreeOf(bundle, child.id)];
-      const words = layer.filter((id) => bundle.byId.get(id)?.type === "TEXT").length;
-      if (words > MAX_ART_WORDS) continue;
-      const picture = layer.some((id) => pictures.has(id));
-      if (!painted && picture) {
-        crops.push(child.id);
-        painted = seen;
-      } else if (
-        painted &&
-        (picture || layer.some((id) => vectors.has(id))) &&
-        seen.x >= painted.x &&
-        seen.y >= painted.y &&
-        seen.x + seen.w <= painted.x + painted.w &&
-        seen.y + seen.h <= painted.y + painted.h
-      ) {
-        drops.push(child.id);
-      }
-    }
-  }
-  return { crops, drops };
 }
 
 /** A corner radius as big as the layer is a circle or a pill, which the theme has a token for. */

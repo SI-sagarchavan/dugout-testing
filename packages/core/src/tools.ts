@@ -42,23 +42,49 @@ export function createToolRegistry(tools: Tool[]): ToolRegistry {
     definitions: (names) =>
       names.flatMap((name) => {
         const tool = byName.get(name);
-        return tool ? [toolDefinition(tool.name, tool.description, tool.input)] : [];
+        return tool
+          ? [toolDefinition(tool.name, tool.description, tool.input, { reason: asksReason(tool) })]
+          : [];
       }),
   };
 }
 
-export function toolDefinition(name: string, description: string, input: z.ZodType) {
+/** The `reason` every write that waits for a yes carries: what the call does and why (ADR 0029). */
+export const REASON = "reason";
+
+/** Whether a call to this tool waits for a person's yes, and so says why it is made. */
+export const asksReason = (tool: Pick<Tool, "effect" | "noApproval">): boolean =>
+  tool.effect === "write" && !tool.noApproval;
+
+const REASON_DESCRIPTION =
+  "What this call does and why, in a sentence or two, for the person who approves it. They read it before the call runs, beside its input";
+
+export function toolDefinition(
+  name: string,
+  description: string,
+  input: z.ZodType,
+  opts: { reason?: boolean } = {},
+) {
   const { $schema: _, ...parameters } = z.toJSONSchema(input, { io: "input" }) as Record<
     string,
     unknown
   >;
   if (parameters.type !== "object") throw new Error(`${name}: input schema must be an object`);
+  if (opts.reason) {
+    parameters.properties = {
+      ...(parameters.properties as Record<string, unknown> | undefined),
+      [REASON]: { type: "string", minLength: 1, description: REASON_DESCRIPTION },
+    };
+    parameters.required = [
+      ...new Set([...((parameters.required as string[] | undefined) ?? []), REASON]),
+    ];
+  }
   return { name, description, parameters };
 }
 
 export type Preflight =
   | { ok: false; stage: DenialStage; reason: string; advisory?: boolean }
-  | { ok: true; tool: Tool; input: unknown; needsApproval: boolean };
+  | { ok: true; tool: Tool; input: unknown; needsApproval: boolean; reason?: string };
 
 /**
  * Pipeline stages that need no I/O: registry, spec allow-list, policy and schema check, and the
@@ -69,7 +95,10 @@ export function preflight(
   call: ToolCall,
   spec: AgentSpec,
   registry: ToolRegistry,
-  ctx?: Pick<ToolContext, "tenantId" | "runId" | "input">,
+  ctx?: Pick<ToolContext, "tenantId" | "runId" | "input" | "callId"> & {
+    /** The call is one a person already saw (waiting, or approved before a crash): saved without a reason before they existed. */
+    replay?: boolean;
+  },
 ): Preflight {
   const tool = registry.get(call.name);
   if (!tool) return { ok: false, stage: "registry", reason: `unknown tool ${call.name}` };
@@ -85,6 +114,20 @@ export function preflight(
   }
   const violation = policyViolation(args);
   if (violation) return { ok: false, stage: "policy", reason: violation };
+  // A write that waits for a yes says why (`reason`); it is the approval's wording, not the tool's input.
+  let reason: string | undefined;
+  if (asksReason(tool) && args && typeof args === "object" && !Array.isArray(args)) {
+    const { [REASON]: said, ...rest } = args as Record<string, unknown>;
+    if (typeof said === "string" && said.trim()) reason = said.trim();
+    else if (!ctx?.replay) {
+      return {
+        ok: false,
+        stage: "policy",
+        reason: `${REASON}: required. Say what this call does and why, for the person who approves it`,
+      };
+    }
+    args = rest;
+  }
   const parsed = tool.input.safeParse(args);
   if (!parsed.success) {
     return { ok: false, stage: "policy", reason: z.prettifyError(parsed.error) };
@@ -124,7 +167,7 @@ export function preflight(
 
   const needsApproval =
     (tool.effect === "write" && !tool.noApproval) || spec.approvals.includes(tool.name);
-  return { ok: true, tool, input: value, needsApproval };
+  return { ok: true, tool, input: value, needsApproval, ...(reason ? { reason } : {}) };
 }
 
 export interface ToolExecutor {

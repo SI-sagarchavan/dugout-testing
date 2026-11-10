@@ -19,6 +19,8 @@ export interface RenderToPngOptions {
   origin?: string;
   /** IANA zone for the `date` pipe; UTC when unset. */
   timeZone?: string;
+  /** Which comes first where day and month could swap (`07/08/2026`): month when unset. */
+  dateOrder?: "mdy" | "dmy";
   /** Pre-emitted theme CSS (from emitCss). Required for correct pixels. */
   themeCss: string;
   width: number;
@@ -187,6 +189,7 @@ async function buildPage(tree: FlatTree, options: RenderToPngOptions): Promise<B
       ...(options.designWidth ? { designWidth: options.designWidth } : {}),
       ...(options.origin ? { origin: options.origin } : {}),
       ...(options.timeZone ? { timeZone: options.timeZone } : {}),
+      ...(options.dateOrder ? { dateOrder: options.dateOrder } : {}),
     }),
   );
 

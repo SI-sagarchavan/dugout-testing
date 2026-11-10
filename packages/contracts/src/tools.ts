@@ -59,18 +59,27 @@ export interface Tool<I = unknown, O = unknown, R = I> {
   resumable?: boolean;
   /** Writes, but starts without asking: only the questions it raises reach a person. */
   noApproval?: boolean;
+  /**
+   * A write that changes something other runs and other people use (a connector every hook can
+   * call). Its approval is a person's: a parent's yes to a call that started it, or a host that
+   * approves without asking, does not cover it, unless the tenant opted in (`approvals.shared-writes`).
+   */
+  shared?: boolean;
   /** Output is never swapped for a reference, however long: the model needs all of it (a skill). */
   alwaysInline?: boolean;
   /**
    * Replaces the parsed arguments before the gate and the approval. The model still sees `input`.
    * Use it when the host already holds the payload and the model must not send it back.
    */
-  resolve?(input: I, ctx: Pick<ToolContext, "tenantId" | "runId" | "input">): R;
+  resolve?(input: I, ctx: Pick<ToolContext, "tenantId" | "runId" | "input" | "callId">): R;
   /**
    * Sync check after the schema and before approval. A string denies the call.
    * Use it for a gate that needs the verified run input, such as a file the host named.
    */
-  block?(input: R, ctx: Pick<ToolContext, "tenantId" | "runId" | "input">): string | undefined;
+  block?(
+    input: R,
+    ctx: Pick<ToolContext, "tenantId" | "runId" | "input" | "callId">,
+  ): string | undefined;
   /**
    * What `block` says is advice for a step the run is working towards (the tool is not ready until
    * something else is done), not a sign the model is stuck: the same call again after it does not

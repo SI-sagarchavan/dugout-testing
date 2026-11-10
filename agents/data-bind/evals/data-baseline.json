@@ -1,0 +1,25 @@
+{
+  "recordedAt": "2026-11-09T13:07:09.672Z",
+  "source": "run 3acd204c (Handoff 74cebc8c, tenant sb), before tickets 01-05",
+  "cases": {
+    "team-squad": {
+      "no-failed-run": true,
+      "ending": true,
+      "hook": false,
+      "right-entity": false,
+      "coverage": true,
+      "format": false,
+      "variants": true,
+      "cost-and-steps": true
+    },
+    "team-fixtures": {
+      "no-failed-run": true,
+      "ending": false,
+      "hook": true,
+      "coverage": true,
+      "format": false,
+      "variants": true,
+      "cost-and-steps": true
+    }
+  }
+}

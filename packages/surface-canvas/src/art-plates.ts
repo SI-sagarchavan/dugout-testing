@@ -37,7 +37,7 @@ export interface ArtPick {
   h: number;
 }
 
-/** The most art screenshots one export carries, root and masks first. */
+/** The most art screenshots one export carries, masks and photos first, the root last. */
 export const MAX_ART_PLATES = 120;
 
 /** A side shorter than this is a rule or a dot, which compiles as a Divider. */
@@ -45,7 +45,14 @@ const MIN_THICK_PX = 3;
 /** And one smaller than this on both sides is too small to be worth a picture. */
 const MIN_ART_PX = 8;
 
-const PRIORITY: Record<ArtKind, number> = { root: 0, mask: 1, image: 2, vector: 3 };
+/**
+ * Masks and photos first: a layer with no picture of its own has no pixels anywhere downstream, and
+ * frame-match never cuts one out of a section picture (that carries whatever is painted over it).
+ * The root is last. It is only what the frame is measured against, and the section pictures stand
+ * in for it; first, a whole-frame picture took a third of the budget and the card photos went
+ * without.
+ */
+const PRIORITY: Record<ArtKind, number> = { mask: 0, image: 1, vector: 2, root: 3 };
 
 export interface ArtSelection {
   picks: ArtPick[];
@@ -94,8 +101,8 @@ export function selectArtPlates(
   };
   visit(root, true);
 
-  // the root is always first; after it, what the design does with the most room and the most
-  // risk of being baked into something else
+  // what the design does with the most room and the most risk of being baked into something else,
+  // and the root after all of it
   found.sort(
     (a, b) => PRIORITY[a.kind] - PRIORITY[b.kind] || b.w * b.h - a.w * a.h,
   );

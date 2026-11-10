@@ -16,5 +16,8 @@
     "@dugout/contracts": "workspace:^",
     "@dugout/sdk": "workspace:^",
     "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@dugout/core": "workspace:^"
   }
 }

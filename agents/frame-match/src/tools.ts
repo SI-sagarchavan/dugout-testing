@@ -1,10 +1,22 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AwaitingAnswers, defineTool, type ToolContext } from "@dugout/contracts";
+import {
+  defineTool,
+  NeedsSetup,
+  type OpenItem,
+  Settled,
+  type ToolContext,
+} from "@dugout/contracts";
 import { describeImage, describeText, REPO_ROOT } from "@dugout/core";
 import type { Pool } from "@dugout/db";
 import { recordPageChoices } from "@dugout/db/page-choices";
-import { BEFORE_RULE, decidedBefore, decisionKey, type MemoryReader } from "@dugout/memory";
+import {
+  answerText,
+  BEFORE_RULE,
+  decidedBefore,
+  decisionKey,
+  type MemoryReader,
+} from "@dugout/memory";
 import { z } from "zod";
 import { applyContentVerdict, Content, contentOf, contentPrompt, outlineOf } from "./content.ts";
 import { type ControlPlane, createControlPlane, webUrl } from "./control-plane.ts";
@@ -25,36 +37,42 @@ import {
   type Unpainted,
   unpaintedLayers,
 } from "./frame.ts";
-import { createHandoffSource, type FrameSource, handoffConfig } from "./handoff.ts";
 import {
-  applyLayoutAnswers,
-  applyVerdict,
+  createHandoffSource,
+  type FrameSource,
+  handoffConfig,
+  readTenantTheme,
+} from "./handoff.ts";
+import {
   describeChoice,
   describePlatform,
-  judgePrompt,
+  LAYOUT_FACTS,
+  type LayoutBefore,
   LayoutChoice,
   type LayoutIntent,
   type LayoutJudge,
   type LayoutReport,
-  layoutQuestions,
-  needsJudge,
+  openLayoutItems,
   type PlatformRead,
-  readVerdict,
+  settledLayout,
   withPlatform,
+  withStructure,
 } from "./layout.ts";
 import { type Looked, LookInputError, look, type See } from "./look.ts";
 import { NOTES_RULE } from "./notes.ts";
+import { type Read, type Reading, readFrame, unread } from "./read.ts";
 
 import {
   type FoundSlots,
   findFrameSlots,
   type Join,
-  joinsFrom,
   ownersOf,
   SlotReport,
+  type SlotShape,
   SPLIT_QUESTION,
   slotted,
-  splitQuestion,
+  splitChoices,
+  splitOpen,
 } from "./slots.ts";
 import { loadToolchain, type PageChoice, type Toolchain } from "./toolchain.ts";
 
@@ -85,6 +103,23 @@ export const PageChoiceSchema = z.object({
 
 export const MATCH_DIR = join(REPO_ROOT, ".runs", "frame-match");
 
+/** Who settled one open item: what a tool that applies a decision is told, beside the decision. */
+const SettledBy = z
+  .object({
+    id: z
+      .string()
+      .min(1)
+      .describe("The open item's id (kind, items, autoplay, loop, platform, section_split ...)"),
+    by: z
+      .enum(["person", "memory", "agent"])
+      .describe(
+        "person: a person answered your ask. memory: you took it from the item's `before`. agent: you decided it from the evidence",
+      ),
+  })
+  .strict();
+const SETTLED_BY_HELP =
+  "For each open item of this call, who settled it: { id, by }. Items you leave out are recorded as settled by you (agent). A claim of memory is kept only when the item has a `before`";
+
 /** The compile, render and compare steps, so a test can run the tools without a built pipeline. */
 export interface Engine {
   /** `source` reads the frame's own files when they are not the control plane's (a Handoff). */
@@ -100,7 +135,14 @@ export interface Engine {
     bundle: Bundle,
     start: Overrides,
     plain?: Measurement,
-  ): Promise<{ overrides: Overrides; built: Built; measurement: Measurement; undone?: string[] }>;
+  ): Promise<{
+    overrides: Overrides;
+    built: Built;
+    measurement: Measurement;
+    undone?: string[];
+    noPicture?: string[];
+    noToken?: string[];
+  }>;
   /** The design beside the rebuild, read by a vision model. Absent where there is no render. */
   look?(
     bundle: Bundle,
@@ -113,12 +155,14 @@ export interface Engine {
     signal?: AbortSignal,
   ): Promise<Looked>;
   unpainted?(bundle: Bundle, built: Built): Unpainted[];
-  /** What each container of the frame is (`@fanos/compile` `detectLayout`). */
+  /** What each container of the frame is, by the IR alone (`@fanos/compile` `detectLayout`): evidence. */
   layouts?(bundle: Bundle): Promise<LayoutIntent[]>;
+  /** The frame read by eye, every claim checked against the IR (`read.ts`). Throws when it cannot. */
+  read?(bundle: Bundle, read: Read, signal?: AbortSignal): Promise<Reading>;
   /** The page choices a built frame writes: its tabs (`@fanos/dsl` `pageChoices`). */
   choices?(built: Built): Promise<PageChoice[]>;
   /** The slots of the frame: the parts that each show one kind of data (`findSlots`). */
-  slots?(bundle: Bundle, joins?: readonly Join[]): Promise<FoundSlots>;
+  slots?(bundle: Bundle, joins?: readonly Join[], shape?: SlotShape): Promise<FoundSlots>;
   /** A platform carousel config as Carousel props, its colours checked against the theme. */
   platform?(json: unknown, colors: ReadonlySet<string>): Promise<PlatformRead>;
 }
@@ -143,8 +187,10 @@ export function pipelineEngine(tools?: Toolchain): Engine {
       }),
     unpainted: (bundle, built) => unpaintedLayers(bundle, built.tree, built.themeRaw),
     layouts: async (bundle) => (await load()).detectLayout(bundle.doc),
+    read: async (bundle, read, signal) =>
+      readFrame({ tools: await load(), bundle, read, ...(signal ? { signal } : {}) }),
     choices: async (built) => (await load()).pageChoices(built.tree),
-    slots: async (bundle, joins) => findFrameSlots(await load(), bundle, joins),
+    slots: async (bundle, joins, shape) => findFrameSlots(await load(), bundle, joins, shape),
     platform: async (json, colors) => (await load()).fromPlatformCarousel(json, { colors }),
   };
 }
@@ -164,6 +210,13 @@ const Published = z.object({
   unchecked: z.array(z.string()),
   /** Icons on show with no art: the export has no vectors and no screenshot holds them. */
   placeholderIcons: z.number(),
+  /**
+   * Pictures and icons the export has no picture of on their own, left as compiled. They are never
+   * cut from a section's screenshot, which would bake in whatever is painted over them.
+   */
+  noPicture: z.array(z.string()).default([]),
+  /** Gradients the tenant's FanXP theme has no token for, left unpainted: add them to the theme. */
+  noToken: z.array(z.string()).default([]),
   before: z.number().optional(),
   match: z.number().optional(),
   /** Whether anything on the section is data: none means there is nothing to bind. */
@@ -172,6 +225,8 @@ const Published = z.object({
   choices: z.array(PageChoiceSchema).default([]),
   /** The parts of the frame that each show one kind of data, and what each owns. */
   slots: z.array(SlotReport).default([]),
+  /** How each open item was settled, and by whom (frame.layout, frame.split). */
+  settled: z.array(Settled).default([]),
 });
 
 /** A run's work so far. On disk, so a run resumed after an approval keeps its overrides. */
@@ -194,6 +249,10 @@ const State = z.object({
   rawGradients: z.number().default(0),
   /** Fixes the first pass took back out because the frame scored worse with them. */
   undone: z.array(z.string()).default([]),
+  /** Pictures and icons with no picture of their own in the export, left as compiled. */
+  noPicture: z.array(z.string()).default([]),
+  /** Gradients the tenant's FanXP theme has no token for, left unpainted. */
+  noToken: z.array(z.string()).default([]),
   /** Layers the design paints and the compile does not: the score cannot see these. */
   unpainted: z.array(z.custom<Unpainted>()).default([]),
   /** How many times frame.look was called, so a run can be told apart by whether it looked. */
@@ -204,8 +263,18 @@ const State = z.object({
   examinedSurfaces: z.array(z.string()).default([]),
   /** Times frame.publish was refused for findings not yet examined. */
   publishRefusals: z.number().default(0),
-  /** What each container is: detected by frame.load, decided through frame.layout. */
+  /** What each container is: read by frame.load, decided through frame.layout. */
   layouts: z.array(z.custom<LayoutReport>()).default([]),
+  /** The frame as frame.load read it: its experience, its parts, what it groups as one. */
+  reading: z.custom<Reading>().optional(),
+  /** What is open about each container (by its src), as frame.load reported it, with memory's `before`. */
+  open: z.record(z.string(), z.array(z.custom<OpenItem>())).default({}),
+  /** What is open about which parts are one section, and whether frame.split has settled it. */
+  split: z.object({ item: z.custom<OpenItem>(), settled: z.boolean() }).optional(),
+  /** How each open item was settled, and by whom. */
+  settled: z.array(Settled).default([]),
+  /** Whether anything on the whole frame is data, before its slots are looked at. */
+  frameContent: Content.optional(),
   /** Whether anything on the section is data, read by frame.load. */
   content: Content.optional(),
   /** The frame's slots with whether each shows data, read by frame.load. */
@@ -325,6 +394,7 @@ function standing(state: State) {
       coverage: current.coverage,
       placeholderIcons: current.placeholderIcons,
       ...layoutsOf(state),
+      ...openNote(state),
     };
   }
   // what frame.publish will refuse over, said with every result: a model told only at the refusal
@@ -347,6 +417,25 @@ function standing(state: State) {
     findings: current.findings,
     ...(examine.length > 0 ? { examineBeforePublish: examine } : {}),
     ...layoutsOf(state),
+    ...openNote(state),
+  };
+}
+
+/** What the slot finder takes from the reading: each container's kind, and the layers that are one part. */
+function shapeOf(reading: Reading): SlotShape {
+  return {
+    layouts: reading.layouts.map((l) => ({ src: l.src, kind: l.choice.kind })),
+    groups: reading.groups,
+  };
+}
+
+/** The reading, as the model reads it: what the frame is for, its parts, what was not borne out. */
+function readingOf(reading: Reading) {
+  return {
+    ...(reading.experience ? { experience: reading.experience } : {}),
+    parts: reading.parts,
+    ...(reading.unsure.length > 0 ? { unsure: reading.unsure } : {}),
+    ...(reading.dropped.length > 0 ? { notBorneOut: reading.dropped } : {}),
   };
 }
 
@@ -363,15 +452,33 @@ function layoutsOf(state: State) {
       applied: l.applied,
       decided: l.decided,
       choice: l.choice,
-      ...(l.ask.length > 0 && !l.decided ? { ask: l.ask } : {}),
+      evidence: l.evidence,
       ...(l.note ? { note: l.note } : {}),
     })),
   };
 }
 
-/** Layouts with a question nobody has been asked yet. */
+/** Layouts the compiler left something open about that nobody has settled yet. */
 const undecided = (state: Pick<State, "layouts">) =>
-  state.layouts.filter((l) => l.ask.length > 0 && !l.decided);
+  state.layouts.filter((l) => l.left.length > 0 && !l.decided);
+
+/** What is still open: each undecided container's items, and the split while it is not settled. */
+function openOf(state: Pick<State, "layouts" | "open" | "split">): OpenItem[] {
+  return [
+    ...undecided(state).flatMap((l) => state.open[l.src] ?? []),
+    ...(state.split && !state.split.settled ? [state.split.item] : []),
+  ];
+}
+
+/** What `open` is, and what to do with it (the same rule data-bind's open items follow). */
+const OPEN_RULE =
+  "These are what the tools could not settle about the frame. For each one: settle it from memory when `before` holds an active answer; decide it yourself, saying why, when the evidence settles it; or ask a person with `ask`, using the item's id. Write the question, its options and its why yourself from the evidence, the candidates and canTake: offer every candidate, and say what else canTake accepts (a text option, or the question itself). Pass what was decided to the tool that acts on it as ordinary input: frame.layout for a container (its choice and config), frame.split for which parts are one section, and say in `settled` who decided each item (person, memory or agent).";
+
+/** What the model reads of what is open: the items, and the rule for them. Nothing when none is. */
+function openNote(state: Pick<State, "layouts" | "open" | "split">) {
+  const open = openOf(state);
+  return open.length > 0 ? { open, openRule: OPEN_RULE } : {};
+}
 
 /**
  * A lowering must leave the first paint as it was: the carousel's server markup IS the design
@@ -507,12 +614,23 @@ export function createMatchTools(
     plane?: (project: string) => ControlPlane;
     /** Reads a Handoff's files for the run's tenant. The FanXP backend (`SURFACE_API_URL`) by default. */
     handoffs?: (tenantId: string, handoffId: string) => FrameSource;
+    /**
+     * The tenant's active FanXP theme, as a token set: what a Handoff is built against. FanXP is the
+     * source of truth for tokens, and Surface Studio draws with nothing else. The FanXP backend
+     * (`SURFACE_API_URL`) by default.
+     */
+    tenantTheme?: (tenantId: string) => ReturnType<typeof readTenantTheme>;
     /** Where the preview link points: the host of the link, `FANOS_WEB_URL` by default; it names the tree and need not be served. */
     web?: string;
     /** `false` leaves frame.look out, which is how a run without eyes is made to compare with. */
     vision?: boolean;
     /** The vision call, replaceable in a test. */
     see?: See;
+    /**
+     * The first look at the frame (`read.ts`), replaceable in a test. `false` (or
+     * `FRAME_MATCH_READ=off`) leaves it out: what the IR shows is put to the agent instead.
+     */
+    read?: Read | false;
     /**
      * Judges a container the detector is not sure of (see `needsJudge`), from its context. `false`
      * (or `FRAME_MATCH_JUDGE=off`) leaves it out, so a person is asked as before. A text model
@@ -531,10 +649,12 @@ export function createMatchTools(
      */
     pool?: Pool;
     /**
-     * What people decided about a section before (ADR 0033), read for frame.load's `before`, and
-     * the split a person settled for this frame (`section_split`), applied without asking again.
+     * What people decided about a section before (ADR 0033), and the club's facts: read for
+     * frame.load's `before` and for each open item's own `before`. Code never applies them: the
+     * model settles an item from memory, or asks.
      */
-    decisions?: Pick<MemoryReader, "decisionsOn"> & Partial<Pick<MemoryReader, "decision">>;
+    decisions?: Pick<MemoryReader, "decisionsOn"> &
+      Partial<Pick<MemoryReader, "decision" | "fact">>;
     /** Cast MCP client (ADR 0022). Its read tools are added; writes are never given to this agent. */
   } = {},
 ) {
@@ -542,26 +662,63 @@ export function createMatchTools(
   const engine = opts.engine ?? pipelineEngine();
 
   /**
-   * The joins the frame's parts get (ticket 04): none when the finder is sure of them; else what a
-   * person answered now, or decided on this frame before (`section_split`, ADR 0033); else the run
-   * stops and asks. A person who lets the agent decide gets the proposal.
+   * What memory holds for one open item (ADR 0033): a person's decision on this section, else the
+   * club's active fact for it. Told as a line, for the model to settle the item from or to ask
+   * about; never applied by code.
    */
-  const settleSplit = async (bundle: Bundle, ctx: ToolContext): Promise<Join[]> => {
-    const found = await engine.slots?.(bundle).catch(() => undefined);
-    const question = found ? splitQuestion(found) : undefined;
-    if (!question) return [];
-    if (ctx.answered && !ctx.answered.from?.length) {
-      const given = ctx.answered.answers[SPLIT_QUESTION];
-      return joinsFrom(given ?? question.proposed);
+  const beforeOf = async (
+    tenantId: string,
+    section: string | undefined,
+    id: string,
+    fact?: string,
+  ): Promise<string | undefined> => {
+    const decided = section
+      ? await opts.decisions
+          ?.decision?.(tenantId, decisionKey(AGENT_ID, id, section))
+          .catch(() => undefined)
+      : undefined;
+    if (decided?.value !== undefined && decided.value !== null) {
+      return `decided on this section before: ${answerText(decided.value)}`;
     }
-    if (bundle.section && opts.decisions?.decision) {
-      const before = await opts.decisions
-        .decision(ctx.tenantId, decisionKey(AGENT_ID, SPLIT_QUESTION, bundle.section))
-        .catch(() => undefined);
-      if (before?.value !== undefined && before.value !== null) return joinsFrom(before.value);
+    const known = fact
+      ? await opts.decisions?.fact?.(tenantId, fact, "active").catch(() => undefined)
+      : undefined;
+    if (known?.value !== undefined && known.value !== null) {
+      return `the club's active fact ${fact}: ${answerText(known.value)}`;
     }
-    throw new AwaitingAnswers([question]);
+    return undefined;
   };
+
+  /** What memory holds for each open item a container has. */
+  const layoutBefore = async (
+    tenantId: string,
+    section: string | undefined,
+  ): Promise<LayoutBefore> => {
+    const found: LayoutBefore = {};
+    for (const id of ["kind", "items", "autoplay", "loop", "platform"]) {
+      const line = await beforeOf(tenantId, section, id, LAYOUT_FACTS[id]);
+      if (line) found[id] = line;
+    }
+    return found;
+  };
+
+  /**
+   * What is open about which parts of the frame are one section (ticket 04): the parts the finder
+   * was unsure of, as an open item, and the joins its own proposal makes, which stand until
+   * frame.split says otherwise. Nothing is open when the finder is sure of every part.
+   */
+  const readSplit = async (
+    bundle: Bundle,
+    ctx: Pick<ToolContext, "tenantId">,
+    shape?: SlotShape,
+  ) => {
+    const found = await engine.slots?.(bundle, [], shape).catch(() => undefined);
+    if (!found) return { joins: [] as Join[] };
+    const before = await beforeOf(ctx.tenantId, bundle.section, SPLIT_QUESTION);
+    const item = splitOpen(found, before);
+    return { joins: item ? splitChoices(found).proposed : [], ...(item ? { item } : {}) };
+  };
+
   const planeOf = opts.plane ?? ((project: string) => createControlPlane(project));
   const handoffsOf =
     opts.handoffs ??
@@ -574,6 +731,34 @@ export function createMatchTools(
       }
       return createHandoffSource(tenantId, handoffId, config);
     });
+  const tenantThemeOf =
+    opts.tenantTheme ??
+    (async (tenantId: string) => {
+      const config = handoffConfig();
+      if (!config) throw new Error("reading it needs SURFACE_API_URL and SURFACE_SERVICE_KEY");
+      return readTenantTheme(tenantId, config);
+    });
+
+  /**
+   * The token set a Handoff is built against: the tenant's FanXP theme, stored in the control plane
+   * so its preview and the agents after this one read the same tokens by id. A tenant with no active
+   * theme has to set one up: nothing else is the theme its pages are drawn with.
+   */
+  const handoffTheme = async (tenantId: string, plane: ControlPlane): Promise<string> => {
+    const found = await tenantThemeOf(tenantId).catch((err: unknown) => {
+      throw new NeedsSetup(
+        `an active FanXP theme for ${tenantId}, which every section is built against (${err instanceof Error ? err.message : String(err)})`,
+      );
+    });
+    // not the project's own token set: `newestArtifactId` passes over a `dugout:` source
+    return plane.upload("token_set", found.raw, {
+      source: "dugout:fanxp-theme",
+      client: tenantId,
+      themeId: found.theme.themeId,
+      themeName: found.theme.themeName,
+    });
+  };
+
   const bundles = new Map<string, Promise<Bundle>>();
   const turns = new Map<string, Promise<unknown>>();
 
@@ -593,8 +778,17 @@ export function createMatchTools(
     const key = `${ctx.tenantId}/${input.project}/${frameId}/${themeArtifactId ?? ""}`;
     let held = bundles.get(key);
     if (!held) {
+      const plane = planeOf(input.project);
       const source = input.handoffId ? handoffsOf(ctx.tenantId, input.handoffId) : undefined;
-      held = engine.bundle(planeOf(input.project), frameId, themeArtifactId, source);
+      held = (async () => {
+        const theme =
+          themeArtifactId ??
+          (input.handoffId ? await handoffTheme(ctx.tenantId, plane) : undefined);
+        const bundle = await engine.bundle(plane, frameId, theme, source);
+        // a Handoff's tokens are the tenant's: the frame can't add one of its own
+        if (input.handoffId) bundle.themeFixed = true;
+        return bundle;
+      })();
       held.catch(() => bundles.delete(key));
       bundles.set(key, held);
     }
@@ -635,30 +829,18 @@ export function createMatchTools(
    */
   async function detectLayouts(
     bundle: Bundle,
+    reading: Reading,
     overrides: Overrides,
     current: Measurement,
     measured: boolean,
-    signal?: AbortSignal,
   ): Promise<{
     layouts: LayoutReport[];
     overrides: Overrides;
     current: Measurement;
     built?: Built;
   }> {
-    const detected = (await engine.layouts?.(bundle)) ?? [];
-    // Below the apply score, with another kind that also fits, a model reads the container's
-    // context and judges it. Its answer is used only when it is sure enough; a model that is
-    // down, or unsure, leaves the detector's answer and a person is asked as before.
-    const intents = await Promise.all(
-      detected.map(async (i) => {
-        if (!judge || !needsJudge(i)) return i;
-        try {
-          return applyVerdict(i, readVerdict(await judge(judgePrompt(i), signal)));
-        } catch {
-          return i;
-        }
-      }),
-    );
+    // what each container is comes from the reading, its claims checked against the IR
+    const intents = reading.layouts;
     const layouts: LayoutReport[] = intents.map((i) => ({
       src: i.src,
       name: i.name,
@@ -666,13 +848,15 @@ export function createMatchTools(
       confidence: i.confidence,
       ...(i.score !== undefined ? { score: i.score } : {}),
       evidence: i.evidence,
-      ask: i.ask,
+      left: i.ask,
       choice: i.choice,
       // a list or a row is what the compiler drew already
       applied: i.choice.kind === "list" || i.choice.kind === "row",
       decided: false,
       ...(i.alternative ? { alternative: i.alternative } : {}),
       ...(Object.keys(i.chrome ?? {}).length > 0 ? { chrome: i.chrome } : {}),
+      ...(i.items.length > 0 ? { items: i.items } : {}),
+      ...(i.slide && i.slide.length > 0 ? { slide: i.slide } : {}),
     }));
     // Applied with no question: a carousel the frame shows, and tabs (one label drawn selected,
     // nothing to ask). Each is kept only if the first paint is still the frame.
@@ -712,6 +896,22 @@ export function createMatchTools(
   }
 
   /**
+   * The frame read by eye, first, before anything is decided (`read.ts`). When the vision model is
+   * off, down or answers nothing usable, what the IR shows is put to the agent instead: every
+   * carousel and tabs as a question, nothing applied unasked.
+   */
+  async function readOf(bundle: Bundle, signal?: AbortSignal): Promise<Reading> {
+    const fallback = async (why: string) =>
+      unread((await engine.layouts?.(bundle).catch(() => [])) ?? [], why);
+    if (!reader || !engine.read) return fallback("reading by eye is off in this run");
+    try {
+      return await engine.read(bundle, reader, signal);
+    } catch (err) {
+      return fallback(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
    * Whether anything on the section is data. Code reads the signs; when they do not settle it, the
    * model that judges layouts reads the outline, and only a sure answer is taken.
    */
@@ -733,6 +933,57 @@ export function createMatchTools(
     } catch {
       return found;
     }
+  }
+
+  /**
+   * The frame's slots for these joins, and whether each shows data. The frame has data when any
+   * slot has, so `framed` is the whole frame's reading with the slots' put in it.
+   */
+  async function readSlots(
+    bundle: Bundle,
+    builtTree: Built["tree"],
+    layouts: LayoutReport[],
+    content: Content,
+    joins: readonly Join[],
+    shape: SlotShape | undefined,
+    signal?: AbortSignal,
+  ): Promise<{ slots?: FoundSlots; slotContent: Content[]; framed: Content }> {
+    const slots = await engine.slots?.(bundle, joins, shape).catch(() => undefined);
+    const slotContent: Content[] = [];
+    let framed = content;
+    if (slots) {
+      const tree = builtTree as unknown as {
+        nodes: Array<{
+          id: string;
+          parent: string | null;
+          type: string;
+          props: Record<string, unknown>;
+        }>;
+      };
+      const owners = ownersOf(tree.nodes, slots);
+      for (const [i, slot] of slots.slots.entries()) {
+        const inside = new Set(slot.ir);
+        slotContent.push(
+          await readContent(
+            bundle,
+            { nodes: tree.nodes.filter((n) => owners.get(n.id) === i) } as Built["tree"],
+            // a carousel drawn once is the slot's when its slide is
+            layouts.filter(
+              (l) => inside.has(l.src) || (l.slide ?? []).some((id) => inside.has(id)),
+            ),
+            signal,
+          ),
+        );
+      }
+      const withData = slots.slots.filter((_, i) => slotContent[i]?.data === "some");
+      if (withData.length > 0 && content.data !== "some") {
+        framed = {
+          data: "some",
+          evidence: [...content.evidence, ...withData.map((s) => `${s.name} shows data`)],
+        };
+      }
+    }
+    return { ...(slots ? { slots } : {}), slotContent, framed };
   }
 
   const load = defineTool({
@@ -761,8 +1012,11 @@ export function createMatchTools(
         const earlier = decided.length > 0 ? { before: decided, beforeRule: BEFORE_RULE } : {};
         if (saved) return { ...standing(saved), ...designer, ...earlier };
 
-        // which parts are one section: settled before the frame is built, so a pause costs nothing
-        const joins = await settleSplit(bundle, ctx);
+        // the frame read by eye first: what it is for, what each part does, what moves
+        const reading = await readOf(bundle, ctx.signal);
+        const shape = shapeOf(reading);
+        // which parts are one section: the finder's proposal stands until frame.split settles it
+        const split = await readSplit(bundle, ctx, shape);
         const base = await engine.build(bundle, noOverrides());
         const before = await engine.measure(bundle, base);
         // nothing to compare against: the frame can still be published, as unmeasured
@@ -775,10 +1029,10 @@ export function createMatchTools(
         const first = await engine.firstPass(bundle, noOverrides(), before);
         const laid = await detectLayouts(
           bundle,
+          reading,
           first.overrides,
           first.measurement,
           !unmeasured,
-          ctx.signal,
         );
         const content = await readContent(
           bundle,
@@ -786,40 +1040,17 @@ export function createMatchTools(
           laid.layouts,
           ctx.signal,
         );
+        const layoutMemory = await layoutBefore(ctx.tenantId, bundle.section);
         // the frame's slots, and whether each shows data: a frame of two sections binds twice
-        const slots = await engine.slots?.(bundle, joins).catch(() => undefined);
-        const slotContent: Content[] = [];
-        let framed = content;
-        if (slots) {
-          const tree = (laid.built ?? first.built).tree as unknown as {
-            nodes: Array<{
-              id: string;
-              parent: string | null;
-              type: string;
-              props: Record<string, unknown>;
-            }>;
-          };
-          const owners = ownersOf(tree.nodes, slots);
-          for (const [i, slot] of slots.slots.entries()) {
-            const inside = new Set(slot.ir);
-            slotContent.push(
-              await readContent(
-                bundle,
-                { nodes: tree.nodes.filter((n) => owners.get(n.id) === i) } as Built["tree"],
-                laid.layouts.filter((l) => inside.has(l.src)),
-                ctx.signal,
-              ),
-            );
-          }
-          // the frame has data when any slot has
-          const withData = slots.slots.filter((_, i) => slotContent[i]?.data === "some");
-          if (withData.length > 0 && content.data !== "some") {
-            framed = {
-              data: "some",
-              evidence: [...content.evidence, ...withData.map((s) => `${s.name} shows data`)],
-            };
-          }
-        }
+        const { slots, slotContent, framed } = await readSlots(
+          bundle,
+          (laid.built ?? first.built).tree,
+          laid.layouts,
+          content,
+          split.joins,
+          shape,
+          ctx.signal,
+        );
         const state: State = {
           exportId: bundle.exportId,
           themeArtifactId: bundle.themeArtifactId,
@@ -835,6 +1066,8 @@ export function createMatchTools(
           standIns: first.built.cropped.length,
           rawGradients: first.built.rawGradients,
           undone: first.undone ?? [],
+          noPicture: first.noPicture ?? [],
+          noToken: first.noToken ?? [],
           unpainted: engine.unpainted?.(bundle, first.built) ?? [],
           looks: 0,
           lookFailures: 0,
@@ -842,6 +1075,16 @@ export function createMatchTools(
           examinedSurfaces: [],
           publishRefusals: 0,
           layouts: laid.layouts,
+          reading,
+          settled: [],
+          open: Object.fromEntries(
+            laid.layouts.flatMap((l) => {
+              const items = openLayoutItems(l, l.choice, layoutMemory);
+              return items.length > 0 ? [[l.src, items]] : [];
+            }),
+          ),
+          ...(split.item ? { split: { item: split.item, settled: false } } : {}),
+          frameContent: content,
           content: framed,
           slotContent,
           ...(slots ? { slots } : {}),
@@ -856,14 +1099,11 @@ export function createMatchTools(
             texts: first.built.addedTexts,
             // fixes tried and taken back because they made the match worse: leave them out
             undone: first.undone ?? [],
+            // no picture of their own: left as compiled, never cut from a section's screenshot
+            noPicture: first.noPicture ?? [],
+            // gradients the tenant's FanXP theme has no token for: left unpainted, said in remaining
+            noToken: first.noToken ?? [],
           },
-          ...(undecided(state).length > 0
-            ? {
-                layoutNote:
-                  "Some containers have questions the frame cannot answer (each layout's ask). Call frame.layout once for each, with its choice as proposed: a person reads the question and approves, or answers in plain words. Make the answer the choice and call frame.layout again.",
-                layoutEvidence: Object.fromEntries(state.layouts.map((l) => [l.src, l.evidence])),
-              }
-            : {}),
           ...(state.unpainted.length > 0
             ? {
                 unpainted: state.unpainted,
@@ -880,6 +1120,7 @@ export function createMatchTools(
                   ? "This section shows data: the binding stage finds its source after you publish."
                   : "The signs do not say whether this section shows data: the binding stage looks again.",
           },
+          reading: readingOf(reading),
           ...designer,
           ...earlier,
           ...standing(state),
@@ -1000,9 +1241,11 @@ export function createMatchTools(
   const LayoutCall = z.object({
     choice: LayoutChoice,
     platform: z.record(z.string(), z.unknown()).optional(),
+    settled: z.array(SettledBy).default([]),
   });
   const layoutInput = z
     .object({
+      settled: z.array(SettledBy).optional().describe(SETTLED_BY_HELP),
       choice: z
         .object({
           src: z.string().min(1),
@@ -1018,8 +1261,11 @@ export function createMatchTools(
     })
     .strict()
     // A platform config rides beside the choice; code applies it, the model never translates it.
-    .transform(({ choice }) => {
-      const { platform, ...config } = (choice.config ?? {}) as Record<string, unknown>;
+    .transform(({ choice, settled }) => {
+      // a setting the model has nothing to say about (pages for "whatever the data holds") may
+      // arrive as null: it is left out, as if it were not passed
+      const { platform, ...given0 } = (choice.config ?? {}) as Record<string, unknown>;
+      const config = Object.fromEntries(Object.entries(given0).filter(([, v]) => v !== null));
       const bare = choice.kind === "list" || choice.kind === "row";
       const kept =
         choice.config && !(bare && Object.keys(config).length === 0)
@@ -1034,19 +1280,19 @@ export function createMatchTools(
           // left as text: the pipe below refuses it, with zod's message
         }
       }
-      return { choice: kept, platform: given } as z.input<typeof LayoutCall>;
+      return { choice: kept, platform: given, settled } as z.input<typeof LayoutCall>;
     })
     .pipe(LayoutCall);
   const layout = defineTool<z.infer<typeof layoutInput>, Record<string, unknown>>({
     name: "frame.layout",
     description:
-      "Decide what one container is: a carousel, a fixed row, a list, a grid or tabs. Pass { choice: { src, kind, config } }: frame.load lists each container with its evidence, the questions the frame cannot answer (ask) and a proposed choice. Call it once for each layout with questions, with the proposal as it stands. The run then stops and a person answers questions written from the frame's evidence (what it is, how many items, autoplay, loop, a platform config); their answers are applied to your proposal and the call returns what was applied. Do not translate their words yourself: it is done for you. A carousel's first paint is the frame, so the match should not move.",
+      "Apply what one container is: a carousel, a fixed row, a list, a grid or tabs. Pass { choice: { src, kind, config }, settled }: frame.load's `layouts` list each container with its evidence, and its `open` items say what is still to settle about it (what it is, how many items, autoplay, loop, a platform config), each with the answers a tool can act on and what else this call takes. Settle each item first (from `before` in memory, from the evidence, or by asking a person with `ask`), then pass the result as the choice: config.pages for a number of items, config.autoplay (false or { delayMs }), config.loop, config.platform (a platform carousel config as JSON, applied with the design first). Say in `settled` who decided each item. It never asks anything: it applies the choice, measures it and returns what was applied. Call it once for each container with open items. A carousel's first paint is the frame, so the match should not move.",
     input: layoutInput,
     // it writes nothing outside the run: what a person says about the frame is the question
     effect: "read",
     timeoutMs: 120_000,
     alwaysInline: true,
-    run: ({ choice: proposal, platform: modelPlatform }, ctx) =>
+    run: ({ choice: proposal, platform: modelPlatform, settled: told }, ctx) =>
       inTurn(ctx.runId, async () => {
         const state = requireState(ctx);
         const report = state.layouts.find((l) => l.src === proposal.src);
@@ -1056,18 +1302,9 @@ export function createMatchTools(
             reason: `frame.load found no repeated items in ${proposal.src}. Pass the src of one of its layouts: ${state.layouts.map((l) => l.src).join(", ") || "it found none"}`,
           };
         }
-        // Ask first (ADR 0029): the run stops here with questions about this frame, and the call
-        // runs again with the answers. A layout already decided, or one the frame leaves nothing
-        // open about, is applied as proposed.
-        const questions = report.decided ? [] : layoutQuestions(report, proposal);
-        if (!ctx.answered && questions.length > 0) throw new AwaitingAnswers(questions);
-        const read = ctx.answered ? applyLayoutAnswers(proposal, ctx.answered.answers) : undefined;
-        const asked: LayoutChoice = read?.choice ?? proposal;
-        const platform = read?.platform ?? modelPlatform;
-        const answerNotes = [
-          ...(read?.notes ?? []),
-          ...(read?.said.map((s) => `the person said ${s}`) ?? []),
-        ];
+        // the items, the one slide and the controls frame.load found, where the choice leaves them out
+        const asked: LayoutChoice = withStructure(proposal, report);
+        const platform = modelPlatform;
         const bundle = await bundleOf(ctx, state);
         let choice: LayoutChoice = asked;
         let platformNotes: string[] | undefined;
@@ -1123,11 +1360,23 @@ export function createMatchTools(
             ...(applied || !note ? {} : { note: note.message }),
           };
         });
+        // how each open item of this container was settled, from what was applied
+        const recorded = settledLayout(
+          choice.src,
+          state.open[choice.src] ?? [],
+          choice,
+          Boolean(platform),
+          told,
+        );
         const next: State = {
           ...state,
           overrides,
           current: measured,
           layouts,
+          settled: [
+            ...state.settled.filter((r) => !r.value.startsWith(`${choice.src}: `)),
+            ...recorded,
+          ],
           standIns: built.cropped.length,
           rawGradients: built.rawGradients,
         };
@@ -1136,15 +1385,94 @@ export function createMatchTools(
         return {
           kept: true,
           layout: describeChoice(choice),
+          ...(recorded.length > 0 ? { settled: recorded } : {}),
           applied,
           ...(note && !applied ? { note: note.message } : {}),
           ...(platformNotes
             ? { platform: platformNotes.length > 0 ? platformNotes : ["applied as given"] }
             : {}),
           ...(platform ? { platformSets: describePlatform(platform) } : {}),
-          ...(answerNotes.length > 0 ? { answers: answerNotes } : {}),
           ...(state.unmeasured ? {} : { was: state.current.match }),
           ...standing(next),
+        };
+      }),
+  });
+
+  const splitInput = z
+    .object({
+      joins: z
+        .array(z.object({ upper: z.string().min(1), lower: z.string().min(1) }).strict())
+        .describe(
+          "The parts that are one section, by the ids frame.load's section_split item lists: each pair joins two parts, the upper one first. [] keeps every part apart",
+        ),
+      settled: z.array(SettledBy).optional().describe(SETTLED_BY_HELP),
+    })
+    .strict();
+  const split = defineTool({
+    name: "frame.split",
+    description:
+      "Apply which parts of the frame are one section. frame.load's open item section_split lists the parts the finder was unsure of and each join it could make, with the finder's proposal and what memory holds: settle it (from memory, from the evidence, or by asking a person with `ask`), then pass the joins here. Parts joined share one data source. It never asks anything: it re-reads the frame's slots with these joins and returns them. Call it once; frame.publish waits for it when frame.load reported the item. Say in `settled` who decided it.",
+    input: splitInput,
+    // it writes nothing outside the run
+    effect: "read",
+    timeoutMs: 120_000,
+    alwaysInline: true,
+    run: ({ joins, settled: told }, ctx) =>
+      inTurn(ctx.runId, async () => {
+        const state = requireState(ctx);
+        if (!state.split) {
+          return {
+            kept: false,
+            reason: "frame.load left nothing open about which parts are one section",
+          };
+        }
+        const bundle = await bundleOf(ctx, state);
+        const shape = state.reading ? shapeOf(state.reading) : undefined;
+        const parts = (await engine.slots?.(bundle, [], shape).catch(() => undefined))?.slots ?? [];
+        const known = new Set(parts.map((p) => p.id));
+        const unknown = joins.flatMap((j) => [j.upper, j.lower]).filter((id) => !known.has(id));
+        if (unknown.length > 0) {
+          return {
+            kept: false,
+            reason: `no part has the id ${[...new Set(unknown)].join(", ")}. The parts are: ${parts.map((p) => `${p.name} [${p.id}]`).join(", ") || "none found"}`,
+          };
+        }
+        const pairs = joins.map((j): Join => [j.upper, j.lower]);
+        const built = await engine.build(bundle, state.overrides);
+        const read = await readSlots(
+          bundle,
+          built.tree,
+          state.layouts,
+          state.frameContent ?? state.content ?? { data: "unsure", evidence: [] },
+          pairs,
+          shape,
+          ctx.signal,
+        );
+        const said = told?.find((t) => t.id === SPLIT_QUESTION)?.by ?? "agent";
+        const recorded: Settled = {
+          id: SPLIT_QUESTION,
+          by: said === "memory" && !state.split.item.before ? "agent" : said,
+          value: pairs.length > 0 ? pairs.map(([a, b]) => `${a}+${b}`).join(", ") : "apart",
+        };
+        const next: State = {
+          ...state,
+          split: { item: state.split.item, settled: true },
+          settled: [...state.settled.filter((r) => r.id !== SPLIT_QUESTION), recorded],
+          ...(read.slots ? { slots: read.slots } : {}),
+          slotContent: read.slotContent,
+          content: read.framed,
+        };
+        const { published: _stale, ...unpublished } = next;
+        writeState(dir, ctx.runId, unpublished);
+        return {
+          kept: true,
+          settled: [recorded],
+          slots: (read.slots?.slots ?? []).map((s, i) => ({
+            id: s.id,
+            name: s.name,
+            confidence: s.confidence,
+            content: read.slotContent[i]?.data ?? "unsure",
+          })),
         };
       }),
   });
@@ -1187,11 +1515,15 @@ export function createMatchTools(
     block(_input, ctx) {
       const state = readState(dir, ctx.runId);
       if (!state) return "Nothing is loaded. Call frame.load first.";
-      // What a container is can only be asked of a person; a frame published without asking ships
-      // a guess. Each question is asked once: an answer, or an approval of the proposal, settles it.
+      // What a container is, and which parts are one section, are settled before the frame is
+      // published: from memory, from the evidence, or by asking a person. A frame published
+      // without that ships a guess.
       const open = undecided(state);
       if (open.length > 0) {
-        return `Not yet. Ask about these layouts with frame.layout, with each one's proposed choice: ${open.map((l) => `"${l.name}" (${l.src})`).join(", ")}`;
+        return `Not yet. Settle what is open about these layouts (frame.load's open items), then apply each with frame.layout: ${open.map((l) => `"${l.name}" (${l.src})`).join(", ")}`;
+      }
+      if (state.split && !state.split.settled) {
+        return "Not yet. Settle which parts of the frame are one section (frame.load's open item section_split), then apply it with frame.split.";
       }
       // The score is blind to some of the worst defects, and a model that is only told to look
       // sometimes doesn't. A run made without eyes answers the call too, so the two read the same.
@@ -1238,8 +1570,10 @@ export function createMatchTools(
               }),
             }
           : { ...by, exportId: state.exportId };
+        // a copy of the theme only when the frame added a gradient token of its own, which a
+        // Handoff's tenant theme never takes
         const themeArtifactId =
-          state.overrides.gradients.length > 0
+          built.rawGradients > 0
             ? await plane.upload("token_set", built.themeRaw, meta)
             : state.themeArtifactId;
         const surfaceArtifactId = await plane.upload("surface_set", built.surfaces, meta);
@@ -1287,10 +1621,13 @@ export function createMatchTools(
           estimated: state.current.estimated,
           unchecked: state.current.unchecked,
           placeholderIcons: state.current.placeholderIcons,
+          noPicture: state.noPicture,
+          noToken: state.noToken,
           ...(state.unmeasured ? {} : { before: state.before.match, match: state.current.match }),
           ...(content ? { content } : {}),
           choices,
           slots,
+          settled: state.settled,
         };
         writeState(dir, ctx.runId, { ...state, published });
         return published;
@@ -1309,6 +1646,19 @@ export function createMatchTools(
     opts.see ??
     ((png, prompt, signal) =>
       describeImage({ png, prompt, model: "haiku", ...(signal ? { signal } : {}) }));
+
+  /** The first look at the design, which everything after reads: a stronger model than frame.look's. */
+  const reader: Read | undefined =
+    opts.read === false || (opts.read === undefined && process.env.FRAME_MATCH_READ === "off")
+      ? undefined
+      : (opts.read ??
+        ((png, prompt, signal) =>
+          describeImage({
+            png,
+            prompt,
+            model: process.env.FRAME_MATCH_READ_MODEL ?? "sonnet",
+            ...(signal ? { signal } : {}),
+          })));
 
   const lookInput = z
     .object({
@@ -1407,5 +1757,14 @@ export function createMatchTools(
       }),
   });
 
-  return [load, node, tokens, override, layout, opts.vision === false ? noEyes : lookTool, publish];
+  return [
+    load,
+    node,
+    tokens,
+    override,
+    layout,
+    split,
+    opts.vision === false ? noEyes : lookTool,
+    publish,
+  ];
 }

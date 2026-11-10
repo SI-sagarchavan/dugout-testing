@@ -42,7 +42,7 @@ const tabs: LayoutReport = {
   kind: "tabs",
   confidence: "likely",
   evidence: [],
-  ask: [],
+  left: [],
   choice: { src: "35:10515", kind: "tabs", config: { options: ["WOMEN", "MEN"], active: 1 } },
   applied: true,
   decided: false,

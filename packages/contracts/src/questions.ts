@@ -113,11 +113,47 @@ export type Learned = z.infer<typeof Learned>;
  * answered before (`learned`), or the harness's `review` of a write.
  */
 export const AskedQuestion = Question.extend({
+  /** A `review` of a write to something shared: only a person's yes counts, whoever approves in bulk. */
+  shared: z.boolean().optional(),
   kind: z.enum([...QUESTION_KINDS, "review"]),
   learned: Learned.optional(),
   about: QuestionAbout.optional(),
 });
 export type AskedQuestion = z.infer<typeof AskedQuestion>;
+
+/**
+ * What a tool could not settle, reported as data (ticket 11): tools never write a question. The
+ * agent's model reads these, answers from memory or from the evidence, or asks a person in its own
+ * words; what it decided goes to the next tool as ordinary input. `id` is the name memory keys on
+ * (ADR 0033), not a sentence.
+ */
+export const OpenItem = z.object({
+  id: z
+    .string()
+    .regex(/^[a-z][a-z0-9_]*$/)
+    .describe("The question id memory learns under"),
+  about: z.string().describe("What it settles, in a few words"),
+  evidence: z.string().describe("What the tool found, with real values"),
+  candidates: z
+    .array(z.object({ value: z.string(), does: z.string().describe("What choosing it does") }))
+    .optional()
+    .describe("Answers the tool can act on"),
+  proposed: z.string().optional().describe("The tool's own best answer"),
+  canTake: z.string().describe("Everything else the next tool accepts for it, in words"),
+  before: z
+    .string()
+    .optional()
+    .describe("What memory holds for it: a decision on this section, else a fact"),
+});
+export type OpenItem = z.infer<typeof OpenItem>;
+
+/** How an open item was settled, for the run's output and thread note. */
+export const Settled = z.object({
+  id: z.string(),
+  by: z.enum(["person", "memory", "agent"]),
+  value: z.string(),
+});
+export type Settled = z.infer<typeof Settled>;
 
 /** The tool call a pause is about, when it is one: a write waiting for a yes. */
 export const Subject = z.object({ input: z.unknown() });
@@ -208,12 +244,28 @@ export const requestChange = (by: string, changes: string): Decision => ({
   answers: { [REVIEW_ID]: { decision: "change", comment: changes } },
 });
 
-/** The harness's question for a write: approve it, ask for a change, or reject it. */
-export function reviewQuestion(tool: string): AskedQuestion {
+/**
+ * The harness's question for a write: approve it, ask for a change, or reject it. Its `why` is what
+ * the model said the call does and why (`reason`, required on every write), not wording of ours;
+ * the call's input is shown beside it. Without a reason (a call saved before writes carried one)
+ * it only says the call writes.
+ */
+export function reviewQuestion(
+  tool: string,
+  opts: { shared?: boolean; reason?: string } = {},
+): AskedQuestion {
+  const note = opts.shared
+    ? "It writes to something other runs and other people use."
+    : "It writes.";
   return {
     id: REVIEW_ID,
     question: `Approve ${tool}?`,
-    why: `${tool} writes. It runs only when a person approves it.`,
+    why: opts.reason
+      ? opts.shared
+        ? `${opts.reason}\n\n${note}`
+        : opts.reason
+      : `${tool}: ${note}`,
+    ...(opts.shared ? { shared: true } : {}),
     kind: "review",
     options: [
       { value: "approve", label: "Approve", description: "Run it as shown" },

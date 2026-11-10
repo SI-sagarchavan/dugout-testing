@@ -16,7 +16,7 @@
  */
 
 import { z } from "zod";
-import { hasRef, lookup, resolveTemplate } from "./binding.js";
+import { hasRef, lookup, type ReadDateOptions, readDate, resolveTemplate } from "./binding.js";
 
 export const CLOCK_UNITS = ["d", "h", "m", "s"] as const;
 export type ClockUnit = (typeof CLOCK_UNITS)[number];
@@ -61,17 +61,14 @@ export const clockTick = (units: readonly ClockUnit[]): number =>
   Math.min(...units.map((unit) => SECONDS[unit])) * 1000;
 
 /**
- * An instant as epoch ms. An ISO string with no offset is read as UTC, as the `date` pipe reads
- * it, so the server and the browser count to the same moment.
+ * An instant as epoch ms, read as the `date` pipe reads it (`readDate`): never in the machine's
+ * zone, so the server and the browser count to the same moment. A time written with no zone is a
+ * time on the clocks of `options.timeZone` (UTC when unset), as it is drawn; a day is its start
+ * there. An all-digit string is epoch ms.
  */
-export function parseInstant(value: unknown): number | undefined {
-  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
-  if (typeof value !== "string" || value.trim() === "") return undefined;
-  const text = value.trim();
-  if (/^-?\d{10,}$/.test(text)) return Number(text);
-  const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(text) ? `${text}Z` : text;
-  const ms = Date.parse(iso);
-  return Number.isNaN(ms) ? undefined : ms;
+export function parseInstant(value: unknown, options: ReadDateOptions = {}): number | undefined {
+  if (typeof value === "string" && value.trim() === "") return undefined;
+  return readDate(typeof value === "string" ? value.trim() : value, options);
 }
 
 /**
@@ -93,14 +90,14 @@ export function clockValues(units: readonly ClockUnit[], to: number, now: number
 }
 
 /** The instant a clock counts to, read in the node's scope: `{match.start_time}` or a literal. */
-export function clockInstant(clock: Pick<Clock, "to">, scope: unknown): number | undefined {
+export function clockInstant(clock: Pick<Clock, "to">, scope: unknown, options: ReadDateOptions = {}): number | undefined {
   const { to } = clock;
   if (typeof to === "number") return parseInstant(to);
   const single = to.match(/^\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}$/);
-  if (single?.[1]) return parseInstant(lookup(scope, single[1]));
-  if (!hasRef(to)) return parseInstant(to);
-  const { value, unresolved } = resolveTemplate(to, scope);
-  return unresolved.length ? undefined : parseInstant(value);
+  if (single?.[1]) return parseInstant(lookup(scope, single[1]), options);
+  if (!hasRef(to)) return parseInstant(to, options);
+  const { value, unresolved } = resolveTemplate(to, scope, options);
+  return unresolved.length ? undefined : parseInstant(value, options);
 }
 
 export interface ClockScope {
@@ -114,11 +111,16 @@ export interface ClockScope {
 }
 
 /** A node's `clock`, resolved in its scope at `now`. Undefined when the prop is not a clock. */
-export function clockScope(clock: unknown, scope: unknown, now: number): ClockScope | undefined {
+export function clockScope(
+  clock: unknown,
+  scope: unknown,
+  now: number,
+  options: ReadDateOptions = {},
+): ClockScope | undefined {
   const parsed = clockSchema.safeParse(clock);
   if (!parsed.success) return undefined;
   const units = clockUnits(parsed.data);
-  const to = clockInstant(parsed.data, scope);
+  const to = clockInstant(parsed.data, scope, options);
   return {
     as: clockAlias(parsed.data),
     units,

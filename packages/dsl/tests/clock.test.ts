@@ -94,7 +94,7 @@ describe("a clock", () => {
     expect(issues({ match: { start_time: "2026-11-17T14:30:00+00:00" } }).map((i) => i.code)).toEqual(["B1"]);
     clock.units = ["d"];
     expect(issues({ match: { start_time: "soon" } }).map((i) => i.message)).toEqual([
-      "clock.to {match.start_time}: the sample values are not instants (ISO-8601 or epoch ms)",
+      "clock.to {match.start_time}: the sample values are not dates or times the clock can read",
     ]);
   });
 });

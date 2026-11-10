@@ -47,10 +47,13 @@ export {
   toolHash,
   writeLock,
 } from "./lock.ts";
+export { forget, observe, observed } from "./observations.ts";
 export {
   type Capability,
   checkEntry,
   type Grant as ToolGrant,
+  grantLimits,
+  isSharedWrite,
   loadRegistry,
   pathOf,
   REGISTRY_DIR,

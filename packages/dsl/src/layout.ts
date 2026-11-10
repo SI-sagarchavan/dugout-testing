@@ -80,11 +80,43 @@ export const tabsConfigSchema = z
   })
   .strict();
 
+/**
+ * Designed controls of a carousel, by Figma id. They stay nodes, wired with `controlFor`: prev and
+ * next arrows, a row of dots (`pagination`), a counter ("01", "1 / 5") and a progress bar.
+ */
+export const layoutChromeSchema = z
+  .object({
+    prev: z.string().optional(),
+    next: z.string().optional(),
+    pagination: z.string().optional(),
+    counter: z.string().optional(),
+    progress: z.string().optional(),
+  })
+  .strict();
+
+/**
+ * What a choice is made of, by Figma id, so lowering never has to find it again:
+ *
+ * - `items`: the repeated items in the container, in order (the slides a carousel draws side by
+ *   side, the tabs of a tab bar);
+ * - `slide`: the layers that together are the ONE slide a carousel draws, when it draws only the
+ *   one on show (a hero: its photo, its shade, its words, its button). They are children of `src`,
+ *   and lowering wraps them in one slide of a new carousel there;
+ * - `chrome`: the designed controls.
+ *
+ * Left out, lowering reads them from the IR (`detectLayout`), as a choice kept from before did.
+ */
+const structure = {
+  items: z.array(z.string()).optional(),
+  slide: z.array(z.string()).optional(),
+  chrome: layoutChromeSchema.optional(),
+};
+
 /** The decided layout of one container. `list` and `row` keep the compiled Stack as it is. */
 export const layoutChoiceSchema = z.discriminatedUnion("kind", [
-  z.object({ src: z.string(), kind: z.literal("carousel"), config: carouselConfigSchema }).strict(),
+  z.object({ src: z.string(), kind: z.literal("carousel"), config: carouselConfigSchema, ...structure }).strict(),
   z.object({ src: z.string(), kind: z.literal("grid"), config: gridConfigSchema }).strict(),
-  z.object({ src: z.string(), kind: z.literal("tabs"), config: tabsConfigSchema }).strict(),
+  z.object({ src: z.string(), kind: z.literal("tabs"), config: tabsConfigSchema, items: structure.items }).strict(),
   z.object({ src: z.string(), kind: z.literal("list") }).strict(),
   z.object({ src: z.string(), kind: z.literal("row") }).strict(),
 ]);
@@ -121,6 +153,10 @@ export interface LayoutChrome {
   next?: string;
   /** The row of dots: one child per page, one of them drawn active. */
   pagination?: string;
+  /** A text that counts the slides: "01", "1 / 5". */
+  counter?: string;
+  /** A bar that fills as the slides go by. */
+  progress?: string;
 }
 
 export interface LayoutIntent {

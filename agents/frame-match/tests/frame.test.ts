@@ -15,7 +15,6 @@ import {
   gridNudge,
   isArtPlate,
   keepWhatHelps,
-  lift,
   measuredPlates,
   noOverrides,
   placeOf,
@@ -490,35 +489,6 @@ describe("clipOf", () => {
       [photo, "header"],
     ]);
     expect(clipOf(bundle, "photo")).toBeUndefined();
-  });
-});
-
-describe("lift", () => {
-  const black = {
-    box: { x: 0, y: 0, w: 10, h: 10 },
-    gradient: {
-      type: "linear-gradient" as const,
-      degree: 180,
-      stops: [
-        { color: "#000000", opacity: 50, percent: 0 },
-        { color: "#000000", opacity: 50, percent: 100 },
-      ],
-    },
-  };
-  const pixel = () => Buffer.from([100, 100, 100, 255]);
-
-  it("takes a gradient out of a pixel inside its box", () => {
-    const data = pixel();
-    lift(data, 0, black, 5, 5);
-    // painted over at half cover, so what was there is twice the pixel
-    expect(data[0]).toBe(200);
-  });
-
-  it("leaves a pixel outside the box alone: nothing was painted over it", () => {
-    const data = pixel();
-    lift(data, 0, black, 15, 5);
-    lift(data, 0, black, 5, -1);
-    expect([...data]).toEqual([100, 100, 100, 255]);
   });
 });
 

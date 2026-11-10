@@ -134,6 +134,7 @@ export {
   carouselConfigSchema,
   gridConfigSchema,
   layoutChoiceSchema,
+  layoutChromeSchema,
   tabsConfigSchema,
 } from "./layout.js";
 export type { CarouselConfig, Confidence, LayoutChoice, LayoutChrome, LayoutIntent, LayoutKind } from "./layout.js";
@@ -168,10 +169,17 @@ export {
   CONDITION_OPS,
   conditionSchema,
   conditionsOf,
+  EACH_SCOPE,
   evaluateCondition,
+  heldBy,
+  itemScope,
   evaluateWhen,
   fillImageRatio,
+  calendarDay,
+  type DateOrder,
   formatDate,
+  readDate,
+  brokenRefs,
   hasRef,
   lookup,
   mapRefPaths,
@@ -182,7 +190,7 @@ export {
   refRegex,
   resolveTemplate,
 } from "./binding.js";
-export type { Condition, Pipe, PipeSpec, Ref, ResolveOptions, ResolveResult, Scalar } from "./binding.js";
+export type { Condition, Pipe, PipeSpec, ReadDateOptions, Ref, ResolveOptions, ResolveResult, Scalar } from "./binding.js";
 export {
   CLOCK_UNITS,
   clockAlias,
@@ -211,6 +219,10 @@ export {
   pageScope,
   pageValueOf,
   readsPage,
+  overChoice,
+  overFor,
+  overList,
+  overLists,
   selectOf,
   selectSchema,
   splitPageWhen,
@@ -219,7 +231,7 @@ export type { PageChoice, PageField, PageFieldType, PageOption, PageState, Selec
 export { fromCastFlow } from "./cast.js";
 export type { CastData, CastPagination } from "./cast.js";
 export { checkBindings, checkPipes, inferShape } from "./contract.js";
-export type { Shape } from "./contract.js";
+export type { BindingCheckOptions, Shape } from "./contract.js";
 
 // Part 8 — tree operations
 export {

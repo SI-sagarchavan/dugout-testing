@@ -14,7 +14,7 @@
  * (`page.ts`). The first paint is the frame.
  */
 
-import { type FlatNode, type FlatTree, type LayoutChoice, type LayoutIntent, PAGE_SCOPE, pageKeyOf, pageValueOf } from "@fanos/dsl";
+import { type FlatNode, type FlatTree, type LayoutChoice, type LayoutChrome, type LayoutIntent, PAGE_SCOPE, pageKeyOf, pageValueOf } from "@fanos/dsl";
 import type { FrameIRDocument, FrameIRNode } from "@fanos/surface-canvas/ir";
 import { detectLayout } from "./detect.js";
 
@@ -57,8 +57,10 @@ export function lowerLayout(tree: FlatTree, doc: FrameIRDocument, choices: Layou
     }
     if (choice.kind === "tabs") {
       const container = nodes.find((n) => n.src === choice.src);
+      // the tabs the choice names, else the ones the IR shows
+      const tabsIntent = choice.items ? ({ items: choice.items } as LayoutIntent) : intents.get(choice.src);
       const result = container
-        ? lowerTabs(nodes, container, choice.config, intents.get(choice.src))
+        ? lowerTabs(nodes, container, choice.config, tabsIntent)
         : "the compiler did not keep this container as a node";
       if (typeof result === "string") {
         notes.push({ src: choice.src, message: result });
@@ -68,8 +70,28 @@ export function lowerLayout(tree: FlatTree, doc: FrameIRDocument, choices: Layou
       notes.push({ src: choice.src, message: result.made });
       continue;
     }
-    const intent = intents.get(choice.src);
     const node = nodes.find((n) => n.src === choice.src);
+    if (choice.slide && choice.slide.length > 0) {
+      // the design draws only the slide on show: its layers become the one slide of a new carousel
+      const aside: string[] = [];
+      const made = node
+        ? lowerOneSlide(nodes, node, choice.slide, choice.chrome ?? {}, choice.config, ir, aside)
+        : "the compiler did not keep this container as a node";
+      if (typeof made === "string") {
+        notes.push({ src: choice.src, message: made });
+        continue;
+      }
+      lowered.push(choice.src);
+      notes.push({ src: choice.src, message: [made.made, ...aside].join("; ") });
+      continue;
+    }
+    // what the choice names, else what the IR shows
+    const detected = intents.get(choice.src);
+    const intent = choice.items
+      ? { items: choice.items, chrome: { ...(detected?.chrome ?? {}), ...(choice.chrome ?? {}) } }
+      : detected
+        ? { items: detected.items, chrome: { ...detected.chrome, ...(choice.chrome ?? {}) } }
+        : undefined;
     if (!intent || !node) {
       notes.push({
         src: choice.src,
@@ -98,7 +120,7 @@ type CarouselConfig = Extract<LayoutChoice, { kind: "carousel" }>["config"];
 function lowerCarousel(
   nodes: FlatNode[],
   node: FlatNode,
-  intent: LayoutIntent,
+  intent: { items: string[]; chrome: LayoutChrome },
   config: CarouselConfig,
   ir: Map<string, FrameIRNode>,
   /** What was not done, on a carousel that was made. */
@@ -180,16 +202,36 @@ function lowerCarousel(
 
   node.type = "Carousel";
   node.props = carousel;
+  wireControls(nodes, node, intent.chrome, config, aside);
+  return undefined;
+}
 
-  // The designed arrows and dots stay as drawn, wired to the carousel. What a frame cannot draw,
-  // their look in a state, comes from the config; an arrow with nowhere to go fades without one.
+/**
+ * The designed arrows, dots and counter stay as drawn, wired to the carousel. What a frame cannot
+ * draw, their look in a state, comes from the config; an arrow with nowhere to go fades without
+ * one. A counter writes the slide on show in the form the design drew ("01", "1 / 5"). A progress
+ * bar stays as drawn: the renderer fills a bar by scale, and a design that moves a segment along a
+ * track is not that.
+ */
+function wireControls(nodes: FlatNode[], carousel: FlatNode, chrome: LayoutChrome, config: CarouselConfig, aside: string[]): void {
   const looks = config.controls;
   const arrows: FlatNode[] = [];
-  for (const part of ["prev", "next", "pagination"] as const) {
-    const src = intent.chrome[part];
+  for (const part of ["prev", "next", "pagination", "counter"] as const) {
+    const src = chrome[part];
     const control = src ? nodes.find((n) => n.src === src) : undefined;
     if (!control) continue;
-    control.props = { ...control.props, controlFor: { target: node.id, part } };
+    if (part === "counter") {
+      if (control.type !== "Text" || typeof control.props.content !== "string") {
+        aside.push(`the counter ${src} is not a text: left as drawn`);
+        continue;
+      }
+      control.props = {
+        ...control.props,
+        controlFor: { target: carousel.id, part, format: counterFormat(control.props.content) },
+      };
+      continue;
+    }
+    control.props = { ...control.props, controlFor: { target: carousel.id, part } };
     if (part === "pagination") {
       const states = looks?.pagination?.states;
       if (states) {
@@ -203,11 +245,110 @@ function lowerCarousel(
     const states = looks?.arrows?.states ?? { disabled: { opacity: "opacity.40" } };
     control.props = { ...control.props, states: { ...((control.props.states as object | undefined) ?? {}), ...states } };
   }
+  if (chrome.progress) aside.push("the progress bar stays as drawn: it does not move with the slides");
   if (looks?.arrows?.placement === "edges") {
     const why = toEdges(nodes, arrows);
     if (why) aside.push(`arrows left where they are drawn: ${why}`);
   }
-  return undefined;
+}
+
+/** The counter's text in the form the design drew it: "01" → "0{index}", "1 / 5" → "{index} / {count}". */
+export function counterFormat(drawn: string): string {
+  const text = drawn.trim();
+  const pad = (digits: string) => (digits.length > 1 && digits.startsWith("0") ? "0".repeat(digits.length - 1) : "");
+  const pair = /^(\d+)(\s*(?:\/|of)\s*)(\d+)$/i.exec(text);
+  if (pair) return `${pad(pair[1]!)}{index}${pair[2]}${pad(pair[3]!)}{count}`;
+  const one = /^(\d+)$/.exec(text);
+  if (one) return `${pad(one[1]!)}{index}`;
+  return "{index} / {count}";
+}
+
+/**
+ * A carousel the design draws one slide of: a hero whose photo, shade, words and button are all
+ * the slide on show, laid over by its arrows and a counter. Those layers are children of
+ * `container`, placed where they are drawn; they become the one slide of a new carousel that fills
+ * the container, and each keeps its place inside the slide, so the first paint is the frame. The
+ * data repeats the slide (one per item). Returns what was made, or why nothing was.
+ */
+function lowerOneSlide(
+  nodes: FlatNode[],
+  container: FlatNode,
+  slide: string[],
+  chrome: LayoutChrome,
+  config: CarouselConfig,
+  ir: Map<string, FrameIRNode>,
+  aside: string[],
+): { made: string } | string {
+  if (container.type !== "Overlay" && container.type !== "Box") {
+    return `its slide's layers sit in a ${container.type}, which lays them out; only layers placed where they are drawn (an Overlay) can become one slide`;
+  }
+  const kids = nodes.filter((n) => n.parent === container.id).sort((a, b) => a.idx - b.idx);
+  const wanted = new Set(slide);
+  const parts = kids.filter((k) => wanted.has(k.src));
+  const lost = slide.filter((src) => !parts.some((p) => p.src === src));
+  if (parts.length === 0) return "none of the slide's layers is a child of this container in the tree";
+  if (lost.length > 0) aside.push(`${lost.length} layer(s) of the slide are not in the tree as children here: ${lost.join(", ")}`);
+  const at = parts.map((p) => kids.indexOf(p));
+  const from = Math.min(...at);
+  const to = Math.max(...at);
+  const between = kids.slice(from, to + 1).filter((k) => !wanted.has(k.src));
+  if (between.length > 0) {
+    return `the slide's layers are not one run: ${between.map((b) => b.src).join(", ")} sits between them, and moving it would change what draws over what`;
+  }
+  const box = ir.get(container.src)?.geometry.bbox;
+  if (!box) return "the container is not in the IR, so the slide's size is unknown";
+  const height = { _unbound: true, raw: round(box.h) };
+  const idOf = (base: string) => {
+    let id = base;
+    let n = 2;
+    while (nodes.some((x) => x.id === id)) id = `${base}_${n++}`;
+    return id;
+  };
+  const synthetic = (src: string) => {
+    let n = 1;
+    while (nodes.some((x) => x.src === `synthetic:${src}:${n}`)) n++;
+    return `synthetic:${src}:${n}`;
+  };
+  const props: Record<string, unknown> = {
+    place: { anchor: "top-fill" },
+    size: { h: height },
+    clip: true,
+    slidesPerView: 1,
+    loop: config.loop,
+    autoplay: config.autoplay === false ? false : { delay: { raw: config.autoplay.delayMs, _unbound: true } },
+  };
+  if (config.initialSlide > 0) props.initialSlide = config.initialSlide;
+  for (const key of CAROUSEL_MOTION) {
+    const value = config.props?.[key];
+    if (value !== undefined) props[key] = value;
+  }
+  const carousel: FlatNode = {
+    id: idOf(`${container.id}_carousel`),
+    parent: container.id,
+    idx: from,
+    src: synthetic(container.src),
+    type: "Carousel",
+    props,
+  } as FlatNode;
+  nodes.push(carousel);
+  const one: FlatNode = {
+    id: idOf(`${container.id}_slide`),
+    parent: carousel.id,
+    idx: 0,
+    src: synthetic(container.src),
+    type: "Overlay",
+    props: { size: { w: "full", h: height }, clip: true },
+  } as FlatNode;
+  nodes.push(one);
+  parts.forEach((p, i) => {
+    p.parent = one.id;
+    p.idx = i;
+  });
+  // idx stays a run from 0 under the container, the carousel where the slide's layers were
+  const rest = kids.filter((k) => !wanted.has(k.src));
+  [...rest.slice(0, from), carousel, ...rest.slice(from)].forEach((k, i) => (k.idx = i));
+  wireControls(nodes, carousel, chrome, config, aside);
+  return { made: `carousel of one drawn slide (${parts.length} layers), repeated for each item the data holds` };
 }
 
 /**

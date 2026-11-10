@@ -1494,7 +1494,7 @@ async function handoffOneFrame(batchId: string, frameId: string): Promise<void> 
       `[fanos-studio] hashed ${files} files (${megabytes.toFixed(1)} MB) in ${Date.now() - hashStart} ms`,
     );
     if (prepared.skipped.length > 0) {
-      console.log(`[fanos-studio] not sent (content photos or empty): ${prepared.skipped.join(", ")}`);
+      console.log(`[fanos-studio] not sent (empty): ${prepared.skipped.join(", ")}`);
     }
     patchFrame(batchId, frameId, { status: "uploading", files });
 

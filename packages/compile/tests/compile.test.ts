@@ -510,6 +510,28 @@ describe("hairline frames", () => {
     expect(ruleNode(hairline({}))?.props.space).toBeUndefined();
   });
 
+  it("keeps a fixed rule's length in a row that runs its way: 100% of a hugging row is nothing", () => {
+    const inRow = hairline({});
+    inRow.root.layout.mode = "horizontal";
+    inRow.root.layout.sizing = { w: "hug", h: "hug" };
+    const rule = inRow.root.children[0]!;
+    rule.layout.sizing = { w: "fixed", h: "fixed" };
+    rule.geometry.bbox.w = rule.geometry.relBbox.w = 161;
+    const node = ruleNode(parseFrameIRDocument(JSON.parse(JSON.stringify(inRow))));
+    expect(node?.type).toBe("Divider");
+    expect(node?.props.size).toEqual({ w: { _unbound: true, raw: 161 } });
+    // in a column a horizontal rule is the column's width, as before
+    expect(ruleNode(hairline({}))?.props.size).toBeUndefined();
+  });
+
+  it("drops padding on any layer with nothing in it", () => {
+    const thin = hairline({});
+    thin.root.children[0]!.geometry.relBbox.h = 4;
+    const node = ruleNode(parseFrameIRDocument(JSON.parse(JSON.stringify(thin))));
+    expect(node?.type).not.toBe("Divider");
+    expect(node?.props.space).toBeUndefined();
+  });
+
   it("leaves an unpainted sliver alone rather than inventing a border", () => {
     expect(ruleNode(hairline({ fill: null }))?.type).not.toBe("Divider");
   });

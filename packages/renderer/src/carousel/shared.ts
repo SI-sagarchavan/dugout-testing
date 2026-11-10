@@ -45,6 +45,8 @@ export const CAROUSEL_VARS = {
   center: "--fos-carousel-center",
   speed: "--fos-carousel-speed",
   delay: "--fos-carousel-delay",
+  /** A number of slides on show: each slide's first-paint width is that share of the row. */
+  perView: "--fos-carousel-per-view",
 } as const;
 
 /** A computed custom property as a number of px or ms: "16px" → 16, "0.3s" → 300. */

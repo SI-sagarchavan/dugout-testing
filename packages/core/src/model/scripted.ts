@@ -11,6 +11,27 @@ export interface ScriptedTurn {
 
 export type ScriptStep = ScriptedTurn | ((req: ModelRequest) => ScriptedTurn);
 
+/**
+ * A write that waits for a yes carries a required `reason` (what it does and why). A script that
+ * does not write one gets a stand-in, so the same script serves a tool whether or not it writes;
+ * a script that does keeps its own.
+ */
+function withReason(
+  call: { name: string; arguments: unknown },
+  tools: ModelRequest["tools"],
+): unknown {
+  const args = call.arguments;
+  if (typeof args !== "object" || args === null || Array.isArray(args) || "reason" in args) {
+    return args;
+  }
+  const parameters = tools?.find((t) => t.name === call.name)?.parameters as
+    | { required?: string[] }
+    | undefined;
+  return parameters?.required?.includes("reason")
+    ? { ...args, reason: `scripted: ${call.name}` }
+    : args;
+}
+
 /** A `ModelClient` that replays a fixed script, for tests and offline eval smoke runs. */
 export function createScriptedModel(script: ScriptStep[]): ModelClient & {
   requests: ModelRequest[];
@@ -29,7 +50,9 @@ export function createScriptedModel(script: ScriptStep[]): ModelClient & {
         id: `call_${requests.length}_${i}`,
         name: call.name,
         arguments:
-          typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments),
+          typeof call.arguments === "string"
+            ? call.arguments
+            : JSON.stringify(withReason(call, req.tools)),
       }));
       // the whole arguments as one fragment; a real model sends many
       for (const [index, call] of (toolCalls ?? []).entries()) {

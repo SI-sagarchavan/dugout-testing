@@ -440,6 +440,54 @@ describe("bedrock client", () => {
     expect(strict).toEqual([true, false]);
   });
 
+  it("sends its largest strict tools without strict while the grammar is too large, and remembers", async () => {
+    // run 949eb0a1: data-bind's strict tools together compiled past Bedrock's grammar limit
+    const tooLarge = Object.assign(
+      new Error(
+        "The model returned the following errors: The compiled grammar is too large, which would cause performance issues. Simplify your tool schemas or reduce the number of strict tools.",
+      ),
+      { name: "ValidationException" },
+    );
+    const inputs: Array<Record<string, unknown>> = [];
+    type Sent = { toolConfig: { tools: Array<{ toolSpec: Record<string, unknown> }> } };
+    const strictOf = (input: unknown) =>
+      (input as Sent).toolConfig.tools
+        .filter((t) => t.toolSpec.strict === true)
+        .map((t) => t.toolSpec.name);
+    const runtime = {
+      async send(command: unknown) {
+        const input = (command as { input: Record<string, unknown> }).input;
+        inputs.push(input);
+        // the grammar fits once "big" and "mid" go without strict
+        if (strictOf(input).some((name) => name === "big" || name === "mid")) throw tooLarge;
+        return {
+          stream: (async function* () {
+            yield ended("end_turn");
+          })(),
+        };
+      },
+    };
+    const client = createBedrockClient({ runtime, models });
+    const props = (n: number) => ({
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: n }, (_, i) => [`p${i}`, { type: "string" }]),
+      ),
+      required: Array.from({ length: n }, (_, i) => `p${i}`),
+    });
+    const tools = [
+      { name: "small", description: "s", parameters: props(1) },
+      { name: "big", description: "b", parameters: props(30) },
+      { name: "mid", description: "m", parameters: props(10) },
+    ];
+    await client.complete(request({ model: "opus", tools }));
+    expect(inputs.map(strictOf)).toEqual([["small", "big", "mid"], ["small", "mid"], ["small"]]);
+    // the next turn with the same tools goes straight to what Bedrock took
+    await client.complete(request({ model: "opus", tools }));
+    expect(inputs).toHaveLength(4);
+    expect(strictOf(inputs[3])).toEqual(["small"]);
+  });
+
   it("keeps tools strict only while their optional parameters stay within Bedrock's limit", async () => {
     const { client, inputs } = fakeRuntime([ended("end_turn")]);
     // ten optional parameters each: two fit in the 24 Bedrock takes, the third would not

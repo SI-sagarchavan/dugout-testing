@@ -244,6 +244,35 @@
         ],
         "additionalProperties": false
       }
+    },
+    "settled": {
+      "description": "How each open item (a container's layout, which parts are one section) was settled, and by whom",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string",
+            "enum": [
+              "person",
+              "memory",
+              "agent"
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "by",
+          "value"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

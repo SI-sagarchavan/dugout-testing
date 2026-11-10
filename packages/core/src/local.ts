@@ -178,6 +178,8 @@ export interface RunLocalOptions {
   parent?: { runId: string; callId: string };
   /** What a child run starts on: its parent's situation at the call (ADR 0033). */
   situation?: Situation;
+  /** A child run's input, as its parent hashed it (ADR 0025). */
+  inputHash?: string;
   tools: Tool[];
   client: ModelClient;
   models: ModelConfig;
@@ -242,6 +244,7 @@ export async function runLocal(opts: RunLocalOptions) {
     ...(opts.depth ? { depth: opts.depth } : {}),
     ...(opts.parent ? { parent: opts.parent } : {}),
     ...(opts.situation ? { situation: opts.situation } : {}),
+    ...(opts.inputHash ? { inputHash: opts.inputHash } : {}),
   };
   const outputs = opts.outputs ?? createFileOutputStore(runsDir);
   const registry = createToolRegistry([...opts.tools, createReadOutputTool(outputs)]);

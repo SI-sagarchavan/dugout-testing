@@ -196,8 +196,14 @@ export function applyBindingPlan(tree: FlatTree, plan: BindingPlan): BindResult 
      * Unless the plan says the shapes vary: then they need only share a parent.
      */
     const memberIds = (members as FlatNode[]).map((m) => m.id);
-    const proposal =
-      group.shape === "varies"
+    // A carousel that draws only its slide on show: that one slide is the template, repeated per item.
+    const oneSlide =
+      memberIds.length === 1 &&
+      templateNode.parent !== null &&
+      next.nodes.find((n) => n.id === templateNode.parent)?.type === "Carousel";
+    const proposal = oneSlide
+      ? { parentId: templateNode.parent as string, memberIds }
+      : group.shape === "varies"
         ? templateNode.parent === null
           ? undefined
           : { parentId: templateNode.parent, memberIds }
@@ -380,13 +386,16 @@ export function applyBindingPlan(tree: FlatTree, plan: BindingPlan): BindResult 
   }
 
   /**
-   * A picture the data gives is drawn to cover its box. A stand-in for the design's picture (a
-   * plate cut to the box) is `fill`, which is exact for it and stretches anything else: a player's
-   * photo of another shape came out squashed. Its src bound to data, it covers instead.
+   * A stand-in for the design's picture (a plate cut to the box) is `fill`, which is exact for it
+   * and stretches anything else: a player's photo of another shape came out squashed. Its src bound
+   * to data, one that fills its parent (a band's background) covers it; one in a box of its own (a
+   * player cut out on a card) is drawn whole, as large as the box takes. Covering, a tall photo was
+   * drawn to the box's width and came out larger than the design's.
    */
   for (const node of next.nodes) {
     if (node.type === "Image" && node.props.fit === "fill" && hasRef(node.props.src)) {
-      next = setProp(next, node.id, "fit", "cover");
+      const fills = (node.props.place as { anchor?: unknown } | undefined)?.anchor === "fill";
+      next = setProp(next, node.id, "fit", fills ? "cover" : "contain");
     }
   }
 

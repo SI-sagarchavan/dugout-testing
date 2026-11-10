@@ -31,7 +31,7 @@ import { absolutize, type Node } from "@fanos/dsl";
 import { cssClassName, cssVar } from "@fanos/tokens";
 import { resolveNode } from "../resolve/style.js";
 import { formatUnresolvedWarnings, interpolate } from "../resolve/data.js";
-import type { NodeRenderContext } from "../context.js";
+import { localeOf, type NodeRenderContext } from "../context.js";
 import { styleToReact } from "./dom.js";
 import { renderIcon } from "./icons.js";
 
@@ -96,7 +96,7 @@ function actionOf(value: unknown): Action {
 function boundAction(action: Action, ctx: NodeRenderContext): Action {
   if (action.kind !== "navigate") return action;
   const href = action.href.includes("{")
-    ? interpolate(action.href, ctx.data, { timeZone: ctx.timeZone }).value
+    ? interpolate(action.href, ctx.data, localeOf(ctx)).value
     : action.href;
   return { ...action, href: absolutize(href, ctx.origin) };
 }
@@ -121,7 +121,7 @@ export function Button({ node, ctx }: { node: Node; ctx: NodeRenderContext }) {
 
   // The label is content, so it interpolates like any other bound string.
   const labelRaw = typeof props.label === "string" ? props.label : "";
-  const { value: label, unresolved } = interpolate(labelRaw, ctx.data, { timeZone: ctx.timeZone });
+  const { value: label, unresolved } = interpolate(labelRaw, ctx.data, localeOf(ctx));
   if (unresolved.length) {
     for (const w of formatUnresolvedWarnings(node.id, "label", unresolved)) console.warn(w);
   }

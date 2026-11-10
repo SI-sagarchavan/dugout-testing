@@ -74,6 +74,13 @@
       "maxOutputTokens": 32000,
       "price": { "input": 1.1, "cacheRead": 1.1, "output": 5.5 }
     },
+    "kimi": {
+      "id": "global.moonshotai.kimi-k3.1",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "toolErrorStatus": true,
+      "price": { "input": 2, "cacheRead": 2, "output": 10 }
+    },
     "sonnet-india": {
       "id": "in.anthropic.claude-sonnet-5",
       "effort": "medium",

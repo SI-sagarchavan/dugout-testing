@@ -111,8 +111,9 @@ describe("formatDate — fanxp's token set, with an explicit zone", () => {
     expect(formatDate("2026-10-21T20:00:00Z", "DD MMM", "Asia/Kolkata")).toBe("22 Oct");
   });
 
-  it("reads an offset-less timestamp as UTC, not as the machine's zone", () => {
+  it("reads an offset-less timestamp as a time in the zone shown, not in the machine's", () => {
     expect(formatDate("2025-07-14T23:45:00", "DD MMM HH:mm", "UTC")).toBe("14 Jul 23:45");
+    expect(formatDate("2025-07-14T23:45:00", "DD MMM HH:mm", "Asia/Kolkata")).toBe("14 Jul 23:45");
   });
 
   it("gives up (so `default` can catch it) on garbage or an unknown zone", () => {

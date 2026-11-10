@@ -33,6 +33,7 @@ describe("the model list", () => {
       "sonnet",
       "opus",
       "terra",
+      "kimi",
     ]) {
       const model = modelEntry(config, name);
       expect(modelFamily(model.id), name).toBeDefined();
@@ -55,6 +56,7 @@ describe("the model list", () => {
     expect(modelFamily("global.amazon.nova-2-lite-v1:0")).toBe("nova-2");
     expect(modelFamily("apac.amazon.nova-pro-v1:0")).toBe("nova");
     expect(modelFamily("global.openai.gpt-6.1-terra")).toBe("openai");
+    expect(modelFamily("global.moonshotai.kimi-k3.1")).toBe("moonshot");
     expect(modelFamily("global.meta.llama-4")).toBeUndefined();
   });
 

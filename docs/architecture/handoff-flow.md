@@ -108,7 +108,7 @@ Base URL: `PATH_PREFIX + /api/v1` (locally `http://localhost:4000/fanxp/api/v1`)
 | `vector`     | art the IR cannot describe: fixed crests, icons, swooshes, masks                  | `image/png`, `image/svg+xml` |
 | `background` | images the designer marked, as their original bytes, with the node they paint     | PNG, JPEG, WebP, SVG         |
 
-Content photos do not ship. The plugin skips every `art-image-*` picture, and `bind` fills those images from data. Limits: 25 MB per file, 100 MB and 1,000 files per send. The plugin reads each background's type from its bytes and refuses one the backend does not take (GIF) with a message naming the file.
+Content photos ship too (`art-image-*`, kind `vector`): the plugin cannot know whether a layer is static or filled from data, so that is decided after the Handoff, by `bind`. Limits: 25 MB per file, 100 MB and 1,000 files per send. The plugin reads each background's type from its bytes and refuses one the backend does not take (GIF) with a message naming the file.
 
 **The three calls:**
 

@@ -25,11 +25,12 @@ import {
 
 const MAX_SCREENSHOTS = 40;
 /**
- * The most bytes of picture one export carries. The control plane takes 32 MB a
- * request, and the IR and its base64 overhead come out of that, so the pictures
- * get what is left with room to spare.
+ * The most bytes of picture one export carries. A Handoff uploads each file to S3
+ * on its own signed URL, so no request body limits it; the backend's cap on a whole
+ * Handoff (MAX_HANDOFF_BYTES) is set above this. At 18 MB a whole-frame picture and
+ * a textured backdrop left no room for the card photos, which then had no pixels.
  */
-const PLATE_BYTES_BUDGET = 18 * 1024 * 1024;
+const PLATE_BYTES_BUDGET = 200 * 1024 * 1024;
 const MIN_SCREENSHOT_WIDTH = 40;
 
 export type Screenshot = { name: string; nodeId: string; bytes: Uint8Array };

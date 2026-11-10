@@ -84,6 +84,10 @@ export function carouselSpec(
   length(CAROUSEL_VARS.before, props.offsetBefore);
   length(CAROUSEL_VARS.after, props.offsetAfter);
   if (spec.centered && typeof props.centerAt === "number") vars[CAROUSEL_VARS.center] = `${props.centerAt}px`;
+  // a number on show sizes each slide to its share of the row; "auto" keeps each slide's own width
+  if (typeof props.slidesPerView === "number" && props.slidesPerView > 0) {
+    vars[CAROUSEL_VARS.perView] = String(props.slidesPerView);
+  }
   if (props.speed !== undefined) vars[CAROUSEL_VARS.speed] = resolveDuration(props.speed).css;
   if (autoplay && typeof autoplay === "object" && autoplay.delay !== undefined) {
     vars[CAROUSEL_VARS.delay] = resolveDuration(autoplay.delay).css;

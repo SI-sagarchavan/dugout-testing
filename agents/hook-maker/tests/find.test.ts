@@ -116,8 +116,11 @@ const answer = (hookId: string | null, input: Record<string, string> = {}) => ({
         hookId,
         built: false,
         input,
-        covers: ["match state → state (R, U)"],
-        missing: [],
+        covers: ["result or upcoming → data.1[].state (R, U)"],
+        missing: [
+          "both teams' short names: the output has none",
+          "both teams' scores: the output has none",
+        ],
         why: "The only schedule hook of dugout's.",
       },
     },

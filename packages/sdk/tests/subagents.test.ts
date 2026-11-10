@@ -31,7 +31,15 @@ import {
 } from "@dugout/memory";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { z } from "zod";
-import { type AnyAgent, agentToolName, childRunId, defineAgent } from "../src/index.ts";
+import {
+  type AnyAgent,
+  agentToolName,
+  childCaller,
+  childRunId,
+  defineAgent,
+  inputKey,
+  MAX_WRITING_TRIES,
+} from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
 afterAll(() => pool.end());
@@ -51,7 +59,13 @@ const PARENT = "You are the lead.";
 const looked: Array<{ tenantId: string; runId: string; depth?: number | undefined }> = [];
 
 const researcher = (
-  extra: { write?: boolean; agents?: AnyAgent[]; maxDepth?: number; signIn?: boolean } = {},
+  extra: {
+    write?: boolean;
+    shared?: boolean;
+    agents?: AnyAgent[];
+    maxDepth?: number;
+    signIn?: boolean;
+  } = {},
 ) =>
   defineAgent({
     spec: {
@@ -93,6 +107,7 @@ const researcher = (
         description: "Saves a fact.",
         input: z.object({}),
         effect: "write",
+        ...(extra.shared ? { shared: true } : {}),
         timeoutMs: 1_000,
         run: async () => ({ saved: true }),
       }),
@@ -544,6 +559,106 @@ describe("subagents (ADR 0025)", () => {
     expect(answered[2]?.child?.parentRunId).toBe(middleId);
   });
 
+  describe("a write to something shared is a person's yes (ticket 12)", () => {
+    const script = () =>
+      routed({
+        [PARENT]: [
+          { toolCalls: [{ name: "agent.researcher", arguments: { question: "Save it" } }] },
+          { toolCalls: [{ name: "final", arguments: { summary: "saved" } }] },
+        ],
+        [CHILD]: [
+          { toolCalls: [{ name: "facts.save", arguments: {} }] },
+          { toolCalls: [{ name: "final", arguments: { answer: "saved" } }] },
+        ],
+      });
+    // memory is in Postgres: a tenant of its own for each run of the file, or an earlier opt-in leaks
+    const tenant = `club-shared-${Date.now()}`;
+    const opts = (runId: string, runStore = createMemoryRunStore()) => ({
+      tenantId: tenant,
+      input: { topic: "t" },
+      // the parent's call is approved; a child's shared write is not covered by that yes
+      responder: async (req: { subject?: unknown }) =>
+        req.subject ? approve("editor") : ({ pending: true } as const),
+      runId,
+      store: runStore,
+      sinks: [createMemorySink()],
+    });
+
+    it("holds the child's write for a person, as a review that says it is shared, though the parent's call was approved", async () => {
+      const result = await lead(researcher({ write: true, shared: true })).create(deps(script()))(
+        opts("shared-held"),
+      );
+      expect(result).toMatchObject({
+        status: "waiting",
+        waiting: { questions: [{ id: "review", kind: "review", shared: true }] },
+      });
+    });
+
+    /** A house fact for a tenant of its own: its sentence, its typed value, and whether it is active. */
+    const fact = async (
+      who: string,
+      f: { content: string; value?: unknown; active: boolean },
+    ): Promise<string> => {
+      const tenantId = `${tenant}-${who}`;
+      const proposal = await store.proposeFact({
+        tenantId,
+        agentId: null,
+        key: "approvals.shared-writes",
+        content: f.content,
+        confidence: 1,
+        sourceRunId: null,
+        ...(f.value !== undefined ? { value: f.value } : {}),
+      });
+      if (f.active) await store.activateFact(tenantId, proposal.id, "test");
+      return tenantId;
+    };
+    const sharedRun = (tenantId: string, runId: string) =>
+      lead(researcher({ write: true, shared: true })).create(deps(script()))({
+        ...opts(runId),
+        tenantId,
+      });
+
+    it("goes through, when the tenant opted in with the house fact's value, and an unshared write never waited", async () => {
+      const first = await lead(researcher({ write: true })).create(deps(script()))(
+        opts("unshared"),
+      );
+      expect(first.status).toBe("completed");
+      const optedIn = await fact("auto", {
+        content: "Shared writes go through under one approval.",
+        value: "auto",
+        active: true,
+      });
+      expect((await sharedRun(optedIn, "shared-opted-in")).status).toBe("completed");
+    });
+
+    it("reads the fact's typed value, never its sentence: a fact that says auto in words does not opt in", async () => {
+      const never = await fact("never", {
+        content: "Shared writes are never auto-approved.",
+        value: "never",
+        active: true,
+      });
+      expect(await sharedRun(never, "shared-never")).toMatchObject({ status: "waiting" });
+      const wordOnly = await fact("word", { content: "auto", active: true });
+      expect(await sharedRun(wordOnly, "shared-word")).toMatchObject({ status: "waiting" });
+    });
+
+    it("reads only an active fact: one still proposed does not opt in", async () => {
+      const proposed = await fact("proposed", {
+        content: "Shared writes go through under one approval.",
+        value: "auto",
+        active: false,
+      });
+      expect(await sharedRun(proposed, "shared-proposed")).toMatchObject({ status: "waiting" });
+    });
+
+    it("reads the fact of the run's own tenant, not another's", async () => {
+      await fact("other", { content: "Shared writes go through.", value: "auto", active: true });
+      expect(await sharedRun(`${tenant}-not-other`, "shared-other")).toMatchObject({
+        status: "waiting",
+      });
+    });
+  });
+
   it("refuses to load an agent that calls agents with no depth for one", () => {
     expect(() => lead(researcher(), { maxDepth: 0 })).toThrow(/budget.maxDepth must be 1 or more/);
   });
@@ -671,11 +786,12 @@ describe("subagents (ADR 0025)", () => {
     ).toHaveLength(0);
   });
 
-  it("builds one thing per run: once a try completed, a second call is refused with what it built", async () => {
+  it("builds one thing per input: once a try completed, asking the same again is refused with what it built", async () => {
     const client = routed({
       [PARENT]: [
         { toolCalls: [{ name: "agent.researcher", arguments: { question: "Save it" } }] },
-        { toolCalls: [{ name: "agent.researcher", arguments: { question: "Save it, again" } }] },
+        // the same need, its keys in another order: still the same thing asked
+        { toolCalls: [{ name: "agent.researcher", arguments: { question: "Save it" } }] },
         { toolCalls: [{ name: "final", arguments: { summary: "saved" } }] },
       ],
       [CHILD]: [
@@ -703,14 +819,444 @@ describe("subagents (ADR 0025)", () => {
     expect(childTurns).toHaveLength(2);
     expect(asked).toEqual(["agent.researcher"]);
     const second = client.requests.at(-1)?.messages.findLast((m) => m.role === "tool");
-    expect(String(second?.content)).toContain("already completed in this run");
+    expect(String(second?.content)).toContain("already answered for this same need");
+    expect(String(second?.content)).toContain("change the need to ask again");
     expect(String(second?.content)).toContain('{"answer":"saved once"}');
     // the child's spend is counted once
     expect(result.usage.costUsd).toBeCloseTo(5 * 0.0012, 6);
     // the tool says so to the model
     expect(
       client.requests[0]?.tools.find((t) => t.name === "agent.researcher")?.description,
-    ).toContain("builds one thing per run");
+    ).toContain("builds one thing for each thing you ask");
+  });
+
+  it("runs the child again when it is asked something new, approved like any try, and not for the same thing twice", async () => {
+    const client = routed({
+      [PARENT]: [
+        call("Save it"),
+        call("Save it, with the feeds a person gave"),
+        call("Save it, with the feeds a person gave"),
+        { toolCalls: [{ name: "final", arguments: { summary: "saved" } }] },
+      ],
+      [CHILD]: [
+        { toolCalls: [{ name: "facts.save", arguments: {} }] },
+        { toolCalls: [{ name: "final", arguments: { answer: "first" } }] },
+        { toolCalls: [{ name: "facts.save", arguments: {} }] },
+        { toolCalls: [{ name: "final", arguments: { answer: "second" } }] },
+      ],
+    });
+    const asked: unknown[] = [];
+    const sink = createMemorySink();
+    const result = await lead(researcher({ write: true })).create(deps(client))({
+      tenantId: "club-a",
+      input: { topic: "t" },
+      responder: async (req) => {
+        asked.push(req.input);
+        return approve("editor");
+      },
+      runId: "parent-new-input",
+      store: createMemoryRunStore(),
+      sinks: [sink],
+    });
+    expect(result.status).toBe("completed");
+    // two children, each a run of its own; the third call was the second input again
+    const started = sink.events
+      .filter((e) => e.type === "run.started" && e.child)
+      .map((e) => e.child?.runId);
+    expect(started).toEqual([
+      childRunId("parent-new-input", "once:researcher"),
+      childRunId("parent-new-input", "once:researcher:2"),
+    ]);
+    // a person approved the first and the second; neither is a retry, so neither says so
+    expect(asked).toEqual([
+      { question: "Save it" },
+      { question: "Save it, with the feeds a person gave" },
+    ]);
+    const answers = client.requests
+      .flatMap((r) => r.messages)
+      .filter((m) => m.role === "tool")
+      .map((m) => String(m.content));
+    expect(answers.some((a) => a.includes('"answer":"second"') && !a.includes("already"))).toBe(
+      true,
+    );
+    expect(answers.at(-1)).toContain("already answered for this same need");
+    expect(answers.at(-1)).toContain('{"answer":"second"}');
+  });
+
+  it("does not count a completed try toward the three, and a new input after failures is a try of its own", async () => {
+    const client = routed({
+      [PARENT]: [
+        call("A"),
+        call("B"),
+        call("B, changed"),
+        call("C"),
+        call("D"),
+        {
+          toolCalls: [{ name: "final", arguments: { summary: "done" } }],
+        },
+      ],
+      [CHILD]: [
+        { toolCalls: [{ name: "final", arguments: { answer: "a" } }] },
+        ...FAILS,
+        { toolCalls: [{ name: "final", arguments: { answer: "b" } }] },
+        { toolCalls: [{ name: "final", arguments: { answer: "c" } }] },
+        { toolCalls: [{ name: "final", arguments: { answer: "d" } }] },
+      ],
+    });
+    const result = await lead(researcher({ write: true }), { maxSteps: 8 }).create(deps(client))({
+      tenantId: "club-a",
+      input: { topic: "t" },
+      responder: async () => approve("editor"),
+      runId: "parent-count",
+      store: createMemoryRunStore(),
+    });
+    expect(result.status).toBe("completed");
+    const tools = client.requests
+      .flatMap((r) => r.messages)
+      .filter((m) => m.role === "tool")
+      .map((m) => String(m.content));
+    // A completed, B failed (one failure), then every later input ran: completing did not use a try
+    expect(tools.some((t) => t.includes("Try 1 of 3"))).toBe(true);
+    for (const answer of ["b", "c", "d"]) {
+      expect(tools.some((t) => t.includes(`"answer":"${answer}"`))).toBe(true);
+    }
+    expect(tools.some((t) => t.includes("a person has to look"))).toBe(false);
+  });
+
+  it("finds the try for each input again after a restart, in the run store", async () => {
+    const script = (parent: ScriptStep[]) =>
+      routed({
+        [PARENT]: parent,
+        [CHILD]: [
+          { toolCalls: [{ name: "final", arguments: { answer: "one" } }] },
+          { toolCalls: [{ name: "final", arguments: { answer: "two" } }] },
+        ],
+      });
+    const runs = createMemoryRunStore();
+    const first = script([
+      call("One"),
+      call("Two"),
+      call("Two"),
+      { toolCalls: [{ name: "final", arguments: { summary: "saved" } }] },
+    ]);
+    // the process is lost when the parent saves after its third call
+    let tools = 0;
+    const flaky = {
+      ...runs,
+      async save(
+        ctx: RunContext,
+        checkpoint: RunCheckpoint,
+        appended: Parameters<typeof runs.save>[2],
+      ) {
+        if (ctx.runId === "parent-restart" && checkpoint.savedAfter === "tool" && ++tools === 4) {
+          throw new RunInterrupted("the worker went away");
+        }
+        return runs.save(ctx, checkpoint, appended);
+      },
+    };
+    const opts = {
+      tenantId: "club-a",
+      input: { topic: "t" },
+      responder: async () => approve("editor"),
+      runId: "parent-restart",
+    };
+    await expect(
+      lead(researcher({ write: true })).create(deps(first))({ ...opts, store: flaky }),
+    ).rejects.toThrow(RunInterrupted);
+    const before = first.requests.filter((r) =>
+      String(r.messages[0]?.content).startsWith(CHILD),
+    ).length;
+    expect(before).toBe(2);
+    // a worker that starts over with nothing in memory but the store: both inputs are found there
+    const again = script([
+      call("Two"),
+      { toolCalls: [{ name: "final", arguments: { summary: "saved" } }] },
+    ]);
+    const result = await lead(researcher({ write: true })).create(deps(again))({
+      ...opts,
+      store: runs,
+      resume: { reason: "recovery" },
+    });
+    expect(result).toMatchObject({ status: "completed" });
+    const turns = again.requests.filter((r) => String(r.messages[0]?.content).startsWith(CHILD));
+    // "Two" the second time is answered from its saved try; no child ran again
+    expect(turns).toHaveLength(0);
+    const saved = await runs.load({
+      runId: childRunId("parent-restart", "once:researcher:2"),
+      tenantId: "club-a",
+    });
+    expect(saved?.checkpoint.inputHash).toBeDefined();
+    const one = await runs.load({
+      runId: childRunId("parent-restart", "once:researcher"),
+      tenantId: "club-a",
+    });
+    expect(one?.checkpoint.inputHash).not.toBe(saved?.checkpoint.inputHash);
+  });
+
+  /** A client whose tool call ids are its own, as a real model's are: a restarted worker's new client. */
+  const renamed = (client: ModelClient, prefix: string): ModelClient => ({
+    async complete(req, onToken, onToolInput) {
+      const res = await client.complete(req, onToken, onToolInput);
+      const toolCalls = res.message.toolCalls?.map((c) => ({ ...c, id: `${prefix}${c.id}` }));
+      return { ...res, message: { ...res.message, ...(toolCalls ? { toolCalls } : {}) } };
+    },
+  });
+  /** A store that loses the worker at the first save a test names. */
+  const losing = (
+    runs: ReturnType<typeof createMemoryRunStore>,
+    when: (ctx: RunContext, checkpoint: RunCheckpoint) => boolean,
+  ) => {
+    let lost = false;
+    return {
+      ...runs,
+      async save(
+        ctx: RunContext,
+        checkpoint: RunCheckpoint,
+        appended: Parameters<typeof runs.save>[2],
+      ) {
+        if (!lost && when(ctx, checkpoint)) {
+          lost = true;
+          throw new RunInterrupted("the worker went away");
+        }
+        return runs.save(ctx, checkpoint, appended);
+      },
+    };
+  };
+  /** A writing child called by code, as the tool does, under a parent run of `runId`. */
+  const callerOf = (
+    client: ModelClient,
+    store: ReturnType<typeof createMemoryRunStore>,
+    child = researcher({ write: true }),
+  ) =>
+    childCaller(
+      lead(child).spec,
+      child,
+      child.create(deps(client)) as Parameters<typeof childCaller>[2],
+      { store },
+      { writes: true },
+    );
+  const callCtx = (runId: string, callId: string) => ({
+    tenantId: "club-a",
+    runId,
+    callId,
+    signal: new AbortController().signal,
+    depth: 0,
+    usdLeft: 1,
+  });
+  const childTurns = (client: { requests: ModelRequest[] }) =>
+    client.requests.filter((r) => String(r.messages[0]?.content).startsWith(CHILD));
+
+  it("takes up a try that never ended only for the same input: another input is a new try", async () => {
+    const runs = createMemoryRunStore();
+    const firstTry = childRunId("parent-ab", "once:researcher");
+    const client = routed({
+      [PARENT]: [],
+      [CHILD]: [
+        // A: saves, and the worker is lost before the try ends
+        { toolCalls: [{ name: "facts.save", arguments: {} }] },
+        // B: a try of its own
+        { toolCalls: [{ name: "final", arguments: { answer: "b" } }] },
+        // A again: its own try is taken up where it was
+        { toolCalls: [{ name: "final", arguments: { answer: "a" } }] },
+      ],
+    });
+    const lost = losing(
+      runs,
+      (ctx, checkpoint) => ctx.runId === firstTry && checkpoint.savedAfter === "tool",
+    );
+    await expect(
+      callerOf(client, lost).call({ question: "A" }, callCtx("parent-ab", "call_1_0")),
+    ).rejects.toThrow(RunInterrupted);
+
+    // a restarted worker: nothing in memory but the store
+    const b = await callerOf(client, runs).call(
+      { question: "B" },
+      callCtx("parent-ab", "call_2_0"),
+    );
+    expect(b).toEqual({
+      runId: childRunId("parent-ab", "once:researcher:2"),
+      output: { answer: "b" },
+    });
+    // B's child was asked B, from the start
+    expect(childTurns(client)[1]?.messages[1]?.content).toBe(JSON.stringify({ question: "B" }));
+    // A's try is still A's: not ended, its hash A's, and B's output is not saved under it
+    const a = await runs.load({ runId: firstTry, tenantId: "club-a" });
+    expect(a?.checkpoint.ended).toBeUndefined();
+    expect(a?.checkpoint.inputHash).toBe(inputKey({ question: "A" }));
+    const second = await runs.load({
+      runId: childRunId("parent-ab", "once:researcher:2"),
+      tenantId: "club-a",
+    });
+    expect(second?.checkpoint.inputHash).toBe(inputKey({ question: "B" }));
+
+    // A asked again takes up A's own try
+    const again = await callerOf(client, runs).call(
+      { question: "A" },
+      callCtx("parent-ab", "call_3_0"),
+    );
+    expect(again).toEqual({ runId: firstTry, output: { answer: "a" } });
+  });
+
+  it("after a restart, answers a same-need call from the store's completed try before any approval", async () => {
+    const runs = createMemoryRunStore();
+    // the first worker: one need answered, then a second need waits for a person's yes
+    const first = routed({
+      [PARENT]: [call("Save it"), call("Save the other")],
+      [CHILD]: [{ toolCalls: [{ name: "final", arguments: { answer: "saved once" } }] }],
+    });
+    let approvals = 0;
+    const opts = { tenantId: "club-a", input: { topic: "t" }, runId: "parent-paused" };
+    const paused = await lead(researcher({ write: true })).create(deps(first))({
+      ...opts,
+      responder: async () => (++approvals === 1 ? approve("editor") : { pending: true as const }),
+      store: runs,
+    });
+    expect(paused).toMatchObject({ status: "waiting" });
+
+    // another worker takes the yes up, with nothing in memory; the model then asks the first need again
+    const second = routed({
+      [PARENT]: [call("Save it"), { toolCalls: [{ name: "final", arguments: { summary: "s" } }] }],
+      [CHILD]: [{ toolCalls: [{ name: "final", arguments: { answer: "the other" } }] }],
+    });
+    const result = await lead(researcher({ write: true })).create(
+      deps(renamed(second, "restarted_")),
+    )({
+      ...opts,
+      // nobody is asked again (never throws when asked)
+      responder: never,
+      store: runs,
+      resume: { reason: "answered", decision: approve("editor") },
+    });
+    expect(result).toMatchObject({ status: "completed" });
+    // only the approved need ran
+    expect(childTurns(second)).toHaveLength(1);
+    const last = second.requests.at(-1)?.messages.findLast((m) => m.role === "tool");
+    expect(String(last?.content)).toContain("already answered for this same need");
+    expect(String(last?.content)).toContain('{"answer":"saved once"}');
+  });
+
+  it("answers the call a restart cut short as its own, and code calling the same need again as answered before", async () => {
+    const runs = createMemoryRunStore();
+    const first = routed({
+      [PARENT]: [call("Save it")],
+      [CHILD]: [
+        { toolCalls: [{ name: "facts.save", arguments: {} }] },
+        { toolCalls: [{ name: "final", arguments: { answer: "saved once" } }] },
+      ],
+    });
+    // the worker is lost right after the child answered, before the parent saved the answer
+    const lost = losing(
+      runs,
+      (ctx, checkpoint) => ctx.runId === "parent-again" && checkpoint.savedAfter === "tool",
+    );
+    const opts = { tenantId: "club-a", input: { topic: "t" }, runId: "parent-again" };
+    await expect(
+      lead(researcher({ write: true })).create(deps(first))({
+        ...opts,
+        responder: async () => approve("editor"),
+        store: lost,
+      }),
+    ).rejects.toThrow(RunInterrupted);
+
+    // a new worker: the interrupted call is taken up, and the model then asks the same again
+    const second = routed({
+      [PARENT]: [call("Save it"), { toolCalls: [{ name: "final", arguments: { summary: "s" } }] }],
+      [CHILD]: [],
+    });
+    const result = await lead(researcher({ write: true })).create(
+      deps(renamed(second, "restarted_")),
+    )({ ...opts, responder: never, store: runs, resume: { reason: "recovery" } });
+    expect(result).toMatchObject({ status: "completed" });
+    // no child ran, and nobody was asked (never throws when asked)
+    expect(childTurns(second)).toHaveLength(0);
+    const tools = second.requests
+      .flatMap((r) => r.messages)
+      .filter((m) => m.role === "tool")
+      .map((m) => String(m.content));
+    // the interrupted call's answer reads as its own; the repeat says it was answered already
+    expect(tools[0]).toContain('"answer":"saved once"');
+    expect(tools[0]).not.toContain("already answered");
+    expect(tools.at(-1)).toContain("already answered for this same need");
+    expect(tools.at(-1)).toContain('{"answer":"saved once"}');
+
+    // code calling it the same way is told it is an answer given before
+    const fresh = routed({ [CHILD]: [] });
+    expect(
+      await callerOf(fresh, runs).call(
+        { question: "Save it" },
+        callCtx("parent-again", "another_call"),
+      ),
+    ).toEqual({
+      runId: childRunId("parent-again", "once:researcher"),
+      output: { answer: "saved once" },
+      again: true,
+    });
+    expect(childTurns(fresh)).toHaveLength(0);
+  });
+
+  it("treats a completed try saved before inputs were kept as matching no input", async () => {
+    const runs = createMemoryRunStore();
+    const first = routed({
+      [PARENT]: [call("Save it"), { toolCalls: [{ name: "final", arguments: { summary: "s" } }] }],
+      [CHILD]: [{ toolCalls: [{ name: "final", arguments: { answer: "old" } }] }],
+    });
+    const done = await lead(researcher({ write: true })).create(deps(first))({
+      tenantId: "club-a",
+      input: { topic: "t" },
+      responder: async () => approve("editor"),
+      runId: "parent-legacy",
+      store: runs,
+    });
+    expect(done.status).toBe("completed");
+    // as an older worker saved it: no input hash, no calling call
+    const legacy = {
+      ...runs,
+      async load(ctx: Pick<RunContext, "runId" | "tenantId">) {
+        const saved = await runs.load(ctx);
+        if (!saved) return saved;
+        const { inputHash: _h, parentCallId: _c, ...checkpoint } = saved.checkpoint;
+        return { ...saved, checkpoint };
+      },
+    };
+    const client = routed({
+      [CHILD]: [{ toolCalls: [{ name: "final", arguments: { answer: "new" } }] }],
+    });
+    const answer = await callerOf(client, legacy as typeof runs).call(
+      { question: "Save it" },
+      callCtx("parent-legacy", "call_9_0"),
+    );
+    expect(answer).toEqual({
+      runId: childRunId("parent-legacy", "once:researcher:2"),
+      output: { answer: "new" },
+    });
+  });
+
+  it(`stops at ${MAX_WRITING_TRIES} tries in one run, completed ones too, and says so without asking a person`, async () => {
+    const needs = Array.from({ length: MAX_WRITING_TRIES + 1 }, (_, i) => `need ${i + 1}`);
+    const client = routed({
+      [PARENT]: [
+        ...needs.map(call),
+        { toolCalls: [{ name: "final", arguments: { summary: "stopped" } }] },
+      ],
+      [CHILD]: needs.map((n) => ({ toolCalls: [{ name: "final", arguments: { answer: n } }] })),
+    });
+    const asked: unknown[] = [];
+    const result = await lead(researcher({ write: true }), { maxSteps: 10 }).create(deps(client))({
+      tenantId: "club-a",
+      input: { topic: "t" },
+      responder: async (req) => {
+        asked.push(req.input);
+        return approve("editor");
+      },
+      runId: "parent-cap",
+      store: createMemoryRunStore(),
+    });
+    expect(result.status).toBe("completed");
+    expect(asked).toHaveLength(MAX_WRITING_TRIES);
+    expect(childTurns(client)).toHaveLength(MAX_WRITING_TRIES);
+    const last = client.requests.at(-1)?.messages.findLast((m) => m.role === "tool");
+    expect(String(last?.content)).toContain(`tried ${MAX_WRITING_TRIES} times in this run`);
+    expect(String(last?.content)).toContain("a person has to look");
   });
 
   /** Four refused finals in a row: the child runs out of its four steps and fails. */

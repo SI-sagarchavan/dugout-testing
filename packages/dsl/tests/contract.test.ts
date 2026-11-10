@@ -113,6 +113,15 @@ describe("B4 — pipes", () => {
     expect(b4[0]!.message).toContain('unknown pipe "upper"');
   });
 
+  it("rejects a ref the grammar cannot read, which would draw as written", () => {
+    const template = '{news.items.1.title | replace:"R":"RECENT","U":"UPCOMING"}';
+    const tree = setProp(bound(), idOf(bound(), "333:9687"), "content", template);
+    const b4 = validate(tree, { registry: registry() }).errors.filter((e) => e.code === "B4");
+    expect(b4).toHaveLength(1);
+    expect(b4[0]!.message).toContain("not a ref");
+    expect(b4[0]!.message).toContain(template);
+  });
+
   it("rejects a wrong arity and warns on date over a non-date", () => {
     const id = idOf(bound(), "333:9687");
     expect(codes(check(setProp(bound(), id, "content", "{news.items.1.published_date | date}")).errors)).toContain("B4");

@@ -21,6 +21,12 @@ describe("redactor", () => {
     "Lions won by 7 wickets at 19:30 on 2026-11-02",
     "Scored 120 runs off 98 balls",
     "Attendance 45000",
+    // run 697996cf: a plan artifact id whose last group is all digits read as an Aadhaar number
+    "planArtifactId 4ebb66fc-f30a-40e5-98d0-234567890123",
+    "id 12345678-2345-6789-0123-abcdef012345",
+    "id 4ebb66fc-f30a-40e5-98d0-987654321098",
+    // run ca1abe01: the first two groups, 8 digits and 4, read as one
+    "plan=67760755-9820-475a-bbfc-7a82c768aade",
   ])("leaves match copy alone: %j", (input) => {
     expect(redact.text(input)).toBe(input);
   });

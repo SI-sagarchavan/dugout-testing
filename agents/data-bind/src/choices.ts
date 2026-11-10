@@ -2,11 +2,11 @@
  * The page's choices, as a binding reads them (ADR 0032): what other sections' tabs write
  * (`_page.<key>`), and which lists of this section's data follow one.
  *
- * A strip of players under a WOMEN | MEN toggle is one list of every player, each with a team. The
- * toggle is another section's; the strip shows the players of the team chosen there. Code finds
- * the field: a list whose items hold, in one field, values that are the options of a choice
- * ("Women", "Men" for `women`, `men`). The plan then draws an item only while its team is the
- * chosen one: the template's `when` is `{ path: "<as>.team", eqPath: "_page.<key>" }`.
+ * A list under a toggle (`<option a> | <option b>`) is often one list of every item, each saying in
+ * one field which option it is for. Code finds the field: a list whose items hold, in one field,
+ * values that are the options of a choice ("Option A" for `option_a`). The plan then draws an item
+ * only while its value is the chosen one: the template's `when` is
+ * `{ path: "<as>.<field>", eqPath: "_page.<key>" }`.
  */
 
 /** A choice another section writes, as recorded when it was published. */
@@ -101,4 +101,90 @@ export function linksOf(data: unknown, choices: KnownChoice[]): ChoiceLink[] {
 /** A link, as the model is told it. */
 export function describeLink(l: ChoiceLink): string {
   return `${l.list}: each item's "${l.field}" is one of _page.${l.key} (${l.covers.join(", ")})${l.others ? `; ${l.others} hold none` : ""}. To draw only the chosen ones, give the template's collapse when { "path": "<as>.${l.field}", "eqPath": "_page.${l.key}" }`;
+}
+
+interface PlanCollapse {
+  over: string;
+  as: string;
+  members?: string[];
+  when?: unknown;
+}
+
+const whensOf = (when: unknown): Array<{ path?: string; eqPath?: string }> =>
+  Array.isArray(when) ? when : when && typeof when === "object" ? [when] : [];
+
+const at = (value: unknown, path: string): unknown =>
+  path
+    .split(".")
+    .filter(Boolean)
+    .reduce<unknown>(
+      (v, key) => (v && typeof v === "object" ? (v as Record<string, unknown>)[key] : undefined),
+      value,
+    );
+
+/** A choice problem, on the list's template so a plan can keep it with why. */
+export interface ChoiceProblem {
+  message: string;
+  src?: string;
+}
+
+/**
+ * What a plan gets wrong about the page's choices (ticket 13), from the plan and the data alone:
+ * a list a choice governs that the plan draws whole, and a filter whose options some list has no
+ * items for. A list that follows the choice by its `over` is filtered already.
+ *
+ * Only a choice placed with the list governs it: one the section (or the slot) draws itself
+ * (`drawn`), when the list's items hold its values; or one another section writes that this one
+ * was told to read (`placed`, a slot's `readFrom`), when its options cover every value the field
+ * holds. Another section's choice whose values a field happens to share (a home/away toggle over
+ * fixtures that each say where they are played) is not this list's. Each problem can be kept.
+ */
+export function choiceProblems(
+  plan: { collapse?: PlanCollapse[] } | undefined,
+  data: unknown,
+  drawn: KnownChoice[],
+  placed: KnownChoice[] = [],
+  /** Every other choice the page has: a filter the plan writes on one is checked all the same. */
+  others: KnownChoice[] = [],
+): ChoiceProblem[] {
+  const problems: ChoiceProblem[] = [];
+  const collapses = plan?.collapse ?? [];
+  const keepHint = (c: PlanCollapse) =>
+    c.members?.[0] ? `; or keep ${c.members[0]} with why the list does not follow it` : "";
+  const governing = [
+    ...linksOf(data, drawn),
+    ...linksOf(data, placed).filter((l) => l.others === 0),
+  ];
+  for (const link of governing) {
+    const c = collapses.find((x) => x.over === link.list);
+    if (!c) continue;
+    const filtered = whensOf(c.when).some((w) => w.eqPath === `_page.${link.key}`);
+    if (!filtered) {
+      problems.push({
+        message: `${link.list} is filtered by the page choice _page.${link.key}: each item's "${link.field}" is one of its options (${link.covers.join(", ")}), and the collapse over it draws every item. Give it when { "path": "${c.as}.${link.field}", "eqPath": "_page.${link.key}" }${keepHint(c)}`,
+        ...(c.members?.[0] ? { src: c.members[0] } : {}),
+      });
+    }
+  }
+  const choices = [...drawn, ...placed, ...others];
+  for (const c of collapses) {
+    for (const w of whensOf(c.when)) {
+      const key = /^_page\.(\w+)$/.exec(w.eqPath ?? "")?.[1];
+      const field = w.path?.startsWith(`${c.as}.`) ? w.path.slice(c.as.length + 1) : undefined;
+      const choice = choices.find((x) => x.key === key);
+      if (!choice || !field) continue;
+      const list = at(data, c.over);
+      const held = (Array.isArray(list) ? list : []).map((i) => choiceValue(at(i, field)));
+      // an option no item holds draws every item (an ALL option, `@fanos/dsl`'s rule), so only a
+      // filter that holds none of the options is wrong: every option then draws the whole list
+      const none = choice.options.filter((o) => !held.includes(choiceValue(o.value)));
+      if (held.length > 0 && none.length === choice.options.length) {
+        problems.push({
+          message: `${c.over} filtered by _page.${key}: no item holds any of its options (${choice.options.map((o) => o.value).join(", ")}) in "${field}" (it holds ${[...new Set(held)].slice(0, 4).join(", ") || "nothing"}), so every option draws the whole list. Map the value in the data (the hook's transform) or filter on another field${keepHint(c)}`,
+          ...(c.members?.[0] ? { src: c.members[0] } : {}),
+        });
+      }
+    }
+  }
+  return problems;
 }

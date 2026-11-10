@@ -41,7 +41,7 @@ describe("selectArtPlates", () => {
       children: [mask("m"), photo("p-inside"), path("v-inside")],
     });
     const root = node({ id: "r", children: [group] });
-    expect(ids(root)).toEqual(["root:r", "mask:g"]);
+    expect(ids(root)).toEqual(["mask:g", "root:r"]);
   });
 
   it("picks an image layer with no text, and not one that holds text", () => {
@@ -49,7 +49,7 @@ describe("selectArtPlates", () => {
     const withText = photo("card", 300, 200);
     withText.children = [node({ id: "t", type: "TEXT", text: looseText() })];
     const root = node({ id: "r", children: [photo("hero"), withText] });
-    expect(ids(root)).toEqual(["root:r", "image:hero"]);
+    expect(ids(root)).toEqual(["image:hero", "root:r"]);
   });
 
   it("picks the largest subtree of nothing but paths, once, not each path", () => {
@@ -62,7 +62,7 @@ describe("selectArtPlates", () => {
       height: 80,
       children: [path("a", 80, 40), path("b", 80, 40), path("c", 30, 30)],
     });
-    expect(ids(node({ id: "r", children: [crest] }))).toEqual(["root:r", "vector:crest"]);
+    expect(ids(node({ id: "r", children: [crest] }))).toEqual(["vector:crest", "root:r"]);
   });
 
   it("leaves out rules and dots, which compile as a Divider or nothing", () => {
@@ -75,10 +75,10 @@ describe("selectArtPlates", () => {
   it("leaves out what is already a section picture", () => {
     resetIds();
     const root = node({ id: "r", children: [photo("hero"), photo("other")] });
-    expect(ids(root, { skip: new Set(["hero"]) })).toEqual(["root:r", "image:other"]);
+    expect(ids(root, { skip: new Set(["hero"]) })).toEqual(["image:other", "root:r"]);
   });
 
-  it("orders by what is hardest to get otherwise: masks, then images, then vectors, big first", () => {
+  it("orders by what is hardest to get otherwise: masks, images, vectors, big first, root last", () => {
     resetIds();
     const root = node({
       id: "r",
@@ -91,12 +91,12 @@ describe("selectArtPlates", () => {
       ],
     });
     expect(ids(root)).toEqual([
-      "root:r",
       "mask:g",
       "image:big-i",
       "image:small-i",
       "vector:big-v",
       "vector:small-v",
+      "root:r",
     ]);
   });
 
@@ -105,7 +105,8 @@ describe("selectArtPlates", () => {
     const kids = Array.from({ length: 10 }, (_, i) => photo(`p${i}`, 100 + i, 100));
     const got = selectArtPlates(node({ id: "r", children: kids }), { max: 4 });
     expect(got.picks).toHaveLength(4);
-    expect(got.picks[0]?.kind).toBe("root");
+    // photos before the frame's own picture, which only measures
+    expect(got.picks.map((p) => p.kind)).toEqual(["image", "image", "image", "image"]);
     expect(got.candidates).toBe(11);
     expect(MAX_ART_PLATES).toBeGreaterThan(20);
   });

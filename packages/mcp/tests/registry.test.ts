@@ -6,6 +6,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createMcpHost,
   type Grant,
+  grantLimits,
+  isSharedWrite,
   loadRegistry,
   McpConfigError,
   readLock,
@@ -65,6 +67,10 @@ const entry = (overrides: Record<string, unknown> = {}) => ({
         demo_run_thing: {},
         demo_list_things: { set: { prefix: "own_" } },
       },
+    },
+    "things.create": {
+      description: "Create things, never change one",
+      tools: { demo_save_thing: { absent: ["note"], arguments: { thingId: "^new_" } } },
     },
   },
   ...overrides,
@@ -164,9 +170,41 @@ describe("the registry", () => {
     expect(() => loadRegistry(dir)).toThrow(/both sets and limits demo_list_things's prefix/);
   });
 
+  it("says a write is shared from the entry first, else from the server's hint", () => {
+    const write = { effect: "write" as const, retries: 0, timeoutMs: 30_000 };
+    expect(isSharedWrite({ ...write, shared: true }, {})).toBe(true);
+    expect(isSharedWrite({ ...write, shared: false }, { destructiveHint: true })).toBe(false);
+    expect(isSharedWrite(write, { destructiveHint: true })).toBe(true);
+    expect(isSharedWrite(write, undefined)).toBe(false);
+    // a read is never a shared write, whatever it is marked
+    expect(isSharedWrite({ ...write, effect: "read", shared: true }, {})).toBe(false);
+  });
+
+  it("lists a grant's rules as mcp list shows them: limits, set arguments, and those it forbids", () => {
+    expect(
+      grantLimits({ absent: ["id"], arguments: { name: "^dugout: " }, set: { prefix: "own_" } }),
+    ).toEqual(["name ~ ^dugout: ", 'prefix = "own_"', "absent: id"]);
+    expect(grantLimits({})).toEqual([]);
+  });
+
   it("is in step with the cast entry this repo ships", () => {
     const shipped = loadRegistry();
     expect(shipped.get("cast")?.capabilities["hooks.author"]).toBeDefined();
+    // connectors are created in dugout's namespace and never updated: both upserts say so
+    const connectors = shipped.get("cast")?.capabilities["connectors.author"]?.tools ?? {};
+    expect(Object.keys(connectors).sort()).toEqual([
+      "cast_describe_api",
+      "cast_list_apis",
+      "cast_list_providers",
+      "cast_upsert_api",
+      "cast_upsert_provider",
+    ]);
+    for (const tool of ["cast_upsert_api", "cast_upsert_provider"]) {
+      expect(connectors[tool]).toEqual({ absent: ["id"], arguments: { name: "^dugout: " } });
+      // shared said in the entry, not left to the server's hint: a sync that drops the hint
+      // cannot make a write every hook depends on go through under one approval
+      expect(shipped.get("cast")?.tools[tool]?.shared).toBe(true);
+    }
     // every tool a capability grants has its effect, and the lock has it
     const lock = readLock("cast");
     for (const capability of Object.values(shipped.get("cast")?.capabilities ?? {})) {
@@ -343,6 +381,47 @@ describe("tools from capabilities", () => {
     expect(await use(plain, {})).toBe("things: alpha, beta");
     expect(await use(plain, { prefix: "x" })).toBe("things: alpha, beta (prefix x)");
     await host.close();
+  });
+
+  it("keeps a create-only grant to creates: a forbidden argument is refused", async () => {
+    const { host } = await synced();
+    const save = host
+      .resolve({ requires: ["things.create"] })
+      .tools.find((t) => t.name === "demo.saveThing");
+    expect(await use(save, { thingId: "new_1", note: "edit" })).toEqual({
+      refused:
+        "demo.saveThing: outside what this agent may touch: note must be left out (this only creates; it never changes what exists)",
+    });
+    expect(await use(save, { thingId: "old_1" })).toEqual({
+      refused: "demo.saveThing: outside what this agent may touch: thingId must match ^new_",
+    });
+    expect(await use(save, { thingId: "new_1" })).toBe("saved new_1");
+    // grants add up: another capability that allows the note lets the call through
+    const both = host.resolve({ requires: ["things.create", "things.write.own"] }).tools;
+    expect(
+      await use(
+        both.find((t) => t.name === "demo.saveThing"),
+        { thingId: "own_1", note: "x" },
+      ),
+    ).toBe("saved own_1");
+    await host.close();
+  });
+
+  it("refuses a capability that both limits and forbids an argument", () => {
+    writeFileSync(
+      join(dir, "demo.json"),
+      JSON.stringify(
+        entry({
+          capabilities: {
+            x: {
+              description: "x",
+              tools: { demo_save_thing: { absent: ["id"], arguments: { id: "^a" } } },
+            },
+          },
+        }),
+      ),
+    );
+    expect(() => loadRegistry(dir)).toThrow(/both limits and forbids demo_save_thing's id/);
   });
 
   it("runs the adapter's guard before the call, and refuses what it refuses", async () => {

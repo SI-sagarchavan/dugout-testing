@@ -6,7 +6,7 @@
  * rather than importing it). `tests/layout.test.ts` holds the two to the same answers.
  */
 
-import type { Answers, AskedQuestion } from "@dugout/contracts";
+import type { OpenItem, Settled } from "@dugout/contracts";
 import { z } from "zod";
 
 export const CarouselConfig = z
@@ -51,11 +51,43 @@ export const CarouselConfig = z
   })
   .strict();
 
+/** The designed controls of a carousel, by Figma id (`@fanos/dsl` `layoutChromeSchema`). */
+export const LayoutChrome = z
+  .object({
+    prev: z.string().optional(),
+    next: z.string().optional(),
+    pagination: z.string().optional().describe("a row of dots"),
+    counter: z.string().optional().describe('a text that counts the slides: "01", "1 / 5"'),
+    progress: z.string().optional().describe("a bar that fills as the slides go by"),
+  })
+  .strict();
+export type LayoutChrome = z.infer<typeof LayoutChrome>;
+
+const Items = z
+  .array(z.string())
+  .optional()
+  .describe("The repeated items, by Figma id, in order. Left out: as frame.load reported them");
+const Slide = z
+  .array(z.string())
+  .optional()
+  .describe(
+    "When the design draws only the slide on show: the layers that are that one slide, by Figma id (its photo, shade, words, button). Left out: as frame.load reported them",
+  );
+
 // A plain union, not a discriminated one: that becomes `oneOf` in a tool's JSON Schema, which
 // Bedrock refuses. Each member is strict with its own `kind`, so it parses the same.
 export const LayoutChoice = z.union([
   z
-    .object({ src: z.string().min(1), kind: z.literal("carousel"), config: CarouselConfig })
+    .object({
+      src: z.string().min(1),
+      kind: z.literal("carousel"),
+      config: CarouselConfig,
+      items: Items,
+      slide: Slide,
+      chrome: LayoutChrome.optional().describe(
+        "Its designed controls. Left out: as frame.load reported them",
+      ),
+    })
     .strict(),
   z
     .object({
@@ -71,6 +103,7 @@ export const LayoutChoice = z.union([
       src: z.string().min(1),
       kind: z.literal("tabs"),
       config: z.object({ options: z.array(z.string()), active: z.number().int().min(0) }).strict(),
+      items: Items,
     })
     .strict(),
   z.object({ src: z.string().min(1), kind: z.literal("list") }).strict(),
@@ -95,7 +128,9 @@ export interface LayoutIntent {
   evidence: string[];
   ask: string[];
   choice: LayoutChoice;
-  chrome: { prev?: string; next?: string; pagination?: string };
+  chrome: LayoutChrome;
+  /** The layers of the one slide a carousel draws, when it draws only that one. */
+  slide?: string[];
   alternative?: LayoutKind;
   alternativeChoice?: LayoutChoice;
   alternativeAsk?: string[];
@@ -204,8 +239,12 @@ export interface LayoutReport {
   /** Confidence in `kind`, 0 to 1. */
   score?: number;
   evidence: string[];
-  /** Questions the frame cannot answer. Empty: nothing to ask. */
-  ask: string[];
+  /**
+   * What the compiler left open about this container, in its own words with its proposal ("Is X a
+   * fixed row of 4, or a carousel? (proposed: a fixed row)"). Evidence for `frame.load`'s `open`,
+   * never put to a person as it is. Empty: the compiler left nothing open.
+   */
+  left: string[];
   /** What is applied now, or the proposal when nothing is yet. */
   choice: LayoutChoice;
   /** The tree has this choice in it. */
@@ -216,7 +255,35 @@ export interface LayoutReport {
   note?: string;
   alternative?: LayoutKind;
   /** The controls the design drew for it, by Figma id: they keep their look. */
-  chrome?: { prev?: string; next?: string; pagination?: string };
+  chrome?: LayoutChrome;
+  /** The repeated items, by Figma id. */
+  items?: string[];
+  /** The layers of the one slide a carousel draws, when it draws only that one. */
+  slide?: string[];
+}
+
+/**
+ * A choice with the structure the report found filled in where the choice leaves it out: a model
+ * that settles autoplay passes { src, kind, config } and the carousel keeps its items, its one
+ * slide and its controls.
+ */
+export function withStructure(choice: LayoutChoice, report: LayoutReport): LayoutChoice {
+  if (choice.kind === "carousel") {
+    const items = choice.items ?? report.items;
+    const slide = choice.slide ?? report.slide;
+    const chrome = choice.chrome ?? report.chrome;
+    return {
+      ...choice,
+      ...(items && items.length > 0 && !slide ? { items } : {}),
+      ...(slide && slide.length > 0 ? { slide } : {}),
+      ...(chrome && Object.keys(chrome).length > 0 ? { chrome } : {}),
+    };
+  }
+  if (choice.kind === "tabs") {
+    const items = choice.items ?? report.items;
+    return { ...choice, ...(items && items.length > 0 ? { items } : {}) };
+  }
+  return choice;
 }
 
 /** A choice in plain words, for a person approving it. */
@@ -264,41 +331,54 @@ function effectOf(effect: unknown): string {
   return typeof kind === "string" && kind !== "slide" ? `${kind} effect` : "";
 }
 
-/** The kinds a container can be, as a person picks one. */
-const KIND_OPTIONS: Array<{ value: LayoutKind; label: string; description: string }> = [
-  { value: "carousel", label: "A carousel", description: "Slides that move, with arrows or dots" },
-  { value: "row", label: "A fixed row", description: "The items as drawn, no moving" },
-  { value: "list", label: "A list", description: "The items stacked, as many as the data has" },
-  { value: "grid", label: "A grid", description: "Columns and rows of items" },
-  { value: "tabs", label: "Tabs", description: "One group of items on show at a time" },
+/** The kinds a container can be, and what choosing each does. */
+const KIND_CANDIDATES: Array<{ value: LayoutKind; does: string }> = [
+  {
+    value: "carousel",
+    does: "slides that move, with arrows or dots; its items, autoplay and loop are then open too",
+  },
+  { value: "row", does: "the items as drawn, no moving" },
+  { value: "list", does: "the items stacked, as many as the data has" },
 ];
 
-/** The "(proposed: ...)" a layout's own question ends with, taken off it. */
-function splitProposed(ask: string): { text: string; proposed: string } {
-  const m = /^(.*?)\s*\(proposed:\s*(.*)\)\s*$/s.exec(ask);
-  return m ? { text: m[1] ?? ask, proposed: m[2] ?? "" } : { text: ask, proposed: "" };
-}
+/** The question ids memory learns a layout's answers under (ADR 0033) and the house fact each feeds. */
+export const LAYOUT_FACTS: Record<string, string> = {
+  autoplay: "layout.carousel.autoplay",
+  loop: "layout.carousel.loop",
+};
+
+/** What memory holds for each open item of a layout, by the item's id: the line `before` shows. */
+export type LayoutBefore = Record<string, string>;
+
+/** A container as a person finds it in the frame: its name and where it is. */
+const placeOf = (r: Pick<LayoutReport, "name" | "src">) => `"${r.name}" (${r.src})`;
 
 /**
- * What a person is asked about one container (ADR 0029), written from what the frame showed, so a
- * run stops with questions that fit this frame: what it is when the frame leaves that open, then
- * for a carousel how many items it holds, whether it moves on its own, whether it loops, and a
- * platform config to apply when there is one. Each has the frame's own proposal. Nothing when the
+ * What is still open about one container (ADR 0029, 0033 amendment): written as data, never as a
+ * question. Each item has the evidence the frame gave, the answers a tool can act on, what else
+ * `frame.layout` takes, the tool's own proposal, and what memory holds. The agent's model decides
+ * each from memory, from the evidence, or by asking a person in its own words. Nothing when the
  * frame leaves nothing open.
  */
-export function layoutQuestions(report: LayoutReport, proposed: LayoutChoice): AskedQuestion[] {
-  if (report.ask.length === 0 && report.confidence === "certain") return [];
+export function openLayoutItems(
+  report: LayoutReport,
+  proposed: LayoutChoice,
+  before: LayoutBefore = {},
+): OpenItem[] {
+  if (report.left.length === 0 && report.confidence === "certain") return [];
   const shows = `The frame shows: ${report.evidence.join("; ")}.`;
-  const out: AskedQuestion[] = [];
+  const memory = (id: string) => (before[id] ? { before: before[id] } : {});
+  const out: OpenItem[] = [];
   if (report.confidence !== "certain") {
     out.push({
       id: "kind",
-      question: `What is "${report.name}"?`,
-      why: shows,
-      kind: "choice",
-      options: KIND_OPTIONS.filter((o) => o.value === proposed.kind || o.value !== "tabs"),
-      allowOther: false,
-      proposed: [report.kind],
+      about: `what ${placeOf(report)} is`,
+      evidence: `${shows}${report.score !== undefined ? ` The detector scored it ${report.score} for ${report.kind}.` : ""}`,
+      candidates: KIND_CANDIDATES.filter((c) => c.value === proposed.kind || c.value !== "tabs"),
+      proposed: report.kind,
+      canTake:
+        "frame.layout's choice.kind: carousel, row, list, grid (with config columns and rows) or tabs (with config options and active)",
+      ...memory("kind"),
     });
   }
   if (proposed.kind === "carousel") {
@@ -307,142 +387,105 @@ export function layoutQuestions(report: LayoutReport, proposed: LayoutChoice): A
     out.push(
       {
         id: "items",
-        question: `How many items does "${report.name}" hold in all?`,
-        why: `${shown ? `The frame shows ${shown}. ` : ""}A carousel repeats for every item the data gives; a number fixes it.`,
-        kind: "choice",
-        options: [
-          {
-            value: "data",
-            label: "Whatever the data holds",
-            description: "Repeats for every item",
-          },
-        ],
-        allowOther: true,
-        proposed: [c.pages ? String(c.pages) : "data"],
+        about: `how many items ${placeOf(report)} holds in all`,
+        evidence: `${shown ? `The frame shows ${shown}. ` : ""}A carousel repeats for every item the data gives; a number fixes it.`,
+        candidates: [{ value: "data", does: "repeats for every item the data holds" }],
+        proposed: c.pages ? String(c.pages) : "data",
+        canTake:
+          "a number of items, as choice.config.pages; leave pages out for whatever the data holds",
+        ...memory("items"),
       },
       {
         id: "autoplay",
-        question: `Should "${report.name}" move on its own, and how long on each item?`,
-        why: "The frame is one still: it cannot show whether it moves.",
-        kind: "choice",
-        options: [
+        about: `whether ${placeOf(report)} moves on its own, and how long on each item`,
+        evidence: "The frame is one still: it cannot show whether it moves.",
+        candidates: [
           {
             value: "off",
-            label: "No autoplay",
-            description: "Moves when someone presses an arrow or swipes",
+            does: "moves when someone presses an arrow or swipes (config.autoplay false)",
           },
-          { value: "3000", label: "Every 3 seconds", description: "" },
-          { value: "5000", label: "Every 5 seconds", description: "" },
-          { value: "8000", label: "Every 8 seconds", description: "" },
+          { value: "3000", does: "moves every 3 seconds (config.autoplay { delayMs: 3000 })" },
+          { value: "5000", does: "moves every 5 seconds" },
+          { value: "8000", does: "moves every 8 seconds" },
         ],
-        allowOther: true,
-        proposed: [c.autoplay ? String(c.autoplay.delayMs) : "off"],
+        proposed: c.autoplay ? String(c.autoplay.delayMs) : "off",
+        canTake: "any delay: config.autoplay { delayMs } in milliseconds, or false",
+        ...memory("autoplay"),
       },
       {
         id: "loop",
-        question: `After the last item, should "${report.name}" wrap around to the first?`,
-        why: "The frame cannot show what is after the last item.",
-        kind: "confirm",
-        options: [],
-        allowOther: false,
-        proposed: [c.loop ? "yes" : "no"],
+        about: `whether ${placeOf(report)} wraps around to the first item after the last`,
+        evidence: "The frame cannot show what is after the last item.",
+        candidates: [
+          { value: "yes", does: "wraps around (config.loop true)" },
+          { value: "no", does: "stops at the last item (config.loop false)" },
+        ],
+        proposed: c.loop ? "yes" : "no",
+        canTake: "config.loop true or false",
+        ...memory("loop"),
       },
       {
         id: "platform",
-        question: "Is there a platform carousel config to apply?",
-        why: "A config (slides_per_view, nav_arrows, nav_indicator ...) sets how it behaves; code applies it with the design first. Skip when there is none.",
-        kind: "text",
-        options: [],
-        allowOther: false,
-        proposed: [],
+        about: `a platform carousel config to apply to ${placeOf(report)}`,
+        evidence:
+          "A config (slides_per_view, nav_arrows, nav_indicator ...) sets how it behaves; code applies it with the design first. Most sections have none.",
+        canTake:
+          "the platform's carousel config as JSON, as choice.config.platform; leave it out when there is none",
+        ...memory("platform"),
       },
     );
     return out;
   }
-  // a container that is not a carousel: the compiler's own open questions, with its proposals
-  for (const [n, ask] of report.ask.entries()) {
-    const { text, proposed: guess } = splitProposed(ask);
+  // a container that is not a carousel: the compiler's own open lines, with its proposals
+  for (const [n, line] of report.left.entries()) {
     out.push({
       id: `ask_${n + 1}`,
-      question: text,
-      why: shows,
-      kind: "text",
-      options: [],
-      allowOther: false,
-      proposed: guess ? [guess] : [],
+      about: `what the compiler left open about ${placeOf(report)}`,
+      evidence: `${shows} The compiler asks: ${line}`,
+      canTake: "frame.layout's choice for this container, with config where its kind takes one",
     });
   }
   return out;
 }
 
-/** What a person said, read as a delay in milliseconds: "4s", "every 4 seconds", 4500. */
-function delayOf(said: string): number | undefined {
-  const m = /(\d+(?:\.\d+)?)\s*(ms|millisecond\w*|s|sec\w*)?/i.exec(said);
-  if (!m) return undefined;
-  const n = Number(m[1]);
-  const seconds = /^(s|sec)/i.test(m[2] ?? "") || (!m[2] && n < 100);
-  const ms = Math.round(seconds ? n * 1000 : n);
-  return ms > 0 ? ms : undefined;
-}
-
 /**
- * The model's proposal with the person's answers put in it: the kind they chose, autoplay, loop,
- * a page count, and a platform config. What they left out stays as proposed. `notes` says what
- * could not be read, and `said` what they wrote about a container the answers do not map onto.
+ * How each open item of one container was settled, from the choice that was applied. `by` is what
+ * the model said (person, memory, agent; agent when it said nothing), except that memory is kept
+ * only for an item that had something in `before`. The value is read from the choice, never from
+ * an answer's words: the container's src, then what the item came to (`35:10545: autoplay 4000`).
  */
-export function applyLayoutAnswers(
-  proposed: LayoutChoice,
-  answers: Answers,
-): { choice: LayoutChoice; platform?: Record<string, unknown>; notes: string[]; said: string[] } {
-  const notes: string[] = [];
-  const said = Object.entries(answers)
-    .filter(([id, a]) => id.startsWith("ask_") && typeof a === "string" && a.trim())
-    .map(([id, a]) => `${id}: ${a}`);
-  const kind = answers.kind;
-  if (typeof kind === "string" && kind !== proposed.kind) {
-    if (kind === "row" || kind === "list")
-      return { choice: { src: proposed.src, kind }, notes, said };
-    notes.push(
-      `${kind} needs its own settings (columns, tabs): the proposal is kept as a ${proposed.kind}`,
-    );
-  }
-  if (proposed.kind !== "carousel") return { choice: proposed, notes, said };
-
-  const config = { ...proposed.config };
-  const autoplay = answers.autoplay;
-  if (typeof autoplay === "string") {
-    if (autoplay === "off") config.autoplay = false;
-    else {
-      const ms = delayOf(autoplay);
-      if (ms) config.autoplay = { delayMs: ms };
-      else notes.push(`autoplay "${autoplay}" was not a time: left as proposed`);
+export function settledLayout(
+  src: string,
+  items: readonly OpenItem[],
+  choice: LayoutChoice,
+  platformGiven: boolean,
+  told: ReadonlyArray<{ id: string; by: Settled["by"] }> = [],
+): Settled[] {
+  const carousel = choice.kind === "carousel" ? choice.config : undefined;
+  const resultOf = (id: string): string => {
+    switch (id) {
+      case "kind":
+        return choice.kind;
+      case "items":
+        return carousel?.pages ? String(carousel.pages) : "data";
+      case "autoplay":
+        return carousel?.autoplay ? String(carousel.autoplay.delayMs) : "off";
+      case "loop":
+        return carousel?.loop ? "yes" : "no";
+      case "platform":
+        return platformGiven ? "applied" : "none";
+      default:
+        return describeChoice(choice);
     }
-  }
-  if (typeof answers.loop === "boolean") config.loop = answers.loop;
-  const items = answers.items;
-  if (typeof items === "string" && items !== "data") {
-    const n = Number.parseInt(items, 10);
-    if (Number.isInteger(n) && n > 0) config.pages = n;
-    else notes.push(`items "${items}" was not a number: it holds whatever the data holds`);
-  }
-  let platform: Record<string, unknown> | undefined;
-  const given = answers.platform;
-  if (typeof given === "string" && given.trim()) {
-    try {
-      const parsed: unknown = JSON.parse(given);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        platform = parsed as Record<string, unknown>;
-      } else notes.push("the platform config was not a JSON object: not applied");
-    } catch {
-      notes.push("the platform config was not JSON: not applied");
-    }
-  }
-  return {
-    choice: { ...proposed, config },
-    ...(platform ? { platform } : {}),
-    notes,
-    said,
   };
+  return items.map((item) => {
+    const said = told.find((t) => t.id === item.id)?.by ?? "agent";
+    return {
+      id: item.id,
+      by: said === "memory" && !item.before ? "agent" : said,
+      value: `${src}: ${resultOf(item.id)}`,
+    };
+  });
 }
 
 type CarouselChoice = Extract<LayoutChoice, { kind: "carousel" }>;

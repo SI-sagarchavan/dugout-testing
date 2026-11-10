@@ -52,7 +52,24 @@ export interface Dsl {
   evaluateWhen(when: unknown, scope: unknown): boolean;
   lookup(data: unknown, path: string): unknown;
   hasRef(value: unknown): boolean;
+  /** The page choice a Repeater's `over` reads (`squad.{_page.squad}`), and its list for one option. */
+  overChoice(over: string): string | undefined;
+  overFor(over: string, data: unknown, value: string): string;
   fromCastFlow(response: unknown): unknown;
+  /** A date as epoch ms, read as the `date` pipe reads it; undefined when it is no readable date. */
+  readDate(
+    value: unknown,
+    options?: { timeZone?: string; dateOrder?: "dmy" | "mdy" },
+  ): number | undefined;
+  /** The lists an `over` that reads a choice can draw, one per option the data has. */
+  overLists(over: string, scope: unknown): Array<{ value: string; items: unknown[] }>;
+  /** An item's scope as the renderer makes it: the item by its name, its list under `_each`. */
+  itemScope(
+    scope: unknown,
+    as: string,
+    item: unknown,
+    list: readonly unknown[],
+  ): Record<string, unknown>;
   /** A node's `clock` in its scope at `now`: its name, and its values when the data has the instant. */
   clockScope(
     clock: unknown,
@@ -61,7 +78,7 @@ export interface Dsl {
   ):
     | { as: string; to: number | undefined; values: Record<string, unknown> | undefined }
     | undefined;
-  /** Structure only (S rules): a binding plan must leave a tree the renderer takes. */
+  /** Structure (S rules) and refs the renderer cannot read (B4): a plan must leave a tree it takes. */
   check(tree: Tree): Issue[];
 }
 
@@ -77,8 +94,14 @@ export function loadDsl(): Promise<Dsl> {
       evaluateWhen: Dsl["evaluateWhen"];
       lookup: Dsl["lookup"];
       hasRef: Dsl["hasRef"];
+      overChoice: Dsl["overChoice"];
+      overFor: Dsl["overFor"];
       fromCastFlow: Dsl["fromCastFlow"];
+      readDate: Dsl["readDate"];
+      overLists: Dsl["overLists"];
+      itemScope: Dsl["itemScope"];
       clockScope: Dsl["clockScope"];
+      checkPipes(tree: unknown): Array<{ severity: string; message: string; nodeId?: string }>;
       flatTreeSchema: {
         safeParse(tree: unknown): {
           success: boolean;
@@ -92,11 +115,27 @@ export function loadDsl(): Promise<Dsl> {
       evaluateWhen: dsl.evaluateWhen,
       lookup: dsl.lookup,
       hasRef: dsl.hasRef,
+      overChoice: dsl.overChoice,
+      overFor: dsl.overFor,
       fromCastFlow: dsl.fromCastFlow,
+      readDate: dsl.readDate,
+      overLists: dsl.overLists,
+      itemScope: dsl.itemScope,
       clockScope: dsl.clockScope,
       check(tree) {
         const parsed = dsl.flatTreeSchema.safeParse(tree);
-        if (parsed.success) return [];
+        if (parsed.success) {
+          // a ref no renderer reads draws as written, braces and all: the page shows the template
+          return dsl
+            .checkPipes(tree)
+            .filter((i) => i.severity === "error")
+            .slice(0, 10)
+            .map((i) => ({
+              code: "B4",
+              message: i.message,
+              ...(i.nodeId ? { nodeId: i.nodeId } : {}),
+            }));
+        }
         return (parsed.error?.issues ?? []).slice(0, 10).map((i) => ({
           code: "S",
           message: `${i.path.join(".")}: ${i.message}`,

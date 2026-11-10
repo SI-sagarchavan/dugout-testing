@@ -9,12 +9,20 @@ import type { ReactNode } from "react";
 import type { FlatTree, Node } from "@fanos/dsl";
 import {
   childrenOf,
+  choiceValue,
+  evaluateCondition,
   evaluateWhen,
+  itemScope,
   lookup,
+  PAGE_SCOPE,
   pageDefaults,
+  pageScope,
   propsAtPlace,
   reify,
   rootOf,
+  overChoice,
+  overList,
+  overLists,
   selectOf,
   splitPageWhen,
 } from "@fanos/dsl";
@@ -42,6 +50,7 @@ export interface RenderProps {
   themeSlug?: string;
   origin?: RenderConfig["origin"];
   timeZone?: RenderConfig["timeZone"];
+  dateOrder?: RenderConfig["dateOrder"];
   /** The time to draw clocks at, epoch ms. Defaults to now. */
   now?: RenderConfig["now"];
   /** Where the page's choices start, when the host draws several sections (`pageDefaults`). */
@@ -64,7 +73,7 @@ export interface RenderProps {
   designWidth?: number;
 }
 
-export function Render({ tree, data, assets, themeSlug, origin, timeZone, now, width, designWidth, page }: RenderProps) {
+export function Render({ tree, data, assets, themeSlug, origin, timeZone, dateOrder, now, width, designWidth, page }: RenderProps) {
   // Validate structure early — reify throws on broken trees.
   reify(tree);
   const root = rootOf(tree);
@@ -80,6 +89,7 @@ export function Render({ tree, data, assets, themeSlug, origin, timeZone, now, w
     themeSlug,
     origin,
     timeZone,
+    ...(dateOrder ? { dateOrder } : {}),
     now: now ?? Date.now(),
     page: pageState,
   };
@@ -154,9 +164,11 @@ function resolveList(path: string | undefined, data: unknown): unknown[] | undef
  * there is rather than throwing — the page renders short instead of not at all, which is the
  * right failure for a section whose CMS came back with four items instead of six.
  */
-function repetitions(node: Node, ctx: NodeRenderContext): NodeRenderContext[] | undefined {
+function repetitions(node: Node, ctx: NodeRenderContext, list?: unknown[]): NodeRenderContext[] | undefined {
   const props = node.props as { over?: string; as?: string; limit?: number; slice?: [number, number] };
-  const items = resolveList(props.over, ctx.data);
+  const key = overChoice(String(props.over ?? ""));
+  // a list that follows a page choice, outside a gate (a carousel's slides): the one the page is at
+  const items = list ?? (key ? overList(String(props.over), ctx.data, ctx.page?.[key]) : resolveList(props.over, ctx.data));
   if (items === undefined) {
     console.warn(`[fos-render] Repeater "${node.id}" — no list at "${props.over}"`);
     return undefined;
@@ -167,10 +179,11 @@ function repetitions(node: Node, ctx: NodeRenderContext): NodeRenderContext[] | 
       ? items.slice(0, props.limit)
       : items;
   const alias = props.as ?? "item";
-  // each item's place among those drawn: what a node's `at` reads (the rule every row but the last has)
+  // each item's place among those drawn: what a node's `at` reads (the rule every row but the last has);
+  // and the whole list, for a filter on the page to know which values its items hold (`_each`)
   return capped.map((item, index) => ({
     ...ctx,
-    data: { ...(ctx.data ?? {}), [alias]: item },
+    data: itemScope(ctx.data, alias, item, items),
     place: { index, count: capped.length },
   }));
 }
@@ -232,6 +245,38 @@ function chosen(node: Node, ctx: NodeRenderContext): Node {
   const select = selectOf(node);
   if (!select) return node;
   return { ...node, props: { ...node.props, [PAGE_SELECTED]: ctx.page?.[select.key] === select.value } } as Node;
+}
+
+/** A Repeater's items, each a repetition of its children, with its separator between them. */
+function drawRepeats(node: Node, kids: Node[], tree: FlatTree, ctx: NodeRenderContext, list?: unknown[]): ReactNode {
+  const scopes = repetitions(node, ctx, list);
+  if (scopes === undefined) return null;
+  // The separator is drawn once between two items, in the Repeater's own scope, not in each.
+  const separator = separatorOf(node, kids);
+  const each = repeated(node, kids);
+  return (
+    <>
+      {scopes.map((scope, i) => (
+        // `display: contents` keeps each repetition out of the layout box
+        // tree — a Repeater under a Stack must place its children directly
+        // into that flex flow, not inside a wrapper. The attribute still
+        // gives the repair loop something to map a diff region onto.
+        <div key={`${node.id}-${i}`} style={{ display: "contents" }} data-fos-repeat={i} data-fos-repeat-of={node.id}>
+          {i > 0 ? separator.map((between) => <RenderNode key={between.id} node={between} tree={tree} ctx={ctx} />) : null}
+          {each.map((child) => (
+            <RenderNode
+              key={child.id}
+              node={child}
+              tree={tree}
+              // A fragment passes its OWN context down: its children are flex
+              // items of the Repeater's parent, not of the Repeater.
+              ctx={scope}
+            />
+          ))}
+        </div>
+      ))}
+    </>
+  );
 }
 
 function DrawNode({
@@ -296,34 +341,32 @@ function DrawNode({
     case "Checkbox":
       return <Checkbox node={node} ctx={ctx} />;
     case "Repeater": {
-      const scopes = repetitions(node, ctx);
-      if (scopes === undefined) return null;
-      // The separator is drawn once between two items, in the Repeater's own scope, not in each.
-      const separator = separatorOf(node, kids);
-      const each = repeated(node, kids);
-      return (
-        <>
-          {scopes.map((scope, i) => (
-            // `display: contents` keeps each repetition out of the layout box
-            // tree — a Repeater under a Stack must place its children directly
-            // into that flex flow, not inside a wrapper. The attribute still
-            // gives the repair loop something to map a diff region onto.
-            <div key={`${node.id}-${i}`} style={{ display: "contents" }} data-fos-repeat={i} data-fos-repeat-of={node.id}>
-              {i > 0 ? separator.map((between) => <RenderNode key={between.id} node={between} tree={tree} ctx={ctx} />) : null}
-              {each.map((child) => (
-                <RenderNode
-                  key={child.id}
-                  node={child}
-                  tree={tree}
-                  // A fragment passes its OWN context down: its children are flex
-                  // items of the Repeater's parent, not of the Repeater.
-                  ctx={scope}
-                />
-              ))}
-            </div>
-          ))}
-        </>
-      );
+      const over = String((node.props as { over?: string }).over ?? "");
+      const choiceKey = overChoice(over);
+      if (choiceKey) {
+        // A list that follows a page choice (`over: "squad.{_page.squad}"`): the server draws each
+        // list the data has, and the browser shows the one the page is at (ADR 0032), whichever
+        // section writes the choice; at a value that names no list (ALL), every list, in order.
+        const lists = overLists(over, ctx.data);
+        if (lists.length === 0) {
+          console.warn(`[fos-render] Repeater "${node.id}" — no list at "${over}"`);
+          return null;
+        }
+        const path = `${PAGE_SCOPE}.${choiceKey}`;
+        return (
+          <>
+            {lists.map((list) => (
+              <PageGate key={`option:${choiceValue(list.value)}`} conditions={[{ path, eq: list.value }]} page={ctx.page ?? {}}>
+                {drawRepeats(node, kids, tree, ctx, list.items)}
+              </PageGate>
+            ))}
+            <PageGate key="every" conditions={lists.map((list) => ({ path, ne: list.value }))} page={ctx.page ?? {}}>
+              {drawRepeats(node, kids, tree, ctx, lists.flatMap((list) => list.items))}
+            </PageGate>
+          </>
+        );
+      }
+      return drawRepeats(node, kids, tree, ctx);
     }
     case "Carousel": {
       // Each child is one slide, and each repetition of a Repeater child is one slide. A slide is
@@ -331,12 +374,63 @@ function DrawNode({
       const slideCtx: NodeRenderContext = { ...ctx, flexChild: false, flexRow: false, overlayChild: false };
       const slides: ReactNode[] = [];
       for (const child of kids) {
-        if (child.type === "Repeater") {
+        const key = child.type === "Repeater" ? overChoice(String((child.props as { over?: string }).over ?? "")) : undefined;
+        if (child.type === "Repeater" && key) {
+          // A rail that follows a page choice: a group of slides for each option's list and one for
+          // a value that names none (ALL). Each slide carries the conditions it shows at; the
+          // server hides those the page is not at and the browser re-gates them as the choice
+          // changes (CarouselRoot), so Swiper (which skips hidden slides) runs the chosen list.
+          const over = String((child.props as { over?: string }).over);
+          const lists = overLists(over, slideCtx.data);
+          if (lists.length === 0) console.warn(`[fos-render] Repeater "${child.id}" — no list at "${over}"`);
+          const path = `${PAGE_SCOPE}.${key}`;
+          const groups = [
+            ...lists.map((list) => ({ name: `option:${choiceValue(list.value)}`, conditions: [{ path, eq: list.value }], items: list.items })),
+            { name: "every", conditions: lists.map((list) => ({ path, ne: list.value })), items: lists.flatMap((list) => list.items) },
+          ];
+          for (const group of groups) {
+            const shown = group.conditions.every((c) => evaluateCondition(c, pageScope(ctx.page ?? {})));
+            repetitions(child, slideCtx, group.items)?.forEach((scope, i) => {
+              slides.push(
+                <div
+                  key={`${child.id}-${group.name}-${i}`}
+                  className="swiper-slide"
+                  data-fos-repeat={i}
+                  data-fos-repeat-of={child.id}
+                  data-fos-gate={JSON.stringify(group.conditions)}
+                  style={shown ? undefined : { display: "none" }}
+                >
+                  {repeated(child, childrenOf(tree, child.id)).map((grand) => (
+                    <RenderNode key={grand.id} node={grand} tree={tree} ctx={scope} />
+                  ))}
+                </div>,
+              );
+            });
+          }
+        } else if (child.type === "Repeater") {
           const scopes = repetitions(child, slideCtx) ?? [];
+          const kids = repeated(child, childrenOf(tree, child.id));
           scopes.forEach((scope, i) => {
+            // An item whose one card is filtered by a page choice (`when` comparing a field with
+            // `_page.<key>`): its slide is gated, not only the card, or the options the page is not
+            // at leave empty slides that still take the rail's gap.
+            const split = kids.length === 1 ? splitPageWhen(kids[0]!.props.when, scope.data) : undefined;
+            const gate = split?.page ?? [];
+            const shown = gate.every((c) => evaluateCondition(c, pageScope(ctx.page ?? {})));
+            // the slide decides the choice; the card keeps the rest of its `when` (data, clocks)
+            const drawn = gate.length
+              ? kids.map((k) => ({ ...k, props: { ...k.props, when: split!.now } }) as Node)
+              : kids;
             slides.push(
-              <div key={`${child.id}-${i}`} className="swiper-slide" data-fos-repeat={i} data-fos-repeat-of={child.id}>
-                {repeated(child, childrenOf(tree, child.id)).map((grand) => (
+              <div
+                key={`${child.id}-${i}`}
+                className="swiper-slide"
+                data-fos-repeat={i}
+                data-fos-repeat-of={child.id}
+                {...(gate.length ? { "data-fos-gate": JSON.stringify(gate) } : {})}
+                style={shown ? undefined : { display: "none" }}
+              >
+                {drawn.map((grand) => (
                   <RenderNode key={grand.id} node={grand} tree={tree} ctx={scope} />
                 ))}
               </div>,

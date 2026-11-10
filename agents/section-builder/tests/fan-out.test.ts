@@ -1,7 +1,26 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ControlPlane } from "@dugout/agent-frame-match";
-import { AwaitingAnswers } from "@dugout/contracts";
+import { AwaitingAnswers, defineTool, type OpenItem } from "@dugout/contracts";
+import {
+  createMemoryOutputStore,
+  createMemoryRunStore,
+  createMemorySink,
+  createScriptedModel,
+  runLocal,
+  scriptedModelConfig,
+} from "@dugout/core";
 import { describe, expect, it } from "vitest";
-import { makePipeline } from "../src/agent.ts";
+import {
+  BuildArgs,
+  Final,
+  makePipeline,
+  Output,
+  slotsToBind,
+  spec,
+  threadNote,
+} from "../src/agent.ts";
 import { mergeBindings } from "../src/merge.ts";
 
 const EXPORT = "6f0e8c1a-0000-4000-8000-000000000001";
@@ -122,6 +141,76 @@ describe("section-builder on a frame of two slots", () => {
     );
   });
 
+  it("reports a slot bound to another team's data as a stand-in, in the output, the remaining and the thread note", async () => {
+    const { pipeline } = fake();
+    const why =
+      "the data is not about the design's team (Southern Brave): the hook gives an IPL squad";
+    const answer = (await pipeline.run(
+      async (child, input) => {
+        if (child.spec.id === "frame-match") return frame;
+        const id = (input as { slot: { id: string } }).slot.id;
+        return id === "sq"
+          ? { ...bound(id, "dugout_ipl_squad"), data: "stand-in", dataWhy: why }
+          : { ...bound(id, "dugout_fixtures"), data: "bound" };
+      },
+      { exportId: EXPORT, project: "default" },
+    )) as Output;
+    expect(answer).toMatchObject({
+      data: "stand-in",
+      dataWhy: [expect.stringContaining("the-brave-squad: the data is not about")],
+      slots: [
+        { name: "the-road-ahead", data: "bound" },
+        { name: "the-brave-squad", data: "stand-in", dataWhy: why },
+      ],
+    });
+    expect(answer.remaining).toContain(
+      `data: the-brave-squad: bound to stand-in data (${why}): it shows another team's data for the shape, not the design's`,
+    );
+    const note = threadNote({}, answer);
+    expect(note).toContain("the-brave-squad bound to stand-in data");
+    expect(note).toContain("the-road-ahead bound (5 props");
+    // the bound slot's props are the design's data; only the stand-in's are not (ticket 12)
+    expect(note).toContain("5 props bound to the design's data");
+    expect(note).toContain("5 props bound to data that is not the design's");
+    expect(note).not.toContain("10 props bound to data that is not the design's");
+    expect(Output.shape.data.safeParse("stand-in").success).toBe(true);
+  });
+
+  it("hands a frame of one slot over as a stand-in when bind says so", async () => {
+    const { pipeline } = fake();
+    const answer = (await pipeline.run(
+      async (child) =>
+        child.spec.id === "frame-match"
+          ? { ...frame, slots: [slot("sq", "the-brave-squad")] }
+          : { ...bound("sq", "dugout_ipl_squad"), data: "stand-in", dataWhy: "an IPL squad" },
+      { exportId: EXPORT, project: "default" },
+    )) as Output;
+    expect(answer).toMatchObject({
+      data: "stand-in",
+      slots: [{ name: "the-brave-squad", data: "stand-in", dataWhy: "an IPL squad" }],
+    });
+    expect(answer.remaining.join("\n")).toContain("bound to stand-in data (an IPL squad)");
+    expect(threadNote({}, answer)).toContain("with stand-in data");
+  });
+
+  it("lists what the pass created in Cast, in the output and the thread note (ticket 12)", async () => {
+    const { pipeline } = fake();
+    const made = ["provider prov_1 (dugout: www.example.com)", "connector api_1 (dugout: Squad)"];
+    const answer = (await pipeline.run(
+      async (child, input) => {
+        if (child.spec.id === "frame-match") return frame;
+        const id = (input as { slot: { id: string } }).slot.id;
+        // the squad's run made a connector; the fixtures' run reused it
+        return { ...bound(id, "dugout_x"), created: id === "sq" ? made : [made[0]] };
+      },
+      { exportId: EXPORT, project: "default" },
+    )) as Output;
+    expect(answer.created).toEqual(made);
+    expect(threadNote({}, answer)).toContain(
+      "Created in Cast, where every hook can use it: provider prov_1",
+    );
+  });
+
   it("leaves a slot with no data as published, and binds the other", async () => {
     const { pipeline } = fake();
     const ran: string[] = [];
@@ -207,7 +296,10 @@ describe("section-builder on a frame of two slots", () => {
 
   describe("when the slots could spend more of Cast than an hour holds", () => {
     const many = Array.from({ length: 5 }, (_, i) => slot(`s${i}`, `slot-${i}`));
-    const runWith = async (answers?: Record<string, string>) => {
+    const runWith = async (args?: {
+      bind?: string[];
+      decidedBy?: "person" | "memory" | "agent";
+    }) => {
       const { pipeline } = fake();
       const keys: string[] = [];
       const answer = await pipeline.run(
@@ -217,24 +309,43 @@ describe("section-builder on a frame of two slots", () => {
           return bound("fx", "h");
         },
         { exportId: EXPORT, project: "default" },
-        answers ? { answered: { by: "sam", answers } } : {},
+        args ? { args } : {},
       );
       return {
-        answer: answer as { slots: Array<{ name: string; data: string }>; remaining: string[] },
+        answer: answer as {
+          slots: Array<{ name: string; data: string }>;
+          remaining: string[];
+          settled: Array<{ id: string; by: string; value: string }>;
+        },
         keys,
       };
     };
 
-    it("asks a person once, before binding any, and proposes the first few", async () => {
-      const asked = await runWith().catch((e: unknown) => e);
-      expect(asked).toBeInstanceOf(AwaitingAnswers);
-      const [q] = (asked as AwaitingAnswers).questions;
-      expect(q).toMatchObject({ id: "cast_budget", kind: "choice", proposed: ["first"] });
-      expect(q?.why).toContain("slot-0, slot-1, slot-2, slot-3, slot-4");
+    it("reports the budget as an open item, with its evidence, and binds nothing", async () => {
+      const { answer, keys } = await runWith();
+      expect(keys).toEqual([]);
+      // no question is built by code: the model asks, in its own words
+      const open = (answer as unknown as { open: OpenItem[]; note: string }).open;
+      expect(open).toHaveLength(1);
+      expect(open[0]).toMatchObject({ id: "cast_budget" });
+      expect(open[0]?.evidence).toContain("slot-0, slot-1, slot-2, slot-3, slot-4");
+      expect(open[0]?.evidence).toContain("30 in all");
+      expect(open[0]?.evidence).toContain("25 an hour");
+      // every candidate is on offer, and what else it takes is said
+      expect(open[0]?.candidates?.map((c) => c.value)).toEqual([
+        "the first 4: slot-0, slot-1, slot-2, slot-3",
+        "all 5: slot-0, slot-1, slot-2, slot-3, slot-4",
+        "none",
+      ]);
+      expect(open[0]?.canTake).toContain("the names of the parts to bind now");
+      expect(open[0]?.proposed).toContain("the first 4");
     });
 
-    it("binds the first four when that is the answer, and lists the rest as skipped", async () => {
-      const { answer, keys } = await runWith({ cast_budget: "first" });
+    it("binds the parts it was told to, lists the rest as skipped, and says who decided", async () => {
+      const { answer, keys } = await runWith({
+        bind: ["slot-0", "slot-1", "slot-2", "slot-3"],
+        decidedBy: "person",
+      });
       expect(keys).toEqual(["s0", "s1", "s2", "s3"]);
       // (the fake gives every slot the same plan, so the merge keeps one: what matters is who ran)
       expect(answer.slots.map((s) => s.data === "skipped")).toEqual([
@@ -245,13 +356,132 @@ describe("section-builder on a frame of two slots", () => {
         true,
       ]);
       expect(answer.remaining.some((r) => r.startsWith("data: slot-4: not bound:"))).toBe(true);
+      expect(answer.settled).toEqual([
+        { id: "cast_budget", by: "person", value: "slot-0, slot-1, slot-2, slot-3" },
+      ]);
     });
 
-    it("binds them all, or none, as the person chose", async () => {
-      expect((await runWith({ cast_budget: "all" })).keys).toHaveLength(5);
-      const none = await runWith({ cast_budget: "none" });
+    it("takes any set of the parts, an empty one included, and no word means anything", async () => {
+      const some = await runWith({ bind: ["slot-4", "slot-1"] });
+      expect(some.keys).toEqual(["s1", "s4"]);
+      expect(some.answer.settled[0]).toMatchObject({ by: "agent", value: "slot-1, slot-4" });
+      const none = await runWith({ bind: [], decidedBy: "memory" });
       expect(none.keys).toEqual([]);
       expect(none.answer.slots.every((s) => s.data === "skipped")).toBe(true);
+      expect(none.answer.settled).toEqual([{ id: "cast_budget", by: "memory", value: "none" }]);
+      // "all" is not a part of the frame: a decision is names, never a word code reads
+      await expect(runWith({ bind: ["all"] })).rejects.toThrow(/not a part of this frame/);
+    });
+
+    it("binds every part without an open item when an hour covers them", async () => {
+      const { pipeline } = fake();
+      const answer = (await pipeline.run(
+        async (child) => (child.spec.id === "frame-match" ? frame : bound("sq", "h")),
+        { exportId: EXPORT, project: "default" },
+        {},
+      )) as { slots: unknown[]; settled: unknown[]; open?: unknown };
+      expect(answer.open).toBeUndefined();
+      expect(answer.slots).toHaveLength(2);
+      expect(answer.settled).toEqual([]);
+    });
+  });
+
+  describe("the model settles it, and a fact memory holds settles it with no question", () => {
+    it("asks memory under the item's id, and passes what it answered as input, by memory", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "dugout-sb-"));
+      const slots = ["slot-0", "slot-1", "slot-2", "slot-3", "slot-4"];
+      const seen: unknown[] = [];
+      const build = defineTool({
+        name: "page.build",
+        description: "stands in for the pipeline",
+        input: BuildArgs.strict(),
+        effect: "read",
+        timeoutMs: 1_000,
+        async run(args) {
+          seen.push(args);
+          const decision = slotsToBind(
+            slots.map((name) => ({ name })),
+            args,
+          );
+          return "open" in decision
+            ? decision.open
+            : { settled: decision.settled, bound: decision.bind.map((s) => s.name) };
+        },
+      });
+      const asked: unknown[] = [];
+      const sink = createMemorySink();
+      const model = createScriptedModel([
+        { toolCalls: [{ name: "page.build", arguments: {} }] },
+        {
+          toolCalls: [
+            {
+              name: "ask",
+              arguments: {
+                questions: [
+                  {
+                    id: "cast_budget",
+                    question: "Which parts should I bind now?",
+                    why: "Five parts show data; Cast's hour covers about four",
+                    kind: "choice",
+                    options: [
+                      { value: "first4", label: "The first four", description: "" },
+                      { value: "all", label: "All five", description: "" },
+                    ],
+                    allowOther: true,
+                    proposed: ["first4"],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              name: "page.build",
+              arguments: { bind: ["slot-0", "slot-1"], decidedBy: "memory" },
+            },
+          ],
+        },
+        { toolCalls: [{ name: "final", arguments: { summary: "bound two parts" } }] },
+      ]);
+      const result = await runLocal({
+        agent: { spec: { ...spec, tools: ["page.build"] }, output: Final },
+        input: "go",
+        tenantId: "demo-cricket",
+        runId: "memory-1",
+        tools: [build],
+        client: model,
+        models: scriptedModelConfig(),
+        // a person is never asked: the club's active fact answers it
+        responder: async (req) => {
+          asked.push(req);
+          return { pending: true };
+        },
+        learned: {
+          refine: async (qs) => qs,
+          // an active `cast.budget` fact: the club's standing answer
+          answer: async (qs) =>
+            qs.every((q) => q.id === "cast_budget") ? { cast_budget: "first4" } : undefined,
+        },
+        runsDir: dir,
+        sinks: [sink],
+        outputs: createMemoryOutputStore(),
+        store: createMemoryRunStore(),
+      });
+      expect(result.status).toBe("completed");
+      expect(asked).toEqual([]);
+      // the question went to memory, which answered it: no person was stopped for
+      const answered = sink.events.filter((e) => e.type === "question.answered");
+      expect(answered).toHaveLength(1);
+      expect(answered[0]?.data).toMatchObject({
+        source: "memory",
+        answers: { cast_budget: "first4" },
+      });
+      // the open item reached the model as data; the decision came back as ordinary input
+      expect(seen).toEqual([{}, { bind: ["slot-0", "slot-1"], decidedBy: "memory" }]);
+      const out = model.requests[3]?.messages.at(-1);
+      expect(String(out?.content)).toContain('"by":"memory"');
     });
   });
 

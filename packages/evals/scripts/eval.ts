@@ -1,4 +1,4 @@
-// pnpm eval <agent> [--scripted] [--model <name>] [--repeat 3] [--concurrency 8] [--threshold 0.9] [--only id,id]
+// pnpm eval <agent> [--live] [--scripted] [--model <name>] [--repeat 3] [--concurrency 8] [--threshold 0.9] [--only id,id]
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadEnv, REPO_ROOT } from "@dugout/core";
@@ -17,6 +17,8 @@ const { values, positionals } = parseArgs({
     concurrency: { type: "string", default: "8" },
     threshold: { type: "string", default: "0.9" },
     only: { type: "string" },
+    // `pnpm eval data`: call Cast for real; otherwise a case reuses its cached hook output
+    live: { type: "boolean", default: false },
   },
 });
 const agent = positionals[0];
@@ -39,6 +41,7 @@ const suite = await mod.createSuite({
   ...(values.model ? { model: values.model } : {}),
   store,
   runsDir: join(REPO_ROOT, ".evals", "runs"),
+  live: values.live,
 });
 
 // the scripted model gives the same answer every time, so repeating it proves nothing
@@ -54,6 +57,7 @@ const report = await runSuite(suite, {
     const scores = r.attempts.flatMap((a) => (a.judge ? [a.judge.score] : []));
     const judge = scores.length ? ` judge ${scores.join(",")}` : "";
     console.log(`${status} ${r.passed}/${r.attempts.length} ${r.id}${judge}`);
+    if (r.skipped) console.log(`     ${r.skipped}`);
     const failures = new Set(
       r.attempts.flatMap((a) => [
         ...(a.error ? [`error: ${a.error}`] : []),

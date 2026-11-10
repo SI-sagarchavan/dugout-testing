@@ -15,7 +15,7 @@ import { parseFrameIRDocument } from "@fanos/surface-canvas/ir";
 import { createRegistry, loadSurfaces, loadTheme } from "@fanos/tokens";
 import { validate, type FlatNode, type FlatTree } from "@fanos/dsl";
 import { detectLayout } from "../src/layout/detect.js";
-import { lowerLayout } from "../src/layout/lower.js";
+import { counterFormat, lowerLayout } from "../src/layout/lower.js";
 
 const THEME = new URL("../../tokens/fixtures/southern-brave.json", import.meta.url).pathname;
 const SURFACES = new URL("../../tokens/surfaces/southern-brave.json", import.meta.url).pathname;
@@ -162,6 +162,25 @@ describe("carousel", () => {
     });
     const [intent] = detectLayout(doc(row(withCta, 1172)));
     expect(intent?.kind).not.toBe("carousel");
+  });
+
+  it("does not take the arrow of a labelled button beside the row for a control", () => {
+    // "VIEW MORE →" in a header above two team cards: a link, not the row's previous arrow.
+    const viewMore = n({
+      name: "atom_button_master",
+      type: "INSTANCE",
+      at: [1100, 20, 131, 38],
+      mode: "horizontal",
+      children: [
+        n({ at: [1110, 30, 70, 16], text: "VIEW MORE" }),
+        n({ name: "atom_icon_arrow_left", type: "INSTANCE", at: [1190, 30, 20, 20] }),
+      ],
+    });
+    const header = n({ name: "header row", at: [0, 0, 1366, 80], mode: "horizontal", children: [viewMore] });
+    const teams = row(cards(2, 182, 16, 100), 1366, { name: "Team Info", at: [0, 100, 1366, 230] });
+    const section = n({ name: "Main Content", at: [0, 0, 1366, 400], children: [header, teams] });
+    const intents = detectLayout(doc(section));
+    expect(intents.find((i) => i.kind === "carousel")).toBeUndefined();
   });
 
   it("counts pages from designed dots, and does not ask for them", () => {
@@ -568,5 +587,76 @@ describe("lowering tabs", () => {
     expect(byId(tree, "men").props.select).toEqual({ key: "squad", value: "men", initial: true });
     const errors = validate(tree, { registry: createRegistry(loadTheme(THEME), { surfaces: loadSurfaces(SURFACES) }) }).errors;
     expect(errors.filter((e) => e.code.startsWith("S")).map((e) => `${e.nodeId} ${e.path} ${e.message}`)).toEqual([]);
+  });
+});
+
+describe("a carousel that draws one slide", () => {
+  /** The Showcase hero as the compiler draws it: photo, shade and words placed in an Overlay, then the arrows and the card. */
+  const hero = (): FlatTree => ({
+    schemaVersion: "1",
+    nodes: [
+      { id: "hero", parent: null, idx: 0, type: "Overlay", src: "9:1", props: { clip: true, size: { w: "full", h: { raw: 768, _unbound: true } } } },
+      { id: "photo", parent: "hero", idx: 0, type: "Image", src: "9:2", props: { src: "a.png", alt: "photo", fit: "fill", place: { anchor: "top-fill" } } },
+      { id: "words", parent: "hero", idx: 1, type: "Stack", src: "9:3", props: { place: { anchor: "top-start", offset: { block: { raw: 464, _unbound: true }, inline: { raw: 97, _unbound: true } } } } },
+      { id: "title", parent: "words", idx: 0, type: "Text", src: "9:4", props: { content: "TOPLEY STEPPED UP", style: "type.body_sm_bold" } },
+      { id: "controls", parent: "hero", idx: 2, type: "Stack", src: "9:5", props: { direction: "row", place: { anchor: "top-start" } } },
+      { id: "prev", parent: "controls", idx: 0, type: "Box", src: "9:6", props: {} },
+      { id: "next", parent: "controls", idx: 1, type: "Box", src: "9:7", props: {} },
+      { id: "count", parent: "controls", idx: 2, type: "Text", src: "9:8", props: { content: "01", style: "type.body_sm_bold" } },
+      { id: "card", parent: "hero", idx: 3, type: "Stack", src: "9:9", props: { place: { anchor: "top-start" } } },
+    ] as FlatNode[],
+  });
+  const heroDoc = () => {
+    const root = n({ name: "hero", at: [0, 0, 1366, 768] });
+    (root as { id: string }).id = "9:1";
+    return doc(root);
+  };
+  const choice: LayoutChoice = {
+    src: "9:1",
+    kind: "carousel",
+    config: { slidesPerView: 1, slidesPerGroup: 1, centered: false, initialSlide: 0, loop: true, autoplay: false },
+    slide: ["9:2", "9:3"],
+    chrome: { prev: "9:6", next: "9:7", counter: "9:8" },
+  };
+  const byId = (tree: FlatTree, id: string) => tree.nodes.find((x) => x.id === id)!;
+
+  it("wraps the slide's layers in one slide of a new carousel, where they were", () => {
+    const { tree, lowered, notes } = lowerLayout(hero(), heroDoc(), [choice]);
+    expect(lowered).toEqual(["9:1"]);
+    expect(notes[0]?.message).toContain("carousel of one drawn slide (2 layers)");
+    const carousel = tree.nodes.find((x) => x.type === "Carousel")!;
+    expect(carousel).toMatchObject({ parent: "hero", idx: 0, props: { slidesPerView: 1, loop: true, clip: true, place: { anchor: "top-fill" } } });
+    expect(carousel.src).toMatch(/^synthetic:9:1:/);
+    const slide = tree.nodes.find((x) => x.parent === carousel.id)!;
+    expect(slide.type).toBe("Overlay");
+    expect(byId(tree, "photo")).toMatchObject({ parent: slide.id, idx: 0 });
+    // the words keep their place inside the slide, which is the hero's size
+    expect(byId(tree, "words")).toMatchObject({ parent: slide.id, idx: 1, props: { place: { anchor: "top-start" } } });
+    // what draws over the slide still does, in the same order
+    expect(byId(tree, "controls").idx).toBe(1);
+    expect(byId(tree, "card").idx).toBe(2);
+  });
+
+  it("wires the arrows, and the counter in the form drawn", () => {
+    const { tree } = lowerLayout(hero(), heroDoc(), [choice]);
+    const carousel = tree.nodes.find((x) => x.type === "Carousel")!;
+    expect(byId(tree, "prev").props.controlFor).toEqual({ target: carousel.id, part: "prev" });
+    expect(byId(tree, "next").props.controlFor).toEqual({ target: carousel.id, part: "next" });
+    expect(byId(tree, "count").props.controlFor).toEqual({ target: carousel.id, part: "counter", format: "0{index}" });
+    const errors = validate(tree, { registry: createRegistry(loadTheme(THEME), { surfaces: loadSurfaces(SURFACES) }) }).errors;
+    expect(errors.filter((e) => e.code.startsWith("S")).map((e) => `${e.nodeId} ${e.path} ${e.message}`)).toEqual([]);
+  });
+
+  it("refuses layers that are not one run: something drawn between them would change order", () => {
+    const { lowered, notes } = lowerLayout(hero(), heroDoc(), [{ ...choice, slide: ["9:2", "9:9"] }]);
+    expect(lowered).toEqual([]);
+    expect(notes[0]?.message).toContain("not one run");
+  });
+
+  it("writes a counter as drawn", () => {
+    expect(counterFormat("01")).toBe("0{index}");
+    expect(counterFormat("1 / 5")).toBe("{index} / {count}");
+    expect(counterFormat("01/05")).toBe("0{index}/0{count}");
+    expect(counterFormat("Slide")).toBe("{index} / {count}");
   });
 });

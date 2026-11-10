@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   type FoundSlots,
   joined,
-  joinsFrom,
   keyPart,
   ownersOf,
   slotted,
   splitChoices,
-  splitQuestion,
+  splitOpen,
 } from "../src/slots.ts";
 
 const slot = (id: string, name: string, ir: string[]) => ({
@@ -155,14 +154,20 @@ describe("settling which parts are one section (ticket 04)", () => {
     background: [],
   };
 
-  it("asks nothing when the finder is sure of every part", () => {
-    expect(splitQuestion(found)).toBeUndefined();
+  it("reports nothing open when the finder is sure of every part", () => {
+    expect(splitOpen(found)).toBeUndefined();
   });
 
-  it("offers each join the finder was unsure of, proposing a heading's join to the part below", () => {
-    const q = splitQuestion(unsure);
-    expect(q).toMatchObject({ id: "section_split", kind: "multi", proposed: ["join:h+c"] });
-    expect(q?.options.map((o) => o.value)).toEqual(["apart", "join:h+c", "join:c+x"]);
+  it("reports each join the finder was unsure of as data, proposing a heading's join to the part below", () => {
+    const item = splitOpen(unsure, "decided on this section before: apart");
+    expect(item).toMatchObject({ id: "section_split", proposed: "h+c" });
+    // the evidence names every part with its id, and why the finder was unsure
+    expect(item?.evidence).toContain("the-brave-squad [h]");
+    expect(item?.evidence).toContain("a heading with no content under it");
+    expect(item?.candidates?.map((c) => c.value)).toEqual(["apart", "h+c", "c+x"]);
+    // what the next tool takes, and what memory holds, are said too
+    expect(item?.canTake).toContain("frame.split");
+    expect(item?.before).toBe("decided on this section before: apart");
     expect(splitChoices(unsure).joins).toEqual([
       ["h", "c"],
       ["c", "x"],
@@ -170,19 +175,18 @@ describe("settling which parts are one section (ticket 04)", () => {
   });
 
   it("proposes keeping them apart when no join is likelier", () => {
-    const q = splitQuestion({
+    const item = splitOpen({
       slots: [part("c", "cards"), unsure.slots[2] as never],
       background: [],
     });
-    expect(q?.proposed).toEqual(["apart"]);
+    expect(item?.proposed).toBe("apart");
   });
 
   it("joins what a person joined into one sure part, signed again, and ignores what is gone", () => {
-    const joins = joinsFrom(["join:h+c", "apart", "join:gone+c"]);
-    expect(joins).toEqual([
+    const joins = [
       ["h", "c"],
       ["gone", "c"],
-    ]);
+    ] as const;
     const out = joined(unsure.slots, joins, (ids) => `sig:${ids.join(",")}`);
     expect(out.map((s) => [s.id, s.name, s.nodes, s.confidence, s.signature])).toEqual([
       ["h", "cards", ["h", "c"], "sure", "sig:h,c"],

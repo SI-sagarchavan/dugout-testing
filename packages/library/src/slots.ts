@@ -70,9 +70,20 @@ export function unwrap(root: IrNode): IrNode {
 
 export function findSlots(
   doc: IrDoc,
-  opts: { layouts?: ReadonlyArray<{ src: string; kind: string }> } = {},
+  opts: {
+    layouts?: ReadonlyArray<{ src: string; kind: string }>;
+    /**
+     * Layers that are one part, by Figma id: the photo, shade and words of the one slide a
+     * carousel draws. They are never background, and they are one slot.
+     */
+    groups?: ReadonlyArray<ReadonlyArray<string>>;
+  } = {},
 ): FoundSlots {
   const layoutOf = new Map((opts.layouts ?? []).map((l) => [l.src, l.kind]));
+  const groupOf = new Map<string, number>();
+  (opts.groups ?? []).forEach((g, i) => {
+    for (const id of g) groupOf.set(id, i);
+  });
   const frame = unwrap(doc.root);
   const width = frame.geometry.bbox.w;
   const children = [...(frame.children ?? [])].sort(
@@ -85,7 +96,11 @@ export function findSlots(
   const rest: IrNode[] = [];
   for (const child of children) {
     const mark = marked.get(child.id);
-    const behind = mark ? mark.kind === "background" : isBackground(child, width);
+    const behind = groupOf.has(child.id)
+      ? false
+      : mark
+        ? mark.kind === "background"
+        : isBackground(child, width);
     (behind ? background : rest).push(child);
   }
 
@@ -97,6 +112,8 @@ export function findSlots(
     lead: boolean;
     /** The section name a designer marked it with. */
     mark?: string;
+    /** The group (`opts.groups`) whose layers it holds. */
+    group?: number;
   };
   const drafts: Draft[] = [];
   let waiting: IrNode[] = [];
@@ -104,7 +121,23 @@ export function findSlots(
   for (const child of rest) {
     const box = child.geometry.bbox;
     const mark = marked.get(child.id)?.name;
-    if (mark) {
+    const group = groupOf.get(child.id);
+    if (group !== undefined && !mark) {
+      // one part, however its layers lie: the heading above joins it
+      const same = drafts.find((d) => d.group === group);
+      if (same) {
+        same.nodes.push(...waiting, child);
+        same.heading ||= holdsHeading(child);
+      } else
+        drafts.push({
+          nodes: [...waiting, child],
+          heading: waiting.length > 0 || holdsHeading(child),
+          content: true,
+          lead: waiting.length > 0,
+          group,
+        });
+      waiting = [];
+    } else if (mark) {
       // layers marked alike are one section, wherever they are; an unmarked heading above joins it
       const same = drafts.find((d) => d.mark === mark);
       if (same) same.nodes.push(...waiting, child);
@@ -139,6 +172,7 @@ export function findSlots(
     const a = drafts[i - 1] as Draft;
     const b = drafts[i] as Draft;
     if (!a.content || !b.content || b.lead || a.mark || b.mark) continue;
+    if (a.group !== undefined || b.group !== undefined) continue;
     const row = spanOf(a.nodes.slice(-1));
     if (sameRow(row, (b.nodes[0] as IrNode).geometry.bbox)) {
       a.nodes.push(...b.nodes);

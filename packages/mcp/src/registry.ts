@@ -33,6 +33,12 @@ const ToolPolicy = z
      * the reading is a decision someone wrote down, not a default.
      */
     reason: z.string().min(10).optional(),
+    /**
+     * The write changes something other runs and people use (a connector every hook can call): a
+     * person approves it, whatever approves the run as a whole. Default: the server's
+     * `destructiveHint`. Say `false` for a tool that only touches what the agent made itself.
+     */
+    shared: z.boolean().optional(),
     /** A check from the server's adapter, run before every call: it can refuse the call. */
     guard: z.string().optional(),
   })
@@ -44,6 +50,11 @@ const Grant = z
   .object({
     /** Argument name → a pattern its value must match: what an agent holding this may touch. */
     arguments: z.record(z.string(), z.string()).optional(),
+    /**
+     * Arguments the call must leave out (or send as null): `["id"]` on an upsert makes the grant
+     * create-only, since a call that names an `id` would update what exists.
+     */
+    absent: z.array(z.string()).optional(),
     /**
      * Arguments the harness passes itself, on every call: the model never sees them in the tool's
      * schema and cannot change them. A list filtered to a namespace (`idPrefix: "dugout_"`).
@@ -116,6 +127,26 @@ export function toolName(server: ServerEntry, remote: string): string {
   return `${server.id}.${camel.charAt(0).toLowerCase()}${camel.slice(1)}`;
 }
 
+/**
+ * A write that changes something other runs and people use: the entry's `shared` when it says,
+ * else the server's `destructiveHint`. A read is never one.
+ */
+export function isSharedWrite(
+  policy: Pick<ToolPolicy, "effect" | "shared"> | undefined,
+  annotations: { destructiveHint?: boolean | undefined } | undefined,
+): boolean {
+  return policy?.effect === "write" && (policy.shared ?? annotations?.destructiveHint === true);
+}
+
+/** A grant's rules in a line each: `name ~ ^dugout: `, `prefix = "own_"`, `absent: id`. */
+export function grantLimits(grant: Grant): string[] {
+  return [
+    ...Object.entries(grant.arguments ?? {}).map(([arg, p]) => `${arg} ~ ${p}`),
+    ...Object.entries(grant.set ?? {}).map(([arg, v]) => `${arg} = ${JSON.stringify(v)}`),
+    ...(grant.absent?.length ? [`absent: ${grant.absent.join(", ")}`] : []),
+  ];
+}
+
 /** The tool an agent reads a server's granted resources with: `cast.readResource`. */
 export const resourceToolName = (server: ServerEntry) => `${server.id}.readResource`;
 
@@ -130,6 +161,14 @@ export function checkEntry(server: ServerEntry): string[] {
       for (const arg of Object.keys(grant.set ?? {})) {
         if (grant.arguments?.[arg]) {
           problems.push(`capability ${id} both sets and limits ${remote}'s ${arg}`);
+        }
+        if (grant.absent?.includes(arg)) {
+          problems.push(`capability ${id} both sets and forbids ${remote}'s ${arg}`);
+        }
+      }
+      for (const arg of grant.absent ?? []) {
+        if (grant.arguments?.[arg]) {
+          problems.push(`capability ${id} both limits and forbids ${remote}'s ${arg}`);
         }
       }
     }

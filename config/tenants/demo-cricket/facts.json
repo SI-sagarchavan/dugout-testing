@@ -35,6 +35,10 @@
     {
       "key": "site.fan-zone",
       "content": "Club site: add a Fan Zone page only when the brief asks for one."
+    },
+    {
+      "key": "locale.timezone",
+      "content": "Europe/London"
     }
   ]
 }

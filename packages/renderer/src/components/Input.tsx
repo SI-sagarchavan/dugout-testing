@@ -16,7 +16,7 @@ import type { Node } from "@fanos/dsl";
 import { cssClassName, cssVar } from "@fanos/tokens";
 import { resolveNode } from "../resolve/style.js";
 import { formatUnresolvedWarnings, interpolate } from "../resolve/data.js";
-import type { NodeRenderContext } from "../context.js";
+import { localeOf, type NodeRenderContext } from "../context.js";
 import { styleToReact } from "./dom.js";
 
 const KINDS = new Set(["text", "email", "tel", "number", "password", "search", "url"]);
@@ -25,7 +25,7 @@ const KINDS = new Set(["text", "email", "tel", "number", "password", "search", "
 function text(node: Node, prop: string, value: unknown, ctx: NodeRenderContext): string | undefined {
   if (typeof value !== "string") return undefined;
   if (!value.includes("{")) return value;
-  const { value: out, unresolved } = interpolate(value, ctx.data, { timeZone: ctx.timeZone });
+  const { value: out, unresolved } = interpolate(value, ctx.data, localeOf(ctx));
   for (const w of formatUnresolvedWarnings(node.id, prop, unresolved)) console.warn(w);
   return out;
 }

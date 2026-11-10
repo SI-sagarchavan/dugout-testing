@@ -35,6 +35,7 @@ import {
   Keyboard,
   Mousewheel,
 } from "swiper/modules";
+import { CAROUSEL_REFRESH, syncSlides } from "./gate.js";
 import { CAROUSEL_VARS, cssNumber, type CarouselSpec } from "./shared.js";
 
 type Modules = NonNullable<SwiperOptions["modules"]>;
@@ -45,6 +46,11 @@ export function mountCarousel(root: HTMLElement): () => void {
   const drawn = JSON.parse(root.dataset.fosCarousel ?? "{}") as CarouselSpec;
   const viewport = root.querySelector<HTMLElement>(":scope > .swiper");
   if (!viewport) return () => {};
+
+  // gated slides the page is not at are no slides of Swiper's; their order, kept to put back
+  syncSlides(root);
+  const wrapper = viewport.querySelector<HTMLElement>(":scope > .swiper-wrapper");
+  const order = wrapper ? [...wrapper.children] : [];
 
   const computed = getComputedStyle(root);
   const read = (name: string, fallback: number) => cssNumber(computed.getPropertyValue(name), fallback);
@@ -150,6 +156,23 @@ export function mountCarousel(root: HTMLElement): () => void {
   const onTimeLeft = (_s: Swiper, _ms: number, left: number) => {
     for (const el of timed) fill(el, 1 - left);
   };
+  // The slides shown changed (a page choice gated some): measure them again, from the first.
+  const refresh = () => {
+    if (spec.loop) swiper.loopDestroy();
+    syncSlides(root);
+    if (spec.loop) {
+      // the loop moved slides about; the options come back in the order the server drew them
+      for (const el of order) wrapper?.append(el);
+      swiper.recalcSlides();
+      swiper.loopCreate();
+    }
+    swiper.update();
+    // the first of the slides now shown; in a loop that is a real index, not a place in the DOM
+    if (spec.loop) swiper.slideToLoop(0, 0);
+    else swiper.slideTo(0, 0);
+    update();
+  };
+  root.addEventListener(CAROUSEL_REFRESH, refresh);
   const EVENTS = ["slideChange", "snapIndexChange", "reachBeginning", "reachEnd", "fromEdge", "resize"] as const;
   for (const e of EVENTS) swiper.on(e, update);
   swiper.on("autoplayTimeLeft", onTimeLeft);
@@ -157,6 +180,7 @@ export function mountCarousel(root: HTMLElement): () => void {
   update();
 
   return () => {
+    root.removeEventListener(CAROUSEL_REFRESH, refresh);
     for (const e of EVENTS) swiper.off(e, update);
     swiper.off("autoplayTimeLeft", onTimeLeft);
     for (const off of arrows) off();
@@ -261,7 +285,7 @@ function applyEffect(spec: CarouselSpec, modules: Modules, options: SwiperOption
 
 /** Pages: the snap points Swiper settles on, or each real slide when it loops. */
 function pageCount(swiper: Swiper, spec: CarouselSpec): number {
-  if (spec.loop) return Math.max(1, swiper.slides.filter((s) => !s.classList.contains("swiper-slide-duplicate")).length);
+  if (spec.loop) return Math.max(1, swiper.slides.filter((s) => !s.classList.contains("swiper-slide-duplicate") && s.style.display !== "none").length);
   return Math.max(1, swiper.snapGrid.length);
 }
 const currentPage = (swiper: Swiper, spec: CarouselSpec) => (spec.loop ? swiper.realIndex : swiper.snapIndex);

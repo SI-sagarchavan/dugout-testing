@@ -47,6 +47,10 @@
       "effect": "read",
       "retries": 1
     },
+    "cast_list_providers": {
+      "effect": "read",
+      "retries": 1
+    },
     "cast_get_template_binding": {
       "effect": "read",
       "retries": 1
@@ -90,7 +94,8 @@
       "effect": "write"
     },
     "cast_remove_step": {
-      "effect": "write"
+      "effect": "write",
+      "shared": false
     },
     "cast_wire_steps": {
       "effect": "write"
@@ -101,6 +106,14 @@
     "cast_publish_hook": {
       "effect": "write",
       "timeoutMs": 60000
+    },
+    "cast_upsert_provider": {
+      "effect": "write",
+      "shared": true
+    },
+    "cast_upsert_api": {
+      "effect": "write",
+      "shared": true
     }
   },
   "capabilities": {
@@ -186,6 +199,26 @@
         }
       },
       "resources": ["cast://examples/hooks", "cast://guide/jsonata"]
+    },
+    "connectors.author": {
+      "description": "Create API connectors and their providers in dugout's namespace (names start \"dugout: \"), so a feed a person gave can be called by a hook. Create only: a connector or provider is shared by every hook that calls it, so an update, which names an id, is refused. Any provider may be read, to reuse one.",
+      "tools": {
+        "cast_list_providers": {},
+        "cast_list_apis": {},
+        "cast_describe_api": {},
+        "cast_upsert_provider": {
+          "absent": ["id"],
+          "arguments": {
+            "name": "^dugout: "
+          }
+        },
+        "cast_upsert_api": {
+          "absent": ["id"],
+          "arguments": {
+            "name": "^dugout: "
+          }
+        }
+      }
     }
   }
 }

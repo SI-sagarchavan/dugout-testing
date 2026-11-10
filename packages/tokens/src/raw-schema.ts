@@ -45,7 +45,7 @@ export const rawGradientSchema = z.object({
 export const rawTypographySchema = z.object({
   name: z.string().optional(),
   size: z.number(),
-  weight: z.number(),
+  weight: z.coerce.number(),
   typeface: z.string(),
   line_height: z.number(),
   letter_spacing: z.number(),

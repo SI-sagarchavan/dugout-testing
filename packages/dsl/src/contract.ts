@@ -30,14 +30,17 @@
 
 import { clockAlias, clockSchema, clockUnits } from "./clock.js";
 import type { FlatNode, FlatTree } from "./flat.js";
-import { isPagePath } from "./page.js";
+import { isPagePath, overChoice, selectOf } from "./page.js";
 import type { Issue } from "./validate.js";
 import {
+  brokenRefs,
   CDN_RATIOS,
+  choiceValue,
   conditionsOf,
   parseRefs,
   PIPES,
   predicateSchema,
+  readDate,
   RATIO_SLOT,
   type Ref,
 } from "./binding.js";
@@ -49,18 +52,29 @@ import {
 type ScalarType = "string" | "number" | "boolean" | "null";
 
 export type Shape =
-  | { kind: "scalar"; types: Set<ScalarType>; isoDate: boolean; ratioSlot: boolean }
+  | {
+      kind: "scalar";
+      types: Set<ScalarType>;
+      /** Every string sample is an ISO timestamp: drawn raw, it prints `2026-10-21T10:29:00.000Z` (B5). */
+      isoDate: boolean;
+      /** How many samples the `date` pipe reads (`readDate`: any form it takes, numbers too). */
+      dates: number;
+      /** Strings it cannot read as a date, a few of them: drawn with `date`, they draw nothing. */
+      undated: string[];
+      ratioSlot: boolean;
+    }
   | { kind: "object"; fields: Map<string, Shape>; nullable: boolean }
   | { kind: "array"; of: Shape | null; nullable: boolean };
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+const UNDATED_MAX = 3;
 
 /** What a clock puts in scope: the units it draws, `past` and `total`. */
 function clockShape(units: readonly string[]): Shape {
-  const num = (): Shape => ({ kind: "scalar", types: new Set<ScalarType>(["number"]), isoDate: false, ratioSlot: false });
+  const num = (): Shape => ({ kind: "scalar", types: new Set<ScalarType>(["number"]), isoDate: false, dates: 0, undated: [], ratioSlot: false });
   const fields = new Map<string, Shape>(units.map((unit) => [unit, num()]));
   fields.set("total", num());
-  fields.set("past", { kind: "scalar", types: new Set<ScalarType>(["boolean"]), isoDate: false, ratioSlot: false });
+  fields.set("past", { kind: "scalar", types: new Set<ScalarType>(["boolean"]), isoDate: false, dates: 0, undated: [], ratioSlot: false });
   return { kind: "object", fields, nullable: false };
 }
 
@@ -77,10 +91,13 @@ export function inferShape(value: unknown): Shape {
     return { kind: "object", fields, nullable: false };
   }
   const t: ScalarType = value === null ? "null" : (typeof value as ScalarType);
+  const read = (typeof value === "string" && value.trim() !== "") || typeof value === "number" ? readDate(value) : undefined;
   return {
     kind: "scalar",
     types: new Set([t]),
     isoDate: typeof value === "string" && ISO_DATE_RE.test(value),
+    dates: read === undefined ? 0 : 1,
+    undated: typeof value === "string" && value.trim() !== "" && read === undefined ? [value] : [],
     ratioSlot: typeof value === "string" && value.includes(RATIO_SLOT),
   };
 }
@@ -94,7 +111,8 @@ function mergeShape(a: Shape, b: Shape): Shape {
     const types = new Set([...a.types, ...b.types]);
     // A date column stays a date column through its nulls.
     const isoDate = (a.isoDate || isNullScalar(a)) && (b.isoDate || isNullScalar(b)) && (a.isoDate || b.isoDate);
-    return { kind: "scalar", types, isoDate, ratioSlot: a.ratioSlot || b.ratioSlot };
+    const undated = [...new Set([...a.undated, ...b.undated])].slice(0, UNDATED_MAX);
+    return { kind: "scalar", types, isoDate, dates: a.dates + b.dates, undated, ratioSlot: a.ratioSlot || b.ratioSlot };
   }
   if (a.kind === "object" && b.kind === "object") {
     const fields = new Map(a.fields);
@@ -170,6 +188,8 @@ function templatesIn(props: Record<string, unknown>): Array<{ prop: string; valu
   for (const [k, v] of Object.entries(props)) {
     // `when` and `over` are paths, not templates — checked on their own below.
     if (k === "_meta" || k === "when") continue;
+    // an `over` that follows a page choice (`squad.{_page.squad}`) names the choice, not a ref
+    if (k === "over" && typeof v === "string" && overChoice(v)) continue;
     walk(v, k);
   }
   return out;
@@ -180,6 +200,15 @@ export function checkPipes(tree: FlatTree): Issue[] {
   const issues: Issue[] = [];
   for (const node of tree.nodes) {
     for (const t of templatesIn(node.props)) {
+      for (const span of brokenRefs(t.value)) {
+        issues.push({
+          code: "B4",
+          severity: "error",
+          nodeId: node.id,
+          path: t.prop,
+          message: `${span}: not a ref the renderer reads, so the page draws it as written — a ref is {path} or {path | pipe:"arg"}, the pipes are ${Object.keys(PIPES).join(", ")}; a label for each code (R → RECENT) is a variant with a when for each value, or a field the data gives`,
+        });
+      }
       for (const ref of parseRefs(t.value)) {
         for (const pipe of ref.pipes) {
           const spec = PIPES[pipe.name];
@@ -213,7 +242,15 @@ export function checkPipes(tree: FlatTree): Issue[] {
  * Scopes follow the Repeaters: inside `Repeater{over: "news.items", as: "article"}`
  * the name `article` is one merged item of `news.items`.
  */
-export function checkBindings(tree: FlatTree, data: unknown): Issue[] {
+export interface BindingCheckOptions {
+  /**
+   * The page choices other sections of the page write (frame-match's `page_choices`): an `over`
+   * that reads one checks its options too, beside those this tree writes.
+   */
+  choices?: ReadonlyArray<{ key: string; options: ReadonlyArray<{ value: string }> }>;
+}
+
+export function checkBindings(tree: FlatTree, data: unknown, options: BindingCheckOptions = {}): Issue[] {
   const issues: Issue[] = [];
   const add = (issue: Issue) => issues.push(issue);
   const root = inferShape(data);
@@ -229,9 +266,15 @@ export function checkBindings(tree: FlatTree, data: unknown): Issue[] {
     if (parent?.type === "Repeater") {
       const over = String(parent.props.over ?? "");
       const as = String(parent.props.as ?? "");
-      const list = walkShape(scope, over);
-      if (as && list.ok && list.shape.kind === "array" && list.shape.of && scope.kind === "object") {
-        scope = { ...scope, fields: new Map(scope.fields).set(as, list.shape.of) };
+      // a list that follows a page choice: an item is an item of any of its lists
+      const item = overChoice(over)
+        ? choiceLists(scope, over).lists.reduce<Shape | null>((a, l) => (a && l.of ? mergeShape(a, l.of) : (a ?? l.of)), null)
+        : (() => {
+            const list = walkShape(scope, over);
+            return list.ok && list.shape.kind === "array" ? list.shape.of : null;
+          })();
+      if (as && item && scope.kind === "object") {
+        scope = { ...scope, fields: new Map(scope.fields).set(as, item) };
       }
     }
     // a clock's values are in scope on the node that carries it, and under it
@@ -278,13 +321,21 @@ export function checkBindings(tree: FlatTree, data: unknown): Issue[] {
         }
         // a clock counts to the instant: it is read, never drawn
         if (t.prop === "clock.to") {
-          if (w.shape.kind !== "scalar" || (!w.shape.isoDate && !w.shape.types.has("number"))) {
+          if (w.shape.kind !== "scalar" || w.shape.dates === 0) {
             add({
               code: "B4",
               severity: "warning",
               nodeId: node.id,
               path: t.prop,
-              message: `clock.to ${ref.text}: the sample values are not instants (ISO-8601 or epoch ms)`,
+              message: `clock.to ${ref.text}: the sample values are not dates or times the clock can read`,
+            });
+          } else if (w.shape.undated.length > 0) {
+            add({
+              code: "B4",
+              severity: "warning",
+              nodeId: node.id,
+              path: t.prop,
+              message: `clock.to ${ref.text}: some sample values cannot be read as a date (${w.shape.undated.map((v) => JSON.stringify(v)).join(", ")}) — the clock is not drawn for them`,
             });
           }
           continue;
@@ -294,7 +345,45 @@ export function checkBindings(tree: FlatTree, data: unknown): Issue[] {
     }
 
     // --- Repeater.over --------------------------------------------------
-    if (node.type === "Repeater" && typeof node.props.over === "string") {
+    if (node.type === "Repeater" && typeof node.props.over === "string" && overChoice(node.props.over)) {
+      // a list that follows a page choice: the data's lists are its options, whichever section
+      // writes the choice; an option known here that names none draws every list (an ALL option)
+      const over = node.props.over;
+      const key = overChoice(over) as string;
+      const { lists, parent, at, before } = choiceLists(scope, over);
+      if (lists.length === 0) {
+        add({
+          code: "B2",
+          severity: "error",
+          nodeId: node.id,
+          path: "over",
+          message: at
+            ? `over "${over}" reads the page choice "${key}": "${at}" is not in the data${offered(parent)}`
+            : `over "${over}" reads the page choice "${key}", but ${before ? `"${before}"` : "the data"} holds no list under any key — one list per option goes there${offered(parent)}`,
+        });
+      } else {
+        const known = new Map<string, string>();
+        for (const n of tree.nodes) {
+          const select = selectOf(n);
+          if (select?.key === key) known.set(choiceValue(select.value), select.value);
+        }
+        for (const c of options.choices ?? []) {
+          if (c.key !== key) continue;
+          for (const o of c.options) if (!known.has(choiceValue(o.value))) known.set(choiceValue(o.value), o.value);
+        }
+        const names = new Set(lists.map((l) => choiceValue(l.name)));
+        for (const [norm, option] of known) {
+          if (names.has(norm)) continue;
+          add({
+            code: "B2",
+            severity: "warning",
+            nodeId: node.id,
+            path: "over",
+            message: `over "${over}": the option "${option}" names no list (the lists are ${lists.map((l) => l.name).join(", ")}), so it draws every list's items, as an ALL option does — if it is not one, its list is missing from the data`,
+          });
+        }
+      }
+    } else if (node.type === "Repeater" && typeof node.props.over === "string") {
       const over = node.props.over;
       const w = walkShape(scope, over);
       if (w.pageKey) pageKey(node, "over", `over "${over}"`, w.pageKey);
@@ -356,13 +445,21 @@ export function checkBindings(tree: FlatTree, data: unknown): Issue[] {
       return;
     }
     const dated = ref.pipes.some((p) => p.name === "date");
-    if (dated && !shape.isoDate && !shape.types.has("number")) {
+    if (dated && shape.dates === 0) {
       add({
         code: "B4",
         severity: "warning",
         nodeId: node.id,
         path: prop,
-        message: `${ref.text}: "date" on a field whose sample values are not dates`,
+        message: `${ref.text}: "date" on a field whose sample values are not dates${shape.undated.length ? ` (${shape.undated.map((v) => JSON.stringify(v)).join(", ")})` : ""}`,
+      });
+    } else if (dated && shape.undated.length > 0) {
+      add({
+        code: "B4",
+        severity: "warning",
+        nodeId: node.id,
+        path: prop,
+        message: `${ref.text}: some sample values cannot be read as a date (${shape.undated.map((v) => JSON.stringify(v)).join(", ")}) — "date" draws nothing for them; add a default pipe, or mend them in the hook`,
       });
     }
     if (!dated && shape.isoDate) {
@@ -401,4 +498,35 @@ function describe(shape: Shape): string {
   if (shape.kind === "array") return "a list";
   if (shape.kind === "object") return "an object";
   return [...shape.types].join(" | ");
+}
+
+/**
+ * The lists an `over` that reads a page choice can draw, as shapes: each key under the part before
+ * the choice whose value (and the part after it) is a list, keys that normalise alike as one. As
+ * `overLists` in `page.ts` reads them from data, here from the merged sample in the Repeater's own
+ * scope (an item's, inside another Repeater). A key is one segment, dots and all.
+ */
+function choiceLists(
+  scope: Shape,
+  over: string,
+): { lists: Array<{ name: string; of: Shape | null }>; parent: Shape | null; before: string; at?: string } {
+  const key = overChoice(over) as string;
+  const token = `{_page.${key}}`;
+  const before = over.slice(0, over.indexOf(token)).replace(/\.$/, "");
+  const after = over.slice(over.indexOf(token) + token.length).replace(/^\./, "");
+  const walked = before ? walkShape(scope, before) : ({ ok: true, shape: scope } as const);
+  if (!walked.ok) return { lists: [], parent: walked.parent, before, at: walked.at };
+  const parent = walked.shape;
+  if (parent.kind !== "object") return { lists: [], parent, before };
+  const seen = new Set<string>();
+  const lists: Array<{ name: string; of: Shape | null }> = [];
+  for (const [name, field] of parent.fields) {
+    if (name.startsWith("_")) continue;
+    const list = after ? walkShape(field, after) : ({ ok: true, shape: field } as const);
+    const norm = choiceValue(name);
+    if (!list.ok || list.shape.kind !== "array" || seen.has(norm)) continue;
+    seen.add(norm);
+    lists.push({ name, of: list.shape.of });
+  }
+  return { lists, parent, before };
 }

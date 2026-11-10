@@ -19,10 +19,11 @@
     },
     "data": {
       "default": "bound",
-      "description": "none: nothing on the section is data, so it was handed over with nothing bound",
+      "description": "stand-in: bound to data about something else than the design (another team), see dataWhy; none: nothing was bound, so it was handed over as designed",
       "type": "string",
       "enum": [
         "bound",
+        "stand-in",
         "none"
       ]
     },
@@ -93,14 +94,19 @@
             "type": "string",
             "enum": [
               "bound",
+              "stand-in",
               "none",
               "failed",
               "skipped"
             ],
-            "description": "none: nothing in it is data; failed: it could not be bound; skipped: a person chose not to bind it in this pass, for Cast's live-run budget"
+            "description": "stand-in: bound to data about something else (another team), shown for the shape; none: nothing in it is data, or no data could be had and the design's copy stays; failed: it could not be bound; skipped: a person chose not to bind it in this pass, for Cast's live-run budget"
           },
           "hookId": {
             "description": "The Cast hook its data comes from",
+            "type": "string"
+          },
+          "dataWhy": {
+            "description": "Why the slot is a stand-in, or why nothing was bound (code's reading)",
             "type": "string"
           },
           "bound": {
@@ -149,6 +155,44 @@
     "collapsed": {
       "type": "number",
       "description": "Lists the binding made"
+    },
+    "created": {
+      "default": [],
+      "description": "What the pass created in Cast that other hooks and people can use (providers, connectors), for a person to see",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "settled": {
+      "default": [],
+      "description": "How each open item page.build reported was settled, and by whom",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string",
+            "enum": [
+              "person",
+              "memory",
+              "agent"
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "by",
+          "value"
+        ],
+        "additionalProperties": false
+      }
     },
     "remaining": {
       "type": "array",
@@ -215,6 +259,8 @@
     "coverage",
     "bound",
     "collapsed",
+    "created",
+    "settled",
     "remaining",
     "kept",
     "compilerFindings",

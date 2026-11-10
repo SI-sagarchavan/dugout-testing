@@ -511,9 +511,9 @@ describe("applyBindingPlan — a picture the data gives", () => {
       { id: "plate", src: "s:plate", parent: "card", idx: 1, type: "Image", props: { src: "data:image/png;base64,BBBB", alt: "", fit: "fill" } },
     ]);
 
-  it("covers its box instead of stretching to it, and a stand-in left as designed keeps fill", () => {
+  it("is drawn whole in its box instead of stretching to it, and a stand-in left as designed keeps fill", () => {
     const { tree: bound } = applyBindingPlan(tree(), { bind: [{ src: "s:photo", prop: "src", path: "player.photo" }] });
-    expect(bound.nodes.find((n) => n.id === "photo")?.props.fit).toBe("cover");
+    expect(bound.nodes.find((n) => n.id === "photo")?.props.fit).toBe("contain");
     expect(bound.nodes.find((n) => n.id === "plate")?.props.fit).toBe("fill");
   });
 });
@@ -576,5 +576,78 @@ describe("applyBindingPlan — items placed by hand", () => {
     const { collapsed, drift } = applyBindingPlan(panel([row(0, 100, 0), row(1, 152, 90), row(2, 204, 10)]), plan(3));
     expect(collapsed).toBe(0);
     expect(drift[0]?.message).toMatch(/not in one line/);
+  });
+});
+
+describe("a picture of the design's own, bound to one from the data", () => {
+  // run 5c5da766: frame-match's crop of the player layer is `fit: "fill"`, exact for the crop; a
+  // 480×854 photo bound into its 281×429 box was stretched 17% wide
+  const crops = (): FlatTree =>
+    ({
+      schemaVersion: "1",
+      nodes: [
+        { id: "card", parent: null, idx: 0, type: "Overlay", src: "1:card", props: {} },
+        {
+          id: "photo",
+          parent: "card",
+          idx: 0,
+          type: "Image",
+          src: "1:photo",
+          props: { src: "data:image/png;base64,AA", alt: "PLAYER", fit: "fill", size: { w: { raw: 281, _unbound: true }, h: { raw: 429, _unbound: true } } },
+        },
+        {
+          id: "band",
+          parent: "card",
+          idx: 1,
+          type: "Image",
+          src: "1:band",
+          props: { src: "data:image/png;base64,AA", alt: "BG", fit: "fill", place: { anchor: "fill" } },
+        },
+      ],
+    }) as never;
+
+  it("never stretches it: a picture in a box of its own is drawn whole, one that fills its parent covers it", () => {
+    const { tree } = applyBindingPlan(crops(), {
+      bind: [
+        { src: "1:photo", prop: "src", path: "player.photo" },
+        { src: "1:band", prop: "src", path: "hero.image" },
+      ],
+    });
+    const byId = new Map(tree.nodes.map((n) => [n.id, n]));
+    expect(byId.get("photo")?.props).toMatchObject({ src: "{player.photo}", fit: "contain" });
+    expect(byId.get("band")?.props).toMatchObject({ src: "{hero.image}", fit: "cover" });
+  });
+
+  it("leaves a fill alone while the design's own picture stays", () => {
+    const { tree } = applyBindingPlan(crops(), { bind: [{ src: "1:photo", prop: "alt", path: "player.name" }] });
+    expect(tree.nodes.find((n) => n.id === "photo")?.props.fit).toBe("fill");
+  });
+});
+
+describe("applyBindingPlan — a carousel that draws one slide", () => {
+  const tree: FlatTree = {
+    schemaVersion: "1",
+    nodes: [
+      { id: "hero", parent: null, idx: 0, type: "Overlay", src: "9:1", props: {} },
+      { id: "c", parent: "hero", idx: 0, type: "Carousel", src: "synthetic:9:1:1", props: { slidesPerView: 1, autoplay: false } },
+      { id: "slide", parent: "c", idx: 0, type: "Overlay", src: "synthetic:9:1:2", props: {} },
+      { id: "title", parent: "slide", idx: 0, type: "Text", src: "9:4", props: { content: "TOPLEY", style: "type.body" } },
+    ] as FlatNode[],
+  };
+
+  it("repeats the one slide for each item", () => {
+    const { tree: out, collapsed, drift } = applyBindingPlan(tree, {
+      collapse: [{ over: "news.cards", as: "article", members: ["synthetic:9:1:2"], fields: [{ src: "9:4", prop: "content", path: "title" }] }],
+    });
+    expect(drift).toEqual([]);
+    expect(collapsed).toBe(1);
+    const repeater = out.nodes.find((n) => n.type === "Repeater")!;
+    expect(repeater).toMatchObject({ parent: "c", props: { over: "news.cards", as: "article" } });
+    expect(out.nodes.find((n) => n.id === "title")?.props.content).toBe("{article.title}");
+  });
+
+  it("does not fold one member that is not a carousel's slide", () => {
+    const { drift } = applyBindingPlan(tree, { collapse: [{ over: "news.cards", as: "a", members: ["9:4"] }] });
+    expect(drift[0]?.reason).toBe("not-a-run");
   });
 });

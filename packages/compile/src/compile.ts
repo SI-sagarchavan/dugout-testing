@@ -462,8 +462,14 @@ function emit(
   // `bbox` says the node occupies 1px on screen; anything taller contradicts it.
   // A Button's padding comes from the frame that actually carries its box,
   // which is usually the master INSIDE the instance — see `button()`.
+  // A layer with nothing in it has nothing to pad: the progress bar's 33x2 fill declares 16px
+  // all round, and drew as a 32px square over the counter.
   const sp =
-    type === "Divider" || type === "Button" || type === "Input" || type === "Checkbox"
+    type === "Divider" ||
+    type === "Button" ||
+    type === "Input" ||
+    type === "Checkbox" ||
+    (node.children ?? []).length === 0
       ? undefined
       : space(ctx.theme, fittedLayout(node));
   if (sp) props.space = sp;
@@ -780,6 +786,19 @@ function emit(
       }
       // A rule's own box is its stroke, not a layout size.
       delete props.size;
+      /**
+       * Except its length, in a row that runs the same way. A horizontal rule is `width: 100%`,
+       * which in a row that hugs its content is a share of nothing: the progress track between
+       * a carousel's arrows and its "01" drew 0px wide, and the counter moved 161px left.
+       */
+      const along = props.orientation === "horizontal" ? "w" : "h";
+      const rowWise =
+        (parent?.node.layout as { mode?: string } | undefined)?.mode ===
+        (along === "w" ? "horizontal" : "vertical");
+      const length = along === "w" ? w : h;
+      if (rowWise && node.layout.sizing[along] === "fixed" && length > 0) {
+        props.size = { [along]: { _unbound: true, raw: Math.round(length * 100) / 100 } };
+      }
       break;
     }
     case "Box": {

@@ -19,4 +19,13 @@ export interface ServerAdapter {
    * reports some failures in its data rather than with `isError`. The call then fails.
    */
   failed?(tool: string, result: ToolResult): string | undefined;
+  /**
+   * What code should keep of a successful result, for a check that runs later in the run
+   * (`observed` in observations.ts): the structured data the model only reads as text.
+   */
+  observe?(
+    tool: string,
+    args: Record<string, unknown>,
+    result: ToolResult,
+  ): { key: string; value: unknown } | undefined;
 }

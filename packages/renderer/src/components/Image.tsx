@@ -10,7 +10,7 @@ import { absolutize, fillImageRatio, type Node } from "@fanos/dsl";
 import { cssVar, resolveAsset, type AssetContext } from "@fanos/tokens";
 import { interpolate, formatUnresolvedWarnings } from "../resolve/data.js";
 import { resolveNode } from "../resolve/style.js";
-import type { NodeRenderContext } from "../context.js";
+import { localeOf, type NodeRenderContext } from "../context.js";
 import { styleToReact } from "./dom.js";
 
 const FIT_MAP: Record<string, string> = {
@@ -26,8 +26,8 @@ export function Image({ node, ctx }: { node: Node; ctx: NodeRenderContext }) {
 
   const srcTemplate = typeof props.src === "string" ? props.src : "";
   const altTemplate = typeof props.alt === "string" ? props.alt : "";
-  const srcResult = interpolate(srcTemplate, ctx.data, { timeZone: ctx.timeZone });
-  const altResult = interpolate(altTemplate, ctx.data, { timeZone: ctx.timeZone });
+  const srcResult = interpolate(srcTemplate, ctx.data, localeOf(ctx));
+  const altResult = interpolate(altTemplate, ctx.data, localeOf(ctx));
   for (const w of formatUnresolvedWarnings(node.id, "src", srcResult.unresolved)) console.warn(w);
   for (const w of formatUnresolvedWarnings(node.id, "alt", altResult.unresolved)) console.warn(w);
 

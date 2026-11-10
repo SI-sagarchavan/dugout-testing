@@ -113,7 +113,7 @@ describe("prepareHandoff", () => {
     ]);
   });
 
-  it("does not send content photos, and says which it left out", async () => {
+  it("sends content photos too: static or data-driven is decided after the Handoff", async () => {
     const result = await prepareHandoff(
       input({
         screenshots: [
@@ -122,8 +122,9 @@ describe("prepareHandoff", () => {
         ],
       }),
     );
-    expect(result.files.map((f) => f.name)).not.toContain("art-image-Player-1-7.png");
-    expect(result.skipped).toEqual(["art-image-Player-1-7.png"]);
+    const photo = result.files.find((f) => f.name === "art-image-Player-1-7.png");
+    expect(photo).toMatchObject({ kind: "vector", nodeId: "1:7" });
+    expect(result.skipped).toEqual([]);
   });
 
   it("leaves out an empty picture rather than send a file with no bytes", async () => {

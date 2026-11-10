@@ -11,8 +11,9 @@
  *   screenshot  the section pictures and the whole-frame picture, for the pixel diff
  *   vector      art the IR cannot describe: a crest, an icon, a swoosh, a mask
  *   background  an image the designer marked, as their own bytes
- * Content photos do not ship. The compiler leaves them as placeholders and `bind` fills them
- * from data, so the plugin skips every `art-image-` picture.
+ * Every picture ships, content photos too (`art-image-`): the plugin cannot know whether a layer
+ * is static or filled from data. The compiler draws the shipped picture as the image's own, and
+ * `bind` replaces it only where it binds a field.
  *
  * PURE. No Figma, no DOM, no platform crypto (see `auth/pkce.ts`).
  */
@@ -37,9 +38,6 @@ export interface PreparedFile {
 }
 
 export type ManifestFile = Omit<PreparedFile, "bytes">;
-
-/** A picture of a layer that is content, not art. The data fills it, so it is not sent. */
-const CONTENT_PHOTO_PREFIX = `${ART_PLATE_PREFIX}image-`;
 
 /** A background whose bytes are a type the backend does not take. The designer can act on this. */
 export class UnsupportedAssetError extends Error {
@@ -108,7 +106,7 @@ export async function prepareHandoff(
   });
 
   for (const shot of input.screenshots) {
-    if (shot.name.startsWith(CONTENT_PHOTO_PREFIX) || shot.bytes.length === 0) {
+    if (shot.bytes.length === 0) {
       skipped.push(shot.name);
       continue;
     }

@@ -26,6 +26,7 @@ import {
   type Condition,
   type PageState,
 } from "@fanos/dsl/runtime";
+import { gateSlides } from "./carousel/gate.js";
 import type { CarouselSpec } from "./carousel/shared.js";
 
 export interface CarouselRootProps {
@@ -33,12 +34,23 @@ export interface CarouselRootProps {
   className: string;
   style: CSSProperties;
   dataAttrs: Record<string, string>;
+  /** The page state the server drew at, for slides that follow a page choice. */
+  page?: PageState;
   /** The slides, each already a `.swiper-slide`. */
   children: ReactNode;
 }
 
-export function CarouselRoot({ spec, className, style, dataAttrs, children }: CarouselRootProps) {
+export function CarouselRoot({ spec, className, style, dataAttrs, page, children }: CarouselRootProps) {
   const ref = useRef<HTMLDivElement>(null);
+  // Slides of a rail that follows a page choice (`data-fos-gate`, the conditions each shows at):
+  // show those the choice now satisfies, and tell Swiper, which skips hidden slides.
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || !root.querySelector("[data-fos-gate]")) return;
+    const gate = () => gateSlides(root, { ...(page ?? {}), ...choiceSnapshot });
+    gate();
+    return subscribeChoices(gate);
+  }, [page]);
   useEffect(() => {
     const root = ref.current;
     if (!root) return;
@@ -128,17 +140,20 @@ export interface ClockTextProps {
   /** When the server drew it. */
   now: number;
   timeZone?: string;
+  dateOrder?: "mdy" | "dmy";
 }
 
 /** The characters of a Text that reads a clock. Its look is the Text's, drawn by the server. */
-export function ClockText({ parts, clocks, now: initial, timeZone }: ClockTextProps) {
+export function ClockText({ parts, clocks, now: initial, timeZone, dateOrder }: ClockTextProps) {
   const now = useNow(initial, clocks);
   const scope = scopeAt(clocks, now);
   return (
     <>
       {parts
         .map((part) =>
-          typeof part === "string" ? part : resolveTemplate(part.ref, scope, timeZone ? { timeZone } : {}).value,
+          typeof part === "string"
+            ? part
+            : resolveTemplate(part.ref, scope, { ...(timeZone ? { timeZone } : {}), ...(dateOrder ? { dateOrder } : {}) }).value,
         )
         .join("")}
     </>

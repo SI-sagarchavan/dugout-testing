@@ -33,6 +33,7 @@ export function Carousel({ node, ctx, slides }: { node: Node; ctx: NodeRenderCon
   return (
     <CarouselRoot
       spec={spec}
+      page={ctx.page}
       className={`${resolved.className} fos-carousel`}
       style={styleToReact({ ...resolved.style, ...vars })}
       dataAttrs={{
@@ -42,6 +43,7 @@ export function Carousel({ node, ctx, slides }: { node: Node; ctx: NodeRenderCon
         "data-fos-carousel-clip": props.clip === false ? "false" : "true",
         "data-fos-align": align,
         ...(spec.centered && vars["--fos-carousel-center"] ? { "data-fos-centered": "true" } : {}),
+        ...(vars["--fos-carousel-per-view"] ? { "data-fos-per-view": vars["--fos-carousel-per-view"] } : {}),
       }}
     >
       {slides}

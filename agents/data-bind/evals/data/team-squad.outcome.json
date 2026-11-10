@@ -1,0 +1,50 @@
+{
+  "status": "completed",
+  "ending": "bound",
+  "hookId": "dugout_cricket_squad_stats",
+  "shown": [
+    {
+      "node": "I35:10530;10111:12383",
+      "placeholder": "Batter",
+      "shown": ["All-Rounder", "Batter", "Bowler", "Wicket-Keeper"]
+    },
+    {
+      "node": "I35:10530;10111:12382",
+      "placeholder": "Ben\nMcKinney",
+      "shown": ["Glenn Maxwell", "Obus Pienaar", "Jason Behrendorff", "Andries Gous"]
+    },
+    {
+      "node": "I35:10530;13706:39003",
+      "placeholder": "10",
+      "shown": ["12", "–", "1"]
+    },
+    {
+      "node": "I35:10530;13706:39007",
+      "placeholder": "300",
+      "shown": ["252", "80", "–", "216"]
+    },
+    {
+      "node": "I35:10530;13706:39011",
+      "placeholder": "116.67",
+      "shown": ["175", "142.85", "–", "139.35"]
+    },
+    {
+      "node": "I35:10530;13560:112033;13384:37681",
+      "placeholder": "C",
+      "shown": ["C"]
+    }
+  ],
+  "boundFields": ["name", "role", "matches", "runs", "strike_rate", "badge"],
+  "problems": [
+    "The data is the wrong team. hookMaker could not build a Southern Brave squad hook from the two feed URLs you gave, so I bound the stand-in dugout_cricket_squad_stats. Its players are Australia, USA and South Africa U19. Re-bind once a Southern Brave hook exists.",
+    "The WOMEN/MEN toggle does not change the list, because the data has no men/women split.",
+    "Player photos are not in the data, so the card pictures stay as designed.",
+    "The name shows on one line, where the design breaks it after the first name.",
+    "The extra badge icon on the second card is not bound.",
+    "The data has no matches value for some players and no runs for others, so those cards show a dash."
+  ],
+  "variantsDrawn": [],
+  "steps": 11,
+  "costUsd": 0.14523830000000001,
+  "recordedFrom": "run 3acd204c (data-bind 8758c3d4)"
+}

@@ -18,7 +18,7 @@ import { isRespObject, isSignedTokenRef, respValues, refCategory, SEMVER_REF_RE,
 import { LAYOUT_PROP_NAMES, REPEATER_FORBIDDEN_PROPS } from "./universal.js";
 import { walkProps } from "./walk.js";
 import { zodOfFields, type FieldType } from "./field.js";
-import { checkBindings, checkPipes } from "./contract.js";
+import { type BindingCheckOptions, checkBindings, checkPipes } from "./contract.js";
 import { PAGE_KEY_RE, selectOf } from "./page.js";
 
 export const ISSUE_CODES = [
@@ -77,6 +77,8 @@ export interface ValidateOptions {
    * checked against it (B1–B7). Without it only the pipe names are (B4).
    */
   data?: unknown;
+  /** The page choices other sections write, for an `over` that reads one (`checkBindings`). */
+  choices?: BindingCheckOptions["choices"];
 }
 
 export interface ValidationResult {
@@ -613,7 +615,7 @@ export function validate(tree: FlatTree, options: ValidateOptions): ValidationRe
 
   // --- B: bindings ---------------------------------------------------------
   issues.push(...checkPipes(tree));
-  if (options.data !== undefined) issues.push(...checkBindings(tree, options.data));
+  if (options.data !== undefined) issues.push(...checkBindings(tree, options.data, options.choices ? { choices: options.choices } : {}));
 
   const errors = issues.filter((i) => i.severity === "error");
   const warnings = issues.filter((i) => i.severity === "warning");

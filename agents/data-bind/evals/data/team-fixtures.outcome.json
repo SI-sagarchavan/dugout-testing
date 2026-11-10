@@ -1,0 +1,67 @@
+{
+  "status": "completed",
+  "ending": "bound",
+  "hookId": "dugout_cricket_fixtures",
+  "shown": [
+    {
+      "node": "I35:10546;18621:42498",
+      "placeholder": "21 JULY",
+      "shown": ["5/26/2026", "5/27/2026", "5/29/2026", "5/31/2026"]
+    },
+    {
+      "node": "I35:10546;18621:42504",
+      "placeholder": "WOMEN",
+      "shown": ["Men"]
+    },
+    {
+      "node": "I35:10546;18621:43142",
+      "placeholder": "19:30",
+      "shown": ["19:30"]
+    },
+    {
+      "node": "I35:10546;18621:42512",
+      "placeholder": "166/5",
+      "shown": ["254/5", "196/10", "219/3", "161/5"]
+    },
+    {
+      "node": "I35:10546;18621:42513",
+      "placeholder": "(100 Balls)",
+      "shown": ["(20.0 Overs)", "(19.2 Overs)", "(18.4 Overs)", "(18.0 Overs)"]
+    },
+    {
+      "node": "I35:10546;18621:42520",
+      "placeholder": "172/3",
+      "shown": ["162/10", "243/8", "214/6", "155/8"]
+    },
+    {
+      "node": "I35:10546;18621:42521",
+      "placeholder": "(100 Balls)",
+      "shown": ["(19.3 Overs)", "(20.0 Overs)"]
+    },
+    {
+      "node": "I35:10546;18621:42523",
+      "placeholder": "Southern Brave Women beat Manchester Super Giants Women by 6 runs ",
+      "shown": [
+        "Royal Challengers Bengaluru beat Gujarat Titans by 92 runs",
+        "Rajasthan Royals beat Sunrisers Hyderabad by 47 runs",
+        "Gujarat Titans beat Rajasthan Royals by 7 wickets",
+        "Royal Challengers Bengaluru beat Gujarat Titans by 5 wickets"
+      ]
+    }
+  ],
+  "boundFields": ["date", "gender", "time", "score", "overs", "result"],
+  "problems": [
+    "The data is IPL 2026 men's matches, not Southern Brave. The hook's schedule connector can't filter by team or series.",
+    "Every sample match is a result (state R), so the upcoming card (countdown, venue, tickets) is a variant no sample item draws. It is not bound beyond its date.",
+    "The data has no crest images, so the team icons stay as designed.",
+    "The data has no tickets link, so the tickets button stays as designed.",
+    "The card's second match block is hidden, because each data item is one match.",
+    "Dates show as the data gives them (5/26/2026), not as '21 JULY'.",
+    "The 'Overs' text is my wording in place of the design's '(100 Balls)'.",
+    "I did not ask any questions. The earlier answers (wrap around: yes, autoplay: off, items: data) were kept."
+  ],
+  "variantsDrawn": [],
+  "steps": 7,
+  "costUsd": 0.188623,
+  "recordedFrom": "run 3acd204c (data-bind 192914fa)"
+}

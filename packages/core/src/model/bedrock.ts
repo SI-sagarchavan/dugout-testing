@@ -68,23 +68,58 @@ export function bedrockRegion(): Promise<string> {
  */
 export function createBedrockClient(opts: BedrockClientOptions = {}): ModelClient {
   const runtime: BedrockRuntime =
-    opts.runtime ?? new BedrockRuntimeClient({ region: opts.region ?? bedrockRegion });
+    opts.runtime ??
+    new BedrockRuntimeClient({
+      region: opts.region ?? bedrockRegion,
+      // a connection that goes quiet (no bytes for this long, first token included) fails with a
+      // TimeoutError, which is retried; without it a dead socket hangs the run for ever
+      requestHandler: { connectionTimeout: 15_000, requestTimeout: 180_000 },
+    });
   const models = opts.models ?? loadModelConfig();
+  // the tools Bedrock took only without strict, by model and tool set: found once, then sent so
+  const loosened = new Map<string, Set<string>>();
   return {
     async complete(req, onToken, onToolInput) {
       const model = modelEntry(models, req.model);
-      try {
-        const output = (await runtime.send(
-          new ConverseStreamCommand(toRequest(req, model)),
-          req.signal ? { abortSignal: req.signal } : undefined,
-        )) as { stream?: AsyncIterable<ConverseStreamOutput> };
-        return await readStream(model, output.stream, onToken, onToolInput);
-      } catch (err) {
-        if (req.signal?.aborted) throw err;
-        throw bedrockError(err);
+      const key = `${model.id}\n${req.tools.map((t) => t.name).join("\n")}`;
+      const loose = loosened.get(key) ?? new Set<string>();
+      for (;;) {
+        const input = toRequest(req, model, loose);
+        try {
+          const output = (await runtime.send(
+            new ConverseStreamCommand(input),
+            req.signal ? { abortSignal: req.signal } : undefined,
+          )) as { stream?: AsyncIterable<ConverseStreamOutput> };
+          return await readStream(model, output.stream, onToken, onToolInput);
+        } catch (err) {
+          if (req.signal?.aborted) throw err;
+          // Strict tools compile into one grammar with a size limit Bedrock does not state: the
+          // largest strict tool goes without strict (zod still checks its calls) and it is sent again.
+          // A refused request is refused before the model runs, so it costs nothing.
+          const largest = GRAMMAR_TOO_LARGE.test(errorText(err)) ? largestStrict(input) : undefined;
+          if (!largest) throw bedrockError(err);
+          loose.add(largest);
+          loosened.set(key, loose);
+          console.warn(`bedrock: ${model.id}: grammar too large, ${largest} sent without strict`);
+        }
       }
     },
   };
+}
+
+const GRAMMAR_TOO_LARGE = /compiled grammar is too large/i;
+
+const errorText = (err: unknown): string =>
+  err instanceof Error ? err.message : typeof err === "string" ? err : "";
+
+/** The strict tool of a request with the largest schema, by its tool name as the model knows it. */
+function largestStrict(input: ConverseStreamCommandInput): string | undefined {
+  const strict = (input.toolConfig?.tools ?? []).flatMap((t) =>
+    t.toolSpec?.strict && t.toolSpec.name
+      ? [{ name: decodeName(t.toolSpec.name), size: JSON.stringify(t.toolSpec.inputSchema).length }]
+      : [],
+  );
+  return strict.sort((a, b) => b.size - a.size)[0]?.name;
 }
 
 const SEE_MAX_TOKENS = 4_000;
@@ -161,7 +196,11 @@ export async function describeText(opts: {
   return text;
 }
 
-function toRequest(req: ModelRequest, model: ModelEntry): ConverseStreamCommandInput {
+function toRequest(
+  req: ModelRequest,
+  model: ModelEntry,
+  loose: ReadonlySet<string> = new Set(),
+): ConverseStreamCommandInput {
   // the model list only holds ids of a known family
   const family = modelFamily(model.id) as ModelFamily;
   const system: SystemContentBlock[] = [];
@@ -218,7 +257,7 @@ function toRequest(req: ModelRequest, model: ModelEntry): ConverseStreamCommandI
     ...(req.tools.length > 0
       ? {
           toolConfig: {
-            tools: toolSpecs(req.tools, model.strictTools),
+            tools: toolSpecs(req.tools, model.strictTools, loose),
             ...(req.toolChoice
               ? { toolChoice: { tool: { name: encodeName(req.toolChoice.tool) } } }
               : {}),
@@ -258,7 +297,7 @@ function addCachePoints(
   messages: WireMessage[],
 ) {
   // no cache point is sent to a family not tried with one
-  if (family === "openai") return;
+  if (family === "openai" || family === "moonshot") return;
   if (system.length > 0) system.push(CACHE_POINT);
   const takes = (m: WireMessage) =>
     family === "claude" || (m.content ?? []).every((block) => "text" in block);
@@ -296,12 +335,20 @@ export function optionalParameters(schema: unknown): number {
  * The request's tools, each strict while the strict ones together stay within Bedrock's limit on
  * optional parameters; the rest go without strict, their calls still checked by zod on arrival.
  * In the order given, so an agent's own tools, listed first, keep strict before those it is lent.
+ * A tool in `loose` (Bedrock found the grammar too large with it) goes without strict.
  */
-function toolSpecs(tools: ToolDefinition[], strictTools: boolean): Tool[] {
+function toolSpecs(
+  tools: ToolDefinition[],
+  strictTools: boolean,
+  loose: ReadonlySet<string>,
+): Tool[] {
   let budget = STRICT_OPTIONAL_LIMIT;
   return tools.map((t) => {
     const parameters = typedSchema(t.parameters);
-    let strict = strictTools && t.strict !== false ? strictSchema(parameters) : undefined;
+    let strict =
+      strictTools && t.strict !== false && !loose.has(t.name)
+        ? strictSchema(parameters)
+        : undefined;
     if (strict) {
       const cost = optionalParameters(strict);
       if (cost > budget) strict = undefined;

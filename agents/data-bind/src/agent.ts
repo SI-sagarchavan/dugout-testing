@@ -6,6 +6,7 @@ import type { McpHost } from "@dugout/mcp";
 import type { MemoryReader } from "@dugout/memory";
 import { defineAgent } from "@dugout/sdk";
 import { z } from "zod";
+import { createdIn, DATA_ENDINGS, type SourceReading, standInIn } from "./ending.ts";
 import { listedNoteIds, NoteReport, unreportedNotes } from "./notes.ts";
 import { createBindTools, type Plane, RunInput } from "./tools.ts";
 
@@ -19,9 +20,10 @@ export const spec: AgentSpec = {
     "The tools read the frame and the data from the run itself. Do not pass ids or data to a tool, except what step 1b says.",
     "1. Call bind.load. Read the outline, what repeats, and the data's paths.",
     "1a. First decide whether anything on the frame is data: content that changes without a designer (players, fixtures, scores, results, headlines, photos of them, dates). A heading, a button's label, tabs and the design's own art are not data. bind.load says how frame-match read it (content). When nothing on it is data, call bind.static with why, then final: do not call agent.hookMaker, and do not look for data the frame does not show.",
-    "1b. When bind.load says the run has no data yet, get it from dugout's Cast hooks: call agent.hookMaker once, with need filled from the outline and bind.load's content: list (what it is), count (the items the design draws, or 'data' when a person chose whatever the data holds), groupBy (what one card gathers several items by, such as date when each card holds a day's matches; left out when a card is one item), item (every thing each item shows, with the design's placeholder as example and required false only for what the design can do without, a tickets link or a crest), must (the team and competition the design's copy names: data about another does not do), hints (the heading, labels and designer's notes that name the data) and hook (a hook a person already chose for this section). A hook's output may have any shape, so the groupBy you name is the shape it should answer. It looks through dugout's hooks, and builds a new one from the tenant's API connectors only when none gives what the frame shows, so one call gets you data either way. Its answer has the hookId, the input it ran with, what the hook covers and what is missing. A person approves the call; the person may be asked questions first, and the answers decide what is built.",
-    "1c. It builds one thing per run: once it has completed, it is not called again. If it fails, read why: you may call it again with what the failure says to change (a person approves each try, and is shown the failure), up to three tries in all. After that, or if it keeps failing for a reason a change cannot fix, stop: say in your answer that the data could not be built and why. If it answers with hookId null, no hook and no connector could give the data: stop the same way. Never write a plan against data you do not have.",
-    "1d. Call bind.source with the hookId and input it returned, and a short name for the data (fixtures, news). What it says is missing goes in remaining.",
+    "1b. When bind.load says the run has no data yet, get it from dugout's Cast hooks: call agent.hookMaker once, with need filled from bind.load's draftNeed (code read how many cards each list draws and what a card shows, each with its kind and the design's placeholder: copy count, kind and example into need.count and each need.item; hook-maker's answer is checked against the kind), the outline and bind.load's content: list (what it is), count (the items the design draws, or 'data' when a person chose whatever the data holds), groupBy (what one card gathers several items by, such as date when each card holds a day's matches; left out when a card is one item), item (every thing each item shows, with the design's placeholder as example and required false only for what the design can do without, a tickets link or a crest), must (the team and competition the design's copy names: data about another does not do), hints (the heading, labels and designer's notes that name the data) and hook (a hook a person already chose for this section). A hook's output may have any shape, so the groupBy you name is the shape it should answer. It looks through dugout's hooks, and builds a new one from the tenant's API connectors only when none gives what the frame shows, so one call gets you data either way. Its answer has the hookId, the input it ran with, what the hook covers and what is missing. A person approves the call; the person may be asked questions first, and the answers decide what is built.",
+    "1b'. Where the data comes from is an open item (bind.load's `open`, id data_source): read its evidence, candidates and canTake. When hook-maker answers no hook (hookId null), or a hook whose missing names the need's must (a hook about another team), and nothing in memory settles it, ask a person once with `ask` (id data_source), in your own words, offering every candidate and what canTake accepts: feeds are given as text, one per line (<label>: https://…), and go to agent.hookMaker as need.sources (label and url as given; the change of need is why it runs again). A feed given earlier on this section is in `before`, and the club's feeds are in bind.load's `feeds`: put them in need.sources on the first call, before you ask. A hook about another team is bound as a stand-in only when a person chose it (the slot is then reported as a stand-in by code); to leave the section as designed, end with bind.publish (bind.done for a slot) and none.",
+    "1c. It builds one thing for each need: once it has completed, asking the same need again answers with the same result and builds nothing; a changed need (feeds a person gave) runs again. If it fails, read why: you may call it again with what the failure says to change (a person approves each try, and is shown the failure), up to three failed tries in all. After that, or if it keeps failing for a reason a change cannot fix, end the run with none (below) saying that the data could not be built and why. If it answers with hookId null, no hook and no connector could give the data: ask `data_source` (step 1b'), and when no feed comes, end the run with bind.publish (bind.done for a slot) and none, saying why: the design's copy stays and the run completes, never fails. Never write a plan against data you do not have.",
+    "1d. Call bind.source with the hookId and input it returned, a short name for the data (fixtures, news), order (the need's, when it has one) and about: the team and competition the need's must names (so bind.try can check the data is about them where its items name teams). What it says is missing goes in remaining. Whether the slot ends bound or as a stand-in is code's, read from the data and from how the hook came to be (hook-maker's answer): never yours to say.",
     "1f. bind.load lists pageChoices when other sections of the page write a choice (a toggle or tabs above this list). When the data's links name a list whose items hold a choice's values, the frame shows the items of the one chosen there: give that collapse the when the link gives (eqPath on _page.<key>), so only those draw. A choice the frame's own tabs write is in writes; a part of the frame that belongs to one of its options draws with a when on _page.<key> and that option's value.",
     "1e. Before you write a plan, look for what only a person can settle (the skill says what: picture paths with no domain, data that is not what the design shows, a different number of items, a field the data lacks) and ask it once with `ask`, all the questions together. A person answers them, or lets you decide, and the answers come back as the call's result. Use them, and say in remaining which answers shaped the plan. A question left unanswered is yours to decide, and you say so. Never ask what bind.try or bind.node can show you, and never ask to approve a write.",
     "2. Write a plan as the skill says, and call bind.try with it.",
@@ -69,6 +71,11 @@ export const spec: AgentSpec = {
       scope: "section",
       about:
         "the URL pattern, from an item field, of a picture the data has no field for, or hide it",
+    },
+    data_source: {
+      scope: "section",
+      about:
+        "the feeds (a URL for each part of the design) that give this section its data, when no hook does or the hook is about another team",
     },
     content_mismatch: {
       scope: "section",
@@ -118,6 +125,22 @@ export type Output = z.infer<typeof Output>;
 
 /** The run's result: the model's `final`, and whether nothing was bound because nothing is data. */
 export const Result = Output.extend({
+  created: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Providers and connectors this run had hook-maker create in Cast, which every hook there can use (code's, from hook-maker's answers)",
+    ),
+  data: z
+    .enum(DATA_ENDINGS)
+    .optional()
+    .describe(
+      "bound: its data is the design's; stand-in: bound to data about something else (another team), shown for the shape; none: nothing was bound. Set by code, never by the model",
+    ),
+  dataWhy: z
+    .string()
+    .optional()
+    .describe("Why the data is a stand-in, or why nothing was bound (code's, never the model's)"),
   static: z
     .boolean()
     .optional()
@@ -168,6 +191,9 @@ export function staticIn(messages: Message[]): { previewUrl: string } | undefine
 
 /** What bind.publish returned in this run, or undefined. */
 type PublishedResult = Partial<Output> & {
+  none?: string;
+  standIn?: string;
+  readings?: SourceReading[];
   problems?: string[];
   kept?: string[];
   despite?: string;
@@ -199,11 +225,19 @@ export function threadNote(_input: unknown, output: unknown): string | undefined
   if (!parsed.success) return undefined;
   const o = parsed.data;
   if (o.static)
-    return "Nothing on the section is data, so nothing was bound: it is handed over as it was published.";
+    return `Nothing was bound${o.dataWhy ? ` (${o.dataWhy})` : ", as nothing on the section is data"}: it is handed over as it was published.`;
+  if (o.data === "stand-in")
+    return `Bound the preview to stand-in data and published it: ${o.bound} props bound, ${o.collapsed} lists. It is not the design's data: ${o.dataWhy ?? "see remaining"}.`;
   return `Bound the preview to data and published it: ${o.bound} props bound, ${o.collapsed} lists.`;
 }
 
 export function completeFinal(output: unknown, run: { messages: Message[] }): unknown {
+  const done = completeEnding(output, run);
+  const created = createdIn(run.messages);
+  return created.length && typeof done === "object" && done !== null ? { ...done, created } : done;
+}
+
+function completeEnding(output: unknown, run: { messages: Message[] }): unknown {
   const still = staticIn(run.messages);
   if (still && !publishedIn(run.messages) && typeof output === "object" && output !== null) {
     return {
@@ -214,12 +248,29 @@ export function completeFinal(output: unknown, run: { messages: Message[] }): un
       dataArtifactId: "",
       bound: 0,
       collapsed: 0,
+      data: "none",
     };
   }
   const published = publishedIn(run.messages);
   if (!published || typeof output !== "object" || output === null) return output;
   const filled: Record<string, unknown> = { ...output };
   for (const key of PUBLISHED_KEYS) if (published[key] !== undefined) filled[key] = published[key];
+  if (published.none) {
+    // ended with no data to bind to: the design's copy stays, and the reason is the code's
+    return {
+      ...filled,
+      static: true,
+      data: "none",
+      dataWhy: published.none,
+      bound: 0,
+      collapsed: 0,
+    };
+  }
+  // set by code, never by the model: bound to data about something else is a stand-in
+  const standIn = standInIn(run.messages, published);
+  filled.data = standIn ? "stand-in" : "bound";
+  if (standIn) filled.dataWhy = standIn;
+  else delete filled.dataWhy;
   if (published.kept?.length) filled.kept = published.kept;
   else delete filled.kept;
   if (published.despite) filled.despite = published.despite;
@@ -235,7 +286,7 @@ export function verifyFinal(output: unknown, run: { messages: Message[] }): stri
     return unreportedNotes(listedNoteIds(run.messages, "bind.load"), (output as Output).notes);
   }
   if (!published)
-    return "Nothing was published. Call bind.publish (bind.done for a slot) before final, or bind.static when nothing on the frame is data.";
+    return "Nothing was published. Call bind.publish (bind.done for a slot) before final; bind.static when nothing on the frame is data; or, when there is no data to bind to (no hook gave it, a person left it unbound), bind.publish (bind.done for a slot) with none saying why: the design's copy stays and no plan is needed.";
   const final = output as Output;
   const problems = published.problems?.length ?? 0;
   if (final.remaining.length < problems) {
@@ -259,6 +310,9 @@ export function needLines(need: Need | undefined): string[] {
     ),
     ...(need.hints?.length ? [`Hints: ${need.hints.join("; ")}`] : []),
     ...(need.hook ? [`Start from: ${need.hook}`] : []),
+    ...(need.sources?.length
+      ? ["Feeds given:", ...need.sources.map((f) => `  ${f.label}: ${f.url}`)]
+      : []),
   ];
 }
 

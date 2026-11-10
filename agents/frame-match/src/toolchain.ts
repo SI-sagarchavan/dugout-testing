@@ -48,6 +48,8 @@ export interface IrNode {
   clipsContent?: boolean;
   layout?: unknown;
   text?: unknown;
+  /** The layer is painted with a bitmap. */
+  image?: { hasImageFill?: boolean };
   children?: IrNode[];
 }
 

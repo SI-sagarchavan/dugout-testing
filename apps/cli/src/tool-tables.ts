@@ -23,6 +23,7 @@ export const EVAL_TOOLS: ToolTable = {
   smoke: "packages/core/scripts/smoke.ts",
   measure: "agents/frame-match/scripts/measure.ts",
   vision: "agents/frame-match/scripts/vision-bench.ts",
+  data: "agents/data-bind/scripts/data-eval.ts",
   layout: "agents/frame-match/scripts/layout-eval.ts",
   sections: "agents/frame-match/scripts/sections-eval.ts",
   binding: "agents/frame-match/scripts/binding-experiment.ts",

@@ -1,6 +1,6 @@
 {
   "server": "cast",
-  "syncedAt": "2026-11-04T12:52:29.183Z",
+  "syncedAt": "2026-11-09T12:50:03.289Z",
   "serverInfo": {
     "name": "cast",
     "version": "0.5.1"
@@ -575,6 +575,26 @@
         "openWorldHint": true
       },
       "hash": "sha256:0521c0392fe3efd5bd39320ab8c9341c67fa0fd645b815b0b6b3c80b7065ee87"
+    },
+    "cast_list_providers": {
+      "title": "List data providers",
+      "description": "The data providers in this workspace — id, base URL, auth mode, env var keys and how many APIs each has. A provider is what an API's {{env.x}} values come from.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "nameContains": {
+            "type": "string",
+            "description": "Case-insensitive substring match on the name."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:d7b380b23a2c3c4dd624990eb175d0699f4ac4930a09de9798736cee8d417c22"
     },
     "cast_get_template_binding": {
       "title": "Read a template's hook binding",
@@ -1916,6 +1936,230 @@
         "openWorldHint": true
       },
       "hash": "sha256:672ecc13548a7bf6c55e1aaa6f9906d84400b3968ff4e59e4448f5303c37c860"
+    },
+    "cast_upsert_provider": {
+      "title": "Create or update a data provider",
+      "description": "Create a provider (name + baseUrl) or update one by id; given lists replace the current ones. Secrets go in as {{cred.name}} references only — a literal secret in an auth-looking row is refused. A provider change affects every API under it: the response lists the hooks that use them.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Existing id to update. Omit to create a new provider with a generated id."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "Required when creating."
+          },
+          "description": {
+            "type": "string"
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "Required when creating. APIs read it as {{env.base_url}}."
+          },
+          "authMode": {
+            "type": "string",
+            "enum": ["none", "bearer", "basic", "apiKey", "custom"]
+          },
+          "envVars": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "value": {
+                  "type": "string",
+                  "description": "May use {{env.x}}, {{input.x}} and {{cred.name}}. Never paste a secret value."
+                },
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Default true."
+                }
+              },
+              "required": ["key", "value"],
+              "additionalProperties": false
+            },
+            "description": "Replaces the list. APIs read these as {{env.<key>}}."
+          },
+          "defaultHeaders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/properties/envVars/items"
+            },
+            "description": "Replaces the list."
+          },
+          "defaultQueryParams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/properties/envVars/items"
+            },
+            "description": "Replaces the list."
+          },
+          "defaultTimeoutMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "defaultRetryCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:794cf257e07faf3314e29e11628a5e8b38309d66c8df2f35570e79f573898e16"
+    },
+    "cast_upsert_api": {
+      "title": "Create or update an API connector",
+      "description": "Create an API under a provider (providerId + name + url) or update one by id; given lists replace the current ones and its input list is derived from the templates. Connectors are shared: the response names every hook that uses it and any lint finding the change introduces there. Secrets go in as {{cred.name}} references only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Existing id to update. Omit to create a new api with a generated id."
+          },
+          "providerId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Required when creating. From cast_list_providers."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "Required when creating."
+          },
+          "description": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+            "description": "Default GET."
+          },
+          "url": {
+            "type": "string",
+            "description": "Required when creating, e.g. `{{env.base_url}}/listing/{{input.id}}`."
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "value": {
+                  "type": "string",
+                  "description": "May use {{env.x}}, {{input.x}} and {{cred.name}}. Never paste a secret value."
+                },
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Default true."
+                }
+              },
+              "required": ["key", "value"],
+              "additionalProperties": false
+            },
+            "description": "Replaces the list."
+          },
+          "queryParams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/properties/headers/items"
+            },
+            "description": "Replaces the list."
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "const": "none"
+                  }
+                },
+                "required": ["mode"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "const": "json"
+                  },
+                  "json": {
+                    "type": "string",
+                    "description": "JSON text; may hold templates."
+                  }
+                },
+                "required": ["mode", "json"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "const": "text"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["mode", "text"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "const": "form"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/properties/headers/items"
+                    }
+                  }
+                },
+                "required": ["mode", "fields"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "hash": "sha256:dd0e7fe1a71a2ab484b80201a5bf618ed8d695a97a0e9a4a042e40e55d9397d6"
     }
   },
   "resources": {

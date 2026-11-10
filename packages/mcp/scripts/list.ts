@@ -1,6 +1,6 @@
 // pnpm agent mcp list — the registry's MCP servers: where each points, whether it is configured
 // here, when its lock was synced, and which capabilities give which tools.
-import { createMcpHost, toolName } from "../src/index.ts";
+import { createMcpHost, grantLimits, isSharedWrite, toolName } from "../src/index.ts";
 import { loadRepoEnv } from "./env.ts";
 
 loadRepoEnv();
@@ -17,12 +17,11 @@ for (const server of host.registry.values()) {
     console.log(`  ${id}: ${capability.description}`);
     for (const [remote, grant] of Object.entries(capability.tools)) {
       const policy = server.tools[remote];
-      const limits = [
-        ...Object.entries(grant.arguments ?? {}).map(([arg, p]) => `${arg} ~ ${p}`),
-        ...Object.entries(grant.set ?? {}).map(([arg, v]) => `${arg} = ${JSON.stringify(v)}`),
-      ];
+      const limits = grantLimits(grant);
+      // shared: a person approves it, whatever approves the run as a whole (the entry's word, else the server's hint)
+      const shared = isSharedWrite(policy, lock?.tools[remote]?.annotations);
       console.log(
-        `    ${toolName(server, remote)}  ${policy?.effect}${limits.length ? `  (${limits.join(", ")})` : ""}`,
+        `    ${toolName(server, remote)}  ${policy?.effect}${shared ? " shared" : ""}${limits.length ? `  (${limits.join(", ")})` : ""}`,
       );
     }
     for (const uri of capability.resources ?? []) console.log(`    ${uri}  resource`);

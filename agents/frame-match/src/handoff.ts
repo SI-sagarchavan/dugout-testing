@@ -39,6 +39,46 @@ export function handoffConfig(env: NodeJS.ProcessEnv = process.env) {
   return url && key ? { url, key } : undefined;
 }
 
+/** The theme a tenant has active in FanXP, as `GET /surface/service/theme` answers it. */
+export interface TenantTheme {
+  themeId: string;
+  themeName: string | null;
+  /** One theme's tokens, in the theme's export shape (`color.light`, `gradient.light`, …). */
+  tokens: Record<string, unknown>;
+}
+
+/**
+ * The tenant's active FanXP theme: the source of truth for every token. Surface Studio and every
+ * FanXP page draw with it, so a section built against any other set of tokens shows its own and not
+ * the page's: the fixtures fades were drawn with two tokens that only a control-plane copy had, and
+ * painted nothing in Studio. The answer is wrapped as a token set (`{ tokens: { <themeId>: … } }`),
+ * the shape the compiler reads.
+ */
+export async function readTenantTheme(
+  tenantId: string,
+  opts: { url: string; key: string; fetch?: typeof fetch },
+): Promise<{ raw: { tokens: Record<string, unknown> }; theme: TenantTheme }> {
+  const send = opts.fetch ?? fetch;
+  const response = await send(`${opts.url.replace(/\/+$/, "")}/surface/service/theme`, {
+    headers: {
+      "x-surface-service-key": opts.key,
+      client: tenantId,
+      accept: "application/json",
+    },
+  });
+  const body = (await response.json().catch(() => ({}))) as {
+    data?: TenantTheme;
+    meta?: { message?: string };
+  };
+  const theme = body.data;
+  if (!response.ok || !theme?.themeId || !theme.tokens) {
+    throw new HandoffError(
+      `FanXP has no theme for ${tenantId}: ${body.meta?.message ?? `status ${response.status}`}`,
+    );
+  }
+  return { raw: { tokens: { [theme.themeId]: theme.tokens } }, theme };
+}
+
 /**
  * The files a designer's Handoff put on S3, read through the FanXP backend. The backend answers
  * only for the client the call names, which is the run's verified tenant (the client code), never

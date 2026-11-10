@@ -14,10 +14,11 @@ import {
 } from "@dugout/agent-frame-match";
 import {
   type AgentSpec,
-  type AskedQuestion,
   AwaitingAnswers,
   type Message,
   NeedsSetup,
+  type OpenItem,
+  Settled,
 } from "@dugout/contracts";
 import { defineAgent, type Pipeline, type PipelineContext } from "@dugout/sdk";
 import { z } from "zod";
@@ -25,6 +26,8 @@ import { mergeBindings, type PlanParts } from "./merge.ts";
 
 /** The one tool: it runs the whole pass, in a fixed order, and answers with the whole result. */
 const BUILD = "page.build";
+/** The id memory learns the Cast budget decision under (ADR 0033). */
+const CAST_BUDGET = "cast_budget";
 
 export const spec: AgentSpec = {
   id: "section-builder",
@@ -33,10 +36,11 @@ export const spec: AgentSpec = {
   description:
     "Turns a designer's Handoff into one page preview with its data bound: the frame matched to its screenshot and published (frame-match), then the data found, or built, in Cast and bound to it (bind). A section with no data on it (a heading, tabs, a button) is handed over as frame-match published it, with nothing bound. One run, one result, one preview.",
   instructions: [
-    "A designer pressed Handoff in the Figma plugin. The whole job is one tool: page.build. It runs in a fixed order, so you do not choose the steps: the frame is matched to its screenshot and published, then the data it shows is found in Cast, or built there, and bound to it. A section that shows no data skips the second stage. It takes no arguments.",
+    "A designer pressed Handoff in the Figma plugin. The whole job is one tool: page.build. It runs in a fixed order, so you do not choose the steps: the frame is matched to its screenshot and published, then the data it shows is found in Cast, or built there, and bound to it. A section that shows no data skips the second stage.",
     "",
-    `1. Call ${BUILD} once. It starts without asking anyone; people are asked only the questions a stage raises.`,
-    "2. Call final with a one-sentence summary of what page.build did. The result itself is page.build's, filled in by code: do not write a link or a number of your own.",
+    `1. Call ${BUILD}. It starts without asking anyone; a stage asks a person only what it cannot settle.`,
+    `2. When ${BUILD} answers with \`open\` instead of a result, it has stopped before binding anything and reports what is open (each item: its id, what it is about, the evidence, the candidates it can act on, and what else it takes). Settle each: from memory (ask it with \`ask\` under the item's id; an answer the club's memory holds comes back without a person), by yourself when the evidence settles it (say why in your summary), or by asking a person with \`ask\`. Write the question yourself from the evidence: offer every candidate, and say what else it takes (canTake) as a text option, so a person can give it. Then call ${BUILD} again with what was decided as its input (\`bind\`: the names of the parts to bind now, none to bind none; \`decidedBy\`: person, memory or agent, whoever decided). Stages that finished are not run again.`,
+    "3. Call final with a one-sentence summary of what page.build did. The result itself is page.build's, filled in by code: do not write a link or a number of your own.",
     "",
     "If page.build fails, read why. It names the stage that failed and what it said. A stage that finished is not done again, so you may call page.build again. After three failures of one stage it is not tried again: say so in your answer, with the reason, and stop. A failure that needs setup (a sign-in, a key) ends the run by itself: nothing you call changes it. Never invent a preview link or a result.",
   ].join("\n"),
@@ -51,7 +55,33 @@ export const spec: AgentSpec = {
   budget: { usdPerRun: 3, maxSteps: 12, maxDepth: 1 },
   // starting the build asks nobody; a stage still stops for a person when it has a question
   approvals: [],
+  // what page.build reports as open and the model asks (ADR 0033): the club's answer is a fact
+  questions: {
+    [CAST_BUDGET]: {
+      scope: "tenant",
+      fact: "cast.budget",
+      about:
+        "which parts of a frame to bind in one pass, when Cast's live runs in an hour would not cover them all",
+    },
+  },
 };
+
+/** What page.build takes: what the model decided about what it reported as open. */
+export const BuildArgs = z.object({
+  bind: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "The parts of the frame (by name) to bind in this pass; an empty list binds none. Decide it from page.build's open item cast_budget; leave it out when nothing is open",
+    ),
+  decidedBy: z
+    .enum(["person", "memory", "agent"])
+    .optional()
+    .describe(
+      "Who decided `bind`: a person you asked, the club's memory, or you from the evidence",
+    ),
+});
+export type BuildArgs = z.infer<typeof BuildArgs>;
 
 const Choice = z.object({
   key: z.string(),
@@ -64,11 +94,15 @@ const Choice = z.object({
 export const SlotOutput = z.object({
   name: z.string().describe("The slot's heading, slugged"),
   data: z
-    .enum(["bound", "none", "failed", "skipped"])
+    .enum(["bound", "stand-in", "none", "failed", "skipped"])
     .describe(
-      "none: nothing in it is data; failed: it could not be bound; skipped: a person chose not to bind it in this pass, for Cast's live-run budget",
+      "stand-in: bound to data about something else (another team), shown for the shape; none: nothing in it is data, or no data could be had and the design's copy stays; failed: it could not be bound; skipped: a person chose not to bind it in this pass, for Cast's live-run budget",
     ),
   hookId: z.string().optional().describe("The Cast hook its data comes from"),
+  dataWhy: z
+    .string()
+    .optional()
+    .describe("Why the slot is a stand-in, or why nothing was bound (code's reading)"),
   bound: z.number(),
   collapsed: z.number(),
   remaining: z.array(z.string()),
@@ -81,9 +115,11 @@ export const Output = z.object({
   planArtifactId: z.string().describe("Empty when nothing was bound"),
   dataArtifactId: z.string().describe("Empty when nothing was bound"),
   data: z
-    .enum(["bound", "none"])
+    .enum(["bound", "stand-in", "none"])
     .default("bound")
-    .describe("none: nothing on the section is data, so it was handed over with nothing bound"),
+    .describe(
+      "stand-in: bound to data about something else than the design (another team), see dataWhy; none: nothing was bound, so it was handed over as designed",
+    ),
   dataWhy: z.array(z.string()).default([]).describe("Why the section was read as showing no data"),
   choices: z
     .array(Choice)
@@ -101,6 +137,16 @@ export const Output = z.object({
   match: z.number().optional().describe("Match of the published frame, 0 to 100"),
   bound: z.number().describe("Props bound to data"),
   collapsed: z.number().describe("Lists the binding made"),
+  created: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "What the pass created in Cast that other hooks and people can use (providers, connectors), for a person to see",
+    ),
+  settled: z
+    .array(Settled)
+    .default([])
+    .describe("How each open item page.build reported was settled, and by whom"),
   remaining: z
     .array(z.string())
     .describe("Everything still off, each starting with the part it is about: frame or data"),
@@ -154,6 +200,14 @@ export function mergeNotes(frame: StageNote[] = [], data: StageNote[] = []): Out
   });
 }
 
+/** What data-bind ended a slot or frame as: bound, bound to another team's data, or nothing. */
+const endingOf = (data: DataOutput): "bound" | "stand-in" | "none" =>
+  data.static ? "none" : data.data === "stand-in" ? "stand-in" : "bound";
+
+/** The slot's line in `remaining`: a stand-in is not the design's data, whatever else is said. */
+const standInLine = (name: string, why: string | undefined) =>
+  `${name}: bound to stand-in data${why ? ` (${why})` : ""}: it shows another team's data for the shape, not the design's`;
+
 /** A frame of one slot: what became of it, from the two stages' answers. */
 function oneSlot(frame: FrameOutput, data: DataOutput): SlotOutput[] {
   const only = frame.slots?.[0];
@@ -161,7 +215,8 @@ function oneSlot(frame: FrameOutput, data: DataOutput): SlotOutput[] {
   return [
     {
       name: only?.name ?? "section",
-      data: data.static ? "none" : "bound",
+      data: endingOf(data),
+      ...(data.dataWhy ? { dataWhy: data.dataWhy } : {}),
       ...(typeof hook?.hookId === "string" ? { hookId: hook.hookId } : {}),
       bound: data.bound,
       collapsed: data.collapsed,
@@ -171,7 +226,12 @@ function oneSlot(frame: FrameOutput, data: DataOutput): SlotOutput[] {
 }
 
 /** One answer from the two stages, as the pass hands it over. No data stage: nothing was data. */
-export function assemble(frame: FrameOutput, given?: DataOutput, slots?: SlotOutput[]): Output {
+export function assemble(
+  frame: FrameOutput,
+  given?: DataOutput,
+  slots?: SlotOutput[],
+  settled: Settled[] = [],
+): Output {
   const data: DataOutput = given ?? {
     static: true,
     previewUrl: frame.previewUrl,
@@ -188,14 +248,17 @@ export function assemble(frame: FrameOutput, given?: DataOutput, slots?: SlotOut
     treeArtifactId: frame.treeArtifactId,
     planArtifactId: data.planArtifactId,
     dataArtifactId: data.dataArtifactId,
-    data: data.static ? "none" : "bound",
+    data: endingOf(data),
     dataWhy: data.static
       ? given
-        ? ["the binding stage found nothing on it to bind"]
+        ? [data.dataWhy ?? "the binding stage found nothing on it to bind"]
         : (frame.content?.evidence ?? [])
-      : [],
+      : data.data === "stand-in" && data.dataWhy
+        ? [data.dataWhy]
+        : [],
     choices: frame.choices ?? [],
     slots: slots ?? oneSlot(frame, data),
+    settled,
     measured: frame.measured,
     coverage: frame.coverage,
     ...(frame.before !== undefined ? { before: frame.before } : {}),
@@ -210,9 +273,16 @@ export function assemble(frame: FrameOutput, given?: DataOutput, slots?: SlotOut
         ? [`frame: nothing was compared: ${frame.unmeasuredBecause}`]
         : []),
       ...frame.remaining.map((item) => `frame: ${item}`),
+      ...(data.data === "stand-in" && !slots
+        ? [`data: ${standInLine(frame.slots?.[0]?.name ?? "section", data.dataWhy)}`]
+        : []),
+      ...(slots ?? [])
+        .filter((s) => s.data === "stand-in")
+        .map((s) => `data: ${standInLine(s.name, s.dataWhy)}`),
       ...data.remaining.map((item) => `data: ${item}`),
     ],
     kept: data.kept ?? [],
+    created: data.created ?? [],
     compilerFindings: frame.compilerFindings,
     notes,
   };
@@ -250,14 +320,27 @@ export function threadNote(_input: unknown, output: unknown): string | undefined
   const writes = o.choices.length
     ? ` Its tabs write ${o.choices.map((c) => `_page.${c.key} (${c.options.map((x) => x.value).join(", ")})`).join(", ")} for the page's other sections to read.`
     : "";
+  // each slot's props counted by what it was bound to: a stand-in's are not the design's data
+  const propsOf = (state: SlotOutput["data"]) =>
+    o.slots.filter((s) => s.data === state).reduce((n, s) => n + s.bound, 0);
+  const standInProps = o.slots.some((s) => s.data === "stand-in") ? propsOf("stand-in") : o.bound;
+  const boundProps = o.slots.some((s) => s.data === "stand-in") ? propsOf("bound") : 0;
   const parts =
     o.slots.length > 1
-      ? ` Slots: ${o.slots.map((s) => `${s.name} ${s.data === "bound" ? `bound (${s.bound} props${s.hookId ? `, from ${s.hookId}` : ""})` : s.data === "none" ? "has no data" : s.data === "skipped" ? "not bound in this pass (Cast budget)" : "failed"}`).join("; ")}.`
+      ? ` Slots: ${o.slots.map((s) => `${s.name} ${s.data === "bound" ? `bound (${s.bound} props${s.hookId ? `, from ${s.hookId}` : ""})` : s.data === "stand-in" ? `bound to stand-in data (${s.dataWhy ?? "not the design's"}${s.hookId ? `, from ${s.hookId}` : ""})` : s.data === "none" ? "has no data" : s.data === "skipped" ? "not bound in this pass (Cast budget)" : "failed"}`).join("; ")}.`
       : "";
+  const decided = o.settled.length
+    ? ` Settled: ${o.settled.map((d) => `${d.id} by ${d.by}: ${d.value}`).join("; ")}.`
+    : "";
   return [
     o.data === "none"
-      ? `Built the section from the Handoff and published its preview: ${match}; nothing on it is data, so nothing was bound.${writes}${parts}`
-      : `Built the section from the Handoff and published its preview with data bound: ${match}; ${o.bound} props bound to data, ${o.collapsed} lists.${writes}${parts}`,
+      ? `Built the section from the Handoff and published its preview: ${match}; nothing was bound (${o.dataWhy.join("; ") || "nothing on it is data"}).${writes}${parts}${decided}`
+      : o.data === "stand-in"
+        ? `Built the section from the Handoff and published its preview with stand-in data: ${match}; ${standInProps} props bound to data that is not the design's (${o.dataWhy.join("; ")})${boundProps ? `, ${boundProps} props bound to the design's data` : ""}.${writes}${parts}${decided}`
+        : `Built the section from the Handoff and published its preview with data bound: ${match}; ${o.bound} props bound to data, ${o.collapsed} lists.${writes}${parts}${decided}`,
+    o.created.length
+      ? `Created in Cast, where every hook can use it: ${o.created.join("; ")}.`
+      : "",
     missed.length
       ? `Designer notes not met: ${missed.map((n) => `${n.id} (${n.detail})`).join("; ")}.`
       : "",
@@ -279,57 +362,84 @@ export function verifyFinal(output: unknown, run: { messages: Message[] }): stri
 /**
  * Cast allows 25 live runs an hour to a person, shared by every agent. A slot looks its hook up (a
  * few runs) and may build one (more). When the slots of a pass could spend more than an hour
- * holds, a person is asked once before any is bound (`cast_budget`): bind them all, the first few,
- * or none. It is an estimate, not a count: Cast does not say what is left of the hour.
+ * holds, `page.build` reports `cast_budget` as an open item before any slot is bound, and the
+ * model settles it (from memory, from the evidence, or by asking a person) and passes the parts to
+ * bind back as input. It is an estimate, not a count: Cast does not say what is left of the hour.
  */
 export const CAST_RUNS_PER_HOUR = 25;
 export const CAST_RUNS_PER_SLOT = 6;
-export const CAST_BUDGET_QUESTION = "cast_budget";
+export const CAST_BUDGET_ID = CAST_BUDGET;
 
 /** How many slots an hour's live runs cover, at the estimate. */
 const slotsAnHourCovers = () => Math.max(1, Math.floor(CAST_RUNS_PER_HOUR / CAST_RUNS_PER_SLOT));
 
-export function castBudgetQuestion(slots: string[]): AskedQuestion {
+/** What page.build answers with when it stops to have something decided: nothing is bound yet. */
+export interface OpenResult {
+  open: OpenItem[];
+  note: string;
+}
+
+/** The Cast budget, as an open item: the evidence, what can be done, and what else is taken. */
+export function castBudgetOpen(slots: string[]): OpenResult {
   const first = slotsAnHourCovers();
+  const some = slots.slice(0, first);
   return {
-    id: CAST_BUDGET_QUESTION,
-    kind: "choice",
-    question: `Bind all ${slots.length} parts of this frame to Cast data now?`,
-    why: `${slots.length} parts show data (${slots.join(", ")}). Finding or building each one's hook may use about ${CAST_RUNS_PER_SLOT} of Cast's live runs, ${slots.length * CAST_RUNS_PER_SLOT} in all, and Cast allows ${CAST_RUNS_PER_HOUR} an hour to a person, shared with every agent.`,
-    options: [
+    open: [
       {
-        value: "first",
-        label: `Bind the first ${first}`,
-        description: `The others are published with the designer's copy and listed as not bound.`,
-      },
-      {
-        value: "all",
-        label: "Bind them all",
-        description: "Some may fail if Cast's hour runs out; they are listed with why.",
-      },
-      {
-        value: "none",
-        label: "Bind none now",
-        description: "The frame is published as matched, with nothing bound.",
+        id: CAST_BUDGET,
+        about: "which parts of this frame to bind to Cast data in this pass",
+        evidence: `${slots.length} parts show data (${slots.join(", ")}). Finding or building each one's hook may use about ${CAST_RUNS_PER_SLOT} of Cast's live runs, ${slots.length * CAST_RUNS_PER_SLOT} in all, and Cast allows ${CAST_RUNS_PER_HOUR} an hour to a person, shared with every agent. Cast does not say what is left of the hour, so this is an estimate.`,
+        candidates: [
+          {
+            value: `the first ${first}: ${some.join(", ")}`,
+            does: `Binds those now; the others are published with the designer's copy and listed as not bound.`,
+          },
+          {
+            value: `all ${slots.length}: ${slots.join(", ")}`,
+            does: "Binds every part; some may fail if Cast's hour runs out, and are listed with why.",
+          },
+          {
+            value: "none",
+            does: "Binds nothing now: the frame is published as matched.",
+          },
+        ],
+        proposed: `the first ${first}: ${some.join(", ")}`,
+        canTake: `bind: the names of the parts to bind now, any of ${slots.join(", ")} (an empty list binds none); decidedBy says who decided`,
       },
     ],
-    allowOther: false,
-    proposed: ["first"],
+    note: `Nothing is bound yet. Settle cast_budget, then call ${BUILD} again with bind (and decidedBy). The frame stage is kept, not run again.`,
   };
 }
 
-/** Which of the slots with data to bind now: all, unless a person chose fewer for Cast's budget. */
-export function slotsToBind<T>(binding: T[], own: PipelineContext = {}): T[] {
-  if (binding.length * CAST_RUNS_PER_SLOT <= CAST_RUNS_PER_HOUR) return binding;
-  const answer = own.answered?.answers[CAST_BUDGET_QUESTION];
-  if (answer === undefined) {
-    throw new AwaitingAnswers([
-      castBudgetQuestion(binding.map((s) => (s as { name?: string }).name ?? "a part")),
-    ]);
+/**
+ * Which of the slots with data to bind now. What the model decided (`args.bind`, by name) when it
+ * did; every one when an hour's live runs cover them; else the decision is open and nothing is
+ * bound yet. No answer is read from a word: a name is a part of the frame or it is refused.
+ */
+export function slotsToBind<T extends { name: string }>(
+  binding: T[],
+  args: BuildArgs = {},
+): { bind: T[]; settled?: Settled } | { open: OpenResult } {
+  if (args.bind === undefined) {
+    if (binding.length * CAST_RUNS_PER_SLOT <= CAST_RUNS_PER_HOUR) return { bind: binding };
+    return { open: castBudgetOpen(binding.map((s) => s.name)) };
   }
-  if (answer === "all") return binding;
-  if (answer === "none") return [];
-  return binding.slice(0, slotsAnHourCovers());
+  const names = new Set(binding.map((s) => s.name));
+  const unknown = args.bind.filter((n) => !names.has(n));
+  if (unknown.length > 0) {
+    throw new Error(
+      `bind names ${unknown.join(", ")}, which ${unknown.length === 1 ? "is" : "are"} not a part of this frame that shows data. The parts are: ${[...names].join(", ")}`,
+    );
+  }
+  const chosen = binding.filter((s) => args.bind?.includes(s.name));
+  return {
+    bind: chosen,
+    settled: {
+      id: CAST_BUDGET,
+      by: args.decidedBy ?? "agent",
+      value: chosen.length > 0 ? chosen.map((s) => s.name).join(", ") : "none",
+    },
+  };
 }
 
 /** The pass: the two agents, in this order, and nothing for the model to decide. */
@@ -341,10 +451,11 @@ export function makePipeline(
   return {
     name: BUILD,
     noApproval: true,
+    input: BuildArgs,
     // one slot's hook is looked up, or built, at a time: Cast's live runs are few and shared
     concurrency: 1,
     description:
-      "Runs the whole pass for this Handoff, in order: matches the frame to its screenshot and publishes it, then finds (or builds) the data in Cast and binds it, unless nothing on the section is data. A frame of several parts that each show data (a strip of fixtures over a squad) binds each part on its own and publishes once. Takes no arguments. Answers with the one preview and everything still off.",
+      "Runs the whole pass for this Handoff, in order: matches the frame to its screenshot and publishes it, then finds (or builds) the data in Cast and binds it, unless nothing on the section is data. A frame of several parts that each show data (a strip of fixtures over a squad) binds each part on its own and publishes once. Takes no arguments the first time. When more parts show data than Cast's live runs in an hour cover, it answers with `open` (cast_budget) and binds nothing: settle it, then call it again with `bind` (the part names) and `decidedBy`. Otherwise answers with the one preview and everything still off.",
     async run(call, input, own) {
       const { exportId, handoffId, project } = RunInput.parse(input);
       const frame = (await call(
@@ -372,12 +483,15 @@ async function fanOut(
   plane: ControlPlane,
   dslOf: () => Promise<Dsl>,
   own: PipelineContext = {},
-): Promise<Output> {
+): Promise<Output | OpenResult> {
   const slots = frame.slots ?? [];
   const withData = slots.filter((s) => s.content.data !== "none");
   if (withData.length === 0) return assemble(frame, undefined, slots.map(noData));
-  // a person is asked once when the slots could spend more of Cast than an hour holds
-  const binding = slotsToBind(withData, own);
+  // when the slots could spend more of Cast than an hour holds, the decision is reported, not made
+  const decision = slotsToBind(withData, BuildArgs.parse(own.args ?? {}));
+  if ("open" in decision) return decision.open;
+  const binding = decision.bind;
+  const settledItems = decision.settled ? [decision.settled] : [];
   const chosen = new Set(binding.map((s) => s.id));
   const deferred = withData.filter((s) => !chosen.has(s.id));
   const settled = await Promise.allSettled(
@@ -417,6 +531,7 @@ async function fanOut(
     ...deferred.map((s) => [s.name, skipped(s)] as const),
   ]);
   const parts: Array<{ name: string; data: DataOutput; report: SlotOutput }> = [];
+  const allData: DataOutput[] = [];
   settled.forEach((r, i) => {
     const slot = binding[i];
     if (!slot) return;
@@ -431,10 +546,12 @@ async function fanOut(
       return;
     }
     const data = r.value as DataOutput;
+    allData.push(data);
     const hook = data.sources?.find((x) => typeof x.hookId === "string");
     const report: SlotOutput = {
       name: slot.name,
-      data: data.static ? "none" : "bound",
+      data: endingOf(data),
+      ...(data.dataWhy ? { dataWhy: data.dataWhy } : {}),
       ...(typeof hook?.hookId === "string" ? { hookId: hook.hookId } : {}),
       bound: data.bound,
       collapsed: data.collapsed,
@@ -449,6 +566,7 @@ async function fanOut(
       frame,
       given,
       slots.map((s) => reports.get(s.name) as SlotOutput),
+      settledItems,
     );
   const failedLines = [...reports.values()]
     .filter((r) => r.data === "failed" || r.data === "skipped")
@@ -456,7 +574,11 @@ async function fanOut(
   const notes = parts.flatMap((p) => p.data.notes);
   if (parts.length === 0) {
     const none = out(undefined);
-    return { ...none, remaining: [...none.remaining, ...failedLines.map((l) => `data: ${l}`)] };
+    return {
+      ...none,
+      created: [...new Set(allData.flatMap((d) => d.created ?? []))],
+      remaining: [...none.remaining, ...failedLines.map((l) => `data: ${l}`)],
+    };
   }
 
   // the slots' plans, side by side, over every slot's data: published once
@@ -490,13 +612,23 @@ async function fanOut(
   const link = new URL(frame.previewUrl);
   link.searchParams.set("data", dataArtifactId);
   link.searchParams.set("plan", planArtifactId);
+  const standIns = used.filter((p) => p.report.data === "stand-in");
   const given: DataOutput = {
+    ...(standIns.length
+      ? {
+          data: "stand-in" as const,
+          dataWhy: standIns
+            .map((p) => `${p.name}: ${p.data.dataWhy ?? "not the design's data"}`)
+            .join("; "),
+        }
+      : {}),
     previewUrl: link.toString(),
     planArtifactId,
     dataArtifactId,
     bound: used.reduce((n, p) => n + p.data.bound, 0),
     collapsed: used.reduce((n, p) => n + p.data.collapsed, 0),
     kept: used.flatMap((p) => p.data.kept ?? []),
+    created: [...new Set(allData.flatMap((d) => d.created ?? []))],
     remaining: [
       ...used.flatMap((p) => p.data.remaining.map((item) => `${p.name}: ${item}`)),
       ...[...reports.values()]

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { AgentSpec, Message } from "@dugout/contracts";
+import { type AgentSpec, type Message, Settled } from "@dugout/contracts";
 import type { Pool } from "@dugout/db";
 import type { MemoryReader } from "@dugout/memory";
 import { defineAgent } from "@dugout/sdk";
@@ -21,7 +21,7 @@ export const spec: AgentSpec = {
     "",
     "The tools hold the frame and read the export from the run itself. Do not pass an id, a path or a tree to a tool.",
     "1. Call frame.load. It compiles, applies the fixes that need no judgement, and returns the match and the findings. If it returns measured: false, no screenshot fits the frame, so no change can be checked. Skip steps 2 and 3 and go to step 4: the frame is published as it is, marked unmeasured.",
-    "1b. frame.load also says what each container is (layouts): a carousel, a list, a row, a grid, tabs. A carousel the frame shows is already applied, and so are tabs: each tab becomes one option of a page choice (`_page.<key>`) that any section of the page can read, and the selected tab's look moves with the choice. A layout with ask has questions only a person can answer: call frame.layout once for each, with its choice exactly as proposed. The run then stops and a person answers questions written from the frame (what it is, how many items, autoplay, loop); frame.layout applies their answers to your proposal and tells you what it applied. Never decide a layout yourself, and do not translate their answers.",
+    "1b. frame.load reads the frame by eye first (reading: what the section is for, its parts, what the picture cannot settle) and says what each container is (layouts): a carousel (one that draws several slides, or only the one on show: its `slide`), a list, a row, a grid, tabs. A carousel the reading is sure of and the IR bears out is already applied, and so are tabs: each tab becomes one option of a page choice (`_page.<key>`) that any section of the page can read, and the selected tab's look moves with the choice. What the frame leaves open comes back as `open`: for a container what it is, how many items it holds, whether it moves on its own, whether it loops, a platform config; for the frame, which parts are one section (section_split). Each open item has its evidence, the candidates a tool can act on, what else the tool takes (canTake), the tool's proposal and, when memory holds something, `before`. For each: settle it from memory when `before` holds an active answer; decide it yourself, saying why, when the evidence settles it; or ask a person with `ask`, using the item's id, in your own words, offering every candidate and what canTake accepts. Then apply what was decided as ordinary input: frame.layout for a container (choice and config), frame.split for which parts are one section, each with `settled` saying who decided each item (person, memory, agent). Neither tool asks anything, and frame.publish waits until every open item has been applied.",
     "2. For the worst finding that is not anti-aliasing, call frame.node with its src, and frame.tokens if you need a token. Find the cause.",
     "3. Call frame.override with the fix. It measures the change and keeps it only if it helped. Go back to step 2 with the findings it returns.",
     "3b. frame.look compares the design with the rebuild by eye, which the score cannot do: it sees text on the wrong edge or a background that is missing. frame.publish is refused until you have called it once; its description says when. Read each difference with frame.node before changing anything. A layer frame.load lists under unpainted can be given its paint with frame.override even though no score moves.",
@@ -36,6 +36,7 @@ export const spec: AgentSpec = {
     "frame.tokens",
     "frame.override",
     "frame.layout",
+    "frame.split",
     "frame.look",
     "frame.publish",
   ],
@@ -50,8 +51,9 @@ export const spec: AgentSpec = {
   memory: { read: ["procedural"], write: [] },
   budget: { usdPerRun: 1, maxSteps: 30, maxDepth: 0 },
   approvals: ["effect:write"],
-  // frame.layout's questions (ADR 0033): what a person answers is a decision on this section, and
-  // a carousel's motion, answered alike on three sections, the club's fact
+  // The names memory learns under (ADR 0033), for the items frame.load reports as open and the
+  // model asks a person about with `ask`: what a person answers is a decision on this section, and
+  // a carousel's motion, answered alike on three sections, the club's fact. No wording lives here.
   questions: {
     kind: { scope: "section", about: "what a container the frame cannot settle is" },
     items: { scope: "section", about: "how many items a carousel holds in all" },
@@ -66,7 +68,7 @@ export const spec: AgentSpec = {
       about: "whether a carousel wraps around after its last item",
     },
     platform: { scope: "section", about: "a platform carousel config to apply" },
-    // frame.load's, when the section finder is unsure which parts of the frame are one section
+    // frame.load's open item, when the section finder is unsure which parts are one section
     section_split: { scope: "section", about: "which parts of the frame are one section" },
   },
 };
@@ -117,6 +119,12 @@ export const Result = Output.extend({
     .describe(
       "The parts of the frame that each show one kind of data, with the tree nodes each owns, whether it shows data, and the page keys it writes and reads",
     ),
+  settled: z
+    .array(Settled)
+    .optional()
+    .describe(
+      "How each open item (a container's layout, which parts are one section) was settled, and by whom",
+    ),
 });
 export type Result = z.infer<typeof Result>;
 
@@ -154,6 +162,44 @@ const PUBLISHED_KEYS = [
   "slots",
 ] as const;
 
+/** The ids of the questions a person answered through `ask` in this run, in the order asked. */
+function askedIn(messages: Message[]): Set<string> {
+  const calls = new Set<string>();
+  const answered = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      for (const call of message.toolCalls ?? []) if (call.name === "ask") calls.add(call.id);
+    } else if (message.role === "tool" && calls.has(message.toolCallId) && !message.isError) {
+      try {
+        const got = JSON.parse(message.content) as {
+          answers?: Array<{ id?: string; answer?: unknown }>;
+        };
+        for (const a of got.answers ?? []) {
+          if (typeof a.id === "string" && a.answer !== null && a.answer !== undefined)
+            answered.add(a.id);
+        }
+      } catch {
+        // not an answer set
+      }
+    }
+  }
+  return answered;
+}
+
+/**
+ * How each open item was settled, as the tools that applied it recorded it, with one check code
+ * can make: an item said to be settled by a person is, only when an `ask` of that id was answered
+ * in this run. Otherwise it was the model's own decision.
+ */
+export function settledIn(
+  settled: readonly Settled[] | undefined,
+  messages: Message[],
+): Settled[] | undefined {
+  if (!settled || settled.length === 0) return undefined;
+  const answered = askedIn(messages);
+  return settled.map((s) => (s.by === "person" && !answered.has(s.id) ? { ...s, by: "agent" } : s));
+}
+
 /**
  * The numbers and ids are frame.publish's, so the host writes them over whatever the model sent:
  * a model that rounds 96.24 to 96.2 loses nothing. The free text stays the model's.
@@ -164,6 +210,16 @@ export function completeFinal(output: unknown, run: { messages: Message[] }): un
   const filled: Record<string, unknown> = { ...output };
   for (const key of PUBLISHED_KEYS) {
     if (published[key] !== undefined) filled[key] = published[key];
+  }
+  // how the open items were settled: the tools' record, with who decided checked against the asks
+  const settled = settledIn(published.settled, run.messages);
+  if (settled) filled.settled = settled;
+  // an answer to a note the designer never left is the model's invention: only listed notes stay
+  if (Array.isArray(filled.notes)) {
+    const listed = new Set(listedNoteIds(run.messages, "frame.load"));
+    filled.notes = (filled.notes as Array<{ id?: unknown }>).filter(
+      (n) => typeof n.id === "string" && listed.has(n.id),
+    );
   }
   return filled;
 }
@@ -202,6 +258,16 @@ export function verifyFinal(output: unknown, run: { messages: Message[] }): stri
   return undefined;
 }
 
+/** What a run did, for its thread's note (ADR 0031): the frame, how close, and what a person or memory settled. */
+export function threadNote(_input: unknown, output: unknown): string | undefined {
+  const parsed = Result.safeParse(output);
+  if (!parsed.success) return undefined;
+  const o = parsed.data;
+  const score = o.measured && o.match !== undefined ? `, match ${o.match}%` : ", not measured";
+  const settled = (o.settled ?? []).map((s) => `${s.id} ${s.value} (${s.by})`);
+  return `Published the frame${score}: ${o.previewUrl}.${settled.length > 0 ? ` Settled: ${settled.join("; ")}.` : ""}`;
+}
+
 export const agent = defineAgent({
   spec,
   input: RunInput,
@@ -209,6 +275,7 @@ export const agent = defineAgent({
   result: Result,
   verifyFinal,
   completeFinal,
+  threadNote,
   dir: join(import.meta.dirname, ".."),
   tools: (opts: {
     matchDir?: string;

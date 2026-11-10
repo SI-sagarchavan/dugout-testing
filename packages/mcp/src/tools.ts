@@ -2,7 +2,8 @@ import { defineTool, type Tool } from "@dugout/contracts";
 import type { ServerAdapter, ServerCall } from "./adapter.ts";
 import type { McpHub, ToolResult } from "./hub.ts";
 import type { Lock } from "./lock.ts";
-import { type Grant, type ServerEntry, toolName } from "./registry.ts";
+import { observe } from "./observations.ts";
+import { type Grant, isSharedWrite, type ServerEntry, toolName } from "./registry.ts";
 import { zodOf } from "./schema.ts";
 
 export class McpConfigError extends Error {}
@@ -46,17 +47,20 @@ const forModel = (result: ToolResult): unknown =>
 
 /**
  * Why a call's arguments are outside every grant of the tool, or undefined. Grants add up: a call
- * one of them allows is allowed. A limited argument the call leaves out is not checked.
+ * one of them allows is allowed. A limited argument the call leaves out is not checked; a forbidden one (`absent`) must be.
  */
 export function outsideGrants(grants: Grant[], args: Record<string, unknown>): string | undefined {
   const failures: string[] = [];
   for (const grant of grants) {
+    const named = (grant.absent ?? []).find((arg) => args[arg] !== undefined && args[arg] !== null);
     const failed = Object.entries(grant.arguments ?? {}).find(([arg, pattern]) => {
       const value = args[arg];
       return value !== undefined && !(typeof value === "string" && new RegExp(pattern).test(value));
     });
-    if (!failed) return undefined;
-    failures.push(`${failed[0]} must match ${failed[1]}`);
+    if (!failed && !named) return undefined;
+    if (named)
+      failures.push(`${named} must be left out (this only creates; it never changes what exists)`);
+    else if (failed) failures.push(`${failed[0]} must match ${failed[1]}`);
   }
   return `outside what this agent may touch: ${[...new Set(failures)].join(", or ")}`;
 }
@@ -107,6 +111,7 @@ export function serverTools(opts: ServerToolsOptions): Tool[] {
       description: locked.description,
       input: zodOf(withoutPinned(locked.inputSchema, pinned)),
       effect: policy.effect,
+      ...(isSharedWrite(policy, locked.annotations) ? { shared: true } : {}),
       timeoutMs: policy.timeoutMs,
       retries: policy.retries,
       block: (args) => {
@@ -132,6 +137,8 @@ export function serverTools(opts: ServerToolsOptions): Tool[] {
         if (result.isError) throw new Error(result.text || `${remote} failed`);
         const failed = adapter?.failed?.(remote, result);
         if (failed) throw new Error(`${failed}\n\n${result.text}`.trim());
+        const seen = adapter?.observe?.(remote, sent, result);
+        if (seen) observe(ctx.runId, seen.key, seen.value);
         return forModel(result);
       },
     }) as Tool;

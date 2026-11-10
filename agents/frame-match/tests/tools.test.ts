@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AwaitingAnswers, type Message } from "@dugout/contracts";
+import type { Message } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { completeFinal, verifyFinal } from "../src/agent.ts";
@@ -774,6 +774,14 @@ describe("verifyFinal", () => {
     expect(verifyFinal(filled, { messages })).toBeUndefined();
   });
 
+  it("completeFinal drops an answer to a note the designer never left", () => {
+    const invented = { id: "none", status: "not-mine", detail: "no notes listed" };
+    const filled = completeFinal({ ...final, notes: [invented] }, { messages }) as {
+      notes: unknown[];
+    };
+    expect(filled.notes).toEqual([]);
+  });
+
   it("completeFinal leaves the output alone when nothing was published", () => {
     expect(completeFinal(final, { messages: [] })).toBe(final);
   });
@@ -831,7 +839,7 @@ describe("verifyFinal", () => {
   });
 });
 
-describe("frame.load and an unsure split (ticket 04)", () => {
+describe("frame.load and an unsure split (ticket 04, ticket 11)", () => {
   const part = (id: string, why?: string) => ({
     id,
     name: id,
@@ -850,14 +858,9 @@ describe("frame.load and an unsure split (ticket 04)", () => {
   async function load(decided?: unknown) {
     const { engine, plane } = setup(() => measured(90));
     const joinsSeen: unknown[] = [];
-    let builds = 0;
     const withSlots: Engine = {
       ...engine,
       bundle: async () => sectioned,
-      build: async (b, o) => {
-        builds++;
-        return engine.build(b, o);
-      },
       slots: async (_b, joins) => {
         joinsSeen.push(joins ?? []);
         return unsure;
@@ -873,42 +876,80 @@ describe("frame.load and an unsure split (ticket 04)", () => {
     };
     const dir = await mkdtemp(join(tmpdir(), "frame-match-split-"));
     const list = createMatchTools({ dir, engine: withSlots, plane: () => plane, decisions });
-    const tool = list.find((t) => t.name === "frame.load") as unknown as {
-      run(input: unknown, c: unknown): Promise<Record<string, unknown>>;
+    const named = (name: string) =>
+      list.find((t) => t.name === name) as unknown as {
+        run(input: unknown, c: unknown): Promise<Record<string, unknown>>;
+        input: { parse(v: unknown): unknown };
+        block(input: unknown, c: unknown): string | undefined;
+      };
+    const apply = (runId: string, input: unknown) => {
+      const t = named("frame.split");
+      return t.run(t.input.parse(input), ctx(runId));
     };
-    return { tool, joinsSeen, keys, builds: () => builds };
+    return { named, apply, joinsSeen, keys };
   }
+  it("reports the split as an open item with evidence, and never stops the run to ask", async () => {
+    const { named, keys, joinsSeen } = await load();
+    const loaded = await named("frame.load").run({}, ctx("split-1"));
+    const open = loaded.open as Array<Record<string, unknown>>;
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ id: "section_split", proposed: "h+c" });
+    expect(String(open[0]?.evidence)).toContain("a heading with no content under it");
+    expect(
+      (open[0] as { candidates: Array<{ value: string }> }).candidates.map((c) => c.value),
+    ).toEqual(["apart", "h+c"]);
+    expect(String(open[0]?.canTake)).toContain("frame.split");
+    expect(typeof loaded.openRule).toBe("string");
+    // memory is read for it, by the section's signature (ADR 0033)
+    expect(keys).toContain("frame-match:section_split@sig-frame");
+    // until it is settled the finder's own proposal stands
+    expect(joinsSeen.at(-1)).toEqual([["h", "c"]]);
+  });
 
-  it("asks before it builds anything, when no one has settled it", async () => {
-    const { tool, builds, keys } = await load();
-    const asked = await tool.run({}, ctx("split-1")).catch((e: unknown) => e);
-    expect(asked).toBeInstanceOf(AwaitingAnswers);
-    expect((asked as AwaitingAnswers).questions[0]).toMatchObject({
-      id: "section_split",
-      proposed: ["join:h+c"],
+  it("applies the joins the model passes, and records who settled it", async () => {
+    const { named, apply, joinsSeen } = await load();
+    await named("frame.load").run({}, ctx("split-2"));
+    expect(named("frame.publish").block({}, ctx("split-2"))).toContain("section_split");
+    const result = await apply("split-2", {
+      joins: [],
+      settled: [{ id: "section_split", by: "person" }],
     });
-    expect(builds()).toBe(0);
-    expect(keys).toEqual(["frame-match:section_split@sig-frame"]);
-  });
-
-  it("applies the person's answer when it runs again", async () => {
-    const { tool, joinsSeen } = await load();
-    await tool.run(
-      {},
-      { ...ctx("split-2"), answered: { by: "sam", answers: { section_split: ["join:h+c"] } } },
-    );
-    expect(joinsSeen.at(-1)).toEqual([["h", "c"]]);
-  });
-
-  it("takes the proposal when the person lets the agent decide", async () => {
-    const { tool, joinsSeen } = await load();
-    await tool.run({}, { ...ctx("split-3"), answered: { by: "sam", answers: {} } });
-    expect(joinsSeen.at(-1)).toEqual([["h", "c"]]);
-  });
-
-  it("asks nothing on a frame a person settled before, and applies what they decided", async () => {
-    const { tool, joinsSeen } = await load(["apart"]);
-    await tool.run({}, ctx("split-4"));
+    expect(result).toMatchObject({
+      kept: true,
+      settled: [{ id: "section_split", by: "person", value: "apart" }],
+    });
     expect(joinsSeen.at(-1)).toEqual([]);
+    expect(named("frame.publish").block({}, ctx("split-2"))).toBeUndefined();
+    // what is open is gone from what the model reads
+    const again = await named("frame.load").run({}, ctx("split-2"));
+    expect(again.open).toBeUndefined();
+  });
+
+  it("keeps a claim of memory only when the item had something in `before`", async () => {
+    const without = await load();
+    await without.named("frame.load").run({}, ctx("split-3"));
+    const a = await without.apply("split-3", {
+      joins: [{ upper: "h", lower: "c" }],
+      settled: [{ id: "section_split", by: "memory" }],
+    });
+    expect(a.settled).toEqual([{ id: "section_split", by: "agent", value: "h+c" }]);
+
+    // a person decided this section before: it is in `before`, and settling from it is by memory
+    const earlier = await load("apart");
+    const loaded = await earlier.named("frame.load").run({}, ctx("split-4"));
+    expect((loaded.open as Array<{ before?: string }>)[0]?.before).toContain("apart");
+    const b = await earlier.apply("split-4", {
+      joins: [],
+      settled: [{ id: "section_split", by: "memory" }],
+    });
+    expect(b.settled).toEqual([{ id: "section_split", by: "memory", value: "apart" }]);
+  });
+
+  it("refuses a join naming a part the frame does not have", async () => {
+    const { named, apply } = await load();
+    await named("frame.load").run({}, ctx("split-5"));
+    const result = await apply("split-5", { joins: [{ upper: "h", lower: "zz" }] });
+    expect(result).toMatchObject({ kept: false });
+    expect(String(result.reason)).toContain("zz");
   });
 });

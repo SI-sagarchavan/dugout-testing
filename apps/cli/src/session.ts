@@ -52,6 +52,13 @@ export interface SessionOptions {
    * and the decision is recorded as made by `by` (auto), so a run can be traced to who chose this.
    */
   autoApprove?: boolean;
+  /**
+   * Whether the tenant opted in to shared writes going through without a person's own yes (its
+   * active house fact `approvals.shared-writes` with the value "auto"), read for `tenantId`, the
+   * tenant the host verified. Without it, or when it says no, `autoApprove` still asks a person
+   * at a write to something shared.
+   */
+  sharedWrites?: (tenantId: string) => Promise<boolean>;
   signal: AbortSignal;
   /** How long to wait for a worker before saying none has picked the run up. */
   hintMs?: number;
@@ -100,10 +107,15 @@ export async function followRun(opts: SessionOptions): Promise<Ending | undefine
     const asked = last.data;
     // a pause replayed from earlier in the run was answered already: carry on past it
     if ((await queue.waitingFor(tenantId, runId)) !== asked.callId) continue;
-    const decision = opts.autoApprove
+    // a write to something shared is a person's yes, whatever approves the rest without asking,
+    // unless the tenant opted in
+    const auto =
+      opts.autoApprove === true &&
+      (!asked.questions.some((q) => q.shared) || (await opts.sharedWrites?.(tenantId)) === true);
+    const decision = auto
       ? autoDecision(asked.questions, `${opts.by}${AUTO_APPROVED}`)
       : await askQuestions(terminal, asked, opts.by, present);
-    if (opts.autoApprove) {
+    if (auto) {
       terminal.line(
         dim(
           asked.subject
@@ -146,6 +158,8 @@ async function askQuestions(
     const card = present({ tool: asked.tool, input: asked.subject.input });
     if (terminal.panel) terminal.panel(card);
     else terminal.line(`\n\n${card}`);
+    // what the model said the call does and why: the approval's own wording
+    if (review?.why) terminal.line(`\n${pc.bold("Why")}  ${review.why}`);
   } else {
     const n = asked.questions.length;
     terminal.line(

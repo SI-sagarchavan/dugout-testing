@@ -34,6 +34,8 @@ export interface RunContext {
   readonly parent?: { readonly runId: string; readonly callId: string };
   /** What the run works on when it starts: a child's is its parent's at the call (ADR 0033). */
   readonly situation?: Situation;
+  /** A child run's input as its parent hashed it; kept on the run's save points. */
+  readonly inputHash?: string;
 }
 
 /**
@@ -204,6 +206,16 @@ export const RunCheckpoint = z.object({
     .optional(),
   /** What the run works on, once a tool said (ADR 0033). Absent before, and on older saves. */
   situation: Situation.optional(),
+  /**
+   * A child run's input, as its parent hashed it (`inputKey`): a writing child is built once for
+   * each input, and a restarted parent finds the try for this input by it (ADR 0025).
+   */
+  inputHash: z.string().optional(),
+  /**
+   * A child run's: the parent's call that started it. A restarted parent tells the call a crash
+   * cut short (its own try) from a later call asking the same again (ADR 0025).
+   */
+  parentCallId: z.string().optional(),
   /** Unset on checkpoints saved before save points were kept. */
   savedAfter: SavedAfter.optional(),
   /** The run and save point this run was forked from. */

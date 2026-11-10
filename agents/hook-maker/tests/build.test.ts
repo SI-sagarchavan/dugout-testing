@@ -36,7 +36,7 @@ const ran = (applied: boolean) => ({
 });
 
 /** Cast as a build meets it: the real registry, grants and lock, the server stood in for. */
-const cast = () =>
+const cast = (extra: Parameters<typeof fakeHub>[0] = {}) =>
   fakeHub({
     cast_describe_api:
       "fanxp-seed-api-cricket-schedule\n  GET /schedule\n  Used by fanxp-seed-hook-cricket-schedule (published).",
@@ -51,12 +51,18 @@ const cast = () =>
       },
       isError: false,
     }),
+    cast_list_providers: "No providers.",
+    cast_list_apis: "No connectors.",
+    cast_upsert_provider: (args) => `Created provider "${args.name}" (prov_1).`,
+    cast_upsert_api: (args) => `Created api "${args.name}" (api_1): GET ${args.url}`,
+    cast_fetch_sample: "200 OK\n  { squad: [ { name: 'Sophie' } ] }",
     cast_create_hook: (args) => `Created draft hook "${args.name}" (${args.id}).`,
     cast_add_step: (args) => `Added ${args.stepId ?? "n1"}.`,
     cast_run_hook: (args) => ran(args.applyTransform === true),
     cast_eval_jsonata: 'Evaluated cleanly. Result:\n\n{ "data": { "1": [] } }',
     cast_set_transform: "Saved.",
     cast_publish_hook: (args) => `Published "${args.hookId}".`,
+    ...extra,
   });
 
 const ctx = (): ToolContext => ({
@@ -117,11 +123,20 @@ describe("hook-maker's grants (hooks.author)", () => {
     // what it may not do at all is not a tool it has
     for (const name of [
       "cast.deleteHook",
+      "cast.deleteApi",
       "cast.setTemplateBinding",
-      "cast.upsertApi",
       "cast.duplicateHook",
     ]) {
       expect(tool(name)).toBeUndefined();
+    }
+    // a connector or provider is created in dugout's namespace and never changed: it is shared
+    for (const name of ["cast.upsertApi", "cast.upsertProvider"]) {
+      expect(await use(tool(name), { id: "api_1", name: "dugout: squad" })).toMatchObject({
+        refused: expect.stringContaining("must be left out"),
+      });
+      expect(await use(tool(name), { name: "squad feed" })).toMatchObject({
+        refused: expect.stringContaining("name must match ^dugout: "),
+      });
     }
     // another hook is read, to copy the values it passes a connector
     expect(
@@ -145,7 +160,7 @@ describe("hook-maker", () => {
             name: "dugout: Cricket fixtures",
             built: true,
             input: {},
-            covers: ["venue → venue"],
+            covers: ["venue → data.1[].venue"],
             missing: [],
             why: "The schedule connector, items mapped to id and venue.",
           },
@@ -192,7 +207,11 @@ describe("hook-maker", () => {
     })({
       tenantId: "demo-cricket",
       input: {
-        need: { list: "matches", count: "data", item: [{ field: "venue", required: true }] },
+        need: {
+          list: "matches",
+          count: "data",
+          item: [{ field: "venue", required: true }],
+        },
       },
       responder: async (req) => {
         asked.push(req.tool);
@@ -230,7 +249,7 @@ describe("hook-maker", () => {
           name: "dugout: Cricket fixtures",
           built,
           input: {},
-          covers: ["venue → venue"],
+          covers: ["venue → data.1[].venue"],
           missing: [],
           why: built ? "Built it." : "It was already there.",
         },
@@ -241,7 +260,10 @@ describe("hook-maker", () => {
     toolCalls: [{ name, arguments: args }],
   });
   const asked: string[] = [];
-  const runWith = async (script: Parameters<typeof createScriptedModel>[0]) => {
+  const runWith = async (
+    script: Parameters<typeof createScriptedModel>[0],
+    needExtra: Record<string, unknown> = {},
+  ) => {
     const model = createScriptedModel(script);
     asked.length = 0;
     const result = await agent.create({
@@ -254,7 +276,12 @@ describe("hook-maker", () => {
     })({
       tenantId: "demo-cricket",
       input: {
-        need: { list: "matches", count: "data", item: [{ field: "venue", required: true }] },
+        need: {
+          list: "matches",
+          count: "data",
+          item: [{ field: "venue", required: true }],
+          ...needExtra,
+        },
       },
       responder: async (req) => {
         asked.push(req.tool);
@@ -266,6 +293,123 @@ describe("hook-maker", () => {
       .filter((m) => m.startsWith("Not accepted"));
     return { result, refusals, asked: [...asked] };
   };
+
+  it("builds on the feeds a person gave: one provider, one connector for both feeds, then the hook", async () => {
+    const SQUAD = "https://www.southernbrave.com/cricket/v2/series/squad";
+    const WOMEN = `${SQUAD}?team_id=2034&series_id=15399&lang=en&feed_format=json&client_id=4ab1ce0f`;
+    const MEN = `${SQUAD}?team_id=2042&series_id=15397&lang=en&feed_format=json&client_id=4ab1ce0f`;
+    const hub = cast();
+    const model = createScriptedModel([
+      call("cast.listProviders", {}),
+      call("cast.listApis", {}),
+      call("cast.upsertProvider", {
+        name: "dugout: www.southernbrave.com",
+        baseUrl: "https://www.southernbrave.com/cricket/v2",
+        authMode: "none",
+      }),
+      call("cast.upsertApi", {
+        providerId: "prov_1",
+        name: "dugout: Southern Brave squad",
+        method: "GET",
+        url: "{{env.base_url}}/series/squad",
+        queryParams: [
+          { key: "team_id", value: "{{input.team_id}}" },
+          { key: "series_id", value: "{{input.series_id}}" },
+          { key: "client_id", value: "4ab1ce0f" },
+        ],
+      }),
+      call("cast.fetchSample", { apiId: "api_1", input: { team_id: "2034", series_id: "15399" } }),
+      call("cast.createHook", { id: "dugout_brave_squad", name: "dugout: Brave squad" }),
+      call("cast.runHook", { hookId: "dugout_brave_squad" }),
+      call("cast.setTransform", { hookId: "dugout_brave_squad", mode: "whole", expression: "$" }),
+      call("cast.runHook", { hookId: "dugout_brave_squad", applyTransform: true }),
+      call("cast.publishHook", { hookId: "dugout_brave_squad" }),
+      {
+        toolCalls: [
+          {
+            name: "final",
+            arguments: {
+              hookId: "dugout_brave_squad",
+              name: "dugout: Brave squad",
+              built: true,
+              input: {},
+              covers: ["venue → data.1[].venue"],
+              missing: [],
+              why: "One connector for both feeds; the output has women and men side by side, so each tab shows its list.",
+              // the model's word: code lists what the run's own writes made instead
+              created: ["provider prov_9 (dugout: something else)"],
+            },
+          },
+        ],
+      },
+    ]);
+    const asked: string[] = [];
+    const result = await agent.create({
+      store: createMemoryStore({ pool, embeddings: createHashEmbeddings() }),
+      client: model,
+      models: scriptedModelConfig(),
+      runsDir: await mkdtemp(join(tmpdir(), "runs-")),
+      consolidate: false,
+      mcp: createMcpHost({ hub }),
+    })({
+      tenantId: "demo-cricket",
+      input: {
+        need: {
+          list: "players",
+          count: "data",
+          item: [{ field: "venue", required: true }],
+          sources: [
+            { label: "women", url: WOMEN },
+            { label: "men", url: MEN },
+          ],
+        },
+      },
+      responder: async (req) => {
+        asked.push(req.tool);
+        return approve("editor");
+      },
+    });
+    expect(result).toMatchObject({
+      status: "completed",
+      output: { hookId: "dugout_brave_squad", built: true, basis: "sources" },
+    });
+    // built by code from the completed writes and the ids their results gave (ticket 12)
+    expect((result as { output: { created: string[] } }).output.created).toEqual([
+      "provider prov_1 (dugout: www.southernbrave.com)",
+      "connector api_1 (dugout: Southern Brave squad)",
+      "hook dugout_brave_squad (dugout: Brave squad)",
+    ]);
+    // a provider and one connector made, each approved; nothing existing was changed
+    expect(asked.slice(0, 2)).toEqual(["cast.upsertProvider", "cast.upsertApi"]);
+    const made = hub.calls.filter((c) => c.tool.startsWith("cast_upsert"));
+    expect(made).toHaveLength(2);
+    for (const c of made) {
+      expect(c.args.id).toBeUndefined();
+      expect(String(c.args.name)).toMatch(/^dugout: /);
+    }
+    // the sources reached the model in the call's input
+    const first = JSON.stringify(model.requests[0]?.messages);
+    expect(first).toContain("team_id=2034");
+    expect(first).toContain("team_id=2042");
+  });
+
+  it("is told, in its instructions and skill, what to do with the feeds a person gave", async () => {
+    const { run } = await create();
+    expect(run.spec.instructions).toMatch(/need has sources/);
+    expect(run.spec.instructions).toMatch(
+      /not GET, or answers an error or not JSON, goes in missing/,
+    );
+    const { readFileSync } = await import("node:fs");
+    const skill = readFileSync(join(import.meta.dirname, "../skills/hook-maker.md"), "utf8");
+    expect(skill).toMatch(/## When a person gave the feed[\s\S]*## When none fits/);
+    for (const step of [
+      "cast.listProviders",
+      "cast.upsertProvider",
+      "cast.upsertApi",
+      "cast.fetchSample",
+    ])
+      expect(skill).toContain(step);
+  });
 
   it("finds a hook that fits and answers with it: nothing created, changed or published, nobody asked", async () => {
     const { result, refusals, asked } = await runWith([
@@ -280,6 +424,36 @@ describe("hook-maker", () => {
       status: "completed",
       output: { hookId: HOOK, built: false, input: { page_size: "2" } },
     });
+  });
+
+  it("will not say it covers a path the run's real output has nothing at", async () => {
+    const wrong = {
+      toolCalls: [
+        {
+          name: "final",
+          arguments: {
+            hookId: HOOK,
+            name: "dugout: Cricket fixtures",
+            built: false,
+            input: {},
+            covers: ["venue → matches[].venue"],
+            missing: [],
+            why: "It was already there.",
+          },
+        },
+      ],
+    };
+    const { result, refusals } = await runWith([
+      call("cast.describeHook", { hookId: HOOK }),
+      call("cast.runHook", { hookId: HOOK, applyTransform: true }),
+      wrong,
+      finalFor(HOOK),
+    ]);
+    // the path is from the root of the output the run gave (data.1[].venue), not the model's guess
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toContain("does not give what you say");
+    expect(refusals[0]).toContain('covers "venue" at matches[].venue');
+    expect(result).toMatchObject({ status: "completed" });
   });
 
   it("will not answer with a hook it has not run with its transform", async () => {
@@ -373,6 +547,47 @@ describe("hook-maker", () => {
     ]);
   });
 
+  it("builds next to a hook whose own run shows another team's data, without having to say why (ticket 17)", async () => {
+    const OTHER = "dugout_other_fixtures";
+    const { result, refusals } = await runWith(
+      [
+        call("cast.describeHook", { hookId: OTHER }),
+        // its output (the fake's: a venue, no team) does not name the team the design is about
+        call("cast.runHook", { hookId: OTHER, applyTransform: true }),
+        call("cast.createHook", { id: HOOK, name: "dugout: Brave fixtures" }),
+        call("cast.addStep", {
+          hookId: HOOK,
+          kind: "api_call",
+          apiId: "fanxp-seed-api-cricket-schedule",
+          connectFrom: "input",
+          connectTo: "output",
+        }),
+        call("cast.setTransform", { hookId: HOOK, mode: "whole", expression: "$" }),
+        call("cast.runHook", { hookId: HOOK, applyTransform: true }),
+        call("cast.publishHook", { hookId: HOOK }),
+        {
+          toolCalls: [
+            {
+              name: "final",
+              arguments: {
+                hookId: HOOK,
+                name: "dugout: Brave fixtures",
+                built: true,
+                input: {},
+                covers: ["venue → data.1[].venue"],
+                missing: [],
+                why: "Built on the club's connector.",
+              },
+            },
+          ],
+        },
+      ],
+      { must: { team: "Zzyzx Rovers" } },
+    );
+    expect(refusals.filter((r) => r.includes("was already there"))).toEqual([]);
+    expect(result).toMatchObject({ status: "completed", output: { built: true } });
+  });
+
   it("will not build a second hook next to one it looked at without saying what that one lacks", async () => {
     const OTHER = "dugout_other_fixtures";
     const built = [
@@ -398,7 +613,7 @@ describe("hook-maker", () => {
             name: "dugout: Cricket fixtures",
             built: true,
             input: {},
-            covers: ["venue → venue"],
+            covers: ["venue → data.1[].venue"],
             missing: [],
             why: "A new one.",
             ...(existing ? { existing } : {}),
@@ -415,5 +630,291 @@ describe("hook-maker", () => {
     expect(refusals).toEqual([
       expect.stringContaining(`You built ${HOOK} though ${OTHER} was already there`),
     ]);
+  });
+});
+
+/**
+ * A hook built as the design shows its data (tickets 14, 15): the feed's form first, then the
+ * design's once the transform derives it. The fake run answers the raw output until the transform
+ * set is the derived one, as a real run with the transform applied does.
+ */
+describe("hook-maker gives what the design shows, in its form and order", () => {
+  const HOOK_ID = "dugout_shaped";
+  const step = (name: string, args: Record<string, unknown>) => ({
+    toolCalls: [{ name, arguments: args }],
+  });
+  const answer = (covers: string[]) => ({
+    toolCalls: [
+      {
+        name: "final",
+        arguments: {
+          hookId: HOOK_ID,
+          name: "dugout: shaped",
+          built: true,
+          input: {},
+          covers,
+          missing: [],
+          why: "Built on the feed's connector.",
+        },
+      },
+    ],
+  });
+  const shapedRun = (output: unknown) => ({
+    text: `RUN  r  hook=${HOOK_ID}  status=ok\n\nOUTPUT  (transform applied)\n  ${JSON.stringify(output)}`,
+    structured: {
+      runId: "r",
+      hookId: HOOK_ID,
+      status: "ok",
+      durationMs: 1,
+      steps: [],
+      outputComputed: true,
+      output,
+      budget: { remaining: 20, used: 1 },
+    },
+    isError: false,
+  });
+
+  const build = async (
+    need: Record<string, unknown>,
+    raw: unknown,
+    shaped: unknown,
+    covers: string[],
+  ) => {
+    let transform = "$";
+    const hub = cast({
+      cast_set_transform: (args) => {
+        transform = String(args.expression);
+        return "Saved.";
+      },
+      cast_run_hook: (args) =>
+        args.applyTransform === true ? shapedRun(transform === "$" ? raw : shaped) : ran(false),
+    });
+    const pass = (expression: string) => [
+      step("cast.setTransform", { hookId: HOOK_ID, mode: "whole", expression }),
+      step("cast.runHook", { hookId: HOOK_ID, applyTransform: true }),
+      step("cast.publishHook", { hookId: HOOK_ID }),
+      answer(covers),
+    ];
+    const model = createScriptedModel([
+      step("cast.createHook", { id: HOOK_ID, name: "dugout: shaped" }),
+      step("cast.addStep", {
+        hookId: HOOK_ID,
+        kind: "api_call",
+        apiId: "fanxp-seed-api-cricket-schedule",
+        connectFrom: "input",
+        connectTo: "output",
+      }),
+      ...pass("$"),
+      ...pass("( derived )"),
+    ]);
+    const result = await agent.create({
+      store: createMemoryStore({ pool, embeddings: createHashEmbeddings() }),
+      client: model,
+      models: scriptedModelConfig(),
+      runsDir: await mkdtemp(join(tmpdir(), "runs-")),
+      consolidate: false,
+      mcp: createMcpHost({ hub }),
+    })({
+      tenantId: "demo-cricket",
+      input: { need: { count: "data", ...need } as never },
+      responder: async () => approve("editor"),
+    });
+    const refusals = model.requests
+      .map((r) => String(r.messages.at(-1)?.content))
+      .filter((m) => m.startsWith("Not accepted"));
+    return { result, refusals };
+  };
+
+  it("a unit converted: a ratio the design writes as a percentage", async () => {
+    const { result, refusals } = await build(
+      {
+        list: "players",
+        item: [{ field: "shooting", required: true, kind: "number", example: "45%" }],
+      },
+      { players: [{ shooting: "0.452" }, { shooting: "0.381" }] },
+      { players: [{ shooting: "45" }, { shooting: "38" }] },
+      ["shooting → players[].shooting"],
+    );
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toContain('holds "0.452" where the design writes "45%"');
+    expect(result).toMatchObject({ status: "completed", output: { hookId: HOOK_ID } });
+  });
+
+  it("one field split: a full name the design draws on two lines", async () => {
+    const { result, refusals } = await build(
+      {
+        list: "players",
+        item: [
+          { field: "first name", required: true, example: "Erling" },
+          { field: "last name", required: true, example: "Haaland" },
+        ],
+      },
+      { players: [{ name: "Erling Haaland" }, { name: "Phil Foden" }] },
+      {
+        players: [
+          { name: "Erling Haaland", first: "Erling", last: "Haaland" },
+          { name: "Phil Foden", first: "Phil", last: "Foden" },
+        ],
+      },
+      ["first name → players[].first", "last name → players[].last"],
+    );
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toContain('covers "first name" at players[].first');
+    expect(result).toMatchObject({ status: "completed" });
+  });
+
+  it("a code made a word: an event's state as the design writes it", async () => {
+    const { result, refusals } = await build(
+      {
+        list: "events",
+        item: [{ field: "status", required: true, example: "Sold out" }],
+      },
+      { events: [{ code: "S" }, { code: "A" }] },
+      {
+        events: [
+          { code: "S", status: "Sold out" },
+          { code: "A", status: "On sale" },
+        ],
+      },
+      ["status → events[].status"],
+    );
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toContain('covers "status" at events[].status');
+    expect(result).toMatchObject({ status: "completed" });
+  });
+
+  it("fields by kind of item: each player's card shows the stat of its role", async () => {
+    const shaped = {
+      players: [
+        { role: "forward", stats: [{ label: "Goals", value: "12" }] },
+        { role: "keeper", stats: [{ label: "Saves", value: "40" }] },
+      ],
+    };
+    const { result, refusals } = await build(
+      {
+        list: "players",
+        item: [
+          {
+            field: "stat",
+            required: true,
+            kind: "number",
+            example: "12",
+            alternatives: ["Goals", "Saves"],
+          },
+        ],
+      },
+      { players: [{ role: "forward", goals: "12" }, { role: "keeper" }] },
+      shaped,
+      ["stat → players[].stats[].value"],
+    );
+    expect(refusals).toHaveLength(1);
+    expect(result).toMatchObject({ status: "completed" });
+  });
+
+  it("which items in what order: fixtures grouped by day, sent in the wrong order", async () => {
+    const day = (date: string, ...kickoffs: string[]) => ({
+      date,
+      matches: kickoffs.map((kickoff) => ({ kickoff, venue: "Ground" })),
+    });
+    const { result, refusals } = await build(
+      {
+        list: "fixtures",
+        groupBy: "date",
+        order: "soonest-first",
+        item: [{ field: "venue", required: true }],
+      },
+      {
+        days: [
+          day("2030-08-02", "2030-08-02T19:00:00Z"),
+          day("2030-07-30", "2030-07-30T15:00:00Z", "2030-07-30T19:00:00Z"),
+        ],
+      },
+      {
+        days: [
+          day("2030-07-30", "2030-07-30T15:00:00Z", "2030-07-30T19:00:00Z"),
+          day("2030-08-02", "2030-08-02T19:00:00Z"),
+        ],
+      },
+      ["venue → days[].matches[].venue", "order → days[].matches[].kickoff"],
+    );
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toContain("not soonest first");
+    expect(result).toMatchObject({ status: "completed" });
+  });
+});
+
+describe("an existing hook on the feeds a person gave (ticket 17 review)", () => {
+  const FEED = "https://media.example.net/v1/clips?channel=7";
+  const OTHER = "dugout_clips";
+  const NEW = "dugout_clips_two";
+  it("counts as fitting though its data names no team: a copy needs a reason", async () => {
+    const hub = cast({
+      cast_describe_hook: (args) => ({
+        text: `HOOK  ${args.hookId}\nSTEPS\n  n1  apiCall\n      GET {{env.base_url}}/v1/clips\n      provider: "dugout: media.example.net" — base https://media.example.net\n      overrides: channel=7`,
+        structured: {
+          id: args.hookId,
+          name: "x",
+          status: "published",
+          readOnly: true,
+          callsHooks: false,
+        },
+        isError: false,
+      }),
+    });
+    const call = (name: string, args: Record<string, unknown>) => ({
+      toolCalls: [{ name, arguments: args }],
+    });
+    const final = (existing?: string) => ({
+      toolCalls: [
+        {
+          name: "final",
+          arguments: {
+            hookId: NEW,
+            name: "dugout: clips",
+            built: true,
+            input: {},
+            covers: ["venue → data.1[].venue"],
+            missing: [],
+            why: "Built.",
+            ...(existing ? { existing } : {}),
+          },
+        },
+      ],
+    });
+    const model = createScriptedModel([
+      call("cast.describeHook", { hookId: OTHER }),
+      call("cast.runHook", { hookId: OTHER, applyTransform: true }),
+      call("cast.createHook", { id: NEW, name: "dugout: clips" }),
+      call("cast.setTransform", { hookId: NEW, mode: "whole", expression: "$" }),
+      call("cast.runHook", { hookId: NEW, applyTransform: true }),
+      call("cast.publishHook", { hookId: NEW }),
+      final(),
+      final(`${OTHER} has no venue`),
+    ]);
+    const result = await agent.create({
+      store: createMemoryStore({ pool, embeddings: createHashEmbeddings() }),
+      client: model,
+      models: scriptedModelConfig(),
+      runsDir: await mkdtemp(join(tmpdir(), "runs-")),
+      consolidate: false,
+      mcp: createMcpHost({ hub }),
+    })({
+      tenantId: "demo-cricket",
+      input: {
+        need: {
+          list: "clips",
+          count: "data",
+          item: [{ field: "venue", required: true }],
+          must: { team: "Zzyzx Rovers" },
+          sources: [{ label: "clips", url: FEED }],
+        },
+      },
+      responder: async () => approve("editor"),
+    });
+    const refusals = model.requests
+      .map((r) => String(r.messages.at(-1)?.content))
+      .filter((m) => m.startsWith("Not accepted"));
+    expect(refusals).toEqual([expect.stringContaining(`though ${OTHER} was already there`)]);
+    expect(result).toMatchObject({ status: "completed", output: { basis: "sources" } });
   });
 });

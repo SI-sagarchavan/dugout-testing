@@ -25,7 +25,7 @@ import { FONT_FACE_CSS } from "./fonts.js";
 const USAGE = `fos-render — headless SDUI render + pixel diff
 
 Usage:
-  fos-render png    --tree <f> --data <f> --theme <f> [--surfaces <f>] --out <f> [--width n] [--viewport n] [--design-width n] [--background #rrggbb] [--origin https://tenant] [--time-zone Area/City]
+  fos-render png    --tree <f> --data <f> --theme <f> [--surfaces <f>] --out <f> [--width n] [--viewport n] [--design-width n] [--background #rrggbb] [--origin https://tenant] [--time-zone Area/City] [--date-order mdy|dmy]
   fos-render boxes  --tree <f> --data <f> --theme <f> [--surfaces <f>] [--out <f>] [--width n] [--viewport n] [--design-width n]
   fos-render diff   --tree <f> --data <f> --theme <f> --expected <f> --out <dir> [--width n]
   fos-render report --tree <f> --data <f> --theme <f> --expected <f> [--width n]
@@ -71,6 +71,13 @@ function themeCss(themePath: string, surfacesPath?: string): string {
   return css;
 }
 
+/** `--date-order`: which comes first where day and month could swap. */
+function dateOrderOf(flag: string | undefined): { dateOrder?: "mdy" | "dmy" } {
+  if (flag === undefined) return {};
+  if (flag !== "mdy" && flag !== "dmy") throw new Error(`--date-order is mdy or dmy, not "${flag}"`);
+  return { dateOrder: flag };
+}
+
 export async function run(argv: readonly string[]): Promise<number> {
   const { command, flags } = parseArgs(argv);
 
@@ -103,6 +110,7 @@ export async function run(argv: readonly string[]): Promise<number> {
           ...(background ? { background } : {}),
           ...(flags.origin ? { origin: flags.origin } : {}),
           ...(flags["time-zone"] ? { timeZone: flags["time-zone"] } : {}),
+          ...dateOrderOf(flags["date-order"]),
         });
         writePng(resolve(required(flags, "out")), buf);
         process.stdout.write(`wrote ${flags.out} (${buf.length} bytes)\n`);

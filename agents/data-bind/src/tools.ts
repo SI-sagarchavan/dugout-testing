@@ -1,34 +1,89 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defineTool, type ToolContext } from "@dugout/contracts";
+import { defineTool, type OpenItem, type ToolContext } from "@dugout/contracts";
 import { REPO_ROOT } from "@dugout/core";
 import type { Pool } from "@dugout/db";
 import { pageChoicesOf } from "@dugout/db/page-choices";
 import { defaultMcpHost, hookOutput, type McpHost } from "@dugout/mcp";
-import { BEFORE_RULE, decidedBefore, type MemoryReader } from "@dugout/memory";
+import { BEFORE_RULE, decidedBefore, decisionKey, type MemoryReader } from "@dugout/memory";
 import { z } from "zod";
-import { describeChoice, describeLink, type KnownChoice, linksOf } from "./choices.ts";
-import { asBag, type Dsl, type IrNode, indexIr, loadDsl, loadSigner, type Tree } from "./dsl.ts";
 import {
+  choiceProblems,
+  describeChoice,
+  describeLink,
+  type KnownChoice,
+  linksOf,
+} from "./choices.ts";
+import { asBag, type Dsl, type IrNode, indexIr, loadDsl, loadSigner, type Tree } from "./dsl.ts";
+import { STAND_IN } from "./ending.ts";
+import {
+  cardHolds,
   type DryRun,
+  dateKey,
+  draftNeed,
   dryRun,
+  entityReading,
   groups,
   type LeftAsDesigned,
   leftAsDesigned,
   lostLooks,
   memberOf,
+  orderOf,
+  orderProblems,
   outline,
   ownPictures,
+  pictureEvidence,
   repeatsOf,
   rowsOf,
+  sectionWords,
   shapeOf,
   someOnly,
   type Unbound,
   unboundCopy,
+  varyingLabels,
 } from "./facts.ts";
+import { clubAbout, FEEDS_RULE, feedsOf, LOCALE_RULE, localeFacts } from "./feeds.ts";
 import { type DesignerNote, NOTES_RULE, notesOf } from "./notes.ts";
 import { pageKeysRead, plannedSrcs, type Scope, Slot, scopeOf, wordsOf } from "./slot.ts";
+
+const OPEN_RULE =
+  "These are what the tools could not settle. For each one: answer it from memory when `before` holds an active answer; decide it yourself, saying why, when the evidence settles it; or ask a person with `ask`, using the item's id. Write the question, its options and its why yourself from the evidence, the candidates and canTake: offer every candidate, and say what else canTake accepts (a text option or the question itself). Pass what was decided to the tool that acts on it as ordinary input.";
+
+/** The data source, when the run has none yet: what is known and everything the next call takes. */
+function dataSourceOpen(
+  feeds: Array<{ kind: string; label: string; url: string }>,
+  before: string | undefined,
+): OpenItem {
+  return {
+    id: "data_source",
+    about: "where this section's data comes from",
+    evidence: feeds.length
+      ? `The club's own feeds: ${feeds.map((f) => `${f.kind}.${f.label} ${f.url}`).join("; ")}. No hook has been looked for yet.`
+      : "No hook has been looked for yet, and the club has no feed on file.",
+    candidates: [
+      {
+        value: "find_hook",
+        does: "agent.hookMaker looks through the tenant's dugout hooks and builds one only when none fits",
+      },
+      {
+        value: STAND_IN,
+        does: "bind the closest hook, which is about another team, for its shape; the slot is reported as a stand-in",
+      },
+      {
+        value: "none",
+        does: "leave the section as designed; end with bind.done or bind.publish and none",
+      },
+    ],
+    proposed: "find_hook",
+    canTake:
+      "feed URLs for this data, one per line with a label for the part of the design it is for (<label>: https://…): agent.hookMaker builds a connector and a hook on each, as need.sources; a hook id a person chose (need.hook)",
+    ...(before ? { before } : {}),
+  };
+}
+
+const DRAFT_NEED_RULE =
+  "Read by code from the design: for each list it repeats, how many cards (count: 'data' for a carousel's, whose cards are only what fits on view) and what the first card shows, each with its kind (date, time, score, number, image, text) and the design's placeholder as example; a list inside a card has its own entry, with its own fields. Build agent.hookMaker's need from it: order, when present, is read from the words of the list's own heading that name time (put it in need.order; leave order out when the draft has none), and cardHolds, when present, says the card holds that many items of one shape (set need.groupBy to the field they share, found in the data: the date, the category); filterBy lists the page choices this section draws (tabs, a toggle): when one filters the list, put it in need.filterBy as { key, options } so the hook gives one list with a field holding the option; name the list and each field in plain words, copy count and example as they are, and add required and must. Do not drop a field it lists unless it is design copy (a heading or label the designer wrote).";
 
 export const BIND_DIR = join(REPO_ROOT, ".runs", "data-bind");
 /** The registry's server a `cast-hook` data source is read from (config/mcp/cast.json). */
@@ -104,7 +159,7 @@ const Field = z
       .string()
       .optional()
       .describe(
-        "The whole value when the design writes words around the data: ({match.overs}). Refs name the alias",
+        "The whole value when the design writes words around the data: ({item.count}). Refs name the alias",
       ),
   })
   .strict();
@@ -191,6 +246,12 @@ export const Plan = z
               .string()
               .min(8)
               .describe("Why it stays as designed: a heading, a label, the design's own look"),
+            settled: z
+              .literal("no-picture")
+              .optional()
+              .describe(
+                "Only for a picture each item has its own of: it was settled that the item has no picture of its own (the evidence, memory or a person said so) and the design's is decoration. Without it such a picture is never kept",
+              ),
           })
           .strict(),
       )
@@ -214,6 +275,18 @@ const Tried = z.object({
   kept: z.array(z.string()).default([]),
   bound: z.number(),
   collapsed: z.number(),
+  /** What code read of each source's data against what the design is about, and whether the plan kept a wrong team. */
+  entity: z
+    .array(
+      z.object({
+        as: z.string(),
+        hookId: z.string(),
+        reading: z.enum(["about", "other", "unknown"]),
+        why: z.string().optional(),
+        kept: z.boolean().optional(),
+      }),
+    )
+    .default([]),
 });
 
 const Published = z.object({
@@ -226,6 +299,26 @@ const Published = z.object({
   kept: z.array(z.string()).default([]),
   /** Why it was published with problems open, when bind.publish said so. */
   despite: z.string().optional(),
+  /** Why nothing was bound, when the run ended with `{ none }`: the design's copy stays. */
+  none: z.string().optional(),
+  /**
+   * Why the data bound is about something else than the design, read by code from the data itself
+   * (`entityReading` over each source and what the design is about), when the plan did not keep
+   * it with why. Absent when it is not.
+   */
+  standIn: z.string().optional(),
+  /** Each source's reading, as bind.try last made it: what the run's ending is decided from. */
+  readings: z
+    .array(
+      z.object({
+        as: z.string(),
+        hookId: z.string(),
+        reading: z.enum(["about", "other", "unknown"]),
+        why: z.string().optional(),
+        kept: z.boolean().optional(),
+      }),
+    )
+    .default([]),
   /** Where the data came from, as the plan's artifacts record it: one entry for each source. */
   sources: z.array(z.record(z.string(), z.unknown())).default([]),
 });
@@ -240,6 +333,10 @@ const Source = z.object({
   /** The name the plan reads the data by: `fixtures.items`. */
   as: z.string(),
   sample: z.unknown(),
+  /** The order the design means the list in (the need's order): bind.try reads the dates against it. */
+  order: z.enum(["soonest-first", "newest-first", "upcoming-then-latest", "as-is"]).optional(),
+  /** What the design is about: the data is checked to be about it (ticket 09). */
+  about: z.object({ team: z.string().optional(), competition: z.string().optional() }).optional(),
 });
 
 const State = z.object({
@@ -382,7 +479,11 @@ const NO_DATA =
 export interface Problem {
   message: string;
   src?: string;
-  keep?: true;
+  /**
+   * `true`: any keep on the node accepts it, with why. `no-picture`: only a keep that says it was
+   * settled the item has no picture of its own (`settled: "no-picture"`).
+   */
+  keep?: true | "no-picture";
 }
 
 const keepable = (src: string, message: string): Problem => ({ message, src, keep: true });
@@ -403,6 +504,8 @@ export function findingsOf(
   left: LeftAsDesigned[] = [],
   unbound: Unbound[] = [],
   unreachable: Array<string | Problem> = [],
+  /** What settles a picture the data does not give: the id field, URL-shaped fields, media facts. */
+  pictures = "",
 ): Problem[] {
   // looks by place (the rule every row but the last has) the fold keeps on its template: not lost
   const kept = new Set(
@@ -436,11 +539,31 @@ export function findingsOf(
         .map((f) => f.src),
     ),
   ]);
-  const samePicture = design ? pictureProblems(design, plan, handled) : [];
+  const bound = new Set([
+    ...(plan?.bind ?? []).map((f) => f.src),
+    ...(plan?.collapse ?? []).flatMap((c) =>
+      [...(c.fields ?? []), ...(c.variants ?? []).flatMap((v) => v.fields ?? [])].map((f) => f.src),
+    ),
+  ]);
+  const samePicture = design ? pictureProblems(design, plan, handled, pictures) : [];
+  // a label the design changes from card to card, kept as one card's: it names the wrong value
+  const labels = design
+    ? (plan?.collapse ?? []).flatMap((c) =>
+        varyingLabels(design, c.members)
+          .filter((v) => !bound.has(v.src))
+          .map((v) =>
+            keepable(
+              v.src,
+              `${v.src} says ${v.texts.map((t) => `"${t}"`).join(" or ")} from card to card in the design (what the item is decides it), and the plan draws ${c.members[0]}'s on every item of ${c.over}: a label over values that mean something else. Bind it from the item (a stats list with a label and a value for each), or keep it with why the label is the same for all`,
+            ),
+          ),
+      )
+    : [];
   const partial = design ? partProblems(design, plan) : [];
   const overflow = applied.tree ? overflowProblems(applied.tree, plan, run) : [];
   return [
     ...lost,
+    ...labels,
     ...samePicture,
     ...overflow,
     ...partial,
@@ -475,6 +598,18 @@ export function findingsOf(
       fixOnly(d.reason === "stranded" ? d.message : `not applied: ${d.message}`, d.src),
     ),
     ...structure.map((s) => fixOnly(`the tree is invalid: ${s.message}`)),
+    ...run.formats.map((f) =>
+      keepable(
+        f.src,
+        `${f.src} shows "${f.shows}" where the design writes "${f.design}": another form of it. ${f.fix}; or keep it with why it stays`,
+      ),
+    ),
+    ...run.unseen.map((u) =>
+      keepable(
+        u.src,
+        `no item of the sample draws ${u.src} (when ${u.when}), one of the shapes of ${u.template}: it was never drawn on the data${u.made ? ", so it was drawn once on an item made from the sample's shape for it and its refs were checked" : ", and no item can be made for that when from the sample's shape"}${u.missing?.length ? `. On that made item ${u.missing.join(", ")} read nothing: fields only such an item would hold, which the sample cannot show; check each path names what that shape's items carry` : ""}. Bind it as the design draws it, and keep it with why: the sample has no such item`,
+      ),
+    ),
     ...run.variants.map((v) =>
       fixOnly(
         v.drew === 0
@@ -534,7 +669,15 @@ function overflowProblems(tree: Tree, plan: Plan | undefined, run: DryRun): Prob
 }
 
 const PICTURE_FIX =
-  'Bind its src to the item\'s picture URL (CMS assets put the ratio before the id: with media.image-ratio set, write it in the template, like /media/{ratio}-{id}.jpg). When the data has none, a house fact media.<what> gives the URL from an item field ("https://…/{id}.png"): use it as a template. With no such fact, ask the person for the URL pattern; if there is none, hide it with a when, or keep it with why it stays';
+  'Bind its src to the item\'s picture URL (CMS assets put the ratio before the id: with media.image-ratio set, write it in the template, like /media/{ratio}-{id}.jpg). When the data has none, a media.<what> house fact gives the URL from an item field ("https://…/{id}.png"): use it as a template. With no such fact, settle it from the evidence or the open item picture_url (canTake: a template with {field} placeholders, loaded for two items before it binds; or that the item has no picture). When there is none, hide it with a set when, so the page shows no picture rather than the designer\'s; it is kept as designed only when it was settled that the item has no picture of its own and the design\'s is decoration (keep with settled "no-picture" and why)';
+
+/**
+ * A picture each item has its own of, left as designed: never kept silently. A picture file is
+ * kept only when it was settled that the item has none (`settled: "no-picture"`); a glyph (an
+ * Icon: a mark the design draws, a flag, a rating) may be kept with why like any other look.
+ */
+const ownPicture = (p: { icon?: true }, message: string, src: string): Problem =>
+  p.icon ? keepable(src, message) : { message, src, keep: "no-picture" };
 
 /**
  * Pictures the design gives each item its own of (a photo, a crest, a thumbnail) that the plan
@@ -542,7 +685,12 @@ const PICTURE_FIX =
  * by position keep the designer's, each the wrong one beside its data. One picture on every item
  * is decoration and never reported.
  */
-function pictureProblems(design: Tree, plan: Plan | undefined, handled: Set<string>): Problem[] {
+function pictureProblems(
+  design: Tree,
+  plan: Plan | undefined,
+  handled: Set<string>,
+  evidence: string,
+): Problem[] {
   const out: Problem[] = [];
   const named = (p: { alt: string; ratio?: string | undefined }) =>
     (p.alt ? ` "${p.alt}"` : "") + (p.ratio ? ` (box ratio ${p.ratio})` : "");
@@ -553,9 +701,10 @@ function pictureProblems(design: Tree, plan: Plan | undefined, handled: Set<stri
       const src = p.srcs[0] ?? "";
       if (handled.has(src)) continue;
       out.push(
-        keepable(
+        ownPicture(
+          p,
+          `${src} picture${named(p)} is ${p.distinct} different pictures across the design's ${p.srcs.length} items, and the plan draws ${c.members[0]}'s in every item of ${c.over}: the wrong picture on all but one. ${PICTURE_FIX} ${evidence}`.trim(),
           src,
-          `${src} picture${named(p)} is ${p.distinct} different pictures across the design's ${p.srcs.length} items, and the plan draws ${c.members[0]}'s in every item of ${c.over}: the wrong picture on all but one. ${PICTURE_FIX}`,
         ),
       );
     }
@@ -573,9 +722,10 @@ function pictureProblems(design: Tree, plan: Plan | undefined, handled: Set<stri
       });
       if (left.length === 0) continue;
       out.push(
-        keepable(
+        ownPicture(
+          p,
+          `${left.join(", ")} still show the design's picture${named(p)} beside data bound by position: the design gives each item its own (${p.distinct} different), so each is the designer's, not the item's. ${PICTURE_FIX} ${evidence}`.trim(),
           left[0] ?? "",
-          `${left.join(", ")} still show the design's picture${named(p)} beside data bound by position: the design gives each item its own (${p.distinct} different), so each is the designer's, not the item's. ${PICTURE_FIX}`,
         ),
       );
     }
@@ -608,7 +758,7 @@ function partProblems(design: Tree, plan: Plan | undefined): Problem[] {
         return [
           keepable(
             part.src,
-            `${what} is ${where}, and the plan draws it on every item of ${c.over}. Something in each item decides it: set a when on the field that does (is_captain, has_video), or keep ${part.src} with why every item shows it`,
+            `${what} is ${where}, and the plan draws it on every item of ${c.over}. Something in each item decides it: set a when on the field that does (a flag on the item), or keep ${part.src} with why every item shows it`,
           ),
         ];
       }
@@ -776,7 +926,11 @@ export function applyKeep(problems: Problem[], design: Tree, plan: Plan): Kept {
   const open = problems.filter((p) => {
     if (!p.keep || !p.src) return true;
     const src = p.src;
-    const by = valid.find((k) => k.src === src || (!wide.has(k.src) && under(src, k.src)));
+    const by = valid.find(
+      (k) =>
+        (k.src === src || (!wide.has(k.src) && under(src, k.src))) &&
+        (p.keep !== "no-picture" || k.settled === "no-picture"),
+    );
     if (!by) return true;
     accepted.set(by.src, [...(accepted.get(by.src) ?? []), p]);
     return false;
@@ -794,6 +948,22 @@ export function applyKeep(problems: Problem[], design: Tree, plan: Plan): Kept {
     return `${k.src} kept as designed: ${k.why}${took.length ? ` (accepts: ${took.map((p) => clipped(p.message)).join(" | ")})` : ""}`;
   });
   return { open, kept, notes };
+}
+
+/**
+ * The node a plan draws a source's data in: the template of its first list over it, else the first
+ * node it binds from it. A problem about the source's data is put there, so a keep can take it.
+ */
+function drawnFrom(plan: Plan, as: string): string | undefined {
+  const from = (path: string | undefined) =>
+    path !== undefined && (path === as || path.startsWith(`${as}.`));
+  const list = (plan.collapse ?? []).find((c) => from(c.over));
+  if (list?.members[0]) return list.members[0];
+  return (plan.bind ?? []).find(
+    (f) =>
+      from(f.path) ||
+      [...(f.template ?? "").matchAll(/\{([^{}|]+)/g)].some((m) => from(m[1]?.trim())),
+  )?.src;
 }
 
 /** `the-brave-squad` → `theBraveSquad`: a slot's name as the name its data is read by. */
@@ -816,7 +986,8 @@ export function createBindTools(
     /** The harness's pool: the page choices other sections write (ADR 0032). */
     pool?: Pool;
     /** What people decided about a section before (ADR 0033), read for bind.load's `before`. */
-    decisions?: Pick<MemoryReader, "decisionsOn">;
+    decisions?: Pick<MemoryReader, "decisionsOn"> &
+      Partial<Pick<MemoryReader, "activeFacts" | "decision">>;
     /**
      * What a picture's URL answers (a bare number is its status), or undefined when the site
      * cannot be reached at all.
@@ -973,8 +1144,9 @@ export function createBindTools(
       const tree = scope ? scope.view(whole) : whole;
       const all = groups(tree, byId);
       const found = all.map((g) => {
-        const line =
-          g.shapes.length === 1
+        const line = g.oneSlide
+          ? `${g.parent} is a carousel that draws one slide, ${g.members[0]}: collapse it over the list (members [${g.members[0]}]), and it repeats once for each item`
+          : g.shapes.length === 1
             ? `${g.parent} holds ${g.members.length} of one shape: ${g.members.join(", ")}`
             : `${g.parent} holds ${g.members.length}${g.component ? ` «${g.component}»` : ""} in ${g.shapes.length} shapes: ${g.shapes.map((s) => `[${s.join(", ")}]`).join(" ")}`;
         // a grid drawn as rows: the cards of every row, not only the first
@@ -985,13 +1157,56 @@ export function createBindTools(
           : line;
       });
       const { notes, content, writes, choices, signature, name } = await frameOf(ctx);
+      // what code can say of the need: the list the design repeats, how many, and what a card shows
+      const drafts = all.flatMap((g) => {
+        const d = draftNeed(tree, g, all);
+        // an order only for a dated list, read from the words of its own heading that name time
+        const dated = d?.item.some((f) => f.kind === "date" || f.kind === "time");
+        const order = dated ? orderOf(sectionWords(tree, g, all)) : undefined;
+        return d && d.item.length > 0
+          ? [
+              {
+                repeats: g.parent,
+                ...d,
+                ...(order ? { order } : {}),
+                ...(cardHolds(tree, all, g) > 0 ? { cardHolds: cardHolds(tree, all, g) } : {}),
+                // the choices this section draws: a list under tabs or a toggle may be filtered by one
+                ...(writes.length > 0
+                  ? {
+                      filterBy: writes.map((w) => ({
+                        key: w.key,
+                        options: w.options.map((o) => o.value),
+                      })),
+                    }
+                  : {}),
+              },
+            ]
+          : [];
+      });
       // the section the run works on, so what a person answers is about it (ADR 0033); a child
       // started after this (agent.hookMaker) works on it too
       if (signature) ctx.situate?.({ section: signature, ...(name ? { name } : {}) });
       const decided = await decidedBefore(opts.decisions, ctx.tenantId, signature).catch(() => []);
+      // how a person settled where the data comes from, as its value: code reads it at the end
+      const sourceBefore = signature
+        ? (
+            await opts.decisions
+              ?.decision?.(ctx.tenantId, decisionKey("data-bind", "data_source", signature))
+              .catch(() => undefined)
+          )?.value
+        : undefined;
+      // the club's feeds, kept as house facts: hook-maker builds on them before a person is asked
+      const houseFacts =
+        (await opts.decisions?.activeFacts?.(ctx.tenantId).catch(() => undefined)) ?? [];
+      const feeds = feedsOf(houseFacts);
+      const locale = localeFacts(houseFacts);
       return {
         ...(notes.length > 0 ? { designerNotes: notes, designerNotesRule: NOTES_RULE } : {}),
         ...(decided.length > 0 ? { before: decided, beforeRule: BEFORE_RULE } : {}),
+        ...(typeof sourceBefore === "string" ? { settled: { data_source: sourceBefore } } : {}),
+        ...(feeds.length > 0 ? { feeds, feedsRule: FEEDS_RULE } : {}),
+        ...(locale.timeZone || locale.dateOrder ? { locale, localeRule: LOCALE_RULE } : {}),
+        ...(drafts.length > 0 ? { draftNeed: drafts, draftNeedRule: DRAFT_NEED_RULE } : {}),
         ...(scope
           ? {
               slot: {
@@ -1017,10 +1232,19 @@ export function createBindTools(
                 "Other sections of the page write these choices. When this frame shows the items of the one chosen there (a strip under a toggle), draw only those: see links once the data is in.",
             }
           : {}),
+        ...(bag
+          ? {}
+          : {
+              open: [
+                dataSourceOpen(
+                  feeds,
+                  decided.find((d) => d.includes("data_source")),
+                ),
+              ],
+              openRule: OPEN_RULE,
+            }),
         data: bag ? shapeOf(bag).join("\n") : NO_DATA,
-        ...(bag && (choices.length || (scope && writes.length))
-          ? linked(bag, scope ? [...writes, ...choices] : choices)
-          : {}),
+        ...(bag && (choices.length || writes.length) ? linked(bag, [...writes, ...choices]) : {}),
       };
     },
   });
@@ -1043,6 +1267,18 @@ export function createBindTools(
           .describe(
             "The name the plan reads the data by: fixtures. A plain list is fixtures.items; any other shape keeps its own keys (fixtures.days). Left out when the run binds a slot: the slot's name",
           ),
+        order: z
+          .enum(["soonest-first", "newest-first", "upcoming-then-latest", "as-is"])
+          .optional()
+          .describe(
+            "The order you put in the need (bind.load's draftNeed.order): bind.try reads the dates of the list against it",
+          ),
+        about: z
+          .object({ team: z.string().optional(), competition: z.string().optional() })
+          .optional()
+          .describe(
+            "What the design is about, as the need's must says it (team, competition): where the data's items name teams or competitions, bind.try reports a list none of whose items names them. Left out, it is the club's own team (house fact club.team); say it when the design is about another team",
+          ),
       })
       .strict(),
     effect: "read",
@@ -1050,8 +1286,13 @@ export function createBindTools(
     alwaysInline: true,
     block: (_input, ctx) =>
       inputOf(ctx).data ? "This run was given its data: bind.load has it." : undefined,
-    async run({ hookId, input, as: named }, ctx) {
+    async run({ hookId, input, as: named, about: told, order }, ctx) {
       const slot = inputOf(ctx).slot;
+      // what the design is about: as the model read it from the need, else who the club is
+      const club = clubAbout(
+        (await opts.decisions?.activeFacts?.(ctx.tenantId).catch(() => undefined)) ?? [],
+      );
+      const about = told && (told.team || told.competition) ? told : club;
       const as = named ?? (slot ? camel(slot.name) : undefined);
       if (!as) throw new Error("name the data: as is the name the plan reads it by (fixtures)");
       // the data is a Cast hook's output: the registry's cast server, under the run's tenant
@@ -1066,15 +1307,31 @@ export function createBindTools(
         input: input ?? {},
         as,
         sample: output,
+        ...(about && (about.team || about.competition) ? { about } : {}),
+        ...(order ? { order } : {}),
       };
       // a source with this name is replaced; the others stay, and the plan reads them all
       const state = readState(dir, ctx.runId);
       const sources = { ...state.sources, [as]: chosen };
       writeState(dir, ctx.runId, { ...state, sources });
-      const { dsl, choices, writes, scope } = await frameOf(ctx);
+      const { dsl, choices, writes } = await frameOf(ctx);
       const bag = sourceBag(sources, dsl);
-      const follow = scope ? [...writes, ...choices] : choices;
-      return { data: shapeOf(bag).join("\n"), ...(follow.length ? linked(bag, follow) : {}) };
+      const follow = [...writes, ...choices];
+      // what code reads of whether the data is about the design's team: the run's ending reads it
+      const read = entityReading(bag[as], about);
+      return {
+        as,
+        hookId,
+        data: shapeOf(bag).join("\n"),
+        about: {
+          ...(about?.team ? { team: about.team } : {}),
+          ...(about?.competition ? { competition: about.competition } : {}),
+          reading: read.reading,
+          ...(read.why ? { why: read.why } : {}),
+          ...(read.lists.length ? { judged: read.lists } : {}),
+        },
+        ...(follow.length ? linked(bag, follow) : {}),
+      };
     },
   });
 
@@ -1156,7 +1413,15 @@ export function createBindTools(
           ? { collapse: parsed.data.collapse.map((c) => ({ ...c, shape: c.shape ?? "varies" })) }
           : {}),
       };
-      const { tree: whole, bag, dsl, byId, scope, writes } = await withData(ctx);
+      const {
+        tree: whole,
+        bag,
+        dsl,
+        byId,
+        scope,
+        writes,
+        choices: choicesKnown,
+      } = await withData(ctx);
       // keep is the plan's record of what stays as designed: the page never reads it
       const { keep: _keep, ...binding } = plan;
       const full = dsl.applyBindingPlan(whole, binding);
@@ -1174,6 +1439,7 @@ export function createBindTools(
         .check(full.tree)
         .filter((i) => !scope || !i.nodeId || scope.has(full.tree, i.nodeId));
       const run = dryRun(applied.tree, bag, dsl, tree);
+      const state0 = readState(dir, ctx.runId);
       // the first items' pictures of each node: a domain the site does not serve shows as a 404,
       // an id the site does not know as its empty stand-in, or the same picture on every item
       const broken = (
@@ -1200,9 +1466,54 @@ export function createBindTools(
         left,
         unboundCopy(applied.tree, dsl.hasRef),
         broken,
+        pictureEvidence(
+          bag,
+          ((await opts.decisions?.activeFacts?.(ctx.tenantId).catch(() => undefined)) ?? []).filter(
+            (f) => f.key?.startsWith("media."),
+          ),
+        ),
       );
-      const { open, kept, notes } = applyKeep(found, tree, plan);
-      // a slot's plan touches its own nodes, and reads the choices it owns or was told to read
+      // the data is about what the design is about: a squad of another club binds without a ref
+      // reading nothing, so only its names say so. Read only where the items name teams, and
+      // advice: the plan keeps it with why when the data is the design's after all
+      const readings = Object.values(state0.sources).map((s) => {
+        const read = entityReading(bag[s.as], s.about);
+        return { source: s, read, src: drawnFrom(binding, s.as) };
+      });
+      const entity = readings.flatMap(({ source, read, src }) =>
+        read.reading === "other" && read.why && src
+          ? [
+              keepable(
+                src,
+                `${read.why}. When it is another team's data, settle data_source (a feed about the design's team, or bind it as a stand-in); when it is the design's after all (the data writes the name another way), keep ${src} with why${source.hookId ? ` (from ${source.hookId})` : ""}`,
+              ),
+            ]
+          : [],
+      );
+      // the list comes in the order the design means (the need's order), read from the data the
+      // plan binds, its dates read as the page reads them
+      const keyOf = dateKey(dsl.readDate);
+      const inOrder = Object.values(state0.sources).flatMap((s) =>
+        orderProblems(s.order, binding as never, bag, keyOf).map((p) =>
+          p.src ? keepable(p.src, p.message) : fixOnly(p.message),
+        ),
+      );
+      // a list a choice placed with it governs is filtered by it, and each option has items: the
+      // choices this frame (or slot) draws, and for a slot the ones it was told to read
+      const told = scope ? choicesKnown.filter((c) => scope.slot.readFrom.includes(c.key)) : [];
+      const governed = choiceProblems(
+        binding as never,
+        bag,
+        writes,
+        told,
+        choicesKnown.filter((c) => !told.includes(c)),
+      ).map((p) => (p.src ? keepable(p.src, p.message) : fixOnly(p.message)));
+      const { open, kept, notes } = applyKeep(
+        [...found, ...entity, ...inOrder, ...governed],
+        tree,
+        plan,
+      );
+      const entityKept = new Set(entity.filter((p) => !open.includes(p)).map((p) => p.src));
       const outside = scope
         ? [
             ...plannedSrcs(plan)
@@ -1225,7 +1536,20 @@ export function createBindTools(
       const state = readState(dir, ctx.runId);
       writeState(dir, ctx.runId, {
         ...state,
-        tried: { plan, problems, kept, bound: applied.bound, collapsed: applied.collapsed },
+        tried: {
+          plan,
+          problems,
+          kept,
+          bound: applied.bound,
+          collapsed: applied.collapsed,
+          entity: readings.map(({ source, read, src }) => ({
+            as: source.as,
+            hookId: source.hookId,
+            reading: read.reading,
+            ...(read.why ? { why: read.why } : {}),
+            ...(src && entityKept.has(src) && read.reading === "other" ? { kept: true } : {}),
+          })),
+        },
       });
       return {
         bound: applied.bound,
@@ -1254,6 +1578,13 @@ export function createBindTools(
         .describe(
           "Only when bind.try's last plan still lists problems that can be neither fixed nor kept: why, in one sentence. A person reads it at the approval",
         ),
+      none: z
+        .string()
+        .min(10)
+        .optional()
+        .describe(
+          "Only when there is no data to bind to (no hook gave it, a person chose to leave it unbound): why, in one sentence. Nothing is bound and the design's copy stays; no plan is needed",
+        ),
     })
     .strict();
   /**
@@ -1270,8 +1601,8 @@ export function createBindTools(
     >({
       name,
       description: forSlot
-        ? "End a run that binds one slot: store the last plan bind.try applied, with the sample data, and return their ids. The frame's preview is published once by the pass, with every slot's plan. Call it with {} once bind.try said publishable; with despite only when it still lists problems that can be neither fixed nor kept."
-        : "Store the last plan bind.try applied, with the sample data, and return the preview link of the bound frame. Call it with {} once bind.try said publishable; with despite only when it still lists problems that can be neither fixed nor kept.",
+        ? "End a run that binds one slot: store the last plan bind.try applied, with the sample data, and return their ids. The frame's preview is published once by the pass, with every slot's plan. Call it with {} once bind.try said publishable; with despite only when it still lists problems that can be neither fixed nor kept; with none (and no plan) when there is no data to bind to, to leave the slot as designed."
+        : "Store the last plan bind.try applied, with the sample data, and return the preview link of the bound frame. Call it with {} once bind.try said publishable; with despite only when it still lists problems that can be neither fixed nor kept; with none (and no plan) when there is no data to bind to, to leave the frame as designed.",
       input: PublishInput,
       effect: "write",
       timeoutMs: 60_000,
@@ -1280,6 +1611,7 @@ export function createBindTools(
       advisoryBlock: true,
       // the approval shows what code measured, never the model's account of it
       resolve(input, ctx) {
+        if (input.none) return { none: input.none };
         const tried = readState(dir, ctx.runId).tried;
         return tried
           ? {
@@ -1302,7 +1634,10 @@ export function createBindTools(
         }
         if (!slot && forSlot)
           return "bind.done ends a run that binds a slot; this one binds the whole frame: call bind.publish.";
-        if (!state.tried) return "Nothing to publish. Call bind.try with a plan first.";
+        // no data to bind to: the section keeps the design's copy, and no plan is needed
+        if (resolved.none) return undefined;
+        if (!state.tried)
+          return `Nothing to publish. Call bind.try with a plan first, or, when there is no data to bind to, call ${name} with none saying why.`;
         const open = state.tried.problems;
         if (open.length === 0 || resolved.despite || state.refusals >= MAX_REFUSALS)
           return undefined;
@@ -1314,12 +1649,33 @@ export function createBindTools(
         const despite = typeof resolved.despite === "string" ? resolved.despite : undefined;
         const state = readState(dir, ctx.runId);
         if (state.published) return state.published;
+        if (typeof resolved.none === "string") {
+          // nothing is stored: the preview stays as frame-match published it
+          const left = {
+            previewUrl: inputOf(ctx).preview,
+            planArtifactId: "",
+            dataArtifactId: "",
+            bound: 0,
+            collapsed: 0,
+            problems: [],
+            kept: [],
+            sources: [],
+            readings: [],
+            none: resolved.none,
+          };
+          writeState(dir, ctx.runId, { ...state, published: left });
+          return left;
+        }
         if (!state.tried) throw new Error("nothing was tried");
         const { bag } = await withData(ctx);
         const input = inputOf(ctx);
         const { url, project } = previewOf(input.preview);
         const plane = planeOf(project);
         const chosen = Object.values(state.sources);
+        // the data's own fields say whether it is the design's team, not what a model wrote of it;
+        // a plan that kept the reading with why says the data is the design's after all
+        const readings = state.tried.entity;
+        const standIn = readings.find((r) => r.reading === "other" && !r.kept)?.why;
         const meta = {
           source: "dugout:bind",
           runId: ctx.runId,
@@ -1363,6 +1719,8 @@ export function createBindTools(
           problems: state.tried.problems,
           kept: state.tried.kept,
           sources: meta.data,
+          readings,
+          ...(standIn ? { standIn } : {}),
           ...(despite ? { despite } : {}),
         };
         writeState(dir, ctx.runId, { ...state, published });

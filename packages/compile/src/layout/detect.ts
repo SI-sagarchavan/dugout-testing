@@ -513,11 +513,11 @@ function controlsNear(
   let scope: FrameIRNode | null = container;
   for (let level = 0; scope && level <= CONTROL_SEARCH_DEPTH; level++) {
     const found: LayoutChrome = {};
-    const walk = (n: FrameIRNode) => {
+    const walk = (n: FrameIRNode, labelled = false) => {
       if (skip.has(n.id)) return;
       const b = box(n);
       // Outermost first: the 40px button, not the 20px glyph inside it.
-      if (b.w <= MAX_CONTROL_PX && b.h <= MAX_CONTROL_PX) {
+      if (!labelled && b.w <= MAX_CONTROL_PX && b.h <= MAX_CONTROL_PX) {
         const d = directionOf(n);
         if (d && !found[d]) {
           found[d] = n.id;
@@ -528,7 +528,10 @@ function controlsNear(
         found.pagination = n.id;
         return;
       }
-      for (const child of n.children ?? []) walk(child);
+      // An arrow inside a button that carries a label ("VIEW MORE →") is that button's glyph, a
+      // link to somewhere else, not a control of the row: an arrow button has no words.
+      const inLabelled = labelled || (b.h <= MAX_CONTROL_PX && textsOf(n).length > 0);
+      for (const child of n.children ?? []) walk(child, inLabelled);
     };
     walk(scope);
     if (found.prev || found.next || found.pagination) return found;

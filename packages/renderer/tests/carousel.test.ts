@@ -129,7 +129,8 @@ const cssColor = (page: Page, name: string) =>
     return c;
   }, name);
 
-const markup = (tree: FlatTree) => renderToStaticMarkup(createElement(Render, { tree, width: 600 }));
+const markup = (tree: FlatTree, extra: Record<string, unknown> = {}) =>
+  renderToStaticMarkup(createElement(Render, { tree, width: 600, ...extra } as never));
 
 describe("the spec a Carousel node becomes", () => {
   it("keeps token values as vars, for the first paint and for Swiper to read computed", () => {
@@ -243,7 +244,7 @@ const styles = readFileSync(join(ROOT, "src/styles.css"), "utf8");
 const bundle = (async () => {
   const result = await build({
     stdin: {
-      contents: `import { mountCarousel } from "./src/carousel/mount.ts"; window.fosMount = () => [...document.querySelectorAll("[data-fos-carousel]")].map(mountCarousel);`,
+      contents: `import { mountCarousel } from "./src/carousel/mount.ts"; import { gateSlides } from "./src/carousel/gate.ts"; window.fosGate = (page) => document.querySelectorAll("[data-fos-carousel]").forEach((r) => gateSlides(r, page)); window.fosMount = () => [...document.querySelectorAll("[data-fos-carousel]")].map(mountCarousel);`,
       resolveDir: ROOT,
       loader: "ts",
     },
@@ -255,11 +256,11 @@ const bundle = (async () => {
   return result.outputFiles[0]!.text;
 })();
 
-async function open(tree: FlatTree): Promise<Page> {
+async function open(tree: FlatTree, extra: Record<string, unknown> = {}): Promise<Page> {
   browser ??= await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 800, height: 400 } });
   await page.setContent(
-    `<!DOCTYPE html><html><head><style>${themeCss()}${styles} html,body{margin:0}</style></head><body>${markup(tree)}</body></html>`,
+    `<!DOCTYPE html><html><head><style>${themeCss()}${styles} html,body{margin:0}</style></head><body>${markup(tree, extra)}</body></html>`,
   );
   await page.addScriptTag({ content: await bundle });
   return page;
@@ -528,6 +529,163 @@ describe("in a browser", () => {
     const page = await open(strip({ clip: false, size: { w: raw(400) } }));
     const overflow = await page.$eval('[data-fos-type="Carousel"] > .swiper', (el) => getComputedStyle(el).overflow);
     expect(overflow).toBe("visible");
+    await page.close();
+  });
+});
+
+/** A rail of 200px cards over `table.{_page.view}`, and two tabs that write the choice. */
+const choiceRail = (): FlatTree => ({
+  schemaVersion: "1",
+  nodes: [
+    { id: "page", parent: null, idx: 0, type: "Stack", src: "1:0", props: { size: { w: raw(600) } } },
+    { id: "t1", parent: "page", idx: 0, type: "Stack", src: "1:t1", props: { select: { key: "view", value: "results" } } },
+    { id: "t2", parent: "page", idx: 1, type: "Stack", src: "1:t2", props: { select: { key: "view", value: "upcoming" } } },
+    {
+      id: "rail",
+      parent: "page",
+      idx: 2,
+      type: "Carousel",
+      src: "1:1",
+      props: { slidesPerView: "auto", gap: raw(0), speed: raw(0), loop: false, autoplay: false, size: { w: raw(600) } },
+    },
+    { id: "rep", parent: "rail", idx: 0, type: "Repeater", src: "1:r", props: { over: "table.{_page.view}", as: "row" } },
+    box("card", "rep", 0, 200, 80),
+    { id: "name", parent: "card", idx: 0, type: "Text", src: "1:n", props: { content: "{row.name}" } },
+  ],
+}) as never;
+const railData = {
+  table: {
+    results: [{ name: "Alpha" }, { name: "Bravo" }],
+    upcoming: [{ name: "Charlie" }, { name: "Delta" }, { name: "Echo" }],
+  },
+};
+
+describe("a carousel whose Repeater follows a page choice", () => {
+  const shown = (page: Page) =>
+    page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".swiper-slide")].filter((s) => s.style.display !== "none").map((s) => s.textContent));
+
+  it("draws the slides of every option, hiding those of the options the page is not at", () => {
+    const html = markup(choiceRail(), { data: railData, page: { view: "results" } });
+    for (const name of ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]) expect(html).toContain(name);
+    expect(html.match(/data-fos-gate=/g)?.length).toBeGreaterThanOrEqual(5);
+    expect(html.match(/display:none/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("switches in the browser: Swiper runs the chosen option's slides", async () => {
+    const page = await open(choiceRail(), { data: railData, page: { view: "results" } });
+    await mount(page);
+    await settle(page);
+    expect(await shown(page)).toEqual(["Alpha", "Bravo"]);
+    await page.evaluate(() => (window as unknown as { fosGate: (p: unknown) => void }).fosGate({ view: "upcoming" }));
+    await settle(page);
+    expect(await shown(page)).toEqual(["Charlie", "Delta", "Echo"]);
+    // the rail now lays out the three upcoming cards from its start, 200px each
+    const left = await page.evaluate(() => {
+      const rail = document.querySelector('[data-fos-type="Carousel"]')!.getBoundingClientRect();
+      return [...document.querySelectorAll<HTMLElement>(".swiper-slide")]
+        .filter((s) => s.style.display !== "none")
+        .map((s) => Math.round(s.getBoundingClientRect().left - rail.left));
+    });
+    expect(left).toEqual([0, 200, 400]);
+    await page.close();
+  });
+});
+
+/** The same rail over one list, each card shown while the choice is at its item's `kind`. */
+const filteredRail = (): FlatTree => {
+  const tree = choiceRail() as unknown as { nodes: Array<{ id: string; props: Record<string, unknown> }> };
+  const rep = tree.nodes.find((n) => n.id === "rep")!;
+  rep.props = { over: "rows", as: "row" };
+  tree.nodes.find((n) => n.id === "card")!.props.when = { path: "row.kind", eqPath: "_page.view" };
+  return tree as never;
+};
+const filteredData = {
+  rows: [
+    { name: "Alpha", kind: "results" },
+    { name: "Charlie", kind: "upcoming" },
+    { name: "Bravo", kind: "results" },
+    { name: "Delta", kind: "upcoming" },
+  ],
+};
+
+describe("a carousel whose items are filtered by a page choice", () => {
+  // run ca1abe01: the squad's other tab left empty slides, a gap between cards
+  it("hides a whole slide whose card the page is not at, not just the card", () => {
+    const html = markup(filteredRail(), { data: filteredData, page: { view: "results" } });
+    expect(html.match(/data-fos-gate=/g)?.length).toBe(4);
+    expect(html.match(/class="swiper-slide"[^>]*style="display:none"/g)?.length).toBe(2);
+  });
+
+  it("lays the chosen cards out from the rail's start, with no empty slides between", async () => {
+    const page = await open(filteredRail(), { data: filteredData, page: { view: "results" } });
+    await mount(page);
+    await settle(page);
+    await page.evaluate(() => (window as unknown as { fosGate: (p: unknown) => void }).fosGate({ view: "upcoming" }));
+    await settle(page);
+    const visible = await page.evaluate(() => {
+      const rail = document.querySelector('[data-fos-type="Carousel"]')!.getBoundingClientRect();
+      return [...document.querySelectorAll<HTMLElement>(".swiper-slide")]
+        .filter((s) => s.style.display !== "none")
+        .map((s) => [s.textContent, Math.round(s.getBoundingClientRect().left - rail.left)]);
+    });
+    expect(visible).toEqual([
+      ["Charlie", 0],
+      ["Delta", 200],
+    ]);
+    await page.close();
+  });
+});
+
+/** A looping rail of four cards per option, three on view, with a next arrow. */
+const loopingFilteredRail = (): FlatTree => {
+  const tree = filteredRail() as unknown as {
+    nodes: Array<{ id: string; parent: string | null; idx: number; type: string; src: string; props: Record<string, unknown> }>;
+  };
+  tree.nodes.find((n) => n.id === "rail")!.props.loop = true;
+  tree.nodes.push(box("fwd", "page", 3, 40, 40, { controlFor: { target: "rail", part: "next" } }) as never);
+  return tree as never;
+};
+const loopingData = {
+  rows: ["A", "B", "C", "D"].flatMap((x) => [
+    { name: `R${x}`, kind: "results" },
+    { name: `U${x}`, kind: "upcoming" },
+  ]),
+};
+
+describe("a looping carousel whose items are filtered by a page choice", () => {
+  // run 5c5da766: the squad rail slid onto the other tab's hidden players
+  it("slides through the chosen option's cards only, one card a step", async () => {
+    const page = await open(loopingFilteredRail(), { data: loopingData, page: { view: "results" } });
+    await mount(page);
+    await settle(page);
+    const onView = () =>
+      page.evaluate(() => {
+        const rail = document.querySelector('[data-fos-type="Carousel"]')!.getBoundingClientRect();
+        return [...document.querySelectorAll<HTMLElement>(".swiper-slide")]
+          .filter((s) => s.style.display !== "none")
+          .map((s) => ({ name: s.textContent, left: Math.round(s.getBoundingClientRect().left - rail.left) }))
+          .filter((s) => s.left >= 0 && s.left < 600)
+          .sort((a, b) => a.left - b.left)
+          .map((s) => s.name);
+      });
+    expect(await onView()).toEqual(["RA", "RB", "RC"]);
+    await page.click('[data-fos-control="next"]');
+    await settle(page);
+    await page.waitForTimeout(50);
+    expect(await onView()).toEqual(["RB", "RC", "RD"]);
+    // past the last it comes round to the first
+    await page.click('[data-fos-control="next"]');
+    await settle(page);
+    await page.waitForTimeout(50);
+    expect(await onView()).toEqual(["RC", "RD", "RA"]);
+    // the other option: its cards from the start, and still one a step
+    await page.evaluate(() => (window as unknown as { fosGate: (p: unknown) => void }).fosGate({ view: "upcoming" }));
+    await settle(page);
+    expect(await onView()).toEqual(["UA", "UB", "UC"]);
+    await page.click('[data-fos-control="next"]');
+    await settle(page);
+    await page.waitForTimeout(50);
+    expect(await onView()).toEqual(["UB", "UC", "UD"]);
     await page.close();
   });
 });
