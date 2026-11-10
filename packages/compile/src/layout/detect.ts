@@ -398,12 +398,31 @@ function collectionOf(container: FrameIRNode): FrameIRNode[] | undefined {
     const key = child.type === "INSTANCE" ? `i:${child.name}` : `s:${child.canonicalSignature}`;
     groups.set(key, [...(groups.get(key) ?? []), child]);
   }
+  // Siblings a designer named alike, drawn the same size, are one item too, even when the selected
+  // one holds a frame the others do not ("second tabs" x3, one drawn selected). Figma's own names
+  // ("Frame 123") say nothing, so only a name a person wrote counts.
+  for (const child of container.children ?? []) {
+    if (child.type === "INSTANCE" || DEFAULT_NAME.test(child.name)) continue;
+    if (isArt(child) || isRule(child) || child.layout.positioning === "absolute") continue;
+    const b = box(child);
+    if (b.w * b.h < MIN_ITEM_AREA) continue;
+    const key = `n:${child.name}`;
+    const group = groups.get(key) ?? [];
+    const first = group[0] ? box(group[0]) : b;
+    if (Math.abs(first.w - b.w) > TOL || Math.abs(first.h - b.h) > TOL) continue;
+    groups.set(key, [...group, child]);
+  }
   let best: FrameIRNode[] | undefined;
-  for (const group of groups.values()) {
-    if (group.length >= 2 && group.length > (best?.length ?? 0)) best = group;
+  for (const [key, group] of groups) {
+    // a pair named alike is a toggle's two halves, which `segmentedControl` reads as one control
+    const least = key.startsWith("n:") ? 3 : 2;
+    if (group.length >= least && group.length > (best?.length ?? 0)) best = group;
   }
   return best;
 }
+
+/** A name Figma gave a layer, not a person: it says nothing about what the layer is. */
+const DEFAULT_NAME = /^(Frame|Group|Rectangle|Vector|Line|Ellipse|Polygon|Star|Image|Component|Instance)( \d+)*$/i;
 
 type Arrangement = { kind: "row" } | { kind: "column" } | { kind: "grid"; columns: number; rows: number };
 

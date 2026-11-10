@@ -185,6 +185,19 @@ const RawReading = z.object({
 });
 type RawLayout = z.infer<typeof RawLayout>;
 
+/** The value with every null left out, at any depth. */
+function withoutNulls(value: unknown): unknown {
+  if (Array.isArray(value)) return value.filter((v) => v !== null).map(withoutNulls);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, v]) => v !== null)
+        .map(([k, v]) => [k, withoutNulls(v)]),
+    );
+  }
+  return value;
+}
+
 /** The first JSON object of a reply; undefined when there is none the reading can use. */
 export function parseReading(
   text: string,
@@ -198,10 +211,11 @@ export function parseReading(
   } catch {
     return undefined;
   }
-  const parsed = RawReading.safeParse(json);
+  // a model writes null for what it leaves out: read it as left out
+  const parsed = RawReading.safeParse(withoutNulls(json));
   if (!parsed.success) return undefined;
   const layouts = parsed.data.layouts.flatMap((l) => {
-    const one = RawLayout.safeParse(l);
+    const one = RawLayout.safeParse(withoutNulls(l));
     return one.success ? [one.data] : [];
   });
   return { ...parsed.data, layouts };
@@ -224,7 +238,7 @@ export interface Reading {
   groups: string[][];
 }
 
-interface Ir {
+export interface Ir {
   byId: Map<string, IrNode>;
   parents: Map<string, string | null>;
 }
@@ -320,7 +334,6 @@ export function checkReading(
 
   for (const l of raw.layouts) {
     const chrome = controlsOf(l, idOf, ir, dropped);
-    const sure = l.sure;
     if (
       l.kind === "carousel" &&
       l.slide &&
@@ -354,7 +367,7 @@ export function checkReading(
         ...(Object.keys(chrome).length > 0 ? { chrome } : {}),
       };
       layouts.push(
-        intentOf(lifted.container, ir, "carousel", sure, backed, evidence, choice, chrome, {
+        intentOf(lifted.container, ir, "carousel", l.sure, backed, evidence, choice, chrome, {
           slide: members,
           ask: carouselAsk(raw.unsure),
         }),
@@ -376,20 +389,44 @@ export function checkReading(
     // a container of items: the items are siblings
     const items = ids(l.items);
     const lifted = items.length > 0 ? liftToSiblings(ir, items) : undefined;
-    const container =
+    const named =
       lifted && lifted.members.length === items.length ? lifted.container : idOf(l.container);
-    if (!container || !ir.byId.has(container)) {
+    if (!named || !ir.byId.has(named)) {
       dropped.push(`a ${l.kind}: no container the IR has`);
       continue;
     }
+    // the eyes say what, the IR says where: a carousel or tabs read on a whole strip whose items
+    // the IR cannot name is the one the IR finds inside it (the cards' row, not the band around it)
+    const backedHere =
+      (lifted?.container === named && lifted.members.length >= 2) ||
+      detected.some((d) => d.src === named);
+    const inner = backedHere
+      ? undefined
+      : detected.find(
+          (d) =>
+            d.kind === l.kind &&
+            d.confidence === "certain" &&
+            d.src !== named &&
+            lineage(ir, d.src).includes(named),
+        );
+    const container = inner?.src ?? named;
+    if (inner)
+      dropped.push(`the ${l.kind} read on "${nameOf(ir, named)}" is "${inner.name}" inside it`);
     const members =
       lifted && lifted.container === container ? inOrder(ir, container, lifted.members) : [];
     const twin = detected.find((d) => d.src === container);
+    // the eyes lean one way and the IR shows it (a card cut off by the edge, designed arrows): two
+    // signals that do not share a mistake agree, and that is enough to apply it
+    const agreed = twin?.kind === l.kind && twin.confidence === "certain" && l.sure >= 0.5;
+    const sure = agreed ? Math.max(l.sure, SURE) : l.sure;
     const evidence = [
       ...(members.length > 0 ? [`${members.length} items in "${nameOf(ir, container)}"`] : []),
       ...controlEvidence(chrome, ir),
       ...said(l),
       ...(twin ? twin.evidence.map((e) => `the IR: ${e}`) : []),
+      ...(agreed && l.sure < SURE
+        ? [`the reading leaned ${l.kind} (${l.sure}) and the IR shows it`]
+        : []),
     ];
 
     if (l.kind === "carousel") {
@@ -461,9 +498,30 @@ export function checkReading(
       );
       continue;
     }
+    const xs = new Set(members.map((m) => Math.round(boxOf(ir, m)?.x ?? 0)));
+    const ys = new Set(members.map((m) => Math.round(boxOf(ir, m)?.y ?? 0)));
+    // a grid the IR lays out on one line is that line: one row is a row, one column a list
+    if (l.kind === "grid" && members.length >= 2 && (ys.size === 1 || xs.size === 1)) {
+      const kind = ys.size === 1 ? ("row" as const) : ("list" as const);
+      layouts.push(
+        intentOf(
+          container,
+          ir,
+          kind,
+          sure,
+          true,
+          [
+            ...evidence,
+            `read as a grid, and the IR lays its items on one ${kind === "row" ? "row" : "column"}`,
+          ],
+          { src: container, kind },
+          {},
+          { items: members, ask: [] },
+        ),
+      );
+      continue;
+    }
     if (l.kind === "grid") {
-      const xs = new Set(members.map((m) => Math.round(boxOf(ir, m)?.x ?? 0)));
-      const ys = new Set(members.map((m) => Math.round(boxOf(ir, m)?.y ?? 0)));
       const choice: LayoutChoice = {
         src: container,
         kind: "grid",
@@ -498,6 +556,14 @@ export function checkReading(
         { items: members, ask: [] },
       ),
     );
+  }
+
+  // what the IR shows repeating that the reading left out: a list or a grid is drawn as it is, and
+  // is evidence that the section shows data
+  for (const d of detected) {
+    if (d.kind !== "list" && d.kind !== "grid") continue;
+    if (layouts.some((l) => l.src === d.src)) continue;
+    layouts.push({ ...d, evidence: d.evidence.map((e) => `the IR: ${e}`) });
   }
 
   // what the IR is sure moves (a card cut off, designed arrows, dots) and the reading left out
@@ -667,14 +733,6 @@ export async function readFrame(opts: {
   signal?: AbortSignal;
 }): Promise<Reading> {
   const { tools, bundle } = opts;
-  const outline = outlineOf(bundle.doc);
-  const png = tools.png.write(designPicture(tools, bundle));
-  const reply = await opts.read(png, readPrompt(outline), opts.signal);
-  const raw = parseReading(reply);
-  if (!raw)
-    throw new Error(
-      `the vision model's reading was not the JSON asked for: ${reply.slice(0, 200)}`,
-    );
   const detected = (() => {
     try {
       return tools.detectLayout(bundle.doc);
@@ -682,7 +740,34 @@ export async function readFrame(opts: {
       return [];
     }
   })();
-  return checkReading(raw, outline, { byId: bundle.byId, parents: bundle.parents }, detected);
+  return readPicture({
+    png: tools.png.write(designPicture(tools, bundle)),
+    doc: bundle.doc,
+    ir: { byId: bundle.byId, parents: bundle.parents },
+    detected,
+    read: opts.read,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
+}
+
+/** Reads a design picture of `doc`: what `readFrame` does once it has the picture. */
+export async function readPicture(opts: {
+  png: Buffer;
+  doc: { root: IrNode };
+  ir: Ir;
+  detected?: LayoutIntent[];
+  read: Read;
+  signal?: AbortSignal;
+}): Promise<Reading> {
+  const outline = outlineOf(opts.doc);
+  const reply = await opts.read(opts.png, readPrompt(outline), opts.signal);
+  const raw = parseReading(reply);
+  if (!raw) {
+    throw new Error(
+      `the vision model's reading was not the JSON asked for: ${reply.slice(0, 200)}`,
+    );
+  }
+  return checkReading(raw, outline, opts.ir, opts.detected ?? []);
 }
 
 /**

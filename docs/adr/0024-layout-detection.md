@@ -53,4 +53,12 @@ The pipeline serves one DSL per device: the host's page URL asks for desktop, ta
 - **The slot finder takes the reading's groups**: a slide's layers are one slot and never background, so the story's photo is bound with its words.
 - **When the frame cannot be read** (the model is down or answers no usable JSON) the run goes on: what the IR shows is put to the agent, every carousel and tabs as an open `kind`, nothing applied unasked.
 
-**Consequences.** One vision call per Handoff (a few cents on Sonnet). Runs are less deterministic: `pnpm eval layout` still checks the detector, and a reading eval against `evals/layouts.ts` (with the Showcase frame added, IR in `evals/sections/showcase.ir.json`) is still to be written before the detector's weights are deleted.
+**Consequences.** One vision call per Handoff (a few cents on Sonnet). Runs are less deterministic, so `pnpm eval read` scores the reading against `evals/layouts.ts` (Showcase added, its IR and design picture in `evals/sections/`) and `--repeat` counts a label right only when every read gets it. Its first run was 6 of 13; what it showed is now code:
+
+- the eyes leaning one way (0.5 or more) and the IR certain of the same kind on the same container apply it: two signals that do not share a mistake agree;
+- a carousel or tabs read on a band whose items the IR cannot name is the IR's container of that kind inside it (the eyes say what, the IR says where);
+- a grid the IR lays on one line is a row (or a list);
+- the IR's lists and grids the reading did not name are kept as evidence that the section shows data;
+- a model's `null` is read as left out.
+
+With those, 13 of 13 on every one of three reads (Sonnet). `pnpm eval layout` still scores the detector (12 of 12): it now also groups three or more siblings a person named alike and drew the same size (ho-spider's graph switch), and three toggles the old labels left out are labelled.

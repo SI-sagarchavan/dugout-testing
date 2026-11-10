@@ -660,3 +660,26 @@ describe("a carousel that draws one slide", () => {
     expect(counterFormat("Slide")).toBe("{index} / {count}");
   });
 });
+
+describe("tabs a designer named alike", () => {
+  it("are one control when the selected one is built differently", () => {
+    // ho-spider's SPIDER / MANHATTAN / WORM: three "second tabs", the last holding another frame
+    const tab = (x: number, label: string, sig: string, fill: string) =>
+      n({ name: "second tabs", at: [x, 0, 282, 52], sig, children: [n({ at: [x, 20, 60, 10], text: label, fill })] });
+    const bar = n({
+      name: "Frame 1321315380",
+      at: [0, 0, 886, 52],
+      mode: "horizontal",
+      children: [tab(0, "SPIDER", "t", "text/main/prim"), tab(302, "MANHATTAN", "t", "text/main/high"), tab(604, "WORM", "w", "text/main/high")],
+    });
+    const [intent] = detectLayout(doc(bar), { kinds: ["tabs"] });
+    expect(intent?.items).toHaveLength(3);
+    expect(intent?.choice).toMatchObject({ kind: "tabs", config: { options: ["SPIDER", "MANHATTAN", "WORM"], active: 0 } });
+  });
+
+  it("are not grouped by a name Figma gave them", () => {
+    const box = (x: number, sig: string) => n({ name: "Frame 12", at: [x, 0, 282, 52], sig, children: [n({ at: [x, 0, 50, 10], text: "A" })] });
+    const row = n({ name: "row", at: [0, 0, 900, 52], mode: "horizontal", children: [box(0, "a"), box(300, "b"), box(600, "c")] });
+    expect(detectLayout(doc(row)).find((i) => i.src === row.id)).toBeUndefined();
+  });
+});

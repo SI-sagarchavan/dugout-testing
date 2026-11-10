@@ -208,3 +208,111 @@ describe("when the frame is not read", () => {
     expect(reading.layouts[0]?.ask).toEqual(['Is "Rail" a carousel?']);
   });
 });
+
+describe("a reading on the band around a carousel", () => {
+  const node = (
+    id: string,
+    name: string,
+    box: [number, number, number, number],
+    children: IrNode[] = [],
+  ) =>
+    ({
+      id,
+      name,
+      type: "FRAME",
+      geometry: { bbox: { x: box[0], y: box[1], w: box[2], h: box[3] } },
+      children,
+    }) as IrNode;
+  const cards = Array.from({ length: 5 }, (_, i) => node(`c${i}`, "card", [i * 300, 40, 281, 260]));
+  const row = node("row", "cards", [0, 40, 1366, 260], cards);
+  const strip = node("strip", "Group 1321315017", [0, 0, 1366, 312], [row]);
+  const root = node("root", "Team", [0, 0, 1366, 312], [strip, node("pad", "pad", [0, 0, 10, 10])]);
+  const byId = new Map<string, IrNode>();
+  const parents = new Map<string, string | null>();
+  const walk = (n: IrNode, p: string | null) => {
+    byId.set(n.id, n);
+    parents.set(n.id, p);
+    for (const c of n.children ?? []) walk(c, n.id);
+  };
+  walk(root, null);
+  const stripOutline = outlineOf({ root });
+  const stripHandle = [...stripOutline.ids].find(([, id]) => id === "strip")?.[0] as string;
+
+  const detected = [
+    {
+      src: "row",
+      name: "cards",
+      kind: "carousel" as const,
+      confidence: "certain" as const,
+      items: cards.map((c) => c.id),
+      evidence: ["a card cut off by the edge"],
+      ask: [],
+      choice: {
+        src: "row",
+        kind: "carousel" as const,
+        config: {
+          slidesPerView: "auto" as const,
+          slidesPerGroup: 1,
+          centered: true,
+          initialSlide: 2,
+          loop: false,
+          autoplay: false as const,
+        },
+      },
+      chrome: {},
+    },
+  ];
+
+  it("is the carousel the IR finds inside the band, applied when the two agree", () => {
+    const raw = parsed(
+      JSON.stringify({ layouts: [{ kind: "carousel", container: stripHandle, sure: 0.5 }] }),
+    );
+    const reading = checkReading(raw, stripOutline, { byId, parents }, detected);
+    const carousel = reading.layouts.find((l) => l.choice.kind === "carousel");
+    expect(carousel).toMatchObject({ src: "row", confidence: "certain" });
+    // what the IR measures stays: centred on the third card
+    expect(carousel?.choice).toMatchObject({ config: { centered: true, initialSlide: 2 } });
+    expect(reading.layouts.filter((l) => l.src === "row")).toHaveLength(1);
+  });
+
+  it("is the same when the reading names the cards' row as its one item", () => {
+    const rowHandle = [...stripOutline.ids].find(([, id]) => id === "row")?.[0] as string;
+    const raw = parsed(
+      JSON.stringify({ layouts: [{ kind: "carousel", items: [rowHandle], sure: 0.7 }] }),
+    );
+    const reading = checkReading(raw, stripOutline, { byId, parents }, detected);
+    expect(reading.layouts.find((l) => l.choice.kind === "carousel")).toMatchObject({
+      src: "row",
+      confidence: "certain",
+    });
+  });
+});
+
+describe("a grid on one line", () => {
+  it("is a row when the IR lays its items in one row", () => {
+    const raw = parsed(
+      JSON.stringify({
+        layouts: [
+          {
+            kind: "grid",
+            items: [handle("Frame 1984079083"), handle("Frame 1984079037")],
+            sure: 0.9,
+          },
+        ],
+      }),
+    );
+    // two layers stacked in the match card: one column, so a list
+    const reading = checkReading(raw, outline, ir);
+    expect(reading.layouts[0]?.choice.kind).toBe("list");
+  });
+});
+
+describe("a reply with nulls", () => {
+  it("reads null as left out, not as a layout to throw away", () => {
+    const raw = parseReading(
+      '{"experience":"x","layouts":[{"kind":"carousel","container":null,"items":null,"slide":["h1"],"controls":{"prev":"h9","next":null,"pagination":null},"selected":null,"sure":0.9}],"unsure":null}',
+    );
+    expect(raw?.layouts).toHaveLength(1);
+    expect(raw?.layouts[0]?.controls).toEqual({ prev: "h9" });
+  });
+});

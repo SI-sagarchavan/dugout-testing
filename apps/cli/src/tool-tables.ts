@@ -27,4 +27,5 @@ export const EVAL_TOOLS: ToolTable = {
   layout: "agents/frame-match/scripts/layout-eval.ts",
   sections: "agents/frame-match/scripts/sections-eval.ts",
   binding: "agents/frame-match/scripts/binding-experiment.ts",
+  read: "agents/frame-match/scripts/read-eval.ts",
 };

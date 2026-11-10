@@ -21,7 +21,14 @@ export interface LayoutLabel {
   kind: LayoutKind;
   confidence?: Confidence;
   /** Designed controls detection must wire. */
-  chrome?: Array<"prev" | "next" | "pagination">;
+  chrome?: Array<"prev" | "next" | "pagination" | "counter" | "progress">;
+  /**
+   * A carousel that draws only the slide on show: layers that must be in its slide (`src` is the
+   * container they sit in). Scored by `pnpm eval read`; the IR detector cannot see one.
+   */
+  slide?: string[];
+  /** Layers that must NOT be in the slide: what is pinned over it. */
+  notSlide?: string[];
   /** For a carousel: centred on the slide drawn in the middle. */
   centered?: boolean;
 }
@@ -36,6 +43,11 @@ export const LAYOUT_LABELS: Record<string, LayoutLabel[]> = {
     },
   ],
   "team-page": [
+    {
+      src: "35:10515",
+      what: "the squad's WOMEN / MEN toggle, MEN selected",
+      kind: "tabs",
+    },
     {
       src: "35:10529",
       what: "player cards running off the page edge, with a back/next pair under them",
@@ -89,16 +101,56 @@ export const LAYOUT_LABELS: Record<string, LayoutLabel[]> = {
       kind: "tabs",
       confidence: "certain",
     },
+    {
+      src: "294:14097",
+      what: "the graphs' SPIDER / MANHATTAN / WORM switch, one selected",
+      kind: "tabs",
+    },
   ],
   "news-later": [],
   "video-card": [],
   "player-card": [],
   "match-centre": [],
   "ho-header": [],
-  "ho-frame-101626": [],
+  "ho-frame-101626": [
+    {
+      src: "294:14115",
+      what: "a toggle between the two teams, one selected",
+      kind: "tabs",
+    },
+  ],
   "ho-standings": [],
   "ho-frame-1984079082": [],
   "ho-merchandise": [],
   "ho-tickets": [],
   "ho-live": [],
+};
+
+/**
+ * Frames that are not stored exports: their IR and design picture are kept in `evals/sections/`.
+ * Scored by `pnpm eval read` only.
+ */
+export const LOCAL_FRAMES: Array<{ id: string; ir: string; design: string }> = [
+  {
+    // Southern Brave's hero (Handoff 9498f86c): one story drawn, two arrows, "01", a bar, a pinned match card
+    id: "showcase",
+    ir: "sections/showcase.ir.json",
+    design: "sections/showcase.design.png",
+  },
+];
+
+export const LOCAL_LABELS: Record<string, LayoutLabel[]> = {
+  showcase: [
+    {
+      src: "542:10713",
+      what: "a hero carousel of stories that draws only the one on show",
+      kind: "carousel",
+      confidence: "certain",
+      chrome: ["prev", "next", "counter"],
+      // the photo and the words move with the story
+      slide: ["I542:10713;13020:17582", "I542:10713;13020:17586"],
+      // the match card stays pinned
+      notSlide: ["I542:10713;13744:55540"],
+    },
+  ],
 };
