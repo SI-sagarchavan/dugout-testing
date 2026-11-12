@@ -100,14 +100,27 @@
             "some",
             "unsure"
           ],
-          "description": "none: nothing on it is data, so nothing is bound; some: it shows data; unsure: the signs do not say"
+          "description": "none: nothing on it is data, so nothing is bound; some: it shows data; unsure: not settled (a proposal from the signs alone)"
         },
         "evidence": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "What says so, each one sign"
+          "description": "What says so: the agent's why first, then each sign"
+        },
+        "why": {
+          "description": "Why the agent settled it so",
+          "type": "string"
+        },
+        "by": {
+          "description": "Who settled it; absent while it is only the signs' proposal",
+          "type": "string",
+          "enum": [
+            "person",
+            "memory",
+            "agent"
+          ]
         }
       },
       "required": [
@@ -188,14 +201,27 @@
                   "some",
                   "unsure"
                 ],
-                "description": "none: nothing on it is data, so nothing is bound; some: it shows data; unsure: the signs do not say"
+                "description": "none: nothing on it is data, so nothing is bound; some: it shows data; unsure: not settled (a proposal from the signs alone)"
               },
               "evidence": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
-                "description": "What says so, each one sign"
+                "description": "What says so: the agent's why first, then each sign"
+              },
+              "why": {
+                "description": "Why the agent settled it so",
+                "type": "string"
+              },
+              "by": {
+                "description": "Who settled it; absent while it is only the signs' proposal",
+                "type": "string",
+                "enum": [
+                  "person",
+                  "memory",
+                  "agent"
+                ]
               }
             },
             "required": [

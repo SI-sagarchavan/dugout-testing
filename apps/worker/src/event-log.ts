@@ -5,7 +5,7 @@ import type { Valkey } from "iovalkey";
 export const LOCAL_VALKEY_URL = "redis://localhost:56379";
 /** Live streams are kept this long after a run ends; Postgres has the permanent record. */
 const RETAIN_SECONDS = 7 * 24 * 3600;
-/** About this many events stay on a tenant's feed, tokens included. */
+/** About this many events stay on a tenant's feed. Streamed fragments are not among them. */
 const FEED_MAX_ENTRIES = 20_000;
 
 /** A run ended: the stream's own, or, for an event with `child`, that child. */
@@ -47,10 +47,13 @@ export function createValkeyEventLog(valkey: Valkey, opts: { keyPrefix?: string 
     /**
      * A copy of each event on the tenant's one feed, so a client follows all its runs over a
      * single connection (`GET /surface/stream`). The feed is a window, not a record: the run's
-     * own stream and Postgres hold the history. Never fails a run.
+     * own stream and Postgres hold the history. Streamed fragments stay off it: they are about
+     * half of a run's events and would halve the window for every open tab, and a screen that
+     * shows a run reads them from the run's own stream (sse-hardening 12). Never fails a run.
      */
     feedSink: (tenantId: string): EventSink => ({
       async write(event) {
+        if (LIVE_ONLY.has(event.type)) return;
         try {
           await valkey.xadd(
             feedKey(tenantId),

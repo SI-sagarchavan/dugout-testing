@@ -6,6 +6,7 @@ import {
   defineTool,
   type ModelClient,
   type ModelRequest,
+  memoryRunState,
   NeedsSetup,
   type RunCheckpoint,
   type RunContext,
@@ -33,10 +34,13 @@ import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { z } from "zod";
 import {
   type AnyAgent,
+  agentTool,
   agentToolName,
+  askedOf,
   childCaller,
   childRunId,
   defineAgent,
+  defineWorkflow,
   inputKey,
   MAX_WRITING_TRIES,
 } from "../src/index.ts";
@@ -127,8 +131,10 @@ const researcher = (
 const lead = (
   child: AnyAgent,
   budget: { usdPerRun?: number; maxDepth?: number; maxSteps?: number } = {},
+  approval?: "once" | "none",
 ) =>
   defineAgent({
+    ...(approval ? { approval } : {}),
     spec: {
       id: "lead",
       version: 1,
@@ -341,7 +347,10 @@ describe("subagents (ADR 0025)", () => {
     });
     const first = client.requests.find((r) => String(r.messages[0]?.content).startsWith(CHILD));
     expect(first?.messages).toHaveLength(2);
-    expect(first?.messages[1]?.content).toBe(JSON.stringify({ question: "When is the opener?" }));
+    // the date, then its own input, and nothing else
+    expect(first?.messages[1]?.content).toMatch(
+      /^Today is \d{4}-\d{2}-\d{2} \(UTC\)\.\n\n\{"question":"When is the opener\?"\}$/,
+    );
     expect(JSON.stringify(first?.messages)).not.toContain('the opener"}');
     // the parent's model is offered the child as a tool, the child's description and input
     const offered = client.requests[0]?.tools.find((t) => t.name === "agent.researcher");
@@ -492,6 +501,8 @@ describe("subagents (ADR 0025)", () => {
       ],
       allowOther: false,
       proposed: ["by_day"],
+      remember: "no" as const,
+      fact: "",
     };
     const tree = () => lead(researcher({ agents: [researcher()], maxDepth: 2 }), { maxDepth: 2 });
     const first = await tree().create(
@@ -702,6 +713,33 @@ describe("subagents (ADR 0025)", () => {
         "the call that started this run (parent-w call_1_0) (auto)",
       ],
     ]);
+  });
+
+  it("calls a child that writes without asking when the parent's approval is none, its writes going through too", async () => {
+    const client = routed({
+      [PARENT]: [
+        { toolCalls: [{ name: "agent.researcher", arguments: { question: "Save it" } }] },
+        { toolCalls: [{ name: "final", arguments: { summary: "saved" } }] },
+      ],
+      [CHILD]: [
+        { toolCalls: [{ name: "facts.save", arguments: {} }] },
+        { toolCalls: [{ name: "final", arguments: { answer: "saved" } }] },
+      ],
+    });
+    const sink = createMemorySink();
+    const result = await lead(researcher({ write: true }), {}, "none").create(deps(client))({
+      tenantId: "club-a",
+      input: { topic: "t" },
+      responder: never,
+      runId: "parent-none",
+      sinks: [sink],
+    });
+    expect(result).toMatchObject({ status: "completed", output: { summary: "saved" } });
+    const granted = sink.events.filter(
+      (e): e is Extract<RunEvent, { type: "question.answered" }> => e.type === "question.answered",
+    );
+    // nobody was asked about the call; the child's own write went through under it
+    expect(granted.map((e) => [e.data.tool, e.data.source])).toEqual([["facts.save", "auto"]]);
   });
 
   it("treats a child as writing when a capability, not its spec, gives it the write tool (ADR 0026)", async () => {
@@ -1040,11 +1078,25 @@ describe("subagents (ADR 0025)", () => {
     runId,
     callId,
     signal: new AbortController().signal,
+    state: memoryRunState(),
     depth: 0,
     usdLeft: 1,
   });
   const childTurns = (client: { requests: ModelRequest[] }) =>
     client.requests.filter((r) => String(r.messages[0]?.content).startsWith(CHILD));
+
+  it("keeps what the run asked the child, and its answer, in the run's state", async () => {
+    const client = routed({
+      [PARENT]: [],
+      [CHILD]: [{ toolCalls: [{ name: "final", arguments: { answer: "a" } }] }],
+    });
+    const tool = agentTool(callerOf(client, createMemoryRunStore()));
+    const ctx = callCtx("parent-asked", "call_1_0");
+    await tool.run({ question: "A" }, ctx as never);
+    expect(askedOf(ctx.state, "researcher")).toEqual([
+      { input: { question: "A" }, output: { answer: "a" } },
+    ]);
+  });
 
   it("takes up a try that never ended only for the same input: another input is a new try", async () => {
     const runs = createMemoryRunStore();
@@ -1078,7 +1130,7 @@ describe("subagents (ADR 0025)", () => {
       output: { answer: "b" },
     });
     // B's child was asked B, from the start
-    expect(childTurns(client)[1]?.messages[1]?.content).toBe(JSON.stringify({ question: "B" }));
+    expect(childTurns(client)[1]?.messages[1]?.content).toMatch(/\n\n\{"question":"B"\}$/);
     // A's try is still A's: not ended, its hash A's, and B's output is not saved under it
     const a = await runs.load({ runId: firstTry, tenantId: "club-a" });
     expect(a?.checkpoint.ended).toBeUndefined();
@@ -1383,18 +1435,13 @@ describe("subagents (ADR 0025)", () => {
     ).toHaveLength(1);
   });
 
-  describe("a pipeline: agents run in a fixed order, in code", () => {
+  describe("a workflow: agents run in a fixed order, in code", () => {
     const stage = (id: string, prefix: string, write: boolean) =>
       defineAgent({
         spec: {
           id,
-          version: 1,
-          owner: "test",
           description: `Stage ${id}.`,
           instructions: prefix,
-          tools: write ? ["facts.save"] : [],
-          skills: [],
-          onDemandSkills: [],
           model: "nova-lite",
           memory: { read: [], write: [] },
           budget: { usdPerRun: 0.5, maxSteps: 4, maxDepth: 0 },
@@ -1402,20 +1449,18 @@ describe("subagents (ADR 0025)", () => {
         },
         input: z.object({ question: z.string() }),
         output: z.object({ answer: z.string() }),
-        dir,
-        tools: () =>
-          write
-            ? [
-                defineTool({
-                  name: "facts.save",
-                  description: "Saves a fact.",
-                  input: z.object({}),
-                  effect: "write",
-                  timeoutMs: 1_000,
-                  run: async () => ({ saved: true }),
-                }),
-              ]
-            : [],
+        tools: write
+          ? [
+              defineTool({
+                name: "facts.save",
+                description: "Saves a fact.",
+                input: z.object({}),
+                effect: "write",
+                timeoutMs: 1_000,
+                run: async () => ({ saved: true }),
+              }),
+            ]
+          : [],
       });
     const ONE = "You are stage one.";
     const TWO = "You are stage two.";
@@ -1423,47 +1468,31 @@ describe("subagents (ADR 0025)", () => {
       toolCalls: [{ name: "final", arguments: { wrong: true } }],
     }));
 
-    /** Built in the test, once `dir` exists. */
-    const build = () => {
+    const build = (tries?: number) => {
       const one = stage("stage-one", ONE, true);
       const two = stage("stage-two", TWO, true);
-      return defineAgent({
-        spec: {
-          id: "piped",
-          version: 1,
-          owner: "test",
-          instructions: PARENT,
-          tools: [],
-          skills: [],
-          onDemandSkills: [],
-          model: "nova-lite",
-          memory: { read: [], write: [] },
-          budget: { usdPerRun: 1, maxSteps: 6, maxDepth: 1 },
-          approvals: [],
-        },
+      return defineWorkflow({
+        id: "piped",
+        description: "Runs stage one, then stage two on its answer.",
         input: z.object({ topic: z.string() }),
-        output: z.object({ summary: z.string() }),
-        agents: [one, two],
-        pipeline: {
-          name: "page.build",
-          description: "Runs stage one, then stage two on its answer.",
-          async run(call, input) {
-            const { topic } = input as { topic: string };
-            const a = (await call(one, { question: topic })) as { answer: string };
-            const b = (await call(two, { question: `after ${a.answer}` })) as { answer: string };
-            return { first: a.answer, second: b.answer };
-          },
+        output: z.object({ first: z.string(), second: z.string() }),
+        steps: [one, two],
+        tool: "page.build",
+        async run(ctx, { topic }) {
+          const a = (await ctx.run(one, { question: topic })) as { answer: string };
+          const b = (await ctx.run(
+            two,
+            { question: `after ${a.answer}` },
+            tries ? { tries } : {},
+          )) as { answer: string };
+          return { first: a.answer, second: b.answer };
         },
-        dir,
-        tools: () => [],
       });
     };
     const ok = (answer: string) => ({ toolCalls: [{ name: "final", arguments: { answer } }] });
-    const callBuild = { toolCalls: [{ name: "page.build", arguments: {} }] };
 
     it("runs the stages in code, in order, as one tool a person approves once", async () => {
       const client = routed({
-        [PARENT]: [callBuild, { toolCalls: [{ name: "final", arguments: { summary: "done" } }] }],
         [ONE]: [{ toolCalls: [{ name: "facts.save", arguments: {} }] }, ok("saved")],
         [TWO]: [ok("checked")],
       });
@@ -1478,58 +1507,74 @@ describe("subagents (ADR 0025)", () => {
         runId: "parent-pipe",
         store: createMemoryRunStore(),
       });
-      expect(result).toMatchObject({ status: "completed", output: { summary: "done" } });
+      expect(result).toMatchObject({
+        status: "completed",
+        output: { first: "saved", second: "checked" },
+      });
       // one approval for the whole sequence, and the first stage's own write rode under it
       expect(asked).toEqual(["page.build"]);
       // stage two was given what stage one answered
       const second = client.requests.find((r) => String(r.messages[0]?.content).startsWith(TWO));
       expect(JSON.stringify(second?.messages[1]?.content)).toContain("after saved");
-      // the model is offered the one tool, never a stage on its own
-      const offered = client.requests[0]?.tools.map((t) => t.name);
-      expect(offered).toContain("page.build");
-      expect(offered).not.toContain("agent.stageOne");
-      expect(offered).not.toContain("agent.stageTwo");
+      // no model took a turn for the workflow itself: every call was a stage's
+      expect(client.requests).toHaveLength(3);
     });
 
     it("keeps a stage that completed when a later one fails, and tries only the failed one again", async () => {
       const client = routed({
-        [PARENT]: [
-          callBuild,
-          callBuild,
-          { toolCalls: [{ name: "final", arguments: { summary: "done" } }] },
-        ],
         [ONE]: [{ toolCalls: [{ name: "facts.save", arguments: {} }] }, ok("saved")],
         [TWO]: [...FAILS2, ok("checked")],
       });
-      const asked: Array<{ tool: string; input: unknown }> = [];
-      const result = await build().create(deps(client))({
+      const asked: string[] = [];
+      const sink = createMemorySink();
+      const result = await build(2).create(deps(client))({
         tenantId: "club-a",
         input: { topic: "t" },
         responder: async (req) => {
-          asked.push({ tool: req.tool, input: req.input });
+          asked.push(req.tool);
           return approve("editor");
         },
         runId: "parent-pipe-retry",
         store: createMemoryRunStore(),
+        sinks: [sink],
       });
-      expect(result).toMatchObject({ status: "completed", output: { summary: "done" } });
-      expect(asked).toHaveLength(2);
-      expect(asked[0]?.input).toEqual({});
-      // the repeat says which stage failed and what it failed on
-      expect(asked[1]?.input).toMatchObject({
-        retry: { stage: "stage-two", attempt: 2, of: 3, lastFailure: expect.any(String) },
-      });
-      // stage one ran once: the second call found it done
+      expect(result).toMatchObject({ status: "completed", output: { second: "checked" } });
+      // the one yes covers the try again: code tries it, nobody is asked twice
+      expect(asked).toEqual(["page.build"]);
+      // stage one ran once; stage two's second try is a run of its own
       const oneTurns = client.requests.filter((r) =>
         String(r.messages[0]?.content).startsWith(ONE),
       );
       expect(oneTurns).toHaveLength(2);
+      const started = sink.events
+        .filter((e) => e.type === "run.started" && e.child)
+        .map((e) => e.child?.runId);
+      expect(started).toEqual([
+        childRunId("parent-pipe-retry", "once:stage-one"),
+        childRunId("parent-pipe-retry", "once:stage-two"),
+        childRunId("parent-pipe-retry", "once:stage-two:2"),
+      ]);
+    });
+
+    it("fails with the stage's failure when it has no try left", async () => {
+      const client = routed({
+        [ONE]: [{ toolCalls: [{ name: "facts.save", arguments: {} }] }, ok("saved")],
+        [TWO]: FAILS2,
+      });
+      const result = await build().create(deps(client))({
+        tenantId: "club-a",
+        input: { topic: "t" },
+        responder: async () => approve("editor"),
+        runId: "parent-pipe-fail",
+        store: createMemoryRunStore(),
+      });
+      expect(result).toMatchObject({ status: "failed", reason: "error" });
+      expect((result as { message: string }).message).toMatch(/stage-two \(run .*\) failed/);
     });
   });
 
-  describe("a pipeline calls one writing child several times, each under a key", () => {
+  describe("a workflow runs one writing agent several times, each under a key", () => {
     const WORK = "You are the worker.";
-    const LEAD = "You are the page builder.";
     const QUESTION = {
       id: "source",
       question: "Which feed?",
@@ -1541,6 +1586,8 @@ describe("subagents (ADR 0025)", () => {
       ],
       allowOther: false,
       proposed: ["a"],
+      remember: "no" as const,
+      fact: "",
     };
     /** What a worker's model does, from what it was asked (the question is its input). */
     interface Plan {
@@ -1556,13 +1603,8 @@ describe("subagents (ADR 0025)", () => {
       defineAgent({
         spec: {
           id: "worker",
-          version: 1,
-          owner: "test",
           description: "Builds one slot.",
           instructions: WORK,
-          tools: ["facts.save"],
-          skills: [],
-          onDemandSkills: [],
           model: "nova-lite",
           memory: { read: [], write: [] },
           budget: { usdPerRun: 0.5, maxSteps: 4, maxDepth: 0 },
@@ -1570,8 +1612,7 @@ describe("subagents (ADR 0025)", () => {
         },
         input: z.object({ question: z.string() }),
         output: z.object({ answer: z.string() }),
-        dir,
-        tools: () => [
+        tools: [
           defineTool({
             name: "facts.save",
             description: "Saves a fact.",
@@ -1609,46 +1650,30 @@ describe("subagents (ADR 0025)", () => {
       return { toolCalls: [{ name: "final", arguments: { answer: `built ${question}` } }] };
     };
 
-    const builder = (
-      w: AnyAgent,
-      opts: { concurrency?: number; keys?: string[]; run?: "all" | "pairs" } = {},
-    ) =>
-      defineAgent({
-        spec: {
-          id: "builder",
-          version: 1,
-          owner: "test",
-          instructions: LEAD,
-          tools: [],
-          skills: [],
-          onDemandSkills: [],
-          model: "nova-lite",
-          memory: { read: [], write: [] },
-          budget: { usdPerRun: 1, maxSteps: 6, maxDepth: 1 },
-          approvals: [],
-        },
+    const builder = (w: AnyAgent, opts: { concurrency?: number; tries?: number } = {}) =>
+      defineWorkflow({
+        id: "builder",
+        description: "Builds each slot.",
         input: z.object({ topic: z.string() }),
-        output: z.object({ summary: z.string() }),
-        agents: [w],
-        pipeline: {
-          name: "page.build",
-          description: "Builds each slot.",
-          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
-          async run(call) {
-            const keys = opts.keys ?? ["squad", "fixtures"];
-            return await Promise.all(
-              keys.map((key) => call(w, { question: `slot ${key}` }, { key })),
-            );
-          },
-        },
-        dir,
-        tools: () => [],
+        output: z.array(z.object({ answer: z.string() })),
+        steps: [w],
+        tool: "page.build",
+        ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+        run: (ctx) =>
+          Promise.all(
+            ["squad", "fixtures"].map(
+              (key) =>
+                ctx.run(
+                  w,
+                  { question: `slot ${key}` },
+                  { key, ...(opts.tries ? { tries: opts.tries } : {}) },
+                ) as Promise<{ answer: string }>,
+            ),
+          ),
       });
 
-    const buildCall = { toolCalls: [{ name: "page.build", arguments: {} }] };
-    const finalCall = { toolCalls: [{ name: "final", arguments: { summary: "done" } }] };
-    const modelFor = (lead: ScriptStep[]) => {
-      const leadModel = createScriptedModel(lead);
+    /** Only the worker has a model: a call for anything else is a turn code should have taken. */
+    const model = (onCall?: (req: ModelRequest) => void) => {
       const requests: ModelRequest[] = [];
       const client: ModelClient & { requests: ModelRequest[] } = {
         requests,
@@ -1656,10 +1681,9 @@ describe("subagents (ADR 0025)", () => {
           const { signal: _, ...rest } = req;
           requests.push(structuredClone(rest));
           const system = String(req.messages[0]?.content ?? "");
-          if (system.startsWith(WORK)) {
-            return createScriptedModel([workerModel]).complete(req, onToken, onToolInput);
-          }
-          return leadModel.complete(req, onToken, onToolInput);
+          if (!system.startsWith(WORK)) throw new Error(`a model was called for ${system}`);
+          onCall?.(req);
+          return createScriptedModel([workerModel]).complete(req, onToken, onToolInput);
         },
       };
       return client;
@@ -1670,12 +1694,14 @@ describe("subagents (ADR 0025)", () => {
       active.now = 0;
       active.max = 0;
     };
+    const startedIn = (events: RunEvent[]) =>
+      events.filter((e) => e.type === "run.started" && e.child).map((e) => e.child?.runId);
 
     it("gives each key a child run of its own, with its own answer, and tags its events with the key", async () => {
       reset();
       const sink = createMemorySink();
       const asked: string[] = [];
-      const result = await builder(worker()).create(deps(modelFor([buildCall, finalCall])))({
+      const result = await builder(worker()).create(deps(model()))({
         tenantId: "club-a",
         input: { topic: "t" },
         responder: async (req) => {
@@ -1687,7 +1713,7 @@ describe("subagents (ADR 0025)", () => {
         sinks: [sink],
       });
       expect(result).toMatchObject({ status: "completed" });
-      // one approval for the whole pipeline
+      // one approval for the whole workflow
       expect(asked).toEqual(["page.build"]);
       const started = sink.events.filter((e) => e.type === "run.started" && e.child);
       expect(started.map((e) => [e.child?.key, e.child?.runId]).sort()).toEqual(
@@ -1696,20 +1722,18 @@ describe("subagents (ADR 0025)", () => {
           ["squad", childRunId("keyed-two", "once:worker@squad")],
         ].sort(),
       );
-      const built = sink.events
-        .filter((e) => e.type === "tool.completed" && e.data.tool === "page.build")
-        .map((e) => (e.type === "tool.completed" ? e.data.content : ""));
-      expect(built.join("")).toContain("slot squad");
-      expect(built.join("")).toContain("slot fixtures");
+      const built = JSON.stringify((result as { output: unknown }).output);
+      expect(built).toContain("slot squad");
+      expect(built).toContain("slot fixtures");
     });
 
-    it("runs two at once, or one at a time when the pipeline limits it", async () => {
+    it("runs two at once, or one at a time when the workflow limits it", async () => {
       reset();
       const run = async (concurrency?: number) => {
         active.now = 0;
         active.max = 0;
         const result = await builder(worker(), concurrency ? { concurrency } : {}).create(
-          deps(modelFor([buildCall, finalCall])),
+          deps(model()),
         )({
           tenantId: "club-a",
           input: { topic: "t" },
@@ -1724,38 +1748,27 @@ describe("subagents (ADR 0025)", () => {
       expect(await run(1)).toBe(1);
     });
 
-    it("retries only the key that failed, and keeps the other's answer", async () => {
+    it("tries only the key that failed again, and keeps the other's answer", async () => {
       reset();
       plan.failing = "slot squad";
-      const client = modelFor([
-        buildCall,
-        // the person is shown the second call, and the squad is the one tried again
-        () => {
+      // the squad's first try fails on each of its four turns; its second try is let through
+      let failed = 0;
+      const client = model((req) => {
+        if (String(req.messages[1]?.content).includes("slot squad") && ++failed > 4) {
           plan.failing = undefined;
-          return buildCall;
-        },
-        finalCall,
-      ]);
-      const asked: unknown[] = [];
+        }
+      });
       const sink = createMemorySink();
-      const result = await builder(worker()).create(deps(client))({
+      const result = await builder(worker(), { tries: 2 }).create(deps(client))({
         tenantId: "club-a",
         input: { topic: "t" },
-        responder: async (req) => {
-          asked.push(req.input);
-          return approve("editor");
-        },
+        responder: async () => approve("editor"),
         runId: "keyed-retry",
         store: createMemoryRunStore(),
         sinks: [sink],
       });
-      expect(result).toMatchObject({ status: "completed", output: { summary: "done" } });
-      expect(asked[1]).toMatchObject({
-        retry: { stage: "worker", key: "squad", attempt: 2, of: 3 },
-      });
-      const started = sink.events
-        .filter((e) => e.type === "run.started" && e.child)
-        .map((e) => e.child?.runId);
+      expect(result).toMatchObject({ status: "completed" });
+      const started = startedIn(sink.events);
       // the fixtures ran once; the squad twice, the second try named for its number
       expect(
         started.filter((id) => id === childRunId("keyed-retry", "once:worker@fixtures")),
@@ -1765,39 +1778,37 @@ describe("subagents (ADR 0025)", () => {
 
     it("finds each key's tries in the store when a worker restarts", async () => {
       reset();
+      // the squad's first try fails while the fixtures ask a person: the run stops there
       plan.failing = "slot squad";
+      plan.asking = "slot fixtures";
       const runStore = createMemoryRunStore();
-      // the second call to page.build waits for a person's yes, and the worker stops there
-      const first = await builder(worker()).create(deps(modelFor([buildCall, buildCall])))({
+      const first = await builder(worker(), { tries: 2 }).create(deps(model()))({
         tenantId: "club-a",
         input: { topic: "t" },
-        responder: (() => {
-          let n = 0;
-          return async () => (++n === 1 ? approve("editor") : { pending: true as const });
-        })(),
+        responder: async (req) => (req.subject ? approve("editor") : { pending: true as const }),
         runId: "keyed-restart",
         store: runStore,
       });
-      expect(first).toMatchObject({ status: "waiting" });
+      expect(first).toMatchObject({
+        status: "waiting",
+        waiting: { questions: [{ id: "source" }] },
+      });
 
       // a new worker, with no memory of the first: it reads the tries from the store
       plan.failing = undefined;
       const sink = createMemorySink();
-      const client = modelFor([finalCall]);
-      const second = await builder(worker()).create(deps(client))({
+      const second = await builder(worker(), { tries: 2 }).create(deps(model()))({
         tenantId: "club-a",
         input: { topic: "t" },
         responder: never,
         runId: "keyed-restart",
         store: runStore,
         sinks: [sink],
-        resume: { reason: "answered", decision: approve("editor") },
+        resume: { reason: "answered", decision: { by: "editor", answers: { source: "b" } } },
       });
       expect(second).toMatchObject({ status: "completed" });
-      const started = sink.events
-        .filter((e) => e.type === "run.started" && e.child)
-        .map((e) => e.child?.runId);
-      // the squad's second try is a new child; the fixtures, already complete, is not run again
+      const started = startedIn(sink.events);
+      // the squad's second try is a new child; its first, which failed, is not run again
       expect(started).toContain(childRunId("keyed-restart", "once:worker@squad:2"));
       expect(started).not.toContain(childRunId("keyed-restart", "once:worker@squad"));
     });
@@ -1807,7 +1818,7 @@ describe("subagents (ADR 0025)", () => {
       plan.asking = "slot";
       const runStore = createMemoryRunStore();
       const input = { topic: "t" };
-      const first = await builder(worker()).create(deps(modelFor([buildCall])))({
+      const first = await builder(worker()).create(deps(model()))({
         tenantId: "club-a",
         input,
         responder: async (req) => (req.subject ? approve("editor") : { pending: true as const }),
@@ -1821,7 +1832,7 @@ describe("subagents (ADR 0025)", () => {
       });
       const askedFirst = (first as { waiting: { from: string[] } }).waiting.from[0];
       // nothing is left running while the run waits: both children are saved, not in flight
-      const second = await builder(worker()).create(deps(modelFor([finalCall])))({
+      const second = await builder(worker()).create(deps(model()))({
         tenantId: "club-a",
         input,
         responder: async () => ({ pending: true as const }),

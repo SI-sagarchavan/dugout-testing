@@ -1,5 +1,6 @@
 import type { Message, ToolCall } from "./messages.ts";
 import type { RunContext } from "./runtime.ts";
+import type { RunStateReader } from "./state.ts";
 
 /**
  * Per-turn rules of a run (ADR 0023). A hook is a plain object of optional functions the loop calls
@@ -87,6 +88,8 @@ export interface BeforeFinal {
   value: unknown;
   ctx: RunContext;
   messages: readonly Message[];
+  /** The run's state (ADR 0035): what its tools kept. */
+  state: RunStateReader;
 }
 export interface BeforeFinalOutcome<S> {
   state?: S;

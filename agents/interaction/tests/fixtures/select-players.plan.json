@@ -1,0 +1,50 @@
+{
+  "collapse": [
+    {
+      "as": "p",
+      "fields": [
+        {
+          "path": "photo",
+          "prop": "src",
+          "src": "I551:13364;19645:16084"
+        },
+        {
+          "path": "name",
+          "prop": "content",
+          "src": "I551:13364;19645:16074"
+        }
+      ],
+      "members": [
+        "551:13364",
+        "551:13365",
+        "551:13366",
+        "551:13367",
+        "551:13368",
+        "551:13369",
+        "551:13370",
+        "551:13371"
+      ],
+      "over": "squad.players",
+      "shape": "varies",
+      "when": {
+        "eqPath": "_page.women_men",
+        "path": "p.squad"
+      }
+    }
+  ],
+  "set": [
+    {
+      "prop": "textCase",
+      "src": "I551:13364;19645:16074",
+      "value": "upper"
+    },
+    {
+      "prop": "when",
+      "src": "I551:13364;19645:16075",
+      "value": {
+        "eq": true,
+        "path": "p.is_captain"
+      }
+    }
+  ]
+}

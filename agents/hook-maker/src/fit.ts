@@ -1,20 +1,25 @@
 /**
- * Whether a hook's output gives what the answer says it does, checked by code against the output a
- * run with the transform applied really produced (never the model's reading of it). The model
- * judges meaning (is `teams[0].score` the runs?); code judges what it can: every required item is
- * accounted for, each path the answer names has something in it, and what is there is of the kind
- * the design draws (a picture is a URL, a score has figures, a date reads as a date).
+ * What a hook's output gives, read by code from the output a run with the transform applied really
+ * produced (never the model's reading of it). Two kinds of reading:
+ *
+ * - facts the answer must agree with, refused at `final` when it does not (`fitIssues`,
+ *   `filterIssues`, `orderIssues`): a path the answer names that holds nothing, a path that holds no
+ *   value of the kind the design draws, an option of the page's choice no item holds, a field the
+ *   answer must name and does not;
+ * - evidence for the model to judge (`fieldEvidence`, `orderEvidence`, `countEvidence`, in
+ *   `hook.evidence`): the values beside the design's example, the dates in output order, how many
+ *   items each list holds. Code says what it sees; whether that is the design's form, order or
+ *   count is the model's call.
  */
 import { dateKey, pageValueOf } from "./dsl.ts";
-import { formOf, hasForm } from "./form.ts";
 
-export type FieldKind = "date" | "time" | "score" | "number" | "image" | "text";
+export type FieldKind = "date" | "time" | "score" | "number" | "image" | "link" | "text";
 
 export interface NeedItem {
   field: string;
   required: boolean;
   kind?: FieldKind | undefined;
-  /** The design's placeholder: a number with its unit, a score, a count. */
+  /** The design's placeholder, as drawn. */
   example?: string | undefined;
 }
 
@@ -66,6 +71,10 @@ export function isKind(kind: FieldKind, value: unknown): boolean {
         text.startsWith("/") ||
         /\.(png|jpe?g|svg|webp|gif|avif)(\?|$)/i.test(text)
       );
+    case "link":
+      // the item's own page: a URL or a path on the club's site, or the slug or id a route.* house
+      // fact builds one from
+      return /^(https?:)?\/\//i.test(text) || text.startsWith("/") || /^[\w.-]+$/.test(text);
     case "date":
       return !Number.isNaN(Date.parse(text)) || /\d/.test(text);
     case "time":
@@ -79,15 +88,22 @@ export function isKind(kind: FieldKind, value: unknown): boolean {
   }
 }
 
+/** A label as compared: case, punctuation and spacing aside. */
 const norm = (s: string) =>
   s
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
-const mentions = (text: string, field: string) => {
-  const a = norm(text);
+
+/** Whether a label names a field as the need writes it: the same words, case and punctuation aside. */
+export const namesField = (label: string, field: string) =>
+  norm(field) !== "" && norm(label) === norm(field);
+
+/** Whether a line of `missing` is about a field: it starts with the field as the need writes it. */
+const missingSays = (line: string, field: string) => {
+  const a = norm(line);
   const b = norm(field);
-  return b !== "" && (a.includes(b) || b.includes(a));
+  return b !== "" && (a === b || a.startsWith(`${b} `));
 };
 
 /** `team crest → matches[].teams[0].logo (a URL)` as its two halves. */
@@ -100,6 +116,9 @@ export function parseCover(line: string): { label: string; path: string } | unde
 /** The value a page compares for a choice (`pageValueOf` in `@fanos/dsl`): the one rule. */
 const choiceKey = (value: unknown) => pageValueOf(value);
 
+const filterCover = (covers: string[]) =>
+  covers.map(parseCover).find((c) => c && /^filter\s*by$/i.test(c.label));
+
 /**
  * A need whose list a page choice filters (`filterBy`): the answer names the item field in
  * `covers` as `filterBy → <path>`, and that field holds each option, so choosing one draws items.
@@ -110,7 +129,7 @@ export function filterIssues(
   output: unknown,
 ): string[] {
   if (!filterBy) return [];
-  const cover = covers.map(parseCover).find((c) => c && /^filter\s*by$/i.test(c.label));
+  const cover = filterCover(covers);
   if (!cover) {
     return [
       `the need is filtered by the page choice "${filterBy.key}" (${filterBy.options.join(", ")}): give one list whose items carry the option they belong to, and say the field in covers as "filterBy → <path>"`,
@@ -130,13 +149,30 @@ export function filterIssues(
     : [];
 }
 
-export type Order = "soonest-first" | "newest-first" | "upcoming-then-latest" | "as-is";
+/** How many items hold each option of the choice, as the page compares them. */
+export function filterEvidence(
+  filterBy: { key: string; options: string[] } | undefined,
+  covers: string[],
+  output: unknown,
+): { key: string; path?: string; options: Array<{ option: string; items: number }> } | undefined {
+  if (!filterBy) return undefined;
+  const cover = filterCover(covers);
+  const held = cover
+    ? valuesAt(output, cover.path)
+        .filter((v) => !empty(v))
+        .map(choiceKey)
+    : [];
+  return {
+    key: filterBy.key,
+    ...(cover ? { path: cover.path } : {}),
+    options: filterBy.options.map((option) => ({
+      option,
+      items: held.filter((h) => h === choiceKey(option)).length,
+    })),
+  };
+}
 
-/**
- * How long before now an item may have started and still be under way: soonest first may begin
- * with it (a live match, an event in progress). A day, for any kind of list.
- */
-const UNDER_WAY_MS = 24 * 60 * 60 * 1000;
+export type Order = "soonest-first" | "newest-first" | "upcoming-then-latest" | "as-is";
 
 /** Whether the output holds a value that reads as a date: a list of dated items. */
 function carriesDate(output: unknown): boolean {
@@ -162,154 +198,123 @@ function carriesDate(output: unknown): boolean {
   return dated(output);
 }
 
+const orderCover = (covers: string[]) =>
+  covers.map(parseCover).find((c) => c && /^order$/i.test(c.label));
+
 /**
- * The date keys of the items, by the option each belongs to when the answer names a `filterBy`
- * field on the same items (or on a list that holds them): each option's items are ordered on their
- * own, since the page shows one option at a time. One group, unnamed, otherwise.
+ * The need has an order and the items carry a date: the answer names the field they are ordered by
+ * in covers as `order → <path>`, so the dates can be read. Whether they are in the need's order is
+ * the model's judgement, from `orderEvidence`.
+ */
+export function orderIssues(order: Order | undefined, covers: string[], output: unknown): string[] {
+  if (!order || order === "as-is" || orderCover(covers)) return [];
+  return carriesDate(output)
+    ? [
+        `the need asks for ${order}: say the date field the items are ordered by in covers as "order → <path>"`,
+      ]
+    : [];
+}
+
+/**
+ * The dates of the items as they come, by the option each belongs to when the answer names a
+ * `filterBy` field on the same items (or on a list that holds them): the page shows one option at
+ * a time. One group, unnamed, otherwise. Each value as the output writes it.
  */
 function datesByOption(
   output: unknown,
   orderPath: string,
   filterPath: string | undefined,
-): Array<{ option?: string; keys: string[] }> {
-  const keysOf = (values: unknown[]) =>
-    values.map(dateKey).filter((k): k is string => k !== undefined);
+): Array<{ option?: string; dates: unknown[] }> {
   const at = filterPath?.lastIndexOf("[]") ?? -1;
   const list = filterPath && at >= 0 ? filterPath.slice(0, at + 2) : undefined;
   if (!filterPath || !list || !orderPath.startsWith(list)) {
-    return [{ keys: keysOf(valuesAt(output, orderPath)) }];
+    return [{ dates: valuesAt(output, orderPath) }];
   }
   const field = filterPath.slice(list.length).replace(/^\./, "");
   const rest = orderPath.slice(list.length).replace(/^\./, "");
-  const groups = new Map<string, string[]>();
+  const groups = new Map<string, unknown[]>();
   for (const item of valuesAt(output, list)) {
     const option = valuesAt(item, field).find((v) => !empty(v));
     const key = option === undefined ? "" : choiceKey(option);
-    groups.set(key, [...(groups.get(key) ?? []), ...keysOf(rest ? valuesAt(item, rest) : [item])]);
+    groups.set(key, [...(groups.get(key) ?? []), ...(rest ? valuesAt(item, rest) : [item])]);
   }
-  return [...groups].map(([option, keys]) => ({ ...(option ? { option } : {}), keys }));
+  return [...groups].map(([option, dates]) => ({ ...(option ? { option } : {}), dates }));
 }
 
-/** What is out of order in one option's dates, or undefined. `now` and `started` are date keys. */
-function outOfOrder(
-  order: Exclude<Order, "as-is">,
-  keys: string[],
-  now: string,
-  started: string,
-): string | undefined {
-  if (keys.length < 2) return undefined;
-  const ascending = (list: string[]) => list.every((t, i) => i === 0 || (list[i - 1] ?? t) <= t);
-  const descending = (list: string[]) => list.every((t, i) => i === 0 || (list[i - 1] ?? t) >= t);
-  if (order === "soonest-first") {
-    if (!ascending(keys)) return "is not soonest first: the dates go back and forth";
-    // an item that started within the day may be under way: it comes first
-    return (keys[0] ?? now) < started && keys.some((t) => t >= now)
-      ? "starts with a past date while later items are still to come: soonest first starts at the next one (or one under way)"
-      : undefined;
-  }
-  if (order === "newest-first") {
-    return descending(keys)
-      ? undefined
-      : "is not newest first: the dates are not from latest to earliest";
-  }
-  // what is next (and what is under way) first, soonest first, then the latest results back
-  let split = 0;
-  while (
-    split < keys.length &&
-    (keys[split] ?? "") >= started &&
-    (split === 0 || (keys[split - 1] ?? "") <= (keys[split] ?? ""))
-  ) {
-    split++;
-  }
-  const past = keys.slice(split);
-  return past.every((t) => t < now) && descending(past)
-    ? undefined
-    : "is not upcoming then latest: what is next comes first (soonest first), then results from the latest back";
-}
+/** How many values a report shows of a list, the rest counted. */
+const SHOWN = 12;
 
-/** What `missing` says when the feed has nothing to come: its words name upcoming items. */
-const NOTHING_TO_COME = /\b(upcoming|future|to come|scheduled|next|fixtures?)\b/i;
-
-/**
- * A list that wants what is next (soonest first, or upcoming then latest) and holds only past
- * items: the cut was made before the sort, or a filter dropped what is to come. Fine only when the
- * feed has nothing to come, and the answer says so in `missing`.
- */
-function onlyPast(
-  order: Exclude<Order, "as-is">,
-  keys: string[],
-  started: string,
-  missing: string[],
-): string | undefined {
-  if (order === "newest-first" || keys.length === 0) return undefined;
-  if (keys.some((t) => t >= started)) return undefined;
-  if (missing.some((m) => NOTHING_TO_COME.test(m))) return undefined;
-  return "holds only past items, and the need wants what is next: the cut to the count may come before the sort, or a filter dropped the items still to come. Look at the feed for upcoming items (its sort or upcoming input, or the whole list before the cut); when it has none, say so in missing";
+export interface OrderEvidence {
+  order: Order;
+  /** The time the run is judged at. */
+  now: string;
+  path: string;
+  groups: Array<{
+    option?: string;
+    /** The dates as the output writes them, in output order (the first few). */
+    dates: unknown[];
+    /** How many values the path holds; `unread` of them do not read as a date. */
+    count: number;
+    unread: number;
+    /** How the readable dates run, in output order. */
+    runs: "rising" | "falling" | "both ways" | "one date";
+    before: number;
+    after: number;
+  }>;
 }
 
 /**
- * Whether the dates of the items come in the order the need asks for, read from the output the
- * hook's run gave, the way the page reads dates. The answer names the date field in covers as
- * `order → <path>`; an output whose items carry no date has no order to check. With a
- * `filterBy → <path>` cover on the same items, each option's items are checked on their own. `now`
- * is the time the run is judged at (epoch ms), for what is upcoming and what is past.
+ * The dates the answer's `order →` path holds, in output order, beside the need's order and the
+ * time now: how they run and how many are before and after now. It judges nothing.
  */
-export function orderIssues(
+export function orderEvidence(
   order: Order | undefined,
   covers: string[],
   output: unknown,
   now: number = Date.now(),
-  missing: string[] = [],
-): string[] {
-  if (!order || order === "as-is") return [];
-  const parsed = covers.map(parseCover);
-  const cover = parsed.find((c) => c && /^order$/i.test(c.label));
+): OrderEvidence | { order: Order; note: string } | undefined {
+  if (!order || order === "as-is") return undefined;
+  const cover = orderCover(covers);
   if (!cover) {
-    return carriesDate(output)
-      ? [
-          `the need asks for ${order}: say the date field the items are ordered by in covers as "order → <path>"`,
-        ]
-      : [];
+    return {
+      order,
+      note: carriesDate(output)
+        ? 'name the date field the items are ordered by as "order → <path>" in covers to see its dates in output order'
+        : "the output carries no value that reads as a date",
+    };
   }
-  const filter = parsed.find((c) => c && /^filter\s*by$/i.test(c.label));
   const nowKey = dateKey(now) ?? "";
-  const startedKey = dateKey(now - UNDER_WAY_MS) ?? nowKey;
-  return datesByOption(output, cover.path, filter?.path).flatMap(({ option, keys }) => {
-    const wrong =
-      outOfOrder(order, keys, nowKey, startedKey) ?? onlyPast(order, keys, startedKey, missing);
-    return wrong
-      ? [`order → ${cover.path}${option ? ` (the items of the option "${option}")` : ""} ${wrong}`]
-      : [];
-  });
+  return {
+    order,
+    now: new Date(now).toISOString(),
+    path: cover.path,
+    groups: datesByOption(output, cover.path, filterCover(covers)?.path).map(
+      ({ option, dates }) => {
+        const keys = dates.map(dateKey).filter((k): k is string => k !== undefined);
+        const rising = keys.every((t, i) => i === 0 || (keys[i - 1] ?? t) <= t);
+        const falling = keys.every((t, i) => i === 0 || (keys[i - 1] ?? t) >= t);
+        return {
+          ...(option ? { option } : {}),
+          dates: dates.slice(0, SHOWN),
+          count: dates.length,
+          unread: dates.length - keys.length,
+          runs:
+            keys.length < 2 || (rising && falling)
+              ? ("one date" as const)
+              : rising
+                ? ("rising" as const)
+                : falling
+                  ? ("falling" as const)
+                  : ("both ways" as const),
+          before: keys.filter((k) => k < nowKey).length,
+          after: keys.filter((k) => k >= nowKey).length,
+        };
+      },
+    ),
+  };
 }
 
-/** Whether a figure is a decimal ("19.3", "20,5") rather than a whole number ("100", "1,234"). */
-const decimal = (text: string) => /\d[.,]\d/.test(text.replace(/\d{1,3}(?:,\d{3})+(?!\d)/g, "9"));
-
-/** Whether `part` is in `form` as whole tokens: "9" in "(9 ball)", not "9" in "9#" (an ordinal). */
-function holdsPart(form: string, part: string): boolean {
-  const edge = (c: string | undefined) => c === undefined || !/[\p{L}\p{N}#]/u.test(c);
-  for (let i = form.indexOf(part); i >= 0; i = form.indexOf(part, i + 1)) {
-    if (edge(form[i - 1]) && edge(form[i + part.length])) return true;
-  }
-  return false;
-}
-
-/**
- * Whether a value has the design's form, or fills a part of it: the whole form ("(98 Balls)" for
- * "(100 Balls)"), or a part of it with a number in it ("98" for "(100 Balls)", "166" for "166/5").
- * A decimal where every figure of the example is whole is another unit ("19.3" overs for balls).
- */
-export function fillsForm(value: string, example: string): boolean {
-  const have = formOf(value);
-  const want = formOf(example);
-  if (have === want) return true;
-  if (!have.includes("9") || !holdsPart(want, have)) return false;
-  const figures = example.match(/\d+(?:[.,]\d+)*/g) ?? [];
-  return !decimal(value) || figures.some(decimal);
-}
-
-/** What is wrong with an answer, in words the model can act on. Empty when it fits. */
+/** What is wrong with an answer, as facts the model can act on. Empty when it agrees with the output. */
 export function fitIssues(
   items: NeedItem[],
   answer: { covers: string[]; missing: string[] },
@@ -319,53 +324,108 @@ export function fitIssues(
   const covers = answer.covers.map(parseCover);
   for (const item of items.filter((i) => i.required)) {
     const said =
-      answer.covers.some((c) => mentions(c.split(/→|->/)[0] ?? c, item.field)) ||
-      answer.missing.some((m) => mentions(m, item.field));
+      covers.some((c) => c && namesField(c.label, item.field)) ||
+      answer.missing.some((m) => missingSays(m, item.field));
     if (!said) {
       issues.push(
-        `"${item.field}" is required by the need and is in neither covers nor missing: say which`,
+        `"${item.field}" is required by the need and is in neither covers nor missing: name it as the need writes it, in covers ("${item.field} → <path>") or at the start of a line of missing ("${item.field}: why")`,
       );
     }
   }
   for (const cover of covers) {
     if (!cover) continue;
-    const found = valuesAt(output, cover.path);
-    const filled = found.filter((v) => !empty(v));
+    const filled = valuesAt(output, cover.path).filter((v) => !empty(v));
     if (filled.length === 0) {
       issues.push(
         `covers "${cover.label}" at ${cover.path}, but the output has nothing there for any item: it is missing, not covered (or the path is wrong: it is from the root of the output)`,
       );
       continue;
     }
-    const named = items.find((i) => mentions(cover.label, i.field));
-    // a value the page writes with a pipe (a date, a time) stays the instant; any other short
-    // figure the design writes is given in the design's form, or as the part of it the field fills
-    // (the number of "(100 Balls)", the runs of "166/5"): the page writes the words around it
-    if (
-      named?.example &&
-      hasForm(named.example) &&
-      named.kind !== "date" &&
-      named.kind !== "time"
-    ) {
-      const example = named.example;
-      const off = filled.filter(
-        (v) => (typeof v === "string" || typeof v === "number") && !fillsForm(String(v), example),
+    const kind = items.find((i) => namesField(cover.label, i.field))?.kind;
+    if (kind && filled.every((v) => !isKind(kind, v))) {
+      issues.push(
+        `"${cover.label}" at ${cover.path} holds no ${kind} (the need's kind for it): its values are ${filled
+          .slice(0, 3)
+          .map((v) => JSON.stringify(v))
+          .join(", ")}`,
       );
-      if (off.length * 2 >= filled.length) {
-        issues.push(
-          `"${cover.label}" at ${cover.path} holds ${JSON.stringify(off[0])} where the design writes "${example}": derive what the design shows in the transform (a unit converted, a field split or joined, a code written as the word), give the value or the number it fills (the page writes the words around it), and check it against the example with cast_eval_jsonata`,
-        );
-      }
-    }
-    const item = named?.kind ? named : undefined;
-    if (item?.kind) {
-      const off = filled.filter((v) => !isKind(item.kind as FieldKind, v));
-      if (off.length * 2 >= filled.length) {
-        issues.push(
-          `"${cover.label}" at ${cover.path} should read as a ${item.kind} (the design draws ${item.field}), but it holds ${JSON.stringify(off[0])}`,
-        );
-      }
     }
   }
   return issues;
+}
+
+export interface FieldEvidence {
+  /** The covers line, as the answer wrote it. */
+  cover: string;
+  path: string;
+  /** The need's field the label names (as the need writes it), or null when it names none. */
+  field: string | null;
+  /** The design's placeholder for it, when the need has one. */
+  example?: string;
+  kind?: FieldKind;
+  /** How many values the path reaches, and how many of them hold something. */
+  reached: number;
+  filled: number;
+  /** A few distinct values, as the output holds them. */
+  values: unknown[];
+  /** How many filled values do not read as the need's kind, with one of them. */
+  notKind?: { count: number; sample: unknown };
+}
+
+/**
+ * For each covers line, what its path holds in the output, beside the design's example and kind
+ * for the need's field it names: a few real values, how many items have one. Whether the values
+ * are in the design's form is the model's call.
+ */
+export function fieldEvidence(
+  items: NeedItem[],
+  covers: string[],
+  output: unknown,
+): FieldEvidence[] {
+  return covers.flatMap((line) => {
+    const cover = parseCover(line);
+    if (!cover) return [];
+    const item = items.find((i) => namesField(cover.label, i.field));
+    const reached = valuesAt(output, cover.path);
+    const filled = reached.filter((v) => !empty(v));
+    const distinct = [...new Map(filled.map((v) => [JSON.stringify(v), v])).values()];
+    const off = item?.kind ? filled.filter((v) => !isKind(item.kind as FieldKind, v)) : [];
+    return [
+      {
+        cover: line,
+        path: cover.path,
+        field: item?.field ?? null,
+        ...(item?.example ? { example: item.example } : {}),
+        ...(item?.kind ? { kind: item.kind } : {}),
+        reached: reached.length,
+        filled: filled.length,
+        values: distinct.slice(0, 5),
+        ...(off.length ? { notKind: { count: off.length, sample: off[0] } } : {}),
+      },
+    ];
+  });
+}
+
+/**
+ * The lists the answer's paths go through and how many items each holds (`days[]` 3,
+ * `days[].matches[]` 7), beside the count the design draws.
+ */
+export function countEvidence(
+  count: number | "data" | undefined,
+  covers: string[],
+  output: unknown,
+): { count?: number | "data"; lists: Array<{ list: string; items: number }> } {
+  const lists = new Map<string, number>();
+  for (const line of covers) {
+    const path = parseCover(line)?.path;
+    if (!path) continue;
+    for (let at = path.indexOf("[]"); at >= 0; at = path.indexOf("[]", at + 2)) {
+      const list = path.slice(0, at + 2);
+      if (!lists.has(list)) lists.set(list, valuesAt(output, list).length);
+    }
+  }
+  return {
+    ...(count !== undefined ? { count } : {}),
+    lists: [...lists].map(([list, items]) => ({ list, items })),
+  };
 }

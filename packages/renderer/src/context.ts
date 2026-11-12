@@ -3,6 +3,7 @@
  * every component is a Server Component and we want zero client boundaries.
  */
 
+import type { AnchorHTMLAttributes, ComponentType, ReactNode } from "react";
 import type { AssetContext } from "@fanos/tokens";
 import type { ClockRef } from "@fanos/renderer/client";
 import type { PageState } from "@fanos/dsl";
@@ -37,7 +38,20 @@ export interface RenderConfig {
    * render; a test or a screenshot fixes it so the digits are the same every time.
    */
   now?: number;
+  /**
+   * The host's link, for a link to a page of its own site: the Next.js site passes `next/link`, so
+   * a card that opens its article navigates in the app. Left out (the widget a JS embed draws,
+   * Studio's canvas), a plain `<a href>`. A link to another site is always a plain `<a>`.
+   */
+  link?: HostLink;
 }
+
+/** What a host's link takes: `next/link` takes these and draws the `<a>` itself. */
+export type HostLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
+  href: string;
+  children?: ReactNode;
+};
+export type HostLink = ComponentType<HostLinkProps>;
 
 export interface NodeRenderContext extends RenderConfig {
   /** Parent is a Stack — enables size.w:"full" → flex:1 1 0. */
@@ -55,6 +69,8 @@ export interface NodeRenderContext extends RenderConfig {
   overlayChild?: boolean;
   /** The clocks in scope, by the name they are read by: what ticks in the browser. */
   clocks?: Record<string, ClockRef>;
+  /** The section's machine on the page, when it has one: what its nodes' events go to. */
+  instance?: string;
   /** Where the item being drawn sits in the nearest Repeater: what a node's `at` reads. */
   place?: { index: number; count: number };
 }

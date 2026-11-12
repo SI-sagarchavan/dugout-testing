@@ -1,28 +1,36 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  defineState,
   defineTool,
   NeedsSetup,
   type OpenItem,
   Settled,
   type ToolContext,
 } from "@dugout/contracts";
-import { describeImage, describeText, REPO_ROOT } from "@dugout/core";
+import { describeImage, REPO_ROOT } from "@dugout/core";
 import type { Pool } from "@dugout/db";
 import { recordPageChoices } from "@dugout/db/page-choices";
 import {
   answerText,
   BEFORE_RULE,
+  builtFor,
   decidedBefore,
   decisionKey,
+  LESSONS_RULE,
+  type LikeFinder,
+  lessonsFor,
   type MemoryReader,
+  PATTERNS_RULE,
+  patternsFor,
 } from "@dugout/memory";
 import { z } from "zod";
-import { applyContentVerdict, Content, contentOf, contentPrompt, outlineOf } from "./content.ts";
+import { Content, contentOf, settledContent } from "./content.ts";
 import { type ControlPlane, createControlPlane, webUrl } from "./control-plane.ts";
 import {
   type Built,
   type Bundle,
+  backdropCandidates,
   buildFrame,
   firstPass,
   gradientOf,
@@ -34,6 +42,7 @@ import {
   PAGE,
   TokenKind,
   tokensOf,
+  toneAgainstDesign,
   type Unpainted,
   unpaintedLayers,
 } from "./frame.ts";
@@ -50,9 +59,9 @@ import {
   type LayoutBefore,
   LayoutChoice,
   type LayoutIntent,
-  type LayoutJudge,
   type LayoutReport,
   openLayoutItems,
+  type PlatformConflict,
   type PlatformRead,
   settledLayout,
   withPlatform,
@@ -91,6 +100,11 @@ export function sectionName(
   const said = tree.nodes.find((n) => n.type === "Text" && typeof n.props.content === "string");
   return typeof said?.props.content === "string" ? said.props.content : frame;
 }
+
+/** What frame.publish made, kept in the run's state for the checks on `final` (ADR 0035). */
+export const PUBLISHED = defineState<Record<string, unknown>>("frame.published");
+/** The ids of the designer's notes frame.load listed, kept the same way. */
+export const LISTED_NOTES = defineState<string[]>("frame.notes");
 
 /** A page choice as published: `_page.<key>`, its options, where it starts. */
 export const PageChoiceSchema = z.object({
@@ -161,8 +175,16 @@ export interface Engine {
   read?(bundle: Bundle, read: Read, signal?: AbortSignal): Promise<Reading>;
   /** The page choices a built frame writes: its tabs (`@fanos/dsl` `pageChoices`). */
   choices?(built: Built): Promise<PageChoice[]>;
-  /** The slots of the frame: the parts that each show one kind of data (`findSlots`). */
-  slots?(bundle: Bundle, joins?: readonly Join[], shape?: SlotShape): Promise<FoundSlots>;
+  /**
+   * The slots of the frame: the parts that each show one kind of data (`findSlots`). `apart` keeps
+   * parts the finder would join for sitting side by side.
+   */
+  slots?(
+    bundle: Bundle,
+    joins?: readonly Join[],
+    shape?: SlotShape,
+    apart?: readonly Join[],
+  ): Promise<FoundSlots>;
   /** A platform carousel config as Carousel props, its colours checked against the theme. */
   platform?(json: unknown, colors: ReadonlySet<string>): Promise<PlatformRead>;
 }
@@ -190,7 +212,8 @@ export function pipelineEngine(tools?: Toolchain): Engine {
     read: async (bundle, read, signal) =>
       readFrame({ tools: await load(), bundle, read, ...(signal ? { signal } : {}) }),
     choices: async (built) => (await load()).pageChoices(built.tree),
-    slots: async (bundle, joins, shape) => findFrameSlots(await load(), bundle, joins, shape),
+    slots: async (bundle, joins, shape, apart) =>
+      findFrameSlots(await load(), bundle, joins, shape, apart),
     platform: async (json, colors) => (await load()).fromPlatformCarousel(json, { colors }),
   };
 }
@@ -263,6 +286,8 @@ const State = z.object({
   examinedSurfaces: z.array(z.string()).default([]),
   /** Times frame.publish was refused for findings not yet examined. */
   publishRefusals: z.number().default(0),
+  /** Changes kept although they cost score or moved nothing measured: what they cost, and the agent's why. */
+  despite: z.array(z.string()).default([]),
   /** What each container is: read by frame.load, decided through frame.layout. */
   layouts: z.array(z.custom<LayoutReport>()).default([]),
   /** The frame as frame.load read it: its experience, its parts, what it groups as one. */
@@ -273,12 +298,13 @@ const State = z.object({
   split: z.object({ item: z.custom<OpenItem>(), settled: z.boolean() }).optional(),
   /** How each open item was settled, and by whom. */
   settled: z.array(Settled).default([]),
-  /** Whether anything on the whole frame is data, before its slots are looked at. */
+  /** What the signs propose about whether the whole frame shows data, before its slots are looked at. */
   frameContent: Content.optional(),
-  /** Whether anything on the section is data, read by frame.load. */
+  /** What the signs propose about whether the section shows data: the agent settles it at frame.publish. */
   content: Content.optional(),
-  /** The frame's slots with whether each shows data, read by frame.load. */
+  /** The frame's slots, read by frame.load (and again by frame.split). */
   slots: z.custom<FoundSlots>().optional(),
+  /** What the signs propose for each slot: the agent settles each at frame.publish. */
   slotContent: z.array(Content).default([]),
   published: Published.optional(),
 });
@@ -314,16 +340,17 @@ async function slottedBy(
   });
 }
 
-/** What the run says of each slot: the tree nodes it owns, what it writes and reads. */
+/** What the run says of each slot: the tree nodes it owns, whether it shows data, what it writes and reads. */
 function reportOf(
   state: State,
   split: { owners: Map<string, number>; writes: string[][]; reads: string[][] },
+  contents: readonly Content[],
 ): SlotReport[] {
   return (state.slots?.slots ?? []).map((s, i) => ({
     id: s.id,
     name: s.name,
     nodes: [...split.owners].filter(([, at]) => at === i).map(([id]) => id),
-    content: state.slotContent[i] ?? { data: "unsure", evidence: [] },
+    content: contents[i] ?? { data: "unsure", evidence: [] },
     writes: split.writes[i] ?? [],
     reads: split.reads[i] ?? [],
     signature: s.signature,
@@ -458,86 +485,113 @@ function layoutsOf(state: State) {
   };
 }
 
-/** Layouts the compiler left something open about that nobody has settled yet. */
-const undecided = (state: Pick<State, "layouts">) =>
-  state.layouts.filter((l) => l.left.length > 0 && !l.decided);
+/** Containers with open items that frame.layout has not settled yet. */
+const undecided = (state: Pick<State, "layouts" | "open">) =>
+  state.layouts.filter((l) => (state.open[l.src]?.length ?? 0) > 0 && !l.decided);
 
-/** What is still open: each undecided container's items, and the split while it is not settled. */
-function openOf(state: Pick<State, "layouts" | "open" | "split">): OpenItem[] {
+/** The candidates for whether a section shows data. */
+const CONTENT_CANDIDATES = [
+  { value: "none", does: "nothing on it is data: published as it is, nothing is bound" },
+  { value: "some", does: "it shows data: the binding stage finds its source after publishing" },
+];
+
+type ContentState = Pick<State, "content" | "slots" | "slotContent">;
+
+/**
+ * Whether the section shows data, as an open item: the signs code read, with its proposal, for the
+ * whole frame or for each of its parts. The agent settles it in frame.publish's `content` (and
+ * `slots`, one for each part when there are several).
+ */
+export function contentOpen(state: ContentState): OpenItem | undefined {
+  const content = state.content;
+  if (!content) return undefined;
+  const parts = state.slots?.slots ?? [];
+  const several = parts.length > 1;
+  const signs = (c: Content | undefined) =>
+    c ? `proposed ${c.data}: ${c.evidence.join("; ") || "no signs"}` : "no signs read";
+  return {
+    id: "content",
+    about: several
+      ? "whether each part of the frame shows data, to be bound to a source"
+      : "whether anything on the section is data, to be bound to a source",
+    evidence: several
+      ? `The frame has ${parts.length} parts, each bound to its own data. ${parts.map((p, i) => `${p.name} [${p.id}]: ${signs(state.slotContent[i])}`).join(" | ")}`
+      : `The signs: ${signs(content)}.`,
+    candidates: CONTENT_CANDIDATES,
+    ...(content.data === "unsure" ? {} : { proposed: content.data }),
+    canTake: several
+      ? "frame.publish's content { data, why, by } for the whole frame (some when any part is), and its slots: one { id, data, why, by } for each part above"
+      : "frame.publish's content { data, why, by }, with slots []",
+    holds: "section",
+  };
+}
+
+type OpenState = Pick<State, "layouts" | "open" | "split" | "published"> & ContentState;
+
+/** What is still open: each undecided container's items, the split while it is not settled, and the content until it is published. */
+function openOf(state: OpenState): OpenItem[] {
+  const content = state.published ? undefined : contentOpen(state);
   return [
     ...undecided(state).flatMap((l) => state.open[l.src] ?? []),
     ...(state.split && !state.split.settled ? [state.split.item] : []),
+    ...(content ? [content] : []),
   ];
 }
 
 /** What `open` is, and what to do with it (the same rule data-bind's open items follow). */
 const OPEN_RULE =
-  "These are what the tools could not settle about the frame. For each one: settle it from memory when `before` holds an active answer; decide it yourself, saying why, when the evidence settles it; or ask a person with `ask`, using the item's id. Write the question, its options and its why yourself from the evidence, the candidates and canTake: offer every candidate, and say what else canTake accepts (a text option, or the question itself). Pass what was decided to the tool that acts on it as ordinary input: frame.layout for a container (its choice and config), frame.split for which parts are one section, and say in `settled` who decided each item (person, memory or agent).";
+  "These are what the tools could not settle about the frame. For each one: settle it from memory when `before` holds an active answer; decide it yourself, saying why, when the evidence settles it; or ask a person with `ask`, using the item's id, with remember set to the item's holds and fact to its fact (empty when it has none). Write the question, its options and its why yourself from the evidence, the candidates and canTake: offer every candidate, and say what else canTake accepts (a text option, or the question itself). Pass what was decided to the tool that acts on it as ordinary input: frame.layout for a container (its choice and config), frame.split for which parts are one section, frame.publish's content for whether the section shows data; say who decided each item (person, memory or agent) in `settled`, or in content's `by`.";
 
 /** What the model reads of what is open: the items, and the rule for them. Nothing when none is. */
-function openNote(state: Pick<State, "layouts" | "open" | "split">) {
+function openNote(state: OpenState) {
   const open = openOf(state);
   return open.length > 0 ? { open, openRule: OPEN_RULE } : {};
 }
 
-/**
- * A lowering must leave the first paint as it was: the carousel's server markup IS the design
- * until Swiper runs. Within this, it is the same picture (anti-aliasing, a subpixel offset).
- */
-const FIRST_PAINT_TOLERANCE = 0.05;
-
-/** Is this change worth keeping? Pixels must not drop, and layout must not get worse. */
-function refusal(
-  from: Measurement,
-  to: Measurement,
-  built: Built,
-  /** The change paints a layer the IR says is painted: evidence enough where no picture measures it. */
-  evidenced = false,
-): string | undefined {
+/** Why a change cannot be applied at all: the validator refused it, or it names nothing to apply to. */
+function unappliable(built: Built): string | undefined {
   if (built.errors.length > 0) return `the validator refused it: ${built.errors.join("; ")}`;
   if (built.missing.length > 0) {
     return `nothing to apply it to, or the IR has no usable paint: ${built.missing.join(", ")}`;
-  }
-  if (to.match < from.match) return `match would drop from ${from.match} to ${to.match}`;
-  if (to.placeholderIcons > from.placeholderIcons) {
-    return `placeholder icons would rise from ${from.placeholderIcons} to ${to.placeholderIcons}`;
-  }
-  if (to.conformErrors > from.conformErrors) {
-    return `conform errors would rise from ${from.conformErrors} to ${to.conformErrors}`;
-  }
-  if (!evidenced && to.match === from.match && to.conformErrors === from.conformErrors) {
-    return `it changed nothing measurable (match ${to.match}, conform errors ${to.conformErrors})`;
   }
   return undefined;
 }
 
 /**
- * Does this change give a layer the paint the design has and the compile dropped?
- *
- * No screenshot holds the root's own fill in an export from before 1.9.0, so painting it moves no
- * measured pixel and would be refused as a no-op. The evidence is not a picture there: the IR says
- * the layer has that fill, and the validator has checked the token. A change that does nothing but
- * that, to a layer `frame.load` listed as unpainted, is kept without a measurement.
+ * What a change costs, measured against the frame before it: each way it is worse, or that it
+ * moved nothing measured. Empty when it helped. One rule for every change: a change with a cost is
+ * kept only when the agent says why (`keep`), and the cost and the why are kept for the reviewer.
  */
-function paintsUnpainted(state: { unpainted: Unpainted[] }, change: Overrides): boolean {
-  if (state.unpainted.length === 0 || change.props.length === 0) return false;
-  const only =
-    change.crops.length === 0 &&
-    change.drops.length === 0 &&
-    change.gradients.length === 0 &&
-    change.texts.length === 0;
-  return (
-    only &&
-    change.props.every(
-      (p) =>
-        typeof p.props.surface === "string" &&
-        Object.keys(p.props).length === 1 &&
-        state.unpainted.some((u) => u.src === p.src),
-    )
-  );
+function costOf(from: Measurement, to: Measurement): string[] {
+  const out: string[] = [];
+  if (to.match < from.match) out.push(`match drops from ${from.match} to ${to.match}`);
+  if (to.placeholderIcons > from.placeholderIcons) {
+    out.push(`placeholder icons rise from ${from.placeholderIcons} to ${to.placeholderIcons}`);
+  }
+  if (to.conformErrors > from.conformErrors) {
+    out.push(`conform errors rise from ${from.conformErrors} to ${to.conformErrors}`);
+  }
+  if (out.length === 0 && to.match === from.match && to.conformErrors === from.conformErrors) {
+    out.push(`it moves nothing measured (match ${to.match}, conform errors ${to.conformErrors})`);
+  }
+  return out;
 }
 
-/** Worth a look: enough pixels, and not just glyph edges with the box in the right place. */
+/** A change in a few words, for the reviewer's list of what was kept despite its cost. */
+function changeLine(change: Partial<Overrides>): string {
+  const parts = [
+    ...(change.props ?? []).map((p) => `props on ${p.src}: ${Object.keys(p.props).join(", ")}`),
+    ...Object.keys(change.surfaces ?? {}).map((n) => `surface ${n}`),
+    ...(change.crops ?? []).map((src) => `crop ${src}`),
+    ...(change.backdrops ?? []).map((src) => `backdrop ${src}`),
+    ...(change.drops ?? []).map((src) => `drop ${src}`),
+    ...(change.gradients ?? []).map((src) => `gradient ${src}`),
+    ...(change.texts ?? []).map((src) => `text ${src}`),
+    ...Object.keys(change.icons ?? {}).map((slug) => `icon ${slug}`),
+  ];
+  return parts.join("; ") || "an empty change";
+}
+
 /** Below this share of the frame, a match is over too little of it to be a result. */
 const MIN_COVERAGE = 25;
 /**
@@ -546,8 +600,9 @@ const MIN_COVERAGE = 25;
  * has lapsed, or a render that fails would otherwise stop every run at the gate.
  */
 const MAX_LOOK_FAILURES = 2;
+/** A finding this many pixels off or more is listed for examining before publishing. */
 const ACTIONABLE_PIXELS = 100;
-const GLYPH_EDGE_OFF = 15;
+/** At most this many findings are listed at once: a bounded nudge, not a gate on every pixel. */
 const MUST_EXAMINE = 5;
 /** Enough looking: past this a run must be able to finish whatever is left. */
 const EXAMINED_ENOUGH = 12;
@@ -561,7 +616,7 @@ const EXAMINED_ENOUGH = 12;
  * not end the run as a repeated refused call would. It is still bounded, so a model that will not
  * examine anything costs a few steps and no more, and a run always ends with a preview link.
  */
-const MAX_PUBLISH_REFUSALS = 4;
+export const MAX_PUBLISH_REFUSALS = 4;
 
 /** One line for a finding the gate wants looked at: where it is and how far off. */
 function describeFinding(state: State, src: string): string {
@@ -570,7 +625,7 @@ function describeFinding(state: State, src: string): string {
     return `${src} (${node.type}, ${node.mismatch}px off, design ${node.design} but renders ${node.render})`;
   const surface = (state.current.surfaces ?? []).find((f) => f.src === src);
   if (surface) {
-    return `${src} (surface ${surface.surface}, ${surface.mismatch}px off, design ${surface.design} but renders ${surface.render})`;
+    return `${src} (surface ${surface.surface}, ${surface.mismatch}px off, ${Math.round(surface.offShare * 100)}% of what it draws, design ${surface.design} but renders ${surface.render})`;
   }
   return src;
 }
@@ -582,9 +637,8 @@ function unexamined(state: State): string[] {
     .filter(
       (f) =>
         f.mismatch >= ACTIONABLE_PIXELS &&
-        // a crop is the screenshot's own pixels, so frame.node has no cause to find in it
-        f.type !== "Image" &&
-        (f.conform.length > 0 || f.off >= GLYPH_EDGE_OFF || f.type !== "Text"),
+        // a crop is the screenshot's own pixels: there is nothing in the tree to read about them
+        f.type !== "Image",
     )
     .map((f) => f.src);
   // a surface a run has read through any of its nodes is examined
@@ -599,6 +653,7 @@ function unexamined(state: State): string[] {
 const merge = (a: Overrides, b: Overrides): Overrides => ({
   icons: { ...a.icons, ...b.icons },
   crops: [...new Set([...a.crops, ...b.crops])],
+  backdrops: [...new Set([...a.backdrops, ...b.backdrops])],
   drops: [...new Set([...a.drops, ...b.drops])],
   gradients: [...new Set([...a.gradients, ...b.gradients])],
   texts: [...new Set([...a.texts, ...b.texts])],
@@ -632,12 +687,6 @@ export function createMatchTools(
      */
     read?: Read | false;
     /**
-     * Judges a container the detector is not sure of (see `needsJudge`), from its context. `false`
-     * (or `FRAME_MATCH_JUDGE=off`) leaves it out, so a person is asked as before. A text model
-     * (`sonnet`) by default.
-     */
-    judge?: LayoutJudge | false;
-    /**
      * When frame.look may be called. `first` is any time. `last` refuses it until the findings the
      * publish gate asks to be examined have been, so it is the final check and not the first
      * lead: a model handed a list of leads early can follow them in place of the measured findings.
@@ -654,7 +703,9 @@ export function createMatchTools(
      * model settles an item from memory, or asks.
      */
     decisions?: Pick<MemoryReader, "decisionsOn"> &
-      Partial<Pick<MemoryReader, "decision" | "fact">>;
+      Partial<Pick<MemoryReader, "decision" | "fact" | "builds" | "lessonsOn" | "activeFacts">>;
+    /** Which of the tenant's sections are like one, for `built.like` (ADR 0034). */
+    like?: LikeFinder;
     /** Cast MCP client (ADR 0022). Its read tools are added; writes are never given to this agent. */
   } = {},
 ) {
@@ -820,28 +871,13 @@ export function createMatchTools(
   };
 
   /**
-   * What each container is, and the carousels the frame shows applied.
-   *
-   * A `certain` carousel (a card cut off by the clip, designed arrows or dots) is applied with no
-   * question: the frame shows it. It is kept only if the first paint is still the frame, measured;
-   * a lowering that moves pixels is reported and left out, never shipped. Everything else is a
-   * proposal until a person decides it through frame.layout.
+   * What each container is, as proposals: the reading's, its claims checked against the IR. Nothing
+   * is applied here. A list or a row is what the compiler drew already; a carousel, tabs, or a row
+   * that may be one of them is an open item the agent settles with frame.layout, however sure the
+   * reading and the IR are (their confidence and evidence are what it settles from).
    */
-  async function detectLayouts(
-    bundle: Bundle,
-    reading: Reading,
-    overrides: Overrides,
-    current: Measurement,
-    measured: boolean,
-  ): Promise<{
-    layouts: LayoutReport[];
-    overrides: Overrides;
-    current: Measurement;
-    built?: Built;
-  }> {
-    // what each container is comes from the reading, its claims checked against the IR
-    const intents = reading.layouts;
-    const layouts: LayoutReport[] = intents.map((i) => ({
+  function reportsOf(reading: Reading): LayoutReport[] {
+    return reading.layouts.map((i) => ({
       src: i.src,
       name: i.name,
       kind: i.kind,
@@ -858,41 +894,6 @@ export function createMatchTools(
       ...(i.items.length > 0 ? { items: i.items } : {}),
       ...(i.slide && i.slide.length > 0 ? { slide: i.slide } : {}),
     }));
-    // Applied with no question: a carousel the frame shows, and tabs (one label drawn selected,
-    // nothing to ask). Each is kept only if the first paint is still the frame.
-    const certain = intents
-      .filter(
-        (i) =>
-          (i.confidence === "certain" && i.choice.kind === "carousel") ||
-          (i.choice.kind === "tabs" && i.confidence !== "unsure" && i.ask.length === 0),
-      )
-      .map((i) => i.choice);
-    if (certain.length === 0) return { layouts, overrides, current };
-    const next = { ...overrides, layouts: [...overrides.layouts, ...certain] };
-    const built = await engine.build(bundle, next);
-    const leftOut = (why: string) => {
-      for (const l of layouts) if (certain.some((c) => c.src === l.src)) l.note = why;
-      return { layouts, overrides, current };
-    };
-    if (built.errors.length > 0)
-      return leftOut(`not applied: the validator refused it: ${built.errors.join("; ")}`);
-    const after = measured ? await engine.measure(bundle, built) : current;
-    if (
-      measured &&
-      (after.match < current.match - FIRST_PAINT_TOLERANCE ||
-        after.conformErrors > current.conformErrors)
-    ) {
-      return leftOut(
-        `not applied: as laid out the first paint moved (match ${current.match} → ${after.match}, conform errors ${current.conformErrors} → ${after.conformErrors}), so it stays as compiled`,
-      );
-    }
-    for (const l of layouts) {
-      const note = built.layoutNotes.find((n) => n.src === l.src);
-      if (!note) continue;
-      l.applied = note.applied;
-      if (!note.applied) l.note = note.message;
-    }
-    return { layouts, overrides: next, current: after, built };
   }
 
   /**
@@ -912,32 +913,19 @@ export function createMatchTools(
   }
 
   /**
-   * Whether anything on the section is data. Code reads the signs; when they do not settle it, the
-   * model that judges layouts reads the outline, and only a sure answer is taken.
+   * The signs of whether anything on the section is data, and what they propose. A proposal: the
+   * agent settles it in frame.publish's `content`.
    */
-  async function readContent(
-    bundle: Bundle,
-    tree: Built["tree"],
-    layouts: LayoutReport[],
-    signal?: AbortSignal,
-  ): Promise<Content> {
+  function readContent(bundle: Bundle, tree: Built["tree"], layouts: LayoutReport[]): Content {
     const nodes = (tree as { nodes: Parameters<typeof contentOf>[0]["nodes"] }).nodes;
     const boxOf = (src: string) => bundle.byId.get(src)?.geometry.bbox;
-    const found = contentOf({ nodes }, layouts, boxOf);
-    if (found.data !== "unsure" || !judge) return found;
-    try {
-      return applyContentVerdict(
-        found,
-        await judge(contentPrompt(outlineOf({ nodes }), found), signal),
-      );
-    } catch {
-      return found;
-    }
+    const nameOf = (src: string) => bundle.byId.get(src)?.name;
+    return contentOf({ nodes }, layouts, boxOf, nameOf);
   }
 
   /**
-   * The frame's slots for these joins, and whether each shows data. The frame has data when any
-   * slot has, so `framed` is the whole frame's reading with the slots' put in it.
+   * The frame's slots for these joins, and what the signs propose for each. The frame shows data
+   * when any slot does, so `framed` is the whole frame's proposal with the slots' put in it.
    */
   async function readSlots(
     bundle: Bundle,
@@ -946,9 +934,9 @@ export function createMatchTools(
     content: Content,
     joins: readonly Join[],
     shape: SlotShape | undefined,
-    signal?: AbortSignal,
+    apart: readonly Join[] = [],
   ): Promise<{ slots?: FoundSlots; slotContent: Content[]; framed: Content }> {
-    const slots = await engine.slots?.(bundle, joins, shape).catch(() => undefined);
+    const slots = await engine.slots?.(bundle, joins, shape, apart).catch(() => undefined);
     const slotContent: Content[] = [];
     let framed = content;
     if (slots) {
@@ -964,14 +952,13 @@ export function createMatchTools(
       for (const [i, slot] of slots.slots.entries()) {
         const inside = new Set(slot.ir);
         slotContent.push(
-          await readContent(
+          readContent(
             bundle,
             { nodes: tree.nodes.filter((n) => owners.get(n.id) === i) } as Built["tree"],
             // a carousel drawn once is the slot's when its slide is
             layouts.filter(
               (l) => inside.has(l.src) || (l.slide ?? []).some((id) => inside.has(id)),
             ),
-            signal,
           ),
         );
       }
@@ -979,7 +966,10 @@ export function createMatchTools(
       if (withData.length > 0 && content.data !== "some") {
         framed = {
           data: "some",
-          evidence: [...content.evidence, ...withData.map((s) => `${s.name} shows data`)],
+          evidence: [
+            ...content.evidence,
+            ...withData.map((s) => `the part ${s.name} [${s.id}] is proposed as showing data`),
+          ],
         };
       }
     }
@@ -1004,12 +994,41 @@ export function createMatchTools(
           bundle.notes.length > 0
             ? { designerNotes: bundle.notes, designerNotesRule: NOTES_RULE }
             : {};
+        // the notes `final` must answer, where its check reads them
+        ctx.state.set(
+          LISTED_NOTES,
+          bundle.notes.map((n) => n.id),
+        );
         // the section the run works on, so what a person answers is about it (ADR 0033)
         if (bundle.section) ctx.situate?.({ section: bundle.section, name: bundle.rootName });
         const decided = await decidedBefore(opts.decisions, ctx.tenantId, bundle.section).catch(
           () => [],
         );
-        const earlier = decided.length > 0 ? { before: decided, beforeRule: BEFORE_RULE } : {};
+        // how this agent built the section before, as an index (ADR 0034)
+        const alike = bundle.section
+          ? await (opts.like?.(ctx.tenantId, bundle.section) ?? Promise.resolve([])).catch(() => [])
+          : [];
+        const built = await builtFor(
+          opts.decisions,
+          ctx.tenantId,
+          bundle.section,
+          AGENT_ID,
+          async () => alike,
+        ).catch(() => undefined);
+        const lessons = await lessonsFor(opts.decisions, ctx.tenantId, [
+          bundle.section,
+          ...alike.map((a) => a.signature),
+        ]).catch(() => []);
+        // what the club approved from several sections' builds (ADR 0034, section 8)
+        const patterns = await patternsFor(opts.decisions, ctx.tenantId, ["layout."]).catch(
+          () => [],
+        );
+        const earlier = {
+          ...(decided.length > 0 ? { before: decided, beforeRule: BEFORE_RULE } : {}),
+          ...(patterns.length > 0 ? { patterns, patternsRule: PATTERNS_RULE } : {}),
+          ...(built ? { built } : {}),
+          ...(lessons.length > 0 ? { lessons, lessonsRule: LESSONS_RULE } : {}),
+        };
         if (saved) return { ...standing(saved), ...designer, ...earlier };
 
         // the frame read by eye first: what it is for, what each part does, what moves
@@ -1027,41 +1046,30 @@ export function createMatchTools(
               ? `Only ${before.coverage}% of the frame has a screenshot that lines up with it, so a match over that says nothing about the rest.${before.plates.some((p) => p.problem) ? ` ${before.plates.map((p) => `${p.name}: ${p.problem ?? "compared"}`).join("; ")}` : ""}`
               : undefined;
         const first = await engine.firstPass(bundle, noOverrides(), before);
-        const laid = await detectLayouts(
-          bundle,
-          reading,
-          first.overrides,
-          first.measurement,
-          !unmeasured,
-        );
-        const content = await readContent(
-          bundle,
-          (laid.built ?? first.built).tree,
-          laid.layouts,
-          ctx.signal,
-        );
+        // what each container is: proposals, applied only when the agent settles them
+        const layouts = reportsOf(reading);
+        const content = readContent(bundle, first.built.tree, layouts);
         const layoutMemory = await layoutBefore(ctx.tenantId, bundle.section);
-        // the frame's slots, and whether each shows data: a frame of two sections binds twice
+        // the frame's slots, and what the signs propose for each: a frame of two sections binds twice
         const { slots, slotContent, framed } = await readSlots(
           bundle,
-          (laid.built ?? first.built).tree,
-          laid.layouts,
+          first.built.tree,
+          layouts,
           content,
           split.joins,
           shape,
-          ctx.signal,
         );
         const state: State = {
           exportId: bundle.exportId,
           themeArtifactId: bundle.themeArtifactId,
-          overrides: laid.overrides,
+          overrides: first.overrides,
           found: Object.fromEntries(bundle.found ?? []),
           before: {
             match: before.match,
             conformErrors: before.conformErrors,
             placeholderIcons: before.placeholderIcons,
           },
-          current: laid.current,
+          current: first.measurement,
           ...(unmeasured ? { unmeasured } : {}),
           standIns: first.built.cropped.length,
           rawGradients: first.built.rawGradients,
@@ -1074,11 +1082,12 @@ export function createMatchTools(
           examined: [],
           examinedSurfaces: [],
           publishRefusals: 0,
-          layouts: laid.layouts,
+          despite: [],
+          layouts,
           reading,
           settled: [],
           open: Object.fromEntries(
-            laid.layouts.flatMap((l) => {
+            layouts.flatMap((l) => {
               const items = openLayoutItems(l, l.choice, layoutMemory);
               return items.length > 0 ? [[l.src, items]] : [];
             }),
@@ -1108,17 +1117,12 @@ export function createMatchTools(
             ? {
                 unpainted: state.unpainted,
                 unpaintedNote:
-                  "The design paints these and the compile does not. No score sees a layer with no screenshot of its own. Give one a paint with frame.override: a surface under a new name, then props { surface } on the layer.",
+                  "The design paints these and the compile does not. No score sees a layer with no screenshot of its own, so painting one moves nothing measured. frame.override paints one: a surface under a new name, then props { surface } on the layer; keep says why a change that moves nothing is kept.",
               }
             : {}),
           content: {
             ...framed,
-            note:
-              framed.data === "none"
-                ? "Nothing on this section is data: it is published as it is, and nothing is bound to a source."
-                : framed.data === "some"
-                  ? "This section shows data: the binding stage finds its source after you publish."
-                  : "The signs do not say whether this section shows data: the binding stage looks again.",
+            note: "What the signs propose, not settled: you settle whether the section shows data (open item content) and pass it to frame.publish. none: it is published as it is, nothing bound. some: the binding stage finds its source after you publish.",
           },
           reading: readingOf(reading),
           ...designer,
@@ -1196,13 +1200,24 @@ export function createMatchTools(
   const override = defineTool({
     name: "frame.override",
     description:
-      "Add overrides, recompile and measure again. Pass any of props: [{ src, props }], surfaces: { name: spec }, crops: [src], gradients: [src], icons: { slug: glyph }. It is kept only if the match does not drop, conform errors do not rise, and something improved. Otherwise it is undone and the reason returned.",
-    // A layout is not the model's to set: frame.layout, behind an approval, is the only way.
-    input: Overrides.omit({ layouts: true }),
+      "Add overrides, recompile and measure again. Pass any of props: [{ src, props }], surfaces: { name: spec }, crops: [src], backdrops: [src], gradients: [src], icons: { slug: glyph }. A change that measures better is kept. One that costs (the match drops, conform errors or placeholder icons rise) or moves nothing measured is undone and its cost returned, unless you pass keep: why you keep it anyway (the IR says the layer has that paint, the score cannot see it); then it is kept, and its cost and your why are listed for the reviewer. Every result also reports what bears on the change: a text tone beside the colour the design paints it, and crops that span a band with no text.",
+    // A layout is set through frame.layout only.
+    input: Overrides.omit({ layouts: true }).extend({
+      keep: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Why to keep this change even if it costs score or moves nothing measured. Left out: such a change is undone",
+        ),
+    }),
     effect: "read",
     timeoutMs: 120_000,
     alwaysInline: true,
-    run: (change, ctx) =>
+    // a change that was kept returns the frame's findings as they now stand, which replace the
+    // ones an earlier change returned; one that was undone changed nothing
+    latestOnly: (output) => (output as { kept?: boolean }).kept === true,
+    run: ({ keep, ...change }, ctx) =>
       inTurn(ctx.runId, async () => {
         const state = requireState(ctx);
         if (state.unmeasured) {
@@ -1215,11 +1230,31 @@ export function createMatchTools(
         const asked = { ...change, layouts: [] };
         const overrides = merge(state.overrides, asked);
         const built = await engine.build(bundle, overrides);
-        const stale = built.errors.length > 0 || built.missing.length > 0;
-        const measured = stale ? state.current : await engine.measure(bundle, built);
-        const refused = refusal(state.current, measured, built, paintsUnpainted(state, asked));
-        if (refused) {
-          return { kept: false, reason: refused, match: state.current.match };
+        // what bears on the change, reported whether it is kept or not: the design's own text
+        // colour beside each tone, and which crops span a band with no text in it
+        const tones = toneAgainstDesign(bundle, change.props ?? []);
+        const backdrops = backdropCandidates(
+          bundle,
+          built.tree.nodes as Parameters<typeof backdropCandidates>[1],
+          change.crops ?? [],
+        );
+        const report = {
+          ...(tones.length > 0 ? { tones } : {}),
+          ...(backdrops.length > 0 ? { backdrops } : {}),
+          ...(built.cropNotes?.length ? { crops: built.cropNotes } : {}),
+        };
+        const cannot = unappliable(built);
+        if (cannot) return { kept: false, reason: cannot, match: state.current.match, ...report };
+        const measured = await engine.measure(bundle, built);
+        const cost = costOf(state.current, measured);
+        if (cost.length > 0 && !keep) {
+          return {
+            kept: false,
+            reason: cost.join("; "),
+            match: state.current.match,
+            tried: measured.match,
+            ...report,
+          };
         }
         const next: State = {
           ...state,
@@ -1227,21 +1262,45 @@ export function createMatchTools(
           current: measured,
           standIns: built.cropped.length,
           rawGradients: built.rawGradients,
+          despite:
+            cost.length > 0
+              ? [
+                  ...state.despite,
+                  `${changeLine(change)}: ${cost.join("; ")}. Kept because: ${keep}`,
+                ]
+              : state.despite,
         };
         const { published: _stale, ...unpublished } = next;
         writeState(dir, ctx.runId, unpublished);
-        return { kept: true, was: state.current.match, ...standing(next) };
+        return {
+          kept: true,
+          was: state.current.match,
+          ...(cost.length > 0 ? { despite: cost } : {}),
+          ...report,
+          ...standing(next),
+        };
       }),
   });
 
-  // What the model sees is small: { src, kind, config } with config an open object. The full
-  // LayoutChoice is a union of kinds with many optional fields, and as a strict tool schema its
-  // grammar is more than Bedrock compiles. An open object leaves the tool out of strict mode (as
-  // frame.override is), and the pipe still refuses any choice LayoutChoice does not take.
+  // What the model sees is small: { src, kind, config } with config an open object, and the
+  // structure (items, slide, chrome) when it changes what frame.load found. The full LayoutChoice
+  // is a union of kinds with many optional fields, and as a strict tool schema its grammar is more
+  // than Bedrock compiles. An open object leaves the tool out of strict mode (as frame.override
+  // is); the run fills what the choice leaves out from frame.load's proposal for the same kind and
+  // refuses any choice LayoutChoice does not take.
+  const ids = (what: string) => z.array(z.string()).optional().describe(what);
   const LayoutCall = z.object({
-    choice: LayoutChoice,
-    platform: z.record(z.string(), z.unknown()).optional(),
-    settled: z.array(SettledBy).default([]),
+    choice: z.object({
+      src: z.string(),
+      kind: z.enum(["carousel", "grid", "tabs", "list", "row"]),
+      config: z.record(z.string(), z.unknown()),
+      items: z.array(z.string()).optional(),
+      slide: z.array(z.string()).optional(),
+      chrome: z.record(z.string(), z.string()).optional(),
+    }),
+    // an object, or pasted text that is not JSON: the run refuses the text with why
+    platform: z.union([z.record(z.string(), z.unknown()), z.string()]).optional(),
+    settled: z.array(SettledBy),
   });
   const layoutInput = z
     .object({
@@ -1254,7 +1313,19 @@ export function createMatchTools(
             .record(z.string(), z.unknown())
             .optional()
             .describe(
-              'carousel: { slidesPerView: number or "auto", slidesPerGroup, centered, initialSlide, pages, loop, autoplay: false or { delayMs }, controls: { arrows: { placement: "edges" or "as-drawn", states }, pagination: { states } }, props: { effect, speed, easing, freeMode }, platform }. platform: a platform carousel config (slides_per_view, nav_arrows, nav_indicator, autoplay_progress, ...) the reviewer gave, passed whole as given. grid: { columns, rows }. tabs: { options, active }. list and row: none',
+              'carousel: { slidesPerView: number or "auto", slidesPerGroup, centered, initialSlide, pages, loop, autoplay: false or { delayMs }, controls: { arrows: { placement: "edges" or "as-drawn", states }, pagination: { states } }, props: { effect, speed, easing, freeMode }, platform }. platform: a platform carousel config (slides_per_view, nav_arrows, nav_indicator, autoplay_progress, ...) a person gave, passed whole as given. grid: { columns, rows }. tabs: { options, active }. list and row: none. For the kind frame.load proposed, what you leave out is its proposal',
+            ),
+          items: ids(
+            "The repeated items, by Figma id, in order. Left out: as frame.load reported them",
+          ),
+          slide: ids(
+            "A carousel that draws only the slide on show: the layers that are that one slide. Left out: as frame.load reported them",
+          ),
+          chrome: z
+            .record(z.string(), z.string())
+            .optional()
+            .describe(
+              "A carousel's designed controls by Figma id: prev, next, pagination, counter, progress. Left out: as frame.load reported them",
             ),
         })
         .strict(),
@@ -1266,27 +1337,72 @@ export function createMatchTools(
       // arrive as null: it is left out, as if it were not passed
       const { platform, ...given0 } = (choice.config ?? {}) as Record<string, unknown>;
       const config = Object.fromEntries(Object.entries(given0).filter(([, v]) => v !== null));
-      const bare = choice.kind === "list" || choice.kind === "row";
-      const kept =
-        choice.config && !(bare && Object.keys(config).length === 0)
-          ? { ...choice, config }
-          : { src: choice.src, kind: choice.kind };
       // Pasted JSON may arrive as the text it was pasted as.
       let given: unknown = platform;
       if (typeof given === "string") {
         try {
           given = JSON.parse(given);
         } catch {
-          // left as text: the pipe below refuses it, with zod's message
+          // left as text: refused below, with zod's message
         }
       }
-      return { choice: kept, platform: given, settled } as z.input<typeof LayoutCall>;
+      // anything else is refused by LayoutCall, with zod's message
+      return { choice: { ...choice, config }, platform: given, settled: settled ?? [] } as z.input<
+        typeof LayoutCall
+      >;
     })
     .pipe(LayoutCall);
+
+  /**
+   * The choice as LayoutChoice takes it: what the model passed, over frame.load's proposal when it
+   * is the kind proposed (a model that settles autoplay passes only autoplay). A carousel chosen in
+   * place of another kind keeps each slide at its designed width unless the model says otherwise.
+   */
+  const fullChoice = (
+    given: z.output<typeof layoutInput>["choice"],
+    report: LayoutReport,
+  ): { choice: LayoutChoice } | { error: string } => {
+    const same = report.choice.kind === given.kind ? report.choice : undefined;
+    const base = same && "config" in same ? (same.config as Record<string, unknown>) : {};
+    const structure = {
+      ...(given.items ? { items: given.items } : {}),
+      ...(given.slide ? { slide: given.slide } : {}),
+      ...(given.chrome ? { chrome: given.chrome } : {}),
+    };
+    const draft =
+      given.kind === "list" || given.kind === "row"
+        ? { src: given.src, kind: given.kind }
+        : given.kind === "carousel"
+          ? {
+              src: given.src,
+              kind: given.kind,
+              config: { slidesPerView: "auto", ...base, ...given.config },
+              ...structure,
+            }
+          : given.kind === "tabs"
+            ? {
+                src: given.src,
+                kind: given.kind,
+                config: { ...base, ...given.config },
+                ...(given.items ? { items: given.items } : {}),
+              }
+            : { src: given.src, kind: given.kind, config: { ...base, ...given.config } };
+    // the member of the union for this kind, so a refusal names the field that is wrong
+    const member = LayoutChoice.options.find((o) => o.shape.kind.value === given.kind);
+    const parsed = (member ?? LayoutChoice).safeParse(draft);
+    if (!parsed.success) {
+      return {
+        error: `${given.kind} needs ${given.kind === "tabs" ? "config { options, active }" : given.kind === "grid" ? "config { columns, rows }" : "a valid config"}: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+      };
+    }
+    return { choice: parsed.data };
+  };
+  const PlatformInput = z.record(z.string(), z.unknown());
+
   const layout = defineTool<z.infer<typeof layoutInput>, Record<string, unknown>>({
     name: "frame.layout",
     description:
-      "Apply what one container is: a carousel, a fixed row, a list, a grid or tabs. Pass { choice: { src, kind, config }, settled }: frame.load's `layouts` list each container with its evidence, and its `open` items say what is still to settle about it (what it is, how many items, autoplay, loop, a platform config), each with the answers a tool can act on and what else this call takes. Settle each item first (from `before` in memory, from the evidence, or by asking a person with `ask`), then pass the result as the choice: config.pages for a number of items, config.autoplay (false or { delayMs }), config.loop, config.platform (a platform carousel config as JSON, applied with the design first). Say in `settled` who decided each item. It never asks anything: it applies the choice, measures it and returns what was applied. Call it once for each container with open items. A carousel's first paint is the frame, so the match should not move.",
+      "Apply what one container is: a carousel, a fixed row, a list, a grid or tabs. Pass { choice: { src, kind, config }, settled }: frame.load's `layouts` list each container with its evidence and proposed choice, and its `open` items say what is still to settle about it (what it is, how many items, autoplay, loop, a platform config), each with the answers a tool can act on and what else this call takes. Nothing is applied until you call this. Settle each item first (from `before` in memory, from the evidence, or by asking a person with `ask`), then pass the result as the choice: config.pages for a number of items, config.autoplay (false or { delayMs }), config.loop, config.platform (a platform carousel config as JSON, a person's word: where it and the frame disagree its value is applied and the disagreement reported). For the kind frame.load proposed, config you leave out is its proposal; items, slide and chrome change which layers are the items, the slide and the controls. Say in `settled` who decided each item. It never asks anything: it applies the choice, measures it and returns what was applied, with the match before and after. Call it once for each container with open items.",
     input: layoutInput,
     // it writes nothing outside the run: what a person says about the frame is the question
     effect: "read",
@@ -1302,12 +1418,23 @@ export function createMatchTools(
             reason: `frame.load found no repeated items in ${proposal.src}. Pass the src of one of its layouts: ${state.layouts.map((l) => l.src).join(", ") || "it found none"}`,
           };
         }
+        const full = fullChoice(proposal, report);
+        if ("error" in full) return { kept: false, reason: full.error };
         // the items, the one slide and the controls frame.load found, where the choice leaves them out
-        const asked: LayoutChoice = withStructure(proposal, report);
-        const platform = modelPlatform;
+        const asked: LayoutChoice = withStructure(full.choice, report);
+        const given =
+          modelPlatform === undefined ? undefined : PlatformInput.safeParse(modelPlatform);
+        if (given && !given.success) {
+          return {
+            kept: false,
+            reason: `config.platform is not a JSON object: ${given.error.issues.map((i) => i.message).join("; ")}`,
+          };
+        }
+        const platform = given?.data;
         const bundle = await bundleOf(ctx, state);
         let choice: LayoutChoice = asked;
         let platformNotes: string[] | undefined;
+        let platformConflicts: PlatformConflict[] | undefined;
         if (platform) {
           if (asked.kind !== "carousel") {
             return {
@@ -1333,6 +1460,7 @@ export function createMatchTools(
           });
           choice = applied.choice;
           platformNotes = applied.notes;
+          platformConflicts = applied.conflicts;
         }
         const overrides = {
           ...state.overrides,
@@ -1392,6 +1520,9 @@ export function createMatchTools(
             ? { platform: platformNotes.length > 0 ? platformNotes : ["applied as given"] }
             : {}),
           ...(platform ? { platformSets: describePlatform(platform) } : {}),
+          // where the person's config and the frame disagree: the config's value is applied where
+          // the Carousel takes one; the rest is the frame's until you change it
+          ...(platformConflicts && platformConflicts.length > 0 ? { platformConflicts } : {}),
           ...(state.unmeasured ? {} : { was: state.current.match }),
           ...standing(next),
         };
@@ -1405,19 +1536,25 @@ export function createMatchTools(
         .describe(
           "The parts that are one section, by the ids frame.load's section_split item lists: each pair joins two parts, the upper one first. [] keeps every part apart",
         ),
+      apart: z
+        .array(z.object({ first: z.string().min(1), second: z.string().min(1) }).strict())
+        .optional()
+        .describe(
+          "Parts the finder joined for sitting side by side that are two sections, by the pair's ids as section_split lists them. Left out: the finder's joins stand",
+        ),
       settled: z.array(SettledBy).optional().describe(SETTLED_BY_HELP),
     })
     .strict();
   const split = defineTool({
     name: "frame.split",
     description:
-      "Apply which parts of the frame are one section. frame.load's open item section_split lists the parts the finder was unsure of and each join it could make, with the finder's proposal and what memory holds: settle it (from memory, from the evidence, or by asking a person with `ask`), then pass the joins here. Parts joined share one data source. It never asks anything: it re-reads the frame's slots with these joins and returns them. Call it once; frame.publish waits for it when frame.load reported the item. Say in `settled` who decided it.",
+      "Apply which parts of the frame are one section. frame.load's open item section_split lists the parts the finder was unsure of and each join it could make, the parts it joined itself for sitting side by side, the finder's proposal and what memory holds: settle it (from memory, from the evidence, or by asking a person with `ask`), then pass the joins here, and in apart any pair the finder joined that is two sections. Parts joined share one data source. It never asks anything: it re-reads the frame's slots with these and returns them. Call it once; frame.publish waits for it when frame.load reported the item. Say in `settled` who decided it.",
     input: splitInput,
     // it writes nothing outside the run
     effect: "read",
     timeoutMs: 120_000,
     alwaysInline: true,
-    run: ({ joins, settled: told }, ctx) =>
+    run: ({ joins, apart = [], settled: told }, ctx) =>
       inTurn(ctx.runId, async () => {
         const state = requireState(ctx);
         if (!state.split) {
@@ -1428,7 +1565,9 @@ export function createMatchTools(
         }
         const bundle = await bundleOf(ctx, state);
         const shape = state.reading ? shapeOf(state.reading) : undefined;
-        const parts = (await engine.slots?.(bundle, [], shape).catch(() => undefined))?.slots ?? [];
+        const kept = apart.map((a): Join => [a.first, a.second]);
+        const parts =
+          (await engine.slots?.(bundle, [], shape, kept).catch(() => undefined))?.slots ?? [];
         const known = new Set(parts.map((p) => p.id));
         const unknown = joins.flatMap((j) => [j.upper, j.lower]).filter((id) => !known.has(id));
         if (unknown.length > 0) {
@@ -1446,13 +1585,16 @@ export function createMatchTools(
           state.frameContent ?? state.content ?? { data: "unsure", evidence: [] },
           pairs,
           shape,
-          ctx.signal,
+          kept,
         );
         const said = told?.find((t) => t.id === SPLIT_QUESTION)?.by ?? "agent";
         const recorded: Settled = {
           id: SPLIT_QUESTION,
           by: said === "memory" && !state.split.item.before ? "agent" : said,
-          value: pairs.length > 0 ? pairs.map(([a, b]) => `${a}+${b}`).join(", ") : "apart",
+          value: [
+            pairs.length > 0 ? pairs.map(([a, b]) => `${a}+${b}`).join(", ") : "apart",
+            ...kept.map(([a, b]) => `${a}|${b}`),
+          ].join(", "),
         };
         const next: State = {
           ...state,
@@ -1471,31 +1613,84 @@ export function createMatchTools(
             id: s.id,
             name: s.name,
             confidence: s.confidence,
-            content: read.slotContent[i]?.data ?? "unsure",
+            proposed: read.slotContent[i]?.data ?? "unsure",
           })),
+          ...openNote(next),
         };
       }),
   });
 
-  const publish = defineTool<
-    z.infer<typeof noArgs>,
-    z.infer<typeof Published>,
-    Record<string, unknown>
-  >({
+  const SettledContent = z
+    .object({
+      data: z.enum(["none", "some"]).describe("none: nothing on it is data; some: it shows data"),
+      why: z.string().min(1).describe("What in the evidence settles it"),
+      by: z
+        .enum(["person", "memory", "agent"])
+        .optional()
+        .describe(
+          "person: a person answered your ask; memory: from `before`; agent (default): you",
+        ),
+    })
+    .strict();
+  const publishInput = z
+    .object({
+      content: SettledContent.describe(
+        "Whether anything on the section is data (frame.load's open item content): settled by you, from its evidence",
+      ),
+      slots: z
+        .array(SettledContent.extend({ id: z.string().min(1).describe("The part's id") }))
+        .describe(
+          "When the content item lists several parts: one entry for each, by its id. [] when the frame is one part",
+        ),
+    })
+    .strict();
+  type PublishInput = z.infer<typeof publishInput>;
+
+  /** What the agent settled about content that does not fit the frame's parts, or none. */
+  const contentGap = (state: State, input: PublishInput): string | undefined => {
+    const parts = state.slots?.slots ?? [];
+    if (parts.length < 2) return undefined;
+    const given = new Set(input.slots.map((s) => s.id));
+    const missing = parts.filter((p) => !given.has(p.id));
+    const unknown = input.slots.filter((s) => !parts.some((p) => p.id === s.id));
+    const anySome = input.slots.some((s) => s.data === "some");
+    const lines = [
+      ...(missing.length > 0
+        ? [`slots has no entry for ${missing.map((p) => `${p.name} [${p.id}]`).join(", ")}`]
+        : []),
+      ...(unknown.length > 0
+        ? [
+            `no part has the id ${unknown.map((s) => s.id).join(", ")}; the parts are ${parts.map((p) => `${p.name} [${p.id}]`).join(", ")}`,
+          ]
+        : []),
+      ...(missing.length === 0 && anySome !== (input.content.data === "some")
+        ? [
+            `content says ${input.content.data} for the whole frame and the parts say ${anySome ? "one shows data" : "none shows data"}`,
+          ]
+        : []),
+    ];
+    return lines.length > 0 ? lines.join("; ") : undefined;
+  };
+
+  const publish = defineTool<PublishInput, z.infer<typeof Published>, Record<string, unknown>>({
     name: "frame.publish",
     description:
-      "Store the frame in the control plane and return its preview link. Takes no arguments. Needs approval, and the reviewer sees the measured numbers, or that none could be measured.",
-    input: noArgs,
+      "Store the frame in the control plane and return its preview link. Pass content: whether anything on the section is data, as you settled it from frame.load's open item content ({ data: none or some, why, by }), and slots: one { id, data, why, by } for each part when the item lists several ([] otherwise). Needs approval, and the reviewer sees the measured numbers, or that none could be measured, and your content.",
+    input: publishInput,
     effect: "write",
     timeoutMs: 60_000,
     // "not yet" here sends the run back to examine and fix, so asking again is the run working
     advisoryBlock: true,
     // the approval shows numbers measured by code, never the model's account of them
-    resolve(_input, ctx) {
+    resolve(input, ctx) {
       const state = readState(dir, ctx.runId);
       if (!state) return {};
       return {
         exportId: state.exportId,
+        // the content as the agent settled it: what the reviewer approves, and what block checks
+        content: input.content,
+        slots: input.slots,
+        ...(state.despite.length > 0 ? { keptDespite: state.despite } : {}),
         measured: !state.unmeasured,
         coverage: state.current.coverage,
         estimated: state.current.estimated,
@@ -1512,7 +1707,7 @@ export function createMatchTools(
           .map((f) => `${f.src} ${f.type}: ${f.mismatch}px`),
       };
     },
-    block(_input, ctx) {
+    block(input, ctx) {
       const state = readState(dir, ctx.runId);
       if (!state) return "Nothing is loaded. Call frame.load first.";
       // What a container is, and which parts are one section, are settled before the frame is
@@ -1525,6 +1720,9 @@ export function createMatchTools(
       if (state.split && !state.split.settled) {
         return "Not yet. Settle which parts of the frame are one section (frame.load's open item section_split), then apply it with frame.split.";
       }
+      const said = publishInput.safeParse({ content: input.content, slots: input.slots ?? [] });
+      const gap = said.success ? contentGap(state, said.data) : undefined;
+      if (gap) return `Not yet. The content you passed does not cover the frame's parts: ${gap}.`;
       // The score is blind to some of the worst defects, and a model that is only told to look
       // sometimes doesn't. A run made without eyes answers the call too, so the two read the same.
       if (
@@ -1539,12 +1737,20 @@ export function createMatchTools(
       if (waiting.length === 0 || state.publishRefusals >= MAX_PUBLISH_REFUSALS) return undefined;
       const refusals = state.publishRefusals + 1;
       writeState(dir, ctx.runId, { ...state, publishRefusals: refusals });
-      return `Not ready to publish (${refusals} of ${MAX_PUBLISH_REFUSALS}). Call frame.node on every one of these ${waiting.length}, in one go, before you ask again; fix what has a cause with frame.override. A difference you find is baked into a crop or a gradient with no token is not a cause: say so in remaining and go on.\n${waiting.map((src) => `- ${describeFinding(state, src)}`).join("\n")}\nAsking again without looking at them only uses up your turns: after ${MAX_PUBLISH_REFUSALS} refusals it goes through with them listed for the reviewer.`;
+      return `Not yet (${refusals} of ${MAX_PUBLISH_REFUSALS}): ${waiting.length} of the largest findings have not been read with frame.node.\n${waiting.map((src) => `- ${describeFinding(state, src)}`).join("\n")}\nAfter ${MAX_PUBLISH_REFUSALS} of these it publishes with whatever is unread listed for the reviewer.`;
     },
-    async run(_input, ctx) {
+    // `resolve` replaced the arguments with what the reviewer sees, the content among them
+    async run(resolved, ctx) {
       return inTurn(ctx.runId, async () => {
         const state = requireState(ctx);
-        if (state.published) return state.published;
+        const said = publishInput.parse({
+          content: resolved.content,
+          slots: resolved.slots ?? [],
+        });
+        if (state.published) {
+          ctx.state.set(PUBLISHED, state.published);
+          return state.published;
+        }
         const input = inputOf(ctx);
         const { project } = input;
         const plane = planeOf(project);
@@ -1578,7 +1784,32 @@ export function createMatchTools(
             : state.themeArtifactId;
         const surfaceArtifactId = await plane.upload("surface_set", built.surfaces, meta);
         const written = (await engine.choices?.(built)) ?? [];
-        const content = state.content;
+        // whether the section shows data, as the agent settled it, over the signs it read
+        const proposal = state.content ?? { data: "unsure" as const, evidence: [] };
+        const content = settledContent(proposal, said.content);
+        const parts = state.slots?.slots ?? [];
+        const slotContent = parts.map((p, i) => {
+          const part = said.slots.find((s) => s.id === p.id);
+          const signs = state.slotContent[i] ?? { data: "unsure" as const, evidence: [] };
+          // a frame of one part: that part is the frame
+          return part
+            ? settledContent(signs, part)
+            : parts.length === 1
+              ? settledContent(signs, said.content)
+              : signs;
+        });
+        const contentSettled: Settled[] = [
+          { id: "content", by: said.content.by ?? "agent", value: said.content.data },
+          ...(parts.length > 1
+            ? said.slots.map(
+                (s): Settled => ({
+                  id: "content",
+                  by: s.by ?? "agent",
+                  value: `${s.id}: ${s.data}`,
+                }),
+              )
+            : []),
+        ];
         // each choice belongs to the slot that draws it, and is named for it when there are several
         const split =
           state.slots && engine.choices
@@ -1586,10 +1817,10 @@ export function createMatchTools(
             : undefined;
         const choices = split ? split.choices : written;
         const tree = split ? (split.tree as unknown as Built["tree"]) : built.tree;
-        const slots = split && state.slots ? reportOf(state, split) : [];
+        const slots = split && state.slots ? reportOf(state, split, slotContent) : [];
         const treeArtifactId = await plane.upload("dsl_tree", tree, {
           ...meta,
-          ...(content ? { content } : {}),
+          content,
           ...(choices.length ? { choices } : {}),
           ...(slots.length ? { slots } : {}),
         });
@@ -1624,23 +1855,17 @@ export function createMatchTools(
           noPicture: state.noPicture,
           noToken: state.noToken,
           ...(state.unmeasured ? {} : { before: state.before.match, match: state.current.match }),
-          ...(content ? { content } : {}),
+          content,
           choices,
           slots,
-          settled: state.settled,
+          settled: [...state.settled, ...contentSettled],
         };
         writeState(dir, ctx.runId, { ...state, published });
+        ctx.state.set(PUBLISHED, published);
         return published;
       });
     },
   });
-
-  const judge: LayoutJudge | undefined =
-    opts.judge === false || (opts.judge === undefined && process.env.FRAME_MATCH_JUDGE === "off")
-      ? undefined
-      : (opts.judge ??
-        ((prompt, signal) =>
-          describeText({ prompt, model: "haiku", ...(signal ? { signal } : {}) })));
 
   const see: See =
     opts.see ??

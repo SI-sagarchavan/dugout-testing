@@ -1,4 +1,4 @@
-import { NeedsSetup } from "@dugout/contracts";
+import { isNeedsSetup, NeedsSetup } from "@dugout/contracts";
 import type { Grant, TokenStore } from "./tokens.ts";
 
 /** No sign-in for this tenant, or no key: a person sets it up, and nothing else will do. */
@@ -139,15 +139,14 @@ export function authFetch(tenantId: string, opts: AuthOptions): Fetch {
 }
 
 /**
- * The setup failure behind an error, when there is one: the transport wraps what its fetch threw,
- * and a sign-in that is missing must still read as one, however deep it is.
+ * The setup failure behind an error, when there is one: the transport may wrap what its fetch
+ * threw (as its `cause`), and a sign-in that is missing must still read as one, however deep it
+ * is. Read by type, never by the error's words.
  */
 export function setupFailure(err: unknown): McpAuthError | undefined {
   for (let at: unknown = err, depth = 0; at && depth < 5; depth++) {
     if (at instanceof McpAuthError) return at;
-    const message = at instanceof Error ? at.message : String(at);
-    if (/no grant for tenant|no token for |no grants file/.test(message))
-      return new McpAuthError(message);
+    if (isNeedsSetup(at)) return new McpAuthError(at.setup);
     at = (at as { cause?: unknown }).cause;
   }
   return undefined;

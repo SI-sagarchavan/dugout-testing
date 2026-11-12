@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AssistantMessage } from "./messages.ts";
 import { StepUsage, TokenUsage } from "./model.ts";
 import { Answers, AskedQuestion, Subject } from "./questions.ts";
+import { Situation } from "./situation.ts";
 
 /**
  * What a host adds to the `by` of an answer it gave without asking anyone (`--yes`, a watcher
@@ -29,7 +30,7 @@ export const ChildRef = z.object({
   agentId: z.string(),
   parentRunId: z.string(),
   callId: z.string(),
-  /** Which of a pipeline's calls to one child this is (ADR 0025, amendment): a slot's name. */
+  /** Which of a workflow's calls to one step this is (ADR 0025, amendment): a slot's name. */
   key: z.string().optional(),
 });
 export type ChildRef = z.infer<typeof ChildRef>;
@@ -134,6 +135,10 @@ export const RunEvent = z.discriminatedUnion("type", [
       durationMs: z.number(),
       // what the call spent besides the run's own model turns: a child run's (ADR 0025)
       usage: RunUsage.optional(),
+      // the section the call found the run works on (ADR 0033), for what is remembered about it
+      situation: Situation.optional(),
+      // what the call kept in the run's state (ADR 0035): a key set to null was removed
+      state: z.record(z.string(), z.unknown()).optional(),
     }),
   ),
   event(

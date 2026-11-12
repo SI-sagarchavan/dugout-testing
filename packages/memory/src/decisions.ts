@@ -90,7 +90,7 @@ export function answerText(answer: unknown): string {
 export const BEFORE_LIMIT = 10;
 /** What `before` tells the model to do with them. */
 export const BEFORE_RULE =
-  "A person already decided these about this section in earlier runs. Keep to them: do not ask them again, and say in remaining where the frame or the data now makes one wrong.";
+  "A person already decided these about this section in earlier runs. Keep to them: do not ask them again, and say where what you find now makes one wrong.";
 
 /**
  * What people decided about a section before (ADR 0033), as the lines a load tool returns: the

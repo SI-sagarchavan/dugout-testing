@@ -6,16 +6,15 @@ import { asBag, indexIr, loadDsl } from "../src/dsl.ts";
 import {
   cardHolds,
   dateKey,
+  datesInOrder,
+  describeNames,
   draftNeed,
   dryRun,
-  entityReading,
   formOf,
   groups,
   hasForm,
-  kindOf,
   leftAsDesigned,
-  orderOf,
-  orderProblems,
+  namesIn,
   outline,
   ownPictures,
   pictureEvidence,
@@ -24,7 +23,7 @@ import {
   shapeOf,
   someOnly,
   unboundCopy,
-  varyingLabels,
+  varyingTexts,
 } from "../src/facts.ts";
 import { applyKeep, findingsOf, Plan, previewOf, problemsOf } from "../src/tools.ts";
 
@@ -122,7 +121,7 @@ describe("a plan drawn against the sample", () => {
     // the hand-written plan binds overs where the design counts balls (ticket 14): nothing else
     expect(problems).toHaveLength(2);
     expect(problems.every((p) => p.includes('where the design writes "(100 Balls)"'))).toBe(true);
-    expect(problems[0]).toContain('counts in "ov" where the design counts in "balls"');
+    expect(problems[0]).toContain('shows "(20.0 Ov)" where the design writes "(100 Balls)"');
     expect(run.repeats).toEqual([
       { template: "35:10546", over: "fixtures.items", items: 7, most: 7 },
       { template: "I35:10546;18621:42501", over: "day.matches", items: 9, most: 2 },
@@ -147,6 +146,26 @@ describe("a plan drawn against the sample", () => {
     label.template = '{match.state | replace:"R":"RECENT","U":"UPCOMING"}';
     const { problems } = check(plan);
     expect(problems.some((p) => p.includes("not a ref the renderer reads"))).toBe(true);
+  });
+
+  it("reports a ref whose quoted argument holds braces, which the page draws as written", () => {
+    // run 3b826dc5: `{g.cover_image | replace:"{{RATIO}}","1x1"}` drew on every card, and no check saw it
+    const plan = structuredClone(reference);
+    const label = plan.collapse[0].fields.find(
+      (f: { src: string }) => f.src === "I35:10546;18621:42503",
+    );
+    delete label.path;
+    label.template = '{match.state | replace:"{{RATIO}}","1x1"}';
+    const { problems } = check(plan);
+    expect(problems.some((p) => p.includes("not a ref the renderer reads"))).toBe(true);
+  });
+
+  it("reports a when that is no condition, which hides nothing", () => {
+    // run 3b826dc5: `when: false` on the design's dummy cards, and the page drew them beside the data
+    const plan = structuredClone(reference);
+    plan.set.push({ src: "I35:10546;18621:42503", prop: "when", value: false });
+    const { problems } = check(plan);
+    expect(problems.some((p) => p.includes("when false: not a condition"))).toBe(true);
   });
 
   it("reports a path the data does not have, and a field some items lack", () => {
@@ -174,16 +193,25 @@ describe("a plan drawn against the sample", () => {
     expect(problems.some((p) => p.includes("has nothing at match.teams.0.score"))).toBe(true);
   });
 
-  it("reports data in lower case where the design writes capitals", () => {
+  it("reports data in lower case where the design writes capitals, as an observation a keep takes", () => {
     const plan = structuredClone(reference);
     plan.set = plan.set.filter(
       (s: { src: string; prop: string }) =>
         !(s.src === "I35:10546;18621:42503" && s.prop === "textCase"),
     );
-    const { problems } = check(plan);
-    expect(problems).toContain(
-      'I35:10546;18621:42503 shows "Recent" where the design writes capitals ("RECENT"): set textCase "upper"',
+    const applied = dsl.applyBindingPlan(tree, plan);
+    const found = findingsOf(
+      applied,
+      [],
+      dryRun(applied.tree, bag, dsl, tree, Date.parse("2026-11-15T12:17:27Z")),
+      plan,
+      tree,
+    ).find((p) => p.src === "I35:10546;18621:42503");
+    expect(found?.message).toContain(
+      'I35:10546;18621:42503 shows "Recent" where the design writes capitals ("RECENT")',
     );
+    // a design may write capitals as an example only: the binder decides, so a keep takes it
+    expect(found?.keep).toBe(true);
   });
 
   it("reports the looks a collapse would lose: the second team drawn like the first", () => {
@@ -231,9 +259,10 @@ describe("a plan drawn against the sample", () => {
       (f: { template?: string }) => !f.template?.includes("countdown"),
     );
     const { problems } = check(plan);
-    expect(problems).toContain(
-      'I35:10547;18621:42579 shows the design\'s "02" in all 2 items it draws in: a placeholder. Bind it to what it stands for (time left until an instant is a clock), hide it with a when when the data has nothing for it, or keep it with why it stays',
-    );
+    const found = problems.find((p) => p.startsWith("I35:10547;18621:42579"));
+    expect(found).toContain('shows the design\'s "02" in all 2 items it draws in');
+    // what was seen, not what it is: no recipe for one kind of design
+    expect(found).not.toMatch(/clock|placeholder/);
   });
 
   it("reports a clock that reads no instant", () => {
@@ -336,7 +365,7 @@ describe("a grid drawn as rows", () => {
     ).toBe(true);
   });
 
-  it("reports the row left showing the design, with each row's slice and its own ids", () => {
+  it("reports the row left showing the design beside the row that draws data, with its own ids", () => {
     const { left, problems } = checkGrid(
       read("agents/data-bind/tests/fixtures/news-grid.one-row.plan.json"),
     );
@@ -347,28 +376,34 @@ describe("a grid drawn as rows", () => {
         over: "news.cards",
         copy: "Southern Brave in Women’s Hundred 2023 | Comple…",
         items: ["35:10188", "35:10189"],
-        fields: [
-          ["I35:10185;10169:11332", "I35:10188;10169:11332"],
-          ["I35:10185;10169:11338", "I35:10188;10169:11338"],
-          ["I35:10185;10169:11342", "I35:10188;10169:11342"],
-        ],
-        slices: [
-          ["35:10184", [0, 2]],
-          ["35:10187", [2, 4]],
-        ],
       },
     ]);
-    expect(problems).toContainEqual(
-      expect.stringMatching(
-        /^35:10187 still shows the design's placeholders .*\(35:10184 \[0, 2\], 35:10187 \[2, 4\]\)/,
-      ),
+    const found = problems.find((p) => p.startsWith("35:10187 still shows"));
+    expect(found).toContain(
+      "beside 35:10184, its sibling of the same shape, which draws news.cards",
     );
+    expect(found).toContain("Its own items: 35:10188, 35:10189");
+    // the observation, not a computed fix
+    expect(found).not.toMatch(/slice|\[0, 2\]/);
     // the first row draws all six cards in a row sized for two
     expect(problems).toContainEqual(
       expect.stringMatching(
         /^news\.cards draws up to 6 items where the design drew 2, in 35:10184: a row/,
       ),
     );
+  });
+
+  it("does not report a row the plan hides with a when", () => {
+    // run 75a770af: the design's last row, hidden where the feed has no item for it, was reported as
+    // design copy, and the model kept it to answer a check that should not have fired
+    const plan = read("agents/data-bind/tests/fixtures/news-grid.one-row.plan.json");
+    plan.set = [
+      ...(plan.set ?? []),
+      { src: "35:10187", prop: "when", value: { path: "news.cards.9.id", exists: true } },
+    ];
+    const { left, problems } = checkGrid(plan);
+    expect(left.map((l) => l.src)).not.toContain("35:10187");
+    expect(problems.filter((p) => p.startsWith("35:10187 still shows"))).toEqual([]);
   });
 
   it("reports nothing overflowing when each row draws its own slice", () => {
@@ -381,7 +416,7 @@ describe("a grid drawn as rows", () => {
       read("agents/data-bind/tests/fixtures/news-grid.plan.json"),
     );
     expect(left).toEqual([]);
-    expect(problems.filter((p) => p.includes("placeholders"))).toEqual([]);
+    expect(problems.filter((p) => p.includes("still shows the design's copy"))).toEqual([]);
   });
 
   it("reports design copy left beside bound data, in any container", () => {
@@ -467,7 +502,7 @@ describe("a picture each card has its own of", () => {
 
   it("reports the first card's photo drawn on every card", () => {
     expect(problems([name]).find((p) => p.startsWith("I35:1;1 picture"))).toContain(
-      "draws 35:1's in every item of squad.players",
+      "every item of squad.players draws 35:1's",
     );
   });
 
@@ -500,7 +535,7 @@ describe("a picture each card has its own of", () => {
     expect(found[0]).toMatch(/^I35:1;1, I35:2;1 still show/);
   });
 
-  it("never accepts a plain keep for a picture each card has its own of: bind it, hide it, or settle it (ticket 16)", () => {
+  it("reports a picture each card has its own of with the evidence, and a keep with why takes it", () => {
     const plan = {
       bind: [
         { src: "I35:1;2", prop: "content", path: "squad.players.0.name" },
@@ -524,24 +559,29 @@ describe("a picture each card has its own of", () => {
       evidence,
     ).filter((p) => p.message.includes("bound by position"));
     expect(found).toHaveLength(1);
-    // only a keep that says it was settled the item has no picture takes it
-    expect(found[0]?.keep).toBe("no-picture");
-    const { open, kept } = applyKeep(found, cards, plan as never);
-    expect(open).toHaveLength(1);
-    expect(kept.join("\n")).not.toContain("accepts");
-    expect(found[0]?.message).toContain('settled "no-picture"');
+    expect(found[0]?.keep).toBe(true);
     expect(found[0]?.message).toContain("House facts that build one: media.player-photo");
-    const settled = {
-      ...plan,
-      keep: [
-        {
-          src: "I35:1;1",
-          why: "each card's art is decoration: the items have no picture of their own",
-          settled: "no-picture",
-        },
-      ],
-    };
-    expect(applyKeep(found, cards, settled as never).open).toEqual([]);
+    expect(found[0]?.message).toContain("3 different ones");
+    // no one site's URL scheme in what it says
+    expect(found[0]?.message).not.toMatch(/ratio|static-assets|CMS/);
+    // what the picture means is the binder's: a keep with why accepts it like any other
+    const { open, kept } = applyKeep(found, cards, plan as never);
+    expect(open).toEqual([]);
+    expect(kept.join("\n")).toContain("accepts");
+    // a settled field is not part of a keep any more
+    const old = { ...plan, keep: [{ src: "I35:1;1", why: "decoration", settled: "no-picture" }] };
+    expect(Plan.safeParse(old).success).toBe(false);
+  });
+
+  it("says the picture's box when the design fixed its size, and no ratio of its own", () => {
+    const sized = {
+      nodes: (
+        cards as { nodes: Array<{ type: string; props: Record<string, unknown> }> }
+      ).nodes.map((n) =>
+        n.type === "Image" ? { ...n, props: { ...n.props, size: { w: 360, h: { raw: 640 } } } } : n,
+      ),
+    } as never;
+    expect(ownPictures(sized, ["35:1", "35:2", "35:3"])[0]).toMatchObject({ box: "360 x 640 px" });
   });
 
   it("lets a plan keep a glyph each card has its own of with why: an icon is not a picture file", () => {
@@ -708,11 +748,36 @@ describe("cards that differ by a badge", () => {
     expect(found.some((p) => p.startsWith("I35:1;4"))).toBe(false);
   });
 
-  it("reports a name the design breaks over two lines drawn on one", () => {
+  it("reports a when that hides on most cards a part the design draws on every card", () => {
+    const name = { src: "I35:1;2", prop: "content", template: "{p.first}\n{p.last}" };
+    const gated = (value: unknown) =>
+      problems({
+        collapse: [collapse([photo, name])],
+        set: [
+          { src: "I35:1;4", prop: "when", value: { path: "p.captain", eq: true } },
+          { src: "I35:1;3", prop: "when", value },
+        ],
+      }).find((p) => p.startsWith("I35:1;3"));
+    expect(gated({ path: "p.captain", eq: true })).toContain(
+      "on every one of the design's 3 items",
+    );
+    // hiding it where the item has nothing to show is not that
+    expect(gated({ path: "p.first", exists: true })).toBeUndefined();
+  });
+
+  it("reports a text the design writes over two lines drawn on one, as an observation a keep takes", () => {
     const name = { src: "I35:1;2", prop: "content", template: "{p.first} {p.last}" };
-    expect(
-      problems({ collapse: [collapse([photo, name])] }).find((p) => p.startsWith("I35:1;2")),
-    ).toContain("on one line where the design breaks it");
+    const plan = { collapse: [collapse([photo, name])] };
+    const applied = dsl.applyBindingPlan(tree, plan);
+    const found = findingsOf(
+      applied,
+      [],
+      dryRun(applied.tree, players, dsl, tree),
+      plan as never,
+      tree,
+    ).find((p) => p.src === "I35:1;2" && p.message.includes("on one line"));
+    expect(found?.message).toContain('where the design writes it over 2 lines ("Ben\\nMcKinney")');
+    expect(found?.keep).toBe(true);
   });
 });
 
@@ -726,19 +791,8 @@ describe("the preview link", () => {
   });
 });
 
-describe("pictureRatio", () => {
-  it("snaps a box to the CMS ratio, width first", async () => {
-    const { pictureRatio } = await import("../src/facts");
-    expect(pictureRatio(360, 640)).toBe("9-16");
-    expect(pictureRatio(1280, 720)).toBe("16-9");
-    expect(pictureRatio(200, 200)).toBe("1-1");
-    expect(pictureRatio(500, 300)).toBeUndefined();
-    expect(pictureRatio(0, 10)).toBeUndefined();
-  });
-});
-
-describe("bind.try checks the design's format, the variants and the team (ticket 09)", () => {
-  it("faults an ISO time where the design writes 19:30, and names the pipe that fixes it", () => {
+describe("bind.try reports the design's format, the variants and what the data names (ticket 09)", () => {
+  it("reports an ISO time where the design writes 19:30, and names the generic tools", () => {
     const plan = structuredClone(reference);
     const field = plan.collapse[0].fields.find((f: { path?: string }) => f.path === "local_time");
     field.path = "start_time";
@@ -747,8 +801,8 @@ describe("bind.try checks the design's format, the variants and the team (ticket
       expect.objectContaining({ src: "I35:10546;18621:43142", design: "19:30" }),
     );
     const found = problems.find((p) => p.includes('where the design writes "19:30"'));
-    expect(found).toContain('date:"HH:mm"');
-    expect(found).toContain("or keep it with why it stays");
+    expect(found).toContain("The date pipe writes a date or a time in the tokens you give it");
+    expect(found).toContain("or keep it with why");
   });
 
   it("does not fault the reference plan's dash for a score an upcoming match lacks", () => {
@@ -769,27 +823,21 @@ describe("bind.try checks the design's format, the variants and the team (ticket
     expect(hasForm("Batter")).toBe(false);
   });
 
-  it("names the date pipe for a day and month, and the template for words around a value", () => {
-    const fix = (design: string) =>
-      dryRunFormats(design, "2026-07-21T19:30:00Z").map((f) => f.fix)[0];
-    expect(fix("21 JULY")).toContain('date:"DD MMMM"');
-    expect(fix("21 JULY")).toContain('textCase "upper"');
-    expect(fix("21 Jul")).toContain('date:"DD MMM"');
-    expect(dryRunFormats("(100 Balls)", "Overs")[0]?.fix).toContain('"({item.field} Balls)"');
+  it("says what is drawn and what the design writes, and no fix of its own for any one form", () => {
+    expect(dryRunFormats("21 JULY", "2026-07-21T19:30:00Z")).toEqual([
+      { src: "t", design: "21 JULY", shows: "2026-07-21T19:30:00Z" },
+    ]);
+    expect(dryRunFormats("(100 Balls)", "Overs")).toEqual([
+      { src: "t", design: "(100 Balls)", shows: "Overs" },
+    ]);
   });
 
-  it("compares forms case-folded, and never proposes a date pipe or a fixed suffix that is wrong", () => {
+  it("compares forms case-folded", () => {
     // the node draws upper: "21 July" with textCase upper is the design's "21 JULY"
     expect(dryRunFormats("21 JULY", "21 July", { textCase: "upper" })).toEqual([]);
     // the design writes it in mixed case and the node shouts it: still the same form
     expect(dryRunFormats("21 July", "21 JULY")).toEqual([]);
-    // a count with a word is no date
-    const goals = dryRunFormats("12 GOALS", "2026-07-21T19:30:00Z")[0]?.fix ?? "";
-    expect(goals).not.toContain("date:");
-    // an ordinal's suffix changes with the value: no "{item.field}nd"
-    const place = dryRunFormats("2nd", "17")[0]?.fix ?? "";
-    expect(place).not.toContain("{item.field}nd");
-    expect(place).toContain("hook-maker");
+    expect(dryRunFormats("2nd", "17")).toHaveLength(1);
   });
 
   /** A list whose items are drawn as a result card or an upcoming card, chosen by `m.state`. */
@@ -871,49 +919,45 @@ describe("bind.try checks the design's format, the variants and the team (ticket
     expect(dryRun(variantTree(), data, dsl).unseen).toEqual([]);
   });
 
-  it("reads the team only from lists whose items name one, and finds another club's data", () => {
+  it("says what the data's items name, most often first, and judges nothing", () => {
     const other = {
       players: [
         { name: "a", team: "Northern Lights" },
         { name: "b", team: "Northern Lights" },
-        { name: "c", team: "Eastern Tide" },
+        { name: "c", team: { name: "Eastern Tide" } },
       ],
     };
-    const read = entityReading(other, { team: "Western Stars" });
-    expect(read.reading).toBe("other");
-    expect(read.why).toContain("the data is about Northern Lights, Eastern Tide");
-    expect(read.why).toContain("the design is about Western Stars");
-    const own = { players: [{ name: "a", team: { name: "Western Stars" } }] };
-    expect(entityReading(own, { team: "Western Stars" }).reading).toBe("about");
-    // a league table names every club: one row being the design's is enough
-    const table = {
-      standings: [
-        { club: "Riverside FC", points: 30 },
-        { club: "Hill Town", points: 28 },
-        { club: "Western Stars", points: 20 },
-      ],
-    };
-    expect(entityReading(table, { team: "Western Stars" }).reading).toBe("about");
-    expect(entityReading(other, {}).reading).toBe("unknown");
-    expect(entityReading(other, undefined).reading).toBe("unknown");
+    expect(namesIn(other)).toEqual([
+      {
+        list: "players",
+        kind: "team",
+        fields: ["team", "team.name"],
+        names: [
+          { name: "Northern Lights", items: 2 },
+          { name: "Eastern Tide", items: 1 },
+        ],
+        of: 3,
+      },
+    ]);
+    expect(describeNames(namesIn(other))).toEqual([
+      'players: its 3 item(s) name the team "Northern Lights" (2), "Eastern Tide" in team, team.name',
+    ]);
+    // a competition, by a field that names one
+    const events = { events: [{ title: "Final", league: "Coastal Cup" }] };
+    expect(namesIn(events)).toMatchObject([
+      { kind: "competition", names: [{ name: "Coastal Cup" }] },
+    ]);
   });
 
-  it("does not judge a list whose items name no team: news, a squad's players", () => {
+  it("lists nothing for items that have no field naming a team: news, a squad's players", () => {
     const news = {
       items: [
         { title: "New kit revealed", published: "2026-07-01" },
         { title: "Season tickets on sale", published: "2026-06-28" },
       ],
     };
-    expect(entityReading(news, { team: "Western Stars" })).toEqual({
-      reading: "unknown",
-      lists: [],
-    });
-    const squad = { women: [{ name: "A Player", role: "Batter" }] };
-    expect(entityReading(squad, { team: "Western Stars" }).reading).toBe("unknown");
-    // a competition is judged on a field that names one
-    const events = { events: [{ title: "Final", league: "Coastal Cup" }] };
-    expect(entityReading(events, { competition: "Inland League" }).reading).toBe("other");
+    expect(namesIn(news)).toEqual([]);
+    expect(namesIn({ women: [{ name: "A Player", role: "Batter" }] })).toEqual([]);
   });
 });
 
@@ -935,28 +979,37 @@ function dryRunFormats(design: string, value: string, props: object = {}) {
   return dryRun(make("{v}"), { v: value }, dsl, make(design)).formats;
 }
 
+describe("the pictures a dry run asks for", () => {
+  const node = (id: string, parent: string | null, type: string, props: object) => ({
+    id,
+    idx: 0,
+    parent,
+    src: id,
+    type,
+    props,
+  });
+  const cdn = "https://cdn.example/static-assets/media/{{RATIO}}-a.jpg";
+  const urls = (props: object) =>
+    dryRun(
+      {
+        schemaVersion: "1",
+        nodes: [
+          node("root", null, "Stack", {}),
+          node("i", "root", "Image", { src: "{v}", ...props }),
+        ],
+      } as never,
+      { v: cdn },
+      dsl,
+    ).pictures[0]?.urls;
+
+  it("fills the CDN's ratio slot from the Image's ratio, as the renderer does", () => {
+    // run 3b826dc5: the slot left in answered a 68-byte stand-in, reported as a picture that draws nothing
+    expect(urls({ ratio: "1/1" })).toEqual(["https://cdn.example/static-assets/media/1-1-a.jpg"]);
+    expect(urls({})).toEqual(["https://cdn.example/static-assets/media/0-a.jpg"]);
+  });
+});
+
 describe("the need, drafted by code from the design (ticket 08)", () => {
-  it("reads a placeholder as a date, a time, a score, a number or text", () => {
-    expect(kindOf("21 JULY")).toBe("date");
-    expect(kindOf("Jul 21, 2026")).toBe("date");
-    expect(kindOf("2026-07-21T19:30:00Z")).toBe("date");
-    expect(kindOf("19:30")).toBe("time");
-    expect(kindOf("166/5")).toBe("score");
-    expect(kindOf("172/3 (20.0 Overs)")).toBe("score");
-    expect(kindOf("42")).toBe("number");
-    expect(kindOf("Southern Brave")).toBe("text");
-    expect(kindOf("Sat 21 July")).toBe("date");
-    expect(kindOf("21st Mar")).toBe("date");
-  });
-
-  it("reads a word and a number as text, not a date: only a month's name beside a day is one", () => {
-    expect(kindOf("Round 3")).toBe("text");
-    expect(kindOf("12 GOALS")).toBe("text");
-    expect(kindOf("Bat 4")).toBe("text");
-    expect(kindOf("Week 12")).toBe("text");
-    expect(kindOf("May 3")).toBe("date");
-  });
-
   it("gives an inner repeat's fields to the inner list only", () => {
     const n = (id: string, parent: string | null, type: string, idx: number, content?: string) => ({
       id,
@@ -994,17 +1047,22 @@ describe("the need, drafted by code from the design (ticket 08)", () => {
     ]);
   });
 
-  it("counts the cards a list draws and lists what the first one shows, with kind and example", () => {
+  it("counts the cards a list draws and lists what the first one shows, as drawn, with no kind", () => {
     const found = groups(tree, byId);
     // the match panels of a day card: a list in a card, not on a rail
     const day = found.find((g) => g.parent === "I35:10546;18621:42500");
     if (!day) throw new Error("no group");
     const need = draftNeed(tree, day);
     expect(need?.count).toBe(day.members.length);
-    const kinds = new Set(need?.item.map((f) => f.kind));
-    expect(kinds.has("time")).toBe(true);
-    expect(need?.item.find((f) => f.example === "19:30")).toMatchObject({ kind: "time" });
-    expect(need?.item.every((f) => f.node.length > 0)).toBe(true);
+    // what kind of value "19:30" is, is the model's to say
+    expect(need?.item.find((f) => f.example === "19:30")).toEqual({
+      node: expect.any(String),
+      drawnAs: "text",
+      example: "19:30",
+      // the other cards' text at that place: evidence, read by the model
+      othersShow: ["19:30", "22:30"],
+    });
+    expect(need?.item.every((f) => f.node.length > 0 && !("kind" in f))).toBe(true);
   });
 
   it("asks for whatever the data holds for the cards of a carousel: those drawn are what fits on view", () => {
@@ -1061,7 +1119,7 @@ describe("a Repeater that follows a page choice, drawn against the sample (ticke
   });
 });
 
-describe("a label the design changes from card to card (ticket 14)", () => {
+describe("texts the design's cards write differently at one place (ticket 14)", () => {
   const n = (id: string, parent: string | null, type: string, props: object, idx = 0) => ({
     id,
     idx,
@@ -1087,18 +1145,17 @@ describe("a label the design changes from card to card (ticket 14)", () => {
       ],
     }) as never;
 
-  it("finds the labels that differ across cards, and not the names or figures", () => {
-    expect(varyingLabels(cards(), ["c1", "c2"])).toEqual([
+  it("finds every text that differs across cards, whatever it is: what it means is the binder's", () => {
+    expect(varyingTexts(cards(), ["c1", "c2"])).toEqual([
       { src: "c1-label", texts: ["Runs", "Wickets"] },
+      { src: "c1-value", texts: ["412", "17"] },
     ]);
   });
 
-  it("puts them on the need as alternatives, and faults a plan that keeps one card's label", () => {
+  it("puts what the other cards show on the need, and reports a plan that leaves one card's", () => {
     const need = draftNeed(cards(), { members: ["c1", "c2"] });
-    expect(need?.item.find((f) => f.node === "c1-label")?.alternatives).toEqual([
-      "Runs",
-      "Wickets",
-    ]);
+    expect(need?.item.find((f) => f.node === "c1-label")?.othersShow).toEqual(["Runs", "Wickets"]);
+    expect(need?.item.find((f) => f.node === "c1-name")?.othersShow).toBeUndefined();
     const plan = {
       collapse: [
         {
@@ -1116,7 +1173,9 @@ describe("a label the design changes from card to card (ticket 14)", () => {
       plan as never,
       cards(),
     ).map((p) => p.message);
-    expect(found.some((m) => m.includes('"Runs" or "Wickets" from card to card'))).toBe(true);
+    const label = found.find((m) => m.startsWith("c1-label"));
+    expect(label).toContain('the design\'s cards write it differently: "Runs", "Wickets"');
+    expect(label).not.toMatch(/stats|batter|bowler/i);
     // bound from the item, it is no problem
     const bound = {
       collapse: [
@@ -1136,21 +1195,12 @@ describe("a label the design changes from card to card (ticket 14)", () => {
       bound as never,
       cards(),
     ).map((p) => p.message);
-    expect(again.some((m) => m.includes("from card to card"))).toBe(false);
+    expect(again.some((m) => m.startsWith("c1-label"))).toBe(false);
   });
 });
 
 describe("which items, in what order, grouped how (ticket 15)", () => {
-  it("reads the order from the design's words", () => {
-    expect(orderOf(["THE ROAD AHEAD"])).toBe("soonest-first");
-    expect(orderOf(["LATEST NEWS"])).toBe("newest-first");
-    expect(orderOf(["Recent", "Upcoming"])).toBe("upcoming-then-latest");
-    // only words that name time: an arrow's "Next", a column's "Last name" name none
-    expect(orderOf(["Our people"])).toBeUndefined();
-    expect(orderOf(["Next", "Last name"])).toBeUndefined();
-  });
-
-  it("reads a list's own heading, not another list's or the cards' words", () => {
+  it("gives a list's own words, not another list's or the cards' words", () => {
     const n = (id: string, parent: string | null, type: string, idx: number, content?: string) => ({
       id,
       idx,
@@ -1186,12 +1236,10 @@ describe("which items, in what order, grouped how (ticket 15)", () => {
     const events = all.find((g) => g.parent === "events-list");
     if (!news || !events) throw new Error("no lists");
     expect(sectionWords(tree, news, all)).toEqual(["LATEST NEWS"]);
-    expect(orderOf(sectionWords(tree, news, all))).toBe("newest-first");
     expect(sectionWords(tree, events, all)).toEqual(["UPCOMING EVENTS", "VIEW ALL"]);
-    expect(orderOf(sectionWords(tree, events, all))).toBe("soonest-first");
   });
 
-  it("faults a list drawn in the wrong order, from the dates the plan binds", () => {
+  it("says how a list's dates run, from the dates the plan binds, and judges no order", () => {
     const now = Date.parse("2026-07-20T12:00:00Z");
     const keyOf = dateKey(dsl.readDate);
     // a pipe on the path, and the field named in a template: both read the item's own date
@@ -1200,118 +1248,48 @@ describe("which items, in what order, grouped how (ticket 15)", () => {
         {
           over: "news.items",
           as: "n",
-          members: ["card"],
           fields: [{ path: "title" }, { path: 'published | date:"DD MMM"' }],
         },
       ],
     };
-    const sorted = {
-      news: {
-        items: [
-          { title: "b", published: "2026-07-18" },
-          { title: "a", published: "2026-07-10" },
-        ],
+    const items = (...dates: string[]) => ({
+      news: { items: dates.map((published, i) => ({ title: `t${i}`, published })) },
+    });
+    expect(datesInOrder(plan, items("2026-07-18", "2026-07-10"), keyOf, now)).toEqual([
+      {
+        over: "news.items",
+        path: "published",
+        values: ["2026-07-18", "2026-07-10"],
+        run: "latest first",
+        past: 2,
+        of: 2,
       },
-    };
-    expect(orderProblems("newest-first", plan, sorted, keyOf, now)).toEqual([]);
-    const oldest = { news: { items: [sorted.news.items[1], sorted.news.items[0]] } };
-    const [wrong] = orderProblems("newest-first", plan, oldest, keyOf, now);
-    expect(wrong?.message).toContain("not newest first");
-    expect(wrong?.message).toContain("ask hook-maker");
-    // on the list's template, so a plan can keep it with why
-    expect(wrong?.src).toBe("card");
-    expect(orderProblems("as-is", plan, oldest, keyOf, now)).toEqual([]);
-    expect(orderProblems(undefined, plan, oldest, keyOf, now)).toEqual([]);
-  });
-
-  it("reads fixtures soonest first, a match already on may lead, and a template's date counts", () => {
-    const now = Date.parse("2026-07-20T12:00:00Z");
-    const keyOf = dateKey(dsl.readDate);
-    const plan = {
+    ]);
+    expect(datesInOrder(plan, items("2026-07-10", "2026-07-22"), keyOf, now)[0]).toMatchObject({
+      run: "earliest first",
+      past: 1,
+    });
+    expect(
+      datesInOrder(plan, items("2026-07-25", "2026-07-10", "2026-07-22"), keyOf, now)[0]?.run,
+    ).toBe("neither");
+    const template = {
       collapse: [
         {
           over: "f.items",
           as: "m",
-          members: ["c"],
           fields: [{ src: "x", prop: "content", template: '{m.kickoff | date:"HH:mm"} {m.venue}' }],
         },
       ],
     };
-    const items = (...kickoffs: string[]) => ({
-      f: { items: kickoffs.map((kickoff) => ({ kickoff, venue: "Home" })) },
-    });
-    // an hour old: on now, so it may come first
-    expect(
-      orderProblems(
-        "soonest-first",
-        plan,
-        items("2026-07-20T11:00:00Z", "2026-07-22T19:00:00Z"),
-        keyOf,
-        now,
-      ),
-    ).toEqual([]);
-    // last week's result before the next match: not soonest first
-    expect(
-      orderProblems(
-        "soonest-first",
-        plan,
-        items("2026-07-12T19:00:00Z", "2026-07-22T19:00:00Z"),
-        keyOf,
-        now,
-      )[0]?.message,
-    ).toContain("starts with past items");
-    expect(
-      orderProblems(
-        "soonest-first",
-        plan,
-        items("2026-07-25T19:00:00Z", "2026-07-22T19:00:00Z"),
-        keyOf,
-        now,
-      )[0]?.message,
-    ).toContain("back and forth");
-    // a field that is no date (a score, a round) is not what a list is ordered by
+    const kickoffs = {
+      f: { items: [{ kickoff: "2026-07-22T19:00:00Z" }, { kickoff: "2026-07-21T19:00:00Z" }] },
+    };
+    expect(datesInOrder(template, kickoffs, keyOf, now)[0]?.path).toBe("kickoff");
+    // a field the page does not read as a date (a round, an id) is not what a list runs by
     const rounds = { f: { items: [{ kickoff: "Round 3" }, { kickoff: "Round 1" }] } };
-    expect(orderProblems("soonest-first", plan, rounds, keyOf, now)).toEqual([]);
-  });
-
-  it("faults a list that wants what is next but holds only past items, and lets it be kept", () => {
-    const now = Date.parse("2026-07-20T12:00:00Z");
-    const keyOf = dateKey(dsl.readDate);
-    const plan = {
-      collapse: [
-        {
-          over: "f.items",
-          as: "m",
-          members: ["c"],
-          fields: [{ src: "x", prop: "content", template: '{m.kickoff | date:"HH:mm"}' }],
-        },
-      ],
-    };
-    const past = {
-      f: { items: [{ kickoff: "2026-07-10T19:00:00Z" }, { kickoff: "2026-07-12T19:00:00Z" }] },
-    };
-    for (const order of ["soonest-first", "upcoming-then-latest"] as const) {
-      const [wrong] = orderProblems(
-        order,
-        plan,
-        order === "soonest-first" ? past : { f: { items: [...past.f.items].reverse() } },
-        keyOf,
-        now,
-      );
-      expect(wrong?.message).toContain("holds only past items");
-      expect(wrong?.message).toContain("nothing upcoming exists");
-      expect(wrong?.src).toBe("c");
-    }
-    // articles are past by nature
-    expect(
-      orderProblems(
-        "newest-first",
-        plan,
-        { f: { items: [...past.f.items].reverse() } },
-        keyOf,
-        now,
-      ),
-    ).toEqual([]);
+    expect(datesInOrder(template, rounds, keyOf, now)).toEqual([]);
+    const ids = { f: { items: [{ kickoff: "1234567890" }, { kickoff: "1234567891" }] } };
+    expect(datesInOrder(template, ids, keyOf, now)).toEqual([]);
   });
 
   it("says a card holds several items of one shape (a day's matches in one card)", () => {
@@ -1374,6 +1352,10 @@ describe("a carousel that draws one slide", () => {
     if (!slide) throw new Error("no list");
     const need = draftNeed(tree, slide, all);
     expect(need?.count).toBe("data");
-    expect(need?.item.map((f) => f.kind)).toEqual(["image", "text", "date"]);
+    expect(need?.item.map((f) => [f.drawnAs, f.example])).toEqual([
+      ["picture", ""],
+      ["text", "TOPLEY AND OVERTON STEPPED UP"],
+      ["text", "09 Jul, 2025"],
+    ]);
   });
 });

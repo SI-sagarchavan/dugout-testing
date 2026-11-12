@@ -1,7 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Tool, ToolContext } from "@dugout/contracts";
+import { memoryRunState, type Tool, type ToolContext } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import { loadDsl } from "../src/dsl.ts";
 import { unboundCopy } from "../src/facts.ts";
@@ -133,6 +133,7 @@ describe("bind.publish", () => {
     tenantId: "bind-keep",
     runId,
     signal: new AbortController().signal,
+    state: memoryRunState(),
     input: {
       preview: "http://localhost:3000/preview/default/6f0e8c1a-0000-4000-8000-000000000001",
     },

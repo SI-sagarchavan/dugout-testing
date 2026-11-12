@@ -58,9 +58,9 @@ export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
     /**
      * Queues a run; a worker starts it. The input must already be checked against the agent's
      * schema. `model` is a name in the model list, with an effort as `name@effort`, run in place of
-     * the spec's. `threadId` puts it in a thread of the tenant's; without one it is in the thread of
-     * the run that published the preview it works on, or starts a thread (the `runs_thread`
-     * trigger).
+     * the spec's. `threadId` puts it in a thread of the tenant's; without one it starts a thread
+     * (the `runs_thread` trigger). A thread is never guessed from the input: a host names the
+     * section's (Studio's backend does, for the comments sent on it).
      */
     async start(
       tenantId: string,
@@ -119,42 +119,56 @@ export function createRunQueue(opts: { pool: Pool; events: ValkeyEventLog }) {
     },
 
     /**
-     * Cancels a queued, running or waiting run. A queued or waiting run, or a running one whose
-     * worker is gone, ends at once with `run.cancelled`. A running one stops at its worker's next
-     * save, and the worker writes `run.cancelled`. Returns the status the run had, or undefined
-     * when it had already ended (or is another tenant's).
+     * Cancels a queued, running or waiting run, and every child run under it that has not ended. A
+     * queued or waiting run, or a running one whose worker is gone, ends at once with
+     * `run.cancelled`. A running one stops at its worker's next save, and the worker writes
+     * `run.cancelled`. A child run (ADR 0025) is never claimed on its own: it runs inside its
+     * parent's call, so one left running when its parent was cancelled would stay `running` for
+     * good; it is ended with the parent, even when the parent had already ended. Returns the status
+     * the run had, or undefined when it had already ended (or is another tenant's).
      */
     async cancel(tenantId: string, runId: string, by: string, reason?: string) {
-      const row = await withTenant(opts.pool, tenantId, async (db) => {
-        const { rows } = await db.query<{ previous: RunRow["status"]; held: boolean }>(
-          `with old as (select id, status, lease_until from runs where id = $1 for update)
-           update runs r
-           set status = 'cancelled', cancelled_by = $2, cancel_reason = $3, decision = null,
-               updated_at = now(),
-               -- no worker holds it: this call ends it, and nothing should claim it after
-               lease_owner = case when old.status = 'running' and old.lease_until > now()
-                 then r.lease_owner end,
-               lease_until = case when old.status = 'running' and old.lease_until > now()
-                 then r.lease_until end
-           from old
-           where r.id = old.id and old.status in ('queued', 'running', 'waiting')
-           returning old.status as previous,
-             (old.status = 'running' and old.lease_until > now()) as held`,
-          [runId, by, reason ?? null],
+      const end = async (id: string, why: string | undefined) => {
+        const row = await withTenant(opts.pool, tenantId, async (db) => {
+          const { rows } = await db.query<{ previous: RunRow["status"]; held: boolean }>(
+            `with old as (select id, status, lease_until from runs where id = $1 for update)
+             update runs r
+             set status = 'cancelled', cancelled_by = $2, cancel_reason = $3, decision = null,
+                 updated_at = now(),
+                 -- no worker holds it: this call ends it, and nothing should claim it after
+                 lease_owner = case when old.status = 'running' and old.lease_until > now()
+                   then r.lease_owner end,
+                 lease_until = case when old.status = 'running' and old.lease_until > now()
+                   then r.lease_until end
+             from old
+             where r.id = old.id and old.status in ('queued', 'running', 'waiting')
+             returning old.status as previous,
+               (old.status = 'running' and old.lease_until > now()) as held`,
+            [id, by, why ?? null],
+          );
+          return rows[0];
+        });
+        if (row && !row.held) {
+          await appendEnding(opts.pool, opts.events, tenantId, id, cancelledEvent(id, by, why));
+        }
+        return row?.previous;
+      };
+      const previous = await end(runId, reason);
+      const children = await withTenant(opts.pool, tenantId, async (db) => {
+        const { rows } = await db.query<{ id: string }>(
+          `with recursive below as (
+             select id, status from runs where parent_run_id = $1 and parent_call_id is not null
+             union all
+             select r.id, r.status from runs r join below b on r.parent_run_id = b.id
+             where r.parent_call_id is not null
+           )
+           select id from below where status in ('queued', 'running', 'waiting')`,
+          [runId],
         );
-        return rows[0];
+        return rows.map((r) => r.id);
       });
-      if (!row) return undefined;
-      if (!row.held) {
-        await appendEnding(
-          opts.pool,
-          opts.events,
-          tenantId,
-          runId,
-          cancelledEvent(runId, by, reason),
-        );
-      }
-      return row.previous;
+      for (const child of children) await end(child, `its parent run ${runId} was cancelled`);
+      return previous;
     },
 
     /** Every save point of the run still kept, oldest first (harness 16). */

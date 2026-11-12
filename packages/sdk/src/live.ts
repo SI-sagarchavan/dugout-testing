@@ -1,5 +1,6 @@
 import { createBedrockClient, loadEnv, loadModelConfig } from "@dugout/core";
 import { createPool, type Pool } from "@dugout/db";
+import { createSectionLibrary, likeFinder, loadMultimodalEmbeddings } from "@dugout/library";
 import { defaultMcpHost } from "@dugout/mcp";
 import {
   createMemoryStore,
@@ -10,8 +11,8 @@ import {
 import { loadTracing } from "@dugout/tracing";
 import { sharedWritesAuto } from "./subagents.ts";
 
-/** The model that turns a reviewer's words into a lesson: a short rewrite, so the cheapest one. */
-export const LESSON_MODEL = "nova-micro";
+/** The model that turns a reviewer's words into a lesson: a short rewrite, so a cheap one; a `global.*` profile, so it runs in any region. */
+export const LESSON_MODEL = "haiku";
 
 /**
  * Reads whether a tenant opted in to shared writes under one approval (`sharedWritesAuto`), from
@@ -31,11 +32,14 @@ export function liveDeps() {
   const pool = createPool();
   const store = createMemoryStore({ pool, embeddings: loadEmbeddings() });
   const lessons = createModelLessonWriter(client, LESSON_MODEL);
-  // undefined unless LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set
-  const tracing = loadTracing();
   // the registry's MCP servers, one connection per server and tenant for the process
   const mcp = defaultMcpHost();
   // what each thread's earlier runs did, for the next run in it (ADR 0031)
   const threads = createThreadNotes(pool);
-  return { models, client, pool, store, lessons, tracing, mcp, threads };
+  // undefined unless LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set; a run's Langfuse
+  // session is its thread, so a Handoff and every later run on its section replay together
+  const tracing = loadTracing(process.env, { sessionOf: threads.threadOf });
+  // which sections are like one, read from the section library in code (ADR 0034)
+  const like = likeFinder(createSectionLibrary({ pool, embeddings: loadMultimodalEmbeddings() }));
+  return { models, client, pool, store, lessons, tracing, mcp, threads, like };
 }

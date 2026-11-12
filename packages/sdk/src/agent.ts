@@ -4,10 +4,7 @@ import {
   AgentSpec,
   type EventSink,
   type InterruptRequest,
-  type Message,
   type ModelClient,
-  type RunContext,
-  type RunHook,
   type RunStore,
   type Situation,
   type Tool,
@@ -25,22 +22,26 @@ import {
 } from "@dugout/core";
 import { defaultMcpHost, type McpHost } from "@dugout/mcp";
 import {
+  type BuildReporter,
+  type CorrectionReporter,
   createDecisionMemory,
   type LessonWriter,
+  type LikeFinder,
   type MemoryStore,
   memoryGroups,
   memoryHooks,
   SKILL_TOOL,
+  type ThreadNoteParts,
   type ThreadNotes,
 } from "@dugout/memory";
 import type { z } from "zod";
+import { type Driver, drivenClient } from "./driver.ts";
 import {
   agentTool,
   agentToolName,
+  type ChildCaller,
   type ChildRuns,
   childCaller,
-  type Pipeline,
-  pipelineTool,
   sharedWritesAuto,
 } from "./subagents.ts";
 
@@ -59,6 +60,8 @@ export interface AgentDeps {
   consolidate?: boolean;
   /** Turns a rejection or change request into a lesson; without it the reviewer's words are kept. */
   lessons?: LessonWriter | undefined;
+  /** Which of a tenant's sections are like one, for `built.like` (ADR 0034). Without it, none. */
+  like?: LikeFinder;
   /** Adds its sink to every run (Langfuse). */
   tracing?: { sink(): EventSink } | undefined;
   /** The MCP servers agents resolve their capabilities against; the process's own by default. */
@@ -122,42 +125,50 @@ export interface AgentCli {
   done?: (result: Pick<AgentResult, "status">, tenantId: string) => string | undefined;
 }
 
-export interface AgentConfig<Input extends z.ZodType, Options extends object> {
+/**
+ * What an agent package passes `defineAgent`. The checks on `final`, the result's shape, whether a
+ * write is expected and the per-turn hooks are `AgentDefinition`'s, documented there.
+ */
+export interface AgentConfig<Input extends z.ZodType, Options extends object>
+  extends Omit<AgentDefinition, "spec"> {
   /** Instructions, tool allow-list, skills, model name, memory scopes, budget, approvals. */
   spec: z.input<typeof AgentSpec>;
   input: Input;
-  /** When set, the run ends through the `final` tool, its input checked against this schema. */
-  output?: z.ZodType;
-  /** Sync check on the `final` result, no I/O; a string refuses it and goes back to the model. */
-  verifyFinal?: (
-    output: unknown,
-    run: { ctx: RunContext; messages: Message[] },
-  ) => string | undefined;
-  /** Sync, no I/O: fills `final` fields a tool already returned, before `verifyFinal` runs. */
-  completeFinal?: (output: unknown, run: { ctx: RunContext; messages: Message[] }) => unknown;
-  /** The result's shape when `completeFinal` changes it; see `AgentDefinition.result`. */
-  result?: z.ZodType;
-  /** Whether a run of this input is expected to write; see `AgentDefinition.writeExpected`. */
-  writeExpected?: (input: unknown) => boolean;
-  /** Per-turn rules of this agent, run after the harness's own; see `AgentDefinition.hooks`. */
-  hooks?: RunHook[];
-  /** The agent's folder: skills are read from `skills/`. Nothing in it is per tenant. */
-  dir: string;
   /**
-   * The agent's own tools. `options` are whatever the host passed to `create` besides the
-   * standard deps (e.g. a folder for tests to write into). Memory tools are added.
+   * The agent's folder: skills are read from `skills/`. Nothing in it is per tenant. Needed only
+   * by an agent that lists skills.
    */
-  tools: (options: Options) => Tool[];
+  dir?: string;
+  /**
+   * The agent's own tools. A list is the simple way: each is allowed without being named in
+   * `spec.tools`. A function gets whatever the host passed to `create` besides the standard deps
+   * (a folder for tests to write into, a store), and its tools are named in `spec.tools`. Memory
+   * tools are added, and allowed when `spec.tools` names them.
+   */
+  tools?: Tool[] | ((options: Options) => Tool[]);
   /**
    * Runs after the model has finished, in the same process, before memory consolidation.
    * A failure is recorded on the result and does not change the run status.
    */
   afterRun?: (run: CompletedRun, deps: AgentDeps & Options) => Promise<void>;
   /**
-   * What a run did, in a sentence or two, for its thread's note (ADR 0031): the next run on the
-   * same section starts from it. Left out, the note says what the output and events show.
+   * What a run did, for its thread's note (ADR 0031): the next run on the same section starts from
+   * it. A sentence or two, or the sentence with what the run made (`made`, by name: a link, an id)
+   * and left open (`open`). The harness knows no agent's output: without `made` it keeps the
+   * output's top-level one-word strings, and without `open` nothing is open but a failure.
    */
-  threadNote?: (input: z.output<Input>, output: unknown) => string | undefined;
+  threadNote?: (input: z.output<Input>, output: unknown) => string | ThreadNoteParts | undefined;
+  /**
+   * What a run built, read by code from its own events and output (ADR 0034): kept in memory as a
+   * build record on the section the run was situated on, and read when that section or one like
+   * it is built again. Nothing when there is nothing to keep. An agent with it leaves no example.
+   */
+  record?: BuildReporter;
+  /**
+   * What a run's edits changed in a preview people had commented on (ADR 0034): each comment is
+   * added to the build records of that preview, and kept as a lesson about its section.
+   */
+  corrects?: CorrectionReporter;
   /** The sports a run is about, when its input says (ADR 0014); its shared memory narrows to them. */
   sportsOf?: (input: z.output<Input>) => string[] | undefined;
   /** Tool outputs longer than this are stored and replaced by a reference. */
@@ -169,16 +180,18 @@ export interface AgentConfig<Input extends z.ZodType, Options extends object> {
    */
   agents?: AnyAgent[];
   /**
-   * Runs the agents it may call in a fixed order, in code, as one tool (`pipeline.name`), instead
-   * of leaving each to the model as `agent.<id>`: for when the steps are known. The tool is one
-   * write a person approves once; the children's writes go through under that yes.
+   * `once` (the default): a call to an agent that writes waits for a person's yes, and that yes
+   * covers the child's writes. `none`: the calls go through without asking, as a workflow's steps
+   * do; the model still asks a person (`ask`) what only they can settle.
    */
-  pipeline?: Pipeline;
+  approval?: "once" | "none";
   cli?: AgentCli;
 }
 
 export interface Agent<Input extends z.ZodType = z.ZodType, Options extends object = object> {
   readonly kind: "agent";
+  /** An agent's model decides what to do next; a workflow's code does (ADR 0037). */
+  readonly shape: "agent" | "workflow";
   readonly spec: AgentSpec;
   readonly input: Input;
   readonly definition: AgentDefinition;
@@ -204,8 +217,36 @@ export type AnyAgent = Omit<Agent, "create"> & {
 export function defineAgent<Input extends z.ZodType, Options extends object = object>(
   config: AgentConfig<Input, Options>,
 ): Agent<Input, Options> {
+  return agentWith(config, {});
+}
+
+/** What `defineWorkflow` adds to an agent. Not for agent packages. */
+export interface WorkflowParts {
+  /** One tool that runs the agents it lists, in code, in place of an `agent.<id>` tool for each. */
+  runs?: { name: string; tool(callers: ChildCaller[]): Tool };
+  /** Code that takes the agent's turns in place of its model. */
+  driver?: Driver;
+}
+
+/** `defineAgent`, with the parts a workflow is made of. Internal: `defineWorkflow` is built on it. */
+export function agentWith<Input extends z.ZodType, Options extends object = object>(
+  config: AgentConfig<Input, Options>,
+  parts: WorkflowParts,
+): Agent<Input, Options> {
   const children = config.agents ?? [];
-  const declared = AgentSpec.parse(config.spec);
+  const parsed = AgentSpec.parse(config.spec);
+  // tools passed as a list are allowed as they are: nothing to name twice
+  const listed = typeof config.tools === "function" ? [] : (config.tools ?? []);
+  const declared: AgentSpec = {
+    ...parsed,
+    tools: [...new Set([...parsed.tools, ...listed.map((t) => t.name)])],
+  };
+  const toolsFor = (options: Options): Tool[] =>
+    typeof config.tools === "function" ? config.tools(options) : listed;
+  const skilled = declared.skills.length + declared.onDemandSkills.length > 0;
+  if (skilled && !config.dir) {
+    throw new Error(`${declared.id}: lists skills, so dir must say where its skills/ folder is`);
+  }
   const childIds = children.map((child) => child.spec.id);
   if (declared.agents && declared.agents.join() !== childIds.join()) {
     throw new Error(
@@ -215,14 +256,12 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
   if (children.length > 0 && declared.budget.maxDepth < 1) {
     throw new Error(`${declared.id}: calls agents, so budget.maxDepth must be 1 or more`);
   }
-  if (config.pipeline && children.length === 0) {
-    throw new Error(`${declared.id}: has a pipeline, so agents must list the agents it runs`);
-  }
   // each agent it may call is a tool of its own, allowed like any other tool in the spec; a
-  // pipeline is one tool for all of them
-  const agentTools = config.pipeline ? [config.pipeline.name] : childIds.map(agentToolName);
+  // workflow's is one tool for all of them
+  const agentTools = parts.runs ? [parts.runs.name] : childIds.map(agentToolName);
   const spec: AgentSpec = children.length
-    ? { ...declared, agents: childIds, tools: [...declared.tools, ...agentTools] }
+    ? // a spec that names a child's tool too gets it once: a model is refused a tool named twice
+      { ...declared, agents: childIds, tools: [...new Set([...declared.tools, ...agentTools])] }
     : declared;
   if (spec.onDemandSkills.length > 0 && !spec.tools.includes(SKILL_TOOL)) {
     throw new Error(`${spec.id}: onDemandSkills needs ${SKILL_TOOL} in spec.tools`);
@@ -231,19 +270,21 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
   if (both.length > 0) {
     throw new Error(`${spec.id}: ${both.join(", ")} in both skills and onDemandSkills`);
   }
-  const definition: AgentDefinition = {
+  const { output, verifyFinal, completeFinal, result, writeExpected, hooks } = config;
+  const definition = defined<AgentDefinition>({
     spec,
-    ...(config.output ? { output: config.output } : {}),
-    ...(config.verifyFinal ? { verifyFinal: config.verifyFinal } : {}),
-    ...(config.completeFinal ? { completeFinal: config.completeFinal } : {}),
-    ...(config.result ? { result: config.result } : {}),
-    ...(config.writeExpected ? { writeExpected: config.writeExpected } : {}),
-    ...(config.hooks ? { hooks: config.hooks } : {}),
-  };
-  const skillsDir = join(config.dir, "skills");
+    output,
+    verifyFinal,
+    completeFinal,
+    result,
+    writeExpected,
+    hooks,
+  });
+  const skillsDir = config.dir ? join(config.dir, "skills") : "";
 
   return {
     kind: "agent",
+    shape: parts.driver ? "workflow" : "agent",
     spec,
     input: config.input,
     definition,
@@ -286,17 +327,15 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
                 config.threadNote?.(input as z.output<Input>, output),
             }
           : {}),
+        ...(config.record ? { record: config.record } : {}),
+        ...(config.corrects ? { corrects: config.corrects } : {}),
         groupsOf: (tenantId, input) =>
           (deps.memoryGroups ?? registryGroups)(
             tenantId,
             input === undefined ? undefined : config.sportsOf?.(input as z.output<Input>),
           ),
       });
-      const tools = [
-        ...config.tools({ ...deps, mcp }),
-        ...memory.tools,
-        ...(resolved?.tools ?? []),
-      ];
+      const tools = [...toolsFor({ ...deps, mcp }), ...memory.tools, ...(resolved?.tools ?? [])];
       const missing = run.spec.tools.filter(
         (name) => !agentTools.includes(name) && !tools.some((t) => t.name === name),
       );
@@ -357,9 +396,9 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
         // is asked to approve the same again
         const { runId } = opts;
         if (runId) await Promise.all(callers.map((c) => c.load(runId, opts.tenantId)));
-        return config.pipeline
-          ? [pipelineTool(config.pipeline, callers)]
-          : callers.map((caller) => agentTool(caller));
+        return parts.runs
+          ? [parts.runs.tool(callers)]
+          : callers.map((caller) => agentTool(caller, { approval: config.approval ?? "once" }));
       };
 
       const runAgent = (opts: RunOptions<z.input<Input>>) => {
@@ -375,7 +414,7 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
             ...(opts.situation ? { situation: opts.situation } : {}),
             ...(opts.inputHash ? { inputHash: opts.inputHash } : {}),
             tools: [...tools, ...childTools],
-            client: deps.client,
+            client: parts.driver ? drivenClient(deps.client, parts.driver) : deps.client,
             models: deps.models,
             responder: opts.responder,
             context: memory.context,
@@ -406,6 +445,11 @@ export function defineAgent<Input extends z.ZodType, Options extends object = ob
       return Object.assign(runAgent, { tools: tools as readonly Tool[], spec: run.spec });
     },
   };
+}
+
+/** `value` without the keys that are undefined: what an optional field takes when left out. */
+function defined<T extends object>(value: { [K in keyof T]: T[K] | undefined }): T {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as T;
 }
 
 let registry: Map<string, Tenant> | undefined;

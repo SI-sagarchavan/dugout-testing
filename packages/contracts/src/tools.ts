@@ -1,7 +1,8 @@
 import type { z } from "zod";
 import type { RunEvent, RunUsage } from "./events.ts";
 import type { Answers } from "./questions.ts";
-import type { Situation } from "./runtime.ts";
+import type { Situation } from "./situation.ts";
+import type { RunState, RunStateReader, StatePatch } from "./state.ts";
 
 /** Built from the run's verified context, never from model output. */
 export interface ToolContext {
@@ -40,7 +41,21 @@ export interface ToolContext {
    * structural signature. A person's answers to the run's section questions are about it.
    */
   situate?(situation: Situation): void;
+  /**
+   * The run's state (ADR 0035): what an earlier call kept, and where this one keeps what a later
+   * call or the check on `final` needs. Saved with the run, so a resumed run reads the same. What a
+   * call sets is kept only when the call succeeds.
+   */
+  readonly state: RunState;
 }
+
+/**
+ * What a tool's gates (`resolve`, `block`) read of the run, before the call is approved or run.
+ * `state` is what earlier calls kept (ADR 0035); a gate reads it and keeps nothing.
+ */
+export type GateContext = Pick<ToolContext, "tenantId" | "runId" | "input" | "callId"> & {
+  readonly state: RunStateReader;
+};
 
 export interface Tool<I = unknown, O = unknown, R = I> {
   /** Dotted lower camel case, e.g. `fixtures.get`. */
@@ -68,18 +83,22 @@ export interface Tool<I = unknown, O = unknown, R = I> {
   /** Output is never swapped for a reference, however long: the model needs all of it (a skill). */
   alwaysInline?: boolean;
   /**
+   * A result replaces the earlier ones of this tool (a plan tried again whole, a frame measured
+   * again): they leave the request and are kept by reference, so the model reads only what still
+   * holds. The transcript keeps them all. A function says so for each result: one that changed
+   * nothing (a plan that did not parse, a change that was undone) replaces nothing.
+   */
+  latestOnly?: boolean | ((output: unknown) => boolean);
+  /**
    * Replaces the parsed arguments before the gate and the approval. The model still sees `input`.
    * Use it when the host already holds the payload and the model must not send it back.
    */
-  resolve?(input: I, ctx: Pick<ToolContext, "tenantId" | "runId" | "input" | "callId">): R;
+  resolve?(input: I, ctx: GateContext): R;
   /**
    * Sync check after the schema and before approval. A string denies the call.
    * Use it for a gate that needs the verified run input, such as a file the host named.
    */
-  block?(
-    input: R,
-    ctx: Pick<ToolContext, "tenantId" | "runId" | "input" | "callId">,
-  ): string | undefined;
+  block?(input: R, ctx: GateContext): string | undefined;
   /**
    * What `block` says is advice for a step the run is working towards (the tool is not ready until
    * something else is done), not a sign the model is stuck: the same call again after it does not
@@ -101,6 +120,10 @@ export type ToolOutcome = ({ ok: true; content: string } | { ok: false; error: s
   setup?: string;
   /** What the run works on, when the call said (`ToolContext.situate`). */
   situation?: Situation;
+  /** What the call kept in the run's state (`ToolContext.state`); only on a call that succeeded. */
+  state?: StatePatch;
+  /** The result replaces the earlier ones of its tool (`Tool.latestOnly`). */
+  replaces?: boolean;
 };
 
 export type DenialStage = "registry" | "spec" | "policy";

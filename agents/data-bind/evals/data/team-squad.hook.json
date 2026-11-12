@@ -1,0 +1,888 @@
+{
+  "hookId": "dugout_brave_squad_cards_by_gender",
+  "output": {
+    "squad": {
+      "items": [],
+      "pages": [],
+      "pagination": null,
+      "players": [
+        {
+          "captain_badge": "",
+          "id": "64192",
+          "is_captain": false,
+          "is_overseas": true,
+          "name": "Lizelle Lee",
+          "nationality": "South Africa",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/64192.png?v=1.16&w=285",
+          "role": "Wicket-Keeper",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 9
+            },
+            {
+              "label": "RUNS",
+              "value": 183
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 116.56
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "66176",
+          "is_captain": false,
+          "is_overseas": true,
+          "name": "Laura Wolvaardt",
+          "nationality": "South Africa",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/66176.png?v=1.16&w=285",
+          "role": "Batter",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 9
+            },
+            {
+              "label": "RUNS",
+              "value": 229
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 111.16
+            }
+          ]
+        },
+        {
+          "captain_badge": "C",
+          "id": "67041",
+          "is_captain": true,
+          "is_overseas": true,
+          "name": "Sophie Molineux",
+          "nationality": "Australia",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/67041.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 8
+            },
+            {
+              "label": "RUNS",
+              "value": 128
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 99.22
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "68442",
+          "is_captain": false,
+          "is_overseas": true,
+          "name": "Jemimah Rodrigues",
+          "nationality": "India",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/68442.png?v=1.16&w=285",
+          "role": "Batter",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 6
+            },
+            {
+              "label": "RUNS",
+              "value": 143
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 131.19
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "69747",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Naomi Dattani",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/69747.png?v=1.16&w=285",
+          "role": "All-Rounder",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 9
+            },
+            {
+              "label": "RUNS",
+              "value": 30
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 130.43
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "69756",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Sarah Glenn",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/69756.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 9
+            },
+            {
+              "label": "RUNS",
+              "value": 0
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "69878",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Maia Bouchier",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/69878.png?v=1.16&w=285",
+          "role": "Batter",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 9
+            },
+            {
+              "label": "RUNS",
+              "value": 200
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 117.64
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "69906",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Lauren Bell",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/69906.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 9
+            },
+            {
+              "label": "RUNS",
+              "value": null
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "70455",
+          "is_captain": false,
+          "is_overseas": true,
+          "name": "Charli Knott",
+          "nationality": "Australia",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/70455.png?v=1.16&w=285",
+          "role": "All-Rounder",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 3
+            },
+            {
+              "label": "RUNS",
+              "value": 43
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 116.21
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "72351",
+          "is_captain": false,
+          "is_overseas": true,
+          "name": "Katherine Fraser",
+          "nationality": "Scotland",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/72351.png?v=1.16&w=285",
+          "role": "All-Rounder",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": null
+            },
+            {
+              "label": "RUNS",
+              "value": null
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": null
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "72861",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Issy Wong",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/72861.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 9
+            },
+            {
+              "label": "RUNS",
+              "value": 10
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 83.33
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "80603",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Phoebe Franklin",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/80603.png?v=1.16&w=285",
+          "role": "All-Rounder",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 1
+            },
+            {
+              "label": "RUNS",
+              "value": 2
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 50
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "85783",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Daisy Gibb",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/85783.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": null
+            },
+            {
+              "label": "RUNS",
+              "value": null
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": null
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "94233",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Rebecca Odgers",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/94233.png?v=1.16&w=285",
+          "role": "Batter",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": null
+            },
+            {
+              "label": "RUNS",
+              "value": null
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": null
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "94609",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Jodi Grewcock",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/94609.png?v=1.16&w=285",
+          "role": "All-Rounder",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 9
+            },
+            {
+              "label": "RUNS",
+              "value": 53
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 117.77
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "99108",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Ellie Anderson",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/99108.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": null
+            },
+            {
+              "label": "RUNS",
+              "value": null
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": null
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "121519",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Tilly Corteen-Coleman",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/121519.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "women",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 9
+            },
+            {
+              "label": "RUNS",
+              "value": null
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "4311",
+          "is_captain": false,
+          "is_overseas": true,
+          "name": "Marcus Stoinis",
+          "nationality": "Australia",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/4311.png?v=1.16&w=285",
+          "role": "All-Rounder",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 7
+            },
+            {
+              "label": "RUNS",
+              "value": 195
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 147.72
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "4661",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Adil Rashid",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/4661.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 8
+            },
+            {
+              "label": "RUNS",
+              "value": null
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "4688",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Moeen Ali",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/4688.png?v=1.16&w=285",
+          "role": "All-Rounder",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 4
+            },
+            {
+              "label": "RUNS",
+              "value": 26
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 81.25
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "5313",
+          "is_captain": false,
+          "is_overseas": true,
+          "name": "David Miller",
+          "nationality": "South Africa",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/5313.png?v=1.16&w=285",
+          "role": "Batter",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 8
+            },
+            {
+              "label": "RUNS",
+              "value": 166
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 121.16
+            }
+          ]
+        },
+        {
+          "captain_badge": "C",
+          "id": "26718",
+          "is_captain": true,
+          "is_overseas": false,
+          "name": "Chris Jordan",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/26718.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 8
+            },
+            {
+              "label": "RUNS",
+              "value": 22
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 137.5
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "63271",
+          "is_captain": false,
+          "is_overseas": true,
+          "name": "Daniel Worrall",
+          "nationality": "Australia",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/63271.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 3
+            },
+            {
+              "label": "RUNS",
+              "value": null
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "63908",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Tom Abell",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/63908.png?v=1.16&w=285",
+          "role": "Batter",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 1
+            },
+            {
+              "label": "RUNS",
+              "value": 22
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 115.78
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "64254",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Jofra Archer",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/64254.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 7
+            },
+            {
+              "label": "RUNS",
+              "value": 11
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 122.22
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "64498",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Luke Wood",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/64498.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 7
+            },
+            {
+              "label": "RUNS",
+              "value": 13
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 162.5
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "64890",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Saif Zaib",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/64890.png?v=1.16&w=285",
+          "role": "All-Rounder",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 2
+            },
+            {
+              "label": "RUNS",
+              "value": 9
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 90
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "66951",
+          "is_captain": false,
+          "is_overseas": true,
+          "name": "Nikhil Chaudhary",
+          "nationality": "Australia",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/66951.png?v=1.16&w=285",
+          "role": "All-Rounder",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 7
+            },
+            {
+              "label": "RUNS",
+              "value": 91
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 119.73
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "69430",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Michael Pepper",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/69430.png?v=1.16&w=285",
+          "role": "Wicket-Keeper",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 1
+            },
+            {
+              "label": "RUNS",
+              "value": 0
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "69554",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Jamie Smith",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/69554.png?v=1.16&w=285",
+          "role": "Wicket-Keeper",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 8
+            },
+            {
+              "label": "RUNS",
+              "value": 176
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 146.66
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "74761",
+          "is_captain": false,
+          "is_overseas": true,
+          "name": "Tristan Stubbs",
+          "nationality": "South Africa",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/74761.png?v=1.16&w=285",
+          "role": "Batter",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 8
+            },
+            {
+              "label": "RUNS",
+              "value": 213
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 134.81
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "97105",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Ben McKinney",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/97105.png?v=1.16&w=285",
+          "role": "Batter",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 6
+            },
+            {
+              "label": "RUNS",
+              "value": 66
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 143.47
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "124687",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Thomas Rew",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/124687.png?v=1.16&w=285",
+          "role": "Wicket-Keeper",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 1
+            },
+            {
+              "label": "RUNS",
+              "value": 41
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 136.66
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "135631",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Manny Lumsden",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/135631.png?v=1.16&w=285",
+          "role": "Bowler",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 1
+            },
+            {
+              "label": "RUNS",
+              "value": null
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "captain_badge": "",
+          "id": "137021",
+          "is_captain": false,
+          "is_overseas": false,
+          "name": "Caleb Falconer",
+          "nationality": "England",
+          "photo": "https://www.southernbrave.com/static-assets/images/players/137021.png?v=1.16&w=285",
+          "role": "Batter",
+          "squad": "men",
+          "stats": [
+            {
+              "label": "MATCHES",
+              "value": 1
+            },
+            {
+              "label": "RUNS",
+              "value": null
+            },
+            {
+              "label": "STRIKE RATE",
+              "value": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "cachedAt": "2026-11-12T08:51:28.667Z"
+}

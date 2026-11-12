@@ -1,10 +1,13 @@
 import {
   type AgentSpec,
   AwaitingAnswers,
+  createRunState,
   type DenialStage,
   isNeedsSetup,
   type RunContext,
+  type RunStateReader,
   type RunUsage,
+  readRunState,
   type Situation,
   type Tool,
   type ToolCall,
@@ -95,11 +98,14 @@ export function preflight(
   call: ToolCall,
   spec: AgentSpec,
   registry: ToolRegistry,
-  ctx?: Pick<ToolContext, "tenantId" | "runId" | "input" | "callId"> & {
+  given?: Pick<ToolContext, "tenantId" | "runId" | "input" | "callId"> & {
+    /** What the run's tools kept so far (ADR 0035), for the tool's gates. */
+    state?: RunStateReader;
     /** The call is one a person already saw (waiting, or approved before a crash): saved without a reason before they existed. */
     replay?: boolean;
   },
 ): Preflight {
+  const ctx = given ? { ...given, state: given.state ?? readRunState(undefined) } : undefined;
   const tool = registry.get(call.name);
   if (!tool) return { ok: false, stage: "registry", reason: `unknown tool ${call.name}` };
   if (!spec.tools.includes(tool.name) && !BUILTIN_TOOLS.includes(tool.name)) {
@@ -195,7 +201,7 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
   const maxInline = opts.maxInlineChars ?? 16_000;
 
   return {
-    async execute({ call, input, usdLeft, answered, situation }, ctx, host) {
+    async execute({ call, input, usdLeft, answered, situation, state }, ctx, host) {
       const tool = opts.registry.get(call.name);
       if (!tool) return { ok: false, error: `unknown tool ${call.name}` };
 
@@ -218,25 +224,37 @@ export function createToolExecutor(opts: ToolExecutorOptions): ToolExecutor {
         spend,
         situate,
       };
-      const withSpend = (outcome: ToolOutcome): ToolOutcome => ({
-        ...outcome,
-        ...(spent ? { usage: spent } : {}),
-        ...(situated ? { situation: situated } : {}),
-      });
+      // what the call keeps in the run's state (ADR 0035): each attempt starts from what the
+      // call found, and only the one that succeeds is kept
+      let kept = createRunState(state);
+      const withSpend = (outcome: ToolOutcome): ToolOutcome => {
+        const patch = outcome.ok ? kept.patch() : undefined;
+        return {
+          ...outcome,
+          ...(spent ? { usage: spent } : {}),
+          ...(situated ? { situation: situated } : {}),
+          // redacted like the result: it is saved with the run
+          ...(patch ? { state: redactor.value(patch) } : {}),
+        };
+      };
 
       let lastError = "";
       for (let attempt = 0; attempt <= (tool.retries ?? 0); attempt++) {
+        kept = createRunState(state);
         try {
-          const output = await runWithTimeout(tool, input, ctx, forCall);
+          const output = await runWithTimeout(tool, input, ctx, { ...forCall, state: kept.state });
           const content = redactor.text(
             typeof output === "string" ? output : JSON.stringify(output ?? null),
           );
+          const replaces =
+            typeof tool.latestOnly === "function" ? tool.latestOnly(output) : tool.latestOnly;
           if (tool.alwaysInline || content.length <= maxInline) {
-            return withSpend({ ok: true, content });
+            return withSpend({ ok: true, content, ...(replaces ? { replaces: true } : {}) });
           }
           const ref = await opts.outputs.put(ctx.runId, content);
           return withSpend({
             ok: true,
+            ...(replaces ? { replaces: true } : {}),
             content: JSON.stringify({
               ref,
               chars: content.length,
@@ -278,7 +296,7 @@ async function runWithTimeout(
   ctx: RunContext,
   call: Pick<
     ToolContext,
-    "callId" | "usdLeft" | "spend" | "answered" | "relay" | "situation" | "situate"
+    "callId" | "usdLeft" | "spend" | "answered" | "relay" | "situation" | "situate" | "state"
   >,
 ): Promise<unknown> {
   const controller = new AbortController();

@@ -88,7 +88,11 @@ describe("a run's note for its thread", () => {
           child,
         },
       ],
-      said: "Built the section and bound it to data.",
+      said: {
+        did: "Built the section and bound it to data.",
+        made: { previewUrl: "http://p/preview/default/t2", planArtifactId: "plan-1" },
+        open: ["data: the count beside the icon has no field"],
+      },
     });
     expect(note).toMatchObject({
       did: "Built the section and bound it to data.",
@@ -102,6 +106,28 @@ describe("a run's note for its thread", () => {
       open: ["data: the count beside the icon has no field"],
       children: [{ agentId: "frame-match", status: "completed" }],
     });
+  });
+
+  it("keeps an output's one-word strings as made when the agent names none, and nothing open", () => {
+    const note = noteOf({
+      runId: "r3",
+      agentId: "other",
+      input: {},
+      result: {
+        status: "completed",
+        output: {
+          link: "http://p/x/1",
+          summary: "a sentence is not a thing made",
+          count: 3,
+          remaining: ["not read: the agent did not say it is open"],
+        },
+        usage,
+      },
+      events: [],
+      said: "Did it.",
+    });
+    expect(note).toMatchObject({ did: "Did it.", made: { link: "http://p/x/1" }, open: [] });
+    expect(note.made.summary).toBeUndefined();
   });
 
   it("says why a run failed, and what it was on when the agent says nothing", () => {
@@ -145,6 +171,41 @@ describe("the thread as the next run reads it", () => {
     expect(text.indexOf("run 1 did")).toBeLessThan(text.indexOf("run 0 did"));
   });
 
+  it("lists the section's versions newest first, and a person's newer version is what exists now", () => {
+    const text = renderThread(
+      [note(0, { made: { treeArtifactId: "t0" } }), note(1, { made: { treeArtifactId: "t1" } })],
+      THREAD_BUDGET_TOKENS,
+      [
+        {
+          tree: "t1",
+          fromTree: "t0",
+          by: "agent:ui-editor",
+          what: 'row gap → "space.6"',
+          restored: false,
+          at: "2026-11-07T11:00:00.000Z",
+        },
+        {
+          tree: "t0",
+          fromTree: "t1",
+          by: "A person",
+          what: "Went back to v1",
+          restored: true,
+          at: "2026-11-07T12:00:00.000Z",
+        },
+      ],
+    );
+    expect(text).toContain("- treeArtifactId: t1");
+    expect(text).toContain(
+      "Newer than the last run: tree t0, A person, went back. It is what exists now",
+    );
+    const v3 = text.indexOf("- v3 tree t0 ← t1, A person, went back");
+    const v2 = text.indexOf(
+      '- v2 tree t1 ← t0, agent:ui-editor, 2026-11-07 11:00: row gap → "space.6"',
+    );
+    expect(v3).toBeGreaterThan(0);
+    expect(v2).toBeGreaterThan(v3);
+  });
+
   it("stays within its budget however long the thread gets: older runs a line each, then dropped", () => {
     const notes = Array.from({ length: 200 }, (_, i) =>
       note(i % 24, { runId: `r${i}`, did: `run ${i} ${"word ".repeat(40)}` }),
@@ -153,6 +214,37 @@ describe("the thread as the next run reads it", () => {
     expect(Math.ceil(text.length / 4)).toBeLessThanOrEqual(THREAD_BUDGET_TOKENS + 50);
     expect(text).toMatch(/…and \d+ earlier runs/);
     expect(renderThread([])).toBe("");
+  });
+});
+
+describe("the thread's budget covers where things stand too", () => {
+  it("counts what was made and left open against the budget, and says how much it left out", () => {
+    const made = Object.fromEntries(
+      Array.from({ length: 80 }, (_, i) => [
+        `artifact${i}`,
+        `http://p/preview/default/${"t".repeat(60)}${i}`,
+      ]),
+    );
+    const text = renderThread(
+      [
+        {
+          runId: "r1",
+          agentId: "section-builder",
+          status: "completed",
+          at: "2026-11-07T10:00:00.000Z",
+          did: "built the section",
+          made,
+          decided: [],
+          open: Array.from({ length: 40 }, (_, i) => `open item ${i} ${"word ".repeat(20)}`),
+          children: [],
+        },
+      ],
+      THREAD_BUDGET_TOKENS,
+    );
+    expect(Math.ceil(text.length / 4)).toBeLessThanOrEqual(THREAD_BUDGET_TOKENS + 50);
+    expect(text).toMatch(/…and \d+ more lines/);
+    // what happened still has its place
+    expect(text).toContain("built the section");
   });
 });
 

@@ -48,7 +48,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Problems ui.publish listed that were left, and anything else still off"
+      "description": "Anything still off after the edits"
     }
   },
   "required": [

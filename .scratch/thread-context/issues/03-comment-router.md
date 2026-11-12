@@ -1,6 +1,6 @@
 # 03 · Comment router
 
-Status: ready-for-agent
+Status: done (2026-11-11)
 Type: design + task
 
 ## What
@@ -22,3 +22,7 @@ Rules first, from the element's type and props, a bound prop on it (from the bin
 
 - A Send with one style comment and one data comment queues `ui-editor` and `data-bind` in the section's thread, each with only its own comments.
 - A test set of about 30 real comments is routed correctly by the rules, or sent to the model.
+
+## Done differently (2026-11-11)
+
+No router in the backend. `ui-editor` is the section's editor and takes every comment, as Claude Design's one agent does: a comment about the data goes to `data-bind` as a child run (`agent.dataBind`, input `request`: the comments' words with their nodes), which starts from the plan the preview binds now. The model routes, from the element's history (what data-bind binds on it) and the words. A comment that needs frame-match again (the design itself) is not routed: frame-match has no mode for one node, and running it again would drop the edits.

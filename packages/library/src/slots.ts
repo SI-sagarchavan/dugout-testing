@@ -28,6 +28,11 @@ export interface Slot {
   confidence: "sure" | "unsure";
   /** Why it is unsure. */
   why?: string;
+  /**
+   * Parts the finder made one because they sit side by side on one row, by the ids each would
+   * have as a slot of its own. A proposal, not a mark: `findSlots`' `apart` keeps a pair apart.
+   */
+  joined?: Array<[string, string]>;
 }
 
 export interface Band {
@@ -77,6 +82,11 @@ export function findSlots(
      * carousel draws. They are never background, and they are one slot.
      */
     groups?: ReadonlyArray<ReadonlyArray<string>>;
+    /**
+     * Pairs of parts (the ids `joined` reports) a person or a model said are two sections: the
+     * finder does not join them for sitting side by side.
+     */
+    apart?: ReadonlyArray<readonly [string, string]>;
   } = {},
 ): FoundSlots {
   const layoutOf = new Map((opts.layouts ?? []).map((l) => [l.src, l.kind]));
@@ -114,6 +124,8 @@ export function findSlots(
     mark?: string;
     /** The group (`opts.groups`) whose layers it holds. */
     group?: number;
+    /** Parts joined into it for sitting side by side, by their own ids. */
+    joined?: Array<[string, string]>;
   };
   const drafts: Draft[] = [];
   let waiting: IrNode[] = [];
@@ -167,7 +179,9 @@ export function findSlots(
   // a heading with nothing under it stands alone
   if (waiting.length > 0)
     drafts.push({ nodes: waiting, heading: true, content: false, lead: true });
-  // layers side by side, on one row, show one thing: the cards of a list the designer laid out
+  // layers side by side, on one row, usually show one thing (the cards of a list the designer laid
+  // out): joined, and the join reported on the slot, so whoever reads the slots can keep them apart
+  const apart = new Set((opts.apart ?? []).map(([a, b]) => `${a}+${b}`));
   for (let i = drafts.length - 1; i > 0; i--) {
     const a = drafts[i - 1] as Draft;
     const b = drafts[i] as Draft;
@@ -175,7 +189,10 @@ export function findSlots(
     if (a.group !== undefined || b.group !== undefined) continue;
     const row = spanOf(a.nodes.slice(-1));
     if (sameRow(row, (b.nodes[0] as IrNode).geometry.bbox)) {
+      const pair: [string, string] = [topOf(a.nodes), topOf(b.nodes)];
+      if (apart.has(`${pair[0]}+${pair[1]}`) || apart.has(`${pair[1]}+${pair[0]}`)) continue;
       a.nodes.push(...b.nodes);
+      a.joined = [...(a.joined ?? []), pair, ...(b.joined ?? [])];
       drafts.splice(i, 1);
     }
   }
@@ -199,6 +216,7 @@ export function findSlots(
       layout: layoutIn(nodes, layoutOf),
       heading: d.heading,
       confidence: "sure" as const,
+      ...(d.joined ? { joined: d.joined } : {}),
     };
   });
   judge(slots, drafts);
@@ -234,6 +252,10 @@ function band(slots: Slot[], background: string[]): Band {
 }
 
 const order = (b: Band, slots: Slot[]) => slots.indexOf(b.slots[0] as Slot);
+
+/** The id a part has as a slot: its topmost layer's (the first, top to bottom). */
+const topOf = (nodes: IrNode[]): string =>
+  ([...nodes].sort((a, b) => a.geometry.bbox.y - b.geometry.bbox.y)[0] as IrNode).id;
 
 function one(frame: IrNode, layoutOf: Map<string, string>, background: IrNode[]): FoundSlots {
   const slot: Slot = {

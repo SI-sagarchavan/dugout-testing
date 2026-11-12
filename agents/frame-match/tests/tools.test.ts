@@ -1,14 +1,14 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Message } from "@dugout/contracts";
+import { type Message, memoryRunState, type RunState } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { completeFinal, verifyFinal } from "../src/agent.ts";
 import type { ControlPlane } from "../src/control-plane.ts";
 import type { Built, Bundle, Measurement, Overrides } from "../src/frame.ts";
 import { LookInputError } from "../src/look.ts";
-import { createMatchTools, type Engine } from "../src/tools.ts";
+import { createMatchTools, type Engine, LISTED_NOTES, PUBLISHED } from "../src/tools.ts";
 
 const measured = (match: number, conformErrors = 0): Measurement => ({
   match,
@@ -70,13 +70,26 @@ function setup(score: (overrides: Overrides) => Measurement, errors: string[] = 
   return { engine, plane, uploads };
 }
 
+// one state for each run, as the loop keeps it (ADR 0035)
+const states = new Map<string, RunState>();
+const stateOf = (runId: string) =>
+  states.get(runId) ?? (states.set(runId, memoryRunState()).get(runId) as RunState);
 const ctx = (runId: string) =>
   ({
     tenantId: "t",
     runId,
     signal: new AbortController().signal,
+    state: stateOf(runId),
     input: { exportId: "6f1d2c1e-7a3b-4c7e-9a10-000000000001", project: "default" },
   }) as const;
+
+/** A run whose frame.publish kept `published` in its state: what the checks on final read. */
+const publishedRun = (published: Record<string, unknown> | undefined, notes: string[] = []) => {
+  const state = memoryRunState();
+  if (published) state.set(PUBLISHED, published);
+  state.set(LISTED_NOTES, notes);
+  return { state, messages: [] as Message[] };
+};
 
 async function tools(score: (o: Overrides) => Measurement, errors?: string[]) {
   const { engine, plane, uploads } = setup(score, errors);
@@ -96,6 +109,7 @@ async function tools(score: (o: Overrides) => Measurement, errors?: string[]) {
 const change = (props: Overrides["props"] = []): Overrides => ({
   icons: {},
   crops: [],
+  backdrops: [],
   drops: [],
   gradients: [],
   texts: [],
@@ -489,37 +503,35 @@ describe("the look gate and unpainted layers", () => {
     expect(named("frame.publish").block({}, ctx("l3"))).toBeUndefined();
   });
 
-  it("keeps a change that paints a layer listed as unpainted, though no score moves", async () => {
+  const paint = {
+    ...change([{ src: "root", props: { surface: "surface.root_background" } }]),
+    surfaces: {
+      root_background: { layers: [{ type: "gradient", ref: "gradient.prim_sec_horiz_1" }] },
+    },
+  };
+
+  it("undoes a change that moves nothing measured, and says so, whatever layer it is on", async () => {
     const named = await withEngine({ unpainted: true });
     await named("frame.load").run({}, ctx("u1"));
-    const paint = {
-      ...change([{ src: "root", props: { surface: "surface.root_background" } }]),
-      surfaces: {
-        root_background: { layers: [{ type: "gradient", ref: "gradient.prim_sec_horiz_1" }] },
-      },
-    };
-    expect(await named("frame.override").run(paint, ctx("u1"))).toMatchObject({ kept: true });
+    const result = await named("frame.override").run(paint, ctx("u1"));
+    expect(result).toMatchObject({ kept: false });
+    expect(String(result.reason)).toContain("it moves nothing measured (match 90");
   });
 
-  it("still refuses a change that does nothing to a layer that was never listed", async () => {
+  it("keeps a change with a cost when the model says why, and lists it for the reviewer", async () => {
     const named = await withEngine({ unpainted: true });
     await named("frame.load").run({}, ctx("u2"));
-    const result = await named("frame.override").run(
-      change([{ src: "somewhere-else", props: { surface: "surface.x" } }]),
-      ctx("u2"),
-    );
-    expect(result).toMatchObject({ kept: false });
-    expect(String(result.reason)).toContain("nothing measurable");
-  });
-
-  it("still refuses an unpainted layer's change that also does something else", async () => {
-    const named = await withEngine({ unpainted: true });
-    await named("frame.load").run({}, ctx("u3"));
-    const result = await named("frame.override").run(
-      change([{ src: "root", props: { surface: "surface.x", gap: "space.2" } }]),
-      ctx("u3"),
-    );
-    expect(result).toMatchObject({ kept: false });
+    const why = "the IR paints the card with this gradient; no screenshot holds it";
+    const result = await named("frame.override").run({ ...paint, keep: why }, ctx("u2"));
+    expect(result).toMatchObject({ kept: true });
+    expect(result.despite).toEqual(["it moves nothing measured (match 90, conform errors 0)"]);
+    const shown = (
+      named("frame.publish") as unknown as {
+        resolve(i: unknown, c: unknown): Record<string, unknown>;
+      }
+    ).resolve({ content: { data: "none", why: "x" }, slots: [] }, ctx("u2"));
+    expect(String((shown.keptDespite as string[])[0])).toContain(why);
+    expect(String((shown.keptDespite as string[])[0])).toContain("surface root_background");
   });
 });
 
@@ -591,7 +603,7 @@ describe("frame.publish", () => {
     // it names every node to look at, with what is off, and asks for all of them at once
     const first = named("frame.publish").block({}, ctx("g3")) ?? "";
     expect(first).toContain("1 of 4");
-    expect(first).toContain("on every one of these 1");
+    expect(first).toContain("1 of the largest findings have not been read with frame.node");
     expect(first).toContain("- worst (Box, 500px off, design #000000 but renders #ffffff)");
     for (const n of [2, 3, 4]) {
       expect(named("frame.publish").block({}, ctx("g3"))).toContain(`${n} of 4`);
@@ -643,8 +655,12 @@ describe("frame.publish", () => {
   it("stores the theme it extended, the surfaces and the tree, once", async () => {
     const { named, uploads } = await tools(() => measured(80));
     await named("frame.load").run({}, ctx("p2"));
-    const first = await named("frame.publish").run({}, ctx("p2"));
-    const again = await named("frame.publish").run({}, ctx("p2"));
+    const said = named("frame.publish").resolve(
+      { content: { data: "none", why: "a heading and a button" }, slots: [] },
+      ctx("p2"),
+    );
+    const first = await named("frame.publish").run(said, ctx("p2"));
+    const again = await named("frame.publish").run(said, ctx("p2"));
     expect(uploads.map((upload) => upload.kind)).toEqual(["token_set", "surface_set", "dsl_tree"]);
     expect(first.previewUrl).toBe(
       "http://web/preview/default/dsl_tree-id?theme=token_set-id&surfaces=surface_set-id&width=100&bg=808080",
@@ -685,10 +701,13 @@ describe("an export with no screenshot that fits", () => {
       ctx("u1"),
     );
     expect(tried).toMatchObject({ kept: false });
-    const shown = named("frame.publish").resolve({}, ctx("u1"));
+    const shown = named("frame.publish").resolve(
+      { content: { data: "some", why: "a list of cards" }, slots: [] },
+      ctx("u1"),
+    );
     expect(shown).toMatchObject({ measured: false });
     expect(shown).not.toHaveProperty("match");
-    const published = await named("frame.publish").run({}, ctx("u1"));
+    const published = await named("frame.publish").run(shown, ctx("u1"));
     expect(published).toMatchObject({ measured: false });
     expect(published).not.toHaveProperty("match");
     expect(published.previewUrl).toContain("http://web/preview/default/dsl_tree-id");
@@ -712,17 +731,10 @@ describe("an export with no screenshot that fits", () => {
       unchecked: [],
       placeholderIcons: 0,
     };
-    const messages: Message[] = [
-      {
-        role: "assistant",
-        content: "",
-        toolCalls: [{ id: "c", name: "frame.publish", arguments: "{}" }],
-      },
-      { role: "tool", toolCallId: "c", content: JSON.stringify(published) },
-    ];
+    const run = publishedRun(published);
     const final = { ...published, remaining: [], compilerFindings: [] };
-    expect(verifyFinal(final, { messages })).toContain("unmeasuredBecause");
-    expect(verifyFinal({ ...final, unmeasuredBecause: "too tall" }, { messages })).toBeUndefined();
+    expect(verifyFinal(final, run)).toContain("unmeasuredBecause");
+    expect(verifyFinal({ ...final, unmeasuredBecause: "too tall" }, run)).toBeUndefined();
   });
 });
 
@@ -738,14 +750,7 @@ describe("verifyFinal", () => {
     before: 80,
     match: 90,
   };
-  const messages: Message[] = [
-    {
-      role: "assistant",
-      content: "",
-      toolCalls: [{ id: "c1", name: "frame.publish", arguments: "{}" }],
-    },
-    { role: "tool", toolCallId: "c1", content: JSON.stringify(published) },
-  ];
+  const run = publishedRun(published);
   const final = {
     ...published,
     remaining: ["Text 35:10234 is 15% off: glyph edges, no layout issue"],
@@ -753,89 +758,66 @@ describe("verifyFinal", () => {
   };
 
   it("takes numbers frame.publish returned", () => {
-    expect(verifyFinal(final, { messages })).toBeUndefined();
+    expect(verifyFinal(final, run)).toBeUndefined();
   });
 
   it("refuses a better number than was measured", () => {
-    const refused = verifyFinal({ ...final, match: 100 }, { messages });
+    const refused = verifyFinal({ ...final, match: 100 }, run);
     expect(refused).toContain("match was 100, must be 90");
   });
 
   it("names every field that differs, and one that is missing", () => {
     const { before: _before, ...rest } = final;
-    const refused = verifyFinal({ ...rest, match: 89.9 }, { messages });
+    const refused = verifyFinal({ ...rest, match: 89.9 }, run);
     expect(refused).toContain("before was missing, must be 80");
     expect(refused).toContain("match was 89.9, must be 90");
   });
 
   it("completeFinal writes the published numbers over the model's", () => {
-    const filled = completeFinal({ ...final, match: 89.9, coverage: 3 }, { messages });
+    const filled = completeFinal({ ...final, match: 89.9, coverage: 3 }, run);
     expect(filled).toEqual(final);
-    expect(verifyFinal(filled, { messages })).toBeUndefined();
+    expect(verifyFinal(filled, run)).toBeUndefined();
   });
 
   it("completeFinal drops an answer to a note the designer never left", () => {
     const invented = { id: "none", status: "not-mine", detail: "no notes listed" };
-    const filled = completeFinal({ ...final, notes: [invented] }, { messages }) as {
+    const filled = completeFinal({ ...final, notes: [invented] }, run) as {
       notes: unknown[];
     };
     expect(filled.notes).toEqual([]);
   });
 
   it("completeFinal leaves the output alone when nothing was published", () => {
-    expect(completeFinal(final, { messages: [] })).toBe(final);
+    expect(completeFinal(final, publishedRun(undefined))).toBe(final);
   });
 
   it("takes a list of unchecked layers retyped, if it is all there", () => {
-    const listed = [
-      messages[0] as Message,
-      {
-        role: "tool",
-        toolCallId: "c1",
-        content: JSON.stringify({ ...published, unchecked: ["Jofra Archer", "badge"] }),
-      } as Message,
-    ];
+    const listed = publishedRun({ ...published, unchecked: ["Jofra Archer", "badge"] });
     const whole = { ...final, unchecked: ["Jofra  Archer", "badge"] };
-    expect(verifyFinal(whole, { messages: listed })).toBeUndefined();
-    expect(verifyFinal({ ...final, unchecked: ["badge"] }, { messages: listed })).toContain(
-      "2 layers",
-    );
+    expect(verifyFinal(whole, listed)).toBeUndefined();
+    expect(verifyFinal({ ...final, unchecked: ["badge"] }, listed)).toContain("2 layers");
   });
 
   it("refuses a remaining that only restates the score", () => {
-    expect(verifyFinal({ ...final, remaining: ["The match is 90%."] }, { messages })).toContain(
+    expect(verifyFinal({ ...final, remaining: ["The match is 90%."] }, run)).toContain(
       "not the score",
     );
   });
 
   it("refuses a low match with nothing said about the rest", () => {
-    const low = [
-      messages[0] as Message,
-      {
-        role: "tool",
-        toolCallId: "c1",
-        content: JSON.stringify({ ...published, match: 45 }),
-      } as Message,
-    ];
-    expect(verifyFinal({ ...final, match: 45, remaining: [] }, { messages: low })).toContain("45%");
+    const low = publishedRun({ ...published, match: 45 });
+    expect(verifyFinal({ ...final, match: 45, remaining: [] }, low)).toContain("45%");
   });
 
   it("refuses a close match that claims nothing is left", () => {
-    const close = [
-      messages[0] as Message,
-      {
-        role: "tool",
-        toolCallId: "c1",
-        content: JSON.stringify({ ...published, match: 98.03 }),
-      } as Message,
-    ];
-    expect(verifyFinal({ ...final, match: 98.03, remaining: [] }, { messages: close })).toContain(
+    const close = publishedRun({ ...published, match: 98.03 });
+    expect(verifyFinal({ ...final, match: 98.03, remaining: [] }, close)).toContain(
       "something still differs",
     );
   });
 
   it("refuses a final with nothing published", () => {
-    expect(verifyFinal(final, { messages: [] })).toContain("Nothing was published");
+    expect(verifyFinal(final, publishedRun(undefined))).toContain("Nothing was published");
   });
 });
 
@@ -891,8 +873,9 @@ describe("frame.load and an unsure split (ticket 04, ticket 11)", () => {
   it("reports the split as an open item with evidence, and never stops the run to ask", async () => {
     const { named, keys, joinsSeen } = await load();
     const loaded = await named("frame.load").run({}, ctx("split-1"));
+    // the split, and whether the section shows data (settled at frame.publish)
     const open = loaded.open as Array<Record<string, unknown>>;
-    expect(open).toHaveLength(1);
+    expect(open.map((i) => i.id)).toEqual(["section_split", "content"]);
     expect(open[0]).toMatchObject({ id: "section_split", proposed: "h+c" });
     expect(String(open[0]?.evidence)).toContain("a heading with no content under it");
     expect(
@@ -920,9 +903,9 @@ describe("frame.load and an unsure split (ticket 04, ticket 11)", () => {
     });
     expect(joinsSeen.at(-1)).toEqual([]);
     expect(named("frame.publish").block({}, ctx("split-2"))).toBeUndefined();
-    // what is open is gone from what the model reads
+    // what is open is gone from what the model reads: only content, settled at frame.publish
     const again = await named("frame.load").run({}, ctx("split-2"));
-    expect(again.open).toBeUndefined();
+    expect((again.open as Array<{ id: string }>).map((i) => i.id)).toEqual(["content"]);
   });
 
   it("keeps a claim of memory only when the item had something in `before`", async () => {

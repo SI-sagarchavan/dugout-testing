@@ -34,6 +34,7 @@ import { formatUnresolvedWarnings, interpolate } from "../resolve/data.js";
 import { localeOf, type NodeRenderContext } from "../context.js";
 import { styleToReact } from "./dom.js";
 import { renderIcon } from "./icons.js";
+import { Anchor, targetOf } from "./link.js";
 
 type Action =
   | { kind: "none" }
@@ -195,12 +196,14 @@ export function Button({ node, ctx }: { node: Node; ctx: NodeRenderContext }) {
    */
   if (action.kind === "navigate") {
     const inert = disabled || loading;
-    return (
-      <a
-        {...shared}
-        {...(inert ? { "aria-disabled": "true" as const, role: "link" } : { href: action.href })}
-        {...(action.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-      >
+    // the host's link on its own site (next/link), a plain <a> anywhere else
+    const to = inert ? undefined : targetOf(action.href, action.external === true, ctx);
+    return to ? (
+      <Anchor to={to} ctx={ctx} {...shared}>
+        {inner}
+      </Anchor>
+    ) : (
+      <a {...shared} aria-disabled="true" role="link">
         {inner}
       </a>
     );

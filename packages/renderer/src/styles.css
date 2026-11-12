@@ -671,16 +671,34 @@
 [data-fos-control] [data-fos-decor] {
   pointer-events: auto;
 }
-.fos-overlay > [data-fos-type]:is([data-fos-type="Stack"], [data-fos-type="Box"], [data-fos-type="Overlay"]):not([class*="fos-surface-"]) {
+.fos-overlay > [data-fos-type]:is([data-fos-type="Stack"], [data-fos-type="Box"], [data-fos-type="Overlay"]):not([class*="fos-surface-"]):not([href]) {
   pointer-events: none;
 }
 .fos-overlay > [data-fos-type]:is([data-fos-type="Stack"], [data-fos-type="Box"], [data-fos-type="Overlay"]):not([class*="fos-surface-"])
   :is([data-fos-type="Text"], [data-fos-type="Image"], [data-fos-type="Icon"], [data-fos-type="Button"], [data-fos-type="Carousel"], [data-fos-type="Input"], [data-fos-type="Checkbox"], [class*="fos-surface-"], [data-fos-control], a, button, input):not([data-fos-decor]) {
   pointer-events: auto;
 }
+/*
+ * A node drawn as a link (`href`: a card that opens its article, a VIEW ALL) looks as designed: none
+ * of the browser's underline or link colour, and the box a div would have had. Zero specificity, so
+ * a Stack's own display (flex) still wins.
+ */
+:where(a[data-fos-type]) {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+:where(a.fos-link) {
+  color: inherit;
+  text-decoration: none;
+}
 [data-fos-control="progress"] {
   transform-origin: left center;
   will-change: transform;
+}
+/* A bar of the slide's time is empty until the carousel runs and fills it: never a full bar first. */
+[data-fos-control="progress"]:not([data-fos-of="slides"]) {
+  transform: scale(0);
 }
 
 /*
@@ -733,3 +751,11 @@
 .fos-carousel .swiper-slide-shadow-right { background-image: linear-gradient(to right, rgb(0 0 0 / 0.5), transparent); }
 .fos-carousel .swiper-slide-shadow-top { background-image: linear-gradient(to top, rgb(0 0 0 / 0.5), transparent); }
 .fos-carousel .swiper-slide-shadow-bottom { background-image: linear-gradient(to bottom, rgb(0 0 0 / 0.5), transparent); }
+
+/*
+ * What is in a box that scrolls keeps its own size: a flex child that clips would otherwise shrink
+ * to the box (its min-size is 0 once it clips) and cut its rows instead of letting them scroll.
+ */
+[data-fos-scroll] > * {
+  flex-shrink: 0;
+}

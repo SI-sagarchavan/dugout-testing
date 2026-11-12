@@ -1,0 +1,21 @@
+{
+  "name": "@dugout/agent-interaction",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@dugout/agent-data-bind": "workspace:^",
+    "@dugout/contracts": "workspace:^",
+    "@dugout/core": "workspace:^",
+    "@dugout/db": "workspace:^",
+    "@dugout/sdk": "workspace:^",
+    "zod": "^4.6.7"
+  }
+}

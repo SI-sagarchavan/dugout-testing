@@ -16,7 +16,9 @@ import { Valkey } from "iovalkey";
 import pc from "picocolors";
 import { z } from "zod";
 import {
+  aboutOf,
   banner,
+  bylineOf,
   type ForkDecision,
   historyLine,
   type Intent,
@@ -25,7 +27,6 @@ import {
   renderAgentHelp,
   renderHelp,
   runLine,
-  summaryOf,
   version,
 } from "./commands.ts";
 import { parseCliArgs, usage } from "./flags.ts";
@@ -707,8 +708,8 @@ async function printAgents(): Promise<void> {
   for (const id of ids) {
     const agent = await loadAgent(id);
     console.log(`  ${pc.cyan(id)}`);
-    console.log(pc.dim(`    ${agent.spec.owner} · ${agent.spec.model}`));
-    console.log(`    ${summaryOf(agent.spec.instructions)}`);
+    console.log(pc.dim(`    ${bylineOf(agent)}`));
+    console.log(`    ${aboutOf(agent)}`);
     console.log();
   }
 }

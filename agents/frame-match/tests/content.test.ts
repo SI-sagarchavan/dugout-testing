@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyContentVerdict, contentOf, contentPrompt, outlineOf } from "../src/content.ts";
+import { contentOf, settledContent, signsOf } from "../src/content.ts";
 import type { LayoutReport } from "../src/layout.ts";
 
 type Node = {
@@ -52,9 +52,9 @@ describe("whether a section shows data", () => {
   it("reads a heading, tabs and a button as a section with nothing to bind", () => {
     const content = contentOf({ nodes: header() }, [tabs]);
     expect(content.data).toBe("none");
-    expect(content.evidence).toContain('"THE BRAVE SQUAD" is a heading or label');
+    expect(content.evidence).toContain('"THE BRAVE SQUAD" is a short text');
     expect(content.evidence).toContain('"VIEW MORE" is a button\'s label');
-    expect(content.evidence.some((e) => e.includes("is tabs"))).toBe(true);
+    expect(content.evidence.some((e) => e.includes("is proposed as tabs"))).toBe(true);
   });
 
   it("reads what repeats as data", () => {
@@ -67,15 +67,31 @@ describe("whether a section shows data", () => {
     expect(contentOf({ nodes: header() }, [list]).data).toBe("some");
   });
 
-  it("reads a score, a date, a long headline and placeholder copy as data", () => {
+  it("proposes data for text shaped like a value: two numbers joined, a date, a time, long prose, lorem ipsum", () => {
     for (const said of [
       "184/6 (20 ov)",
-      "Sat 4 Jul, 14:30",
-      "Southern Brave beat Welsh Fire by six wickets to go top of the table at the Utilita Bowl",
-      "Player Name",
+      "Sat 4 Jul",
+      "Kick-off 14:30",
+      "The home side won by six wickets to go top of the table at the ground on Saturday",
+      "Lorem ipsum dolor",
     ]) {
       expect(contentOf({ nodes: [...header(), text("x", said)] }, []).data, said).toBe("some");
     }
+  });
+
+  it("knows no subject's words: a placeholder name is a short text, its layer's name reported", () => {
+    const nodes = [...header(), { ...text("x", "Player Name"), src: "1:2" }];
+    const signs = signsOf({ nodes }, [], undefined, (src) =>
+      src === "1:2" ? "athlete/name" : undefined,
+    );
+    expect(signs.copy).toContain('"Player Name" (layer "athlete/name") is a short text');
+    expect(signs.data).toEqual([]);
+  });
+
+  it("reports a number in short text without leaning either way", () => {
+    const content = contentOf({ nodes: [...header(), text("x", "TOP 10")] }, []);
+    expect(content.data).toBe("unsure");
+    expect(content.evidence).toContain('"TOP 10" holds a number');
   });
 
   it("does not take a heading with a number in it for data", () => {
@@ -95,27 +111,16 @@ describe("whether a section shows data", () => {
   });
 });
 
-describe("a model settling an unsure section", () => {
-  const unsure = { data: "unsure" as const, evidence: ["a picture 320×240px"] };
-
-  it("takes a sure answer", () => {
-    const content = applyContentVerdict(
-      unsure,
-      '{"data":"none","confidence":0.9,"reason":"a decorative banner"}',
-    );
-    expect(content.data).toBe("none");
-    expect(content.evidence.at(-1)).toContain("a decorative banner");
-  });
-
-  it("leaves it unsure on a doubtful answer, or one that is not the JSON asked for", () => {
-    expect(applyContentVerdict(unsure, '{"data":"none","confidence":0.5}').data).toBe("unsure");
-    expect(applyContentVerdict(unsure, "it is probably static").data).toBe("unsure");
-  });
-
-  it("is asked with the section's outline", () => {
-    const prompt = contentPrompt(outlineOf({ nodes: header() }), unsure);
-    expect(prompt).toContain('Text title "THE BRAVE SQUAD"');
-    expect(prompt).toContain("Stack men (tab)");
+describe("what the agent settled", () => {
+  it("is the section's content, its why first and the signs after", () => {
+    const proposal = { data: "unsure" as const, evidence: ["a picture 320×240px"] };
+    const content = settledContent(proposal, { data: "none", why: "a decorative banner" });
+    expect(content).toEqual({
+      data: "none",
+      evidence: ["decided: a decorative banner", "a picture 320×240px"],
+      why: "a decorative banner",
+      by: "agent",
+    });
   });
 });
 

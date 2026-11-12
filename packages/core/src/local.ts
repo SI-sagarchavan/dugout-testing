@@ -193,11 +193,12 @@ export interface RunLocalOptions {
   /** Tool outputs longer than this are stored and replaced by a reference. */
   maxInlineChars?: number;
   /**
-   * Keeps a long run inside its model's window: past `at` of it (65%), older tool results become
-   * references and older turns a summary written by `summarizer` (the agent's own model unless
-   * named). `false` leaves the transcript as it is.
+   * Keeps a long run's request small: past `at` of the model's window (65%) or `maxTokens`
+   * (150,000), whichever is lower, older tool results become references and older turns a summary
+   * written by `summarizer` (the agent's own model unless named). `false` leaves the transcript
+   * as it is.
    */
-  compaction?: false | { at?: number; keep?: number; summarizer?: string };
+  compaction?: false | { at?: number; maxTokens?: number; keep?: number; summarizer?: string };
   /** Builds the run's skills and memory context before the loop starts. */
   context?: (ctx: RunContext, input: unknown) => Promise<RunMemoryContext>;
   /** What earlier answers tell the run about the questions it asks (ADR 0029). */
@@ -287,6 +288,7 @@ export async function runLocal(opts: RunLocalOptions) {
           compaction: {
             window: modelEntry(opts.models, opts.agent.spec.model).contextWindow,
             ...(opts.compaction?.at ? { at: opts.compaction.at } : {}),
+            ...(opts.compaction?.maxTokens ? { maxTokens: opts.compaction.maxTokens } : {}),
             ...(opts.compaction?.keep ? { keep: opts.compaction.keep } : {}),
             // the agent's own model: what it carries on from is only as good as the summary
             summarizer: opts.compaction?.summarizer ?? opts.agent.spec.model,

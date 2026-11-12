@@ -488,6 +488,43 @@ describe("bedrock client", () => {
     expect(strictOf(inputs[3])).toEqual(["small"]);
   });
 
+  it("takes Bedrock's other words for the same limit: a schema too complex to compile", async () => {
+    // run ac62668e: ui-editor with data-bind's input as its agent.dataBind tool
+    const tooComplex = Object.assign(
+      new Error(
+        "The model returned the following errors: compilation exceeded limits: Schema is too complex.",
+      ),
+      { name: "ValidationException" },
+    );
+    let sent = 0;
+    const runtime = {
+      async send(command: unknown) {
+        sent++;
+        const tools = (
+          command as { input: { toolConfig: { tools: Array<{ toolSpec: { strict?: boolean } }> } } }
+        ).input.toolConfig.tools;
+        if (tools.some((t) => t.toolSpec.strict === true)) throw tooComplex;
+        return {
+          stream: (async function* () {
+            yield ended("end_turn");
+          })(),
+        };
+      },
+    };
+    const client = createBedrockClient({ runtime, models });
+    const tool = {
+      name: "agent.dataBind",
+      description: "d",
+      parameters: {
+        type: "object",
+        properties: { preview: { type: "string" } },
+        required: ["preview"],
+      },
+    };
+    await client.complete(request({ model: "opus", tools: [tool] }));
+    expect(sent).toBe(2);
+  });
+
   it("keeps tools strict only while their optional parameters stay within Bedrock's limit", async () => {
     const { client, inputs } = fakeRuntime([ended("end_turn")]);
     // ten optional parameters each: two fit in the 24 Bedrock takes, the third would not

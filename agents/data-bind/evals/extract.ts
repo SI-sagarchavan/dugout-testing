@@ -168,6 +168,22 @@ export function datedLists(
   return out;
 }
 
+/**
+ * The problems bind.try still listed when the plan was published: what the approval of the last
+ * bind.publish (or bind.done) showed, as code measured it. Nothing when it published clean.
+ */
+export function publishedProblems(events: readonly RunEvent[]): string[] {
+  let last: string[] = [];
+  for (const e of events) {
+    if (e.type !== "tool.started" || (e as { child?: unknown }).child) continue;
+    const data = e.data as { tool?: string; input?: { problems?: unknown } };
+    if (data.tool !== "bind.publish" && data.tool !== "bind.done") continue;
+    const problems = data.input?.problems;
+    last = Array.isArray(problems) ? problems.map(String) : [];
+  }
+  return last;
+}
+
 /** What a finished run did, from its result, its events and the artifacts it published. */
 export function outcomeOf(run: {
   status: string;
@@ -197,7 +213,7 @@ export function outcomeOf(run: {
     hookOutput: run.bag,
     shown: shownIn(run.events, run.tree),
     boundFields: boundFieldsOf(run.plan),
-    problems: out.remaining ?? [],
+    problems: publishedProblems(run.events),
     variantsDrawn: variantsDrawn(run.plan, run.bag),
     ...(run.timeOf
       ? { dated: datedLists(run.plan, run.bag, run.timeOf), at: run.now ?? Date.now() }

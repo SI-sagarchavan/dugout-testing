@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { authFetch, setupFailure } from "./auth.ts";
+import { authFetch, McpAuthError, setupFailure } from "./auth.ts";
 import { drift, type Lock, type RemoteResource, type RemoteTool } from "./lock.ts";
 import { pathOf, type Registry, readValue, type ServerEntry } from "./registry.ts";
 import { surfaceTokenStore } from "./surface-tokens.ts";
@@ -155,7 +155,8 @@ export function createMcpHub(opts: HubOptions): McpHub {
             }
           }
           const path = auth.type === "oauth-per-tenant" ? pathOf(auth.grants, env) : undefined;
-          if (!path) throw new McpUnavailable(`${server.id}: no grants file`);
+          // a sign-in nobody can make without a grants file: setup, as a missing grant is
+          if (!path) throw new McpAuthError(`${server.id}: no grants file`);
           return storeFor(path);
         };
         const transport = new StreamableHTTPClientTransport(new URL(url), {

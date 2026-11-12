@@ -1,0 +1,68 @@
+{
+  "recordedAt": "2026-11-10T08:06:50.959Z",
+  "note": "steps, cost and questions per case with nothing in memory, averaged over the attempts",
+  "models": ["global.anthropic.claude-haiku-5-5"],
+  "repeat": 3,
+  "cases": {
+    "fixtures-strip": {
+      "attempts": 3,
+      "steps": 10.33,
+      "costUsd": 0.0085,
+      "asked": 0
+    },
+    "video-card": {
+      "attempts": 3,
+      "steps": 6.67,
+      "costUsd": 0.0031,
+      "asked": 0
+    },
+    "news-later": {
+      "attempts": 3,
+      "steps": 8,
+      "costUsd": 0.0041,
+      "asked": 0
+    },
+    "fixtures-inner": {
+      "attempts": 3,
+      "steps": 7.67,
+      "costUsd": 0.0068,
+      "asked": 0
+    },
+    "player-card": {
+      "attempts": 3,
+      "steps": 7.33,
+      "costUsd": 0.0042,
+      "asked": 0
+    },
+    "player-strip": {
+      "attempts": 3,
+      "steps": 11.33,
+      "costUsd": 0.009,
+      "asked": 0
+    },
+    "latest-news": {
+      "attempts": 3,
+      "steps": 7,
+      "costUsd": 0.004,
+      "asked": 0
+    },
+    "hospitality": {
+      "attempts": 3,
+      "steps": 11,
+      "costUsd": 0.0082,
+      "asked": 0
+    },
+    "team-page": {
+      "attempts": 3,
+      "steps": 11,
+      "costUsd": 0.0113,
+      "asked": 0
+    },
+    "match-centre": {
+      "attempts": 3,
+      "steps": 7.67,
+      "costUsd": 0.005,
+      "asked": 0
+    }
+  }
+}

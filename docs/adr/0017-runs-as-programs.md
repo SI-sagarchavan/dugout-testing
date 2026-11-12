@@ -1,6 +1,6 @@
 # 0017 — A run can be a program of steps and tasks
 
-Date: 2026-10-31 (graph cursor added 2026-11-01) · Status: accepted · Extends ADR 0002, ADR 0006 and ADR 0007
+Date: 2026-10-31 (graph cursor added 2026-11-01) · Status: superseded by ADR 0037 (`defineProgram`, `defineGraph` and `runProgram` were deleted on 2026-11-11: a workflow is `defineWorkflow`) · Extends ADR 0002, ADR 0006 and ADR 0007
 
 ## Context
 

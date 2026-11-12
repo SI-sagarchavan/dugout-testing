@@ -31,7 +31,7 @@ export const Question = z.object({
     .min(1)
     .max(40)
     .describe(
-      "A short id for the answer, unique in this ask: lower case, digits and _ (image_domain)",
+      "A short id for the answer, unique in this ask: lower case, digits and _, named for what it settles",
     ),
   question: z.string().min(1).describe("The question, as the person reads it"),
   why: z
@@ -58,27 +58,32 @@ export const Question = z.object({
     .describe(
       "Your best answer, which the person can accept as it is: one option value (several for multi), 'yes' or 'no' for confirm, the text, or the number as text. [] when you have none",
     ),
+  remember: z
+    .enum(["section", "club", "no"])
+    .optional()
+    .describe(
+      "How far the answer holds, so it is remembered (ADR 0033): section when it is about the item this run works on only (asked again on another), club when it holds for everything of this tenant, no when it is for this run alone (the enum values are the contract's names)",
+    ),
+  fact: z
+    .string()
+    .optional()
+    .describe(
+      "For a tenant-wide (club) answer, the house fact it becomes, as a dotted key; empty for none",
+    ),
 });
 export type Question = z.infer<typeof Question>;
 
+/** How far an answer holds, as the model says it; `club` is a tenant's. */
+export const REMEMBER = { section: "section", club: "tenant" } as const;
+
 /**
- * A question an agent says it asks (`AgentSpec.questions`, ADR 0033), by its id. What a person
- * answers to it is learned: an answer about one section is a decision on that section (episodic),
- * an answer true for the club is a fact (semantic). A question whose id is not declared is asked
- * all the same, and nothing is learned from it.
+ * How far a person's answer holds (ADR 0033), as the model says when it asks (`remember`): no
+ * agent declares its questions in advance. An answer about one section is a decision on that
+ * section (episodic), an answer true for the club is a fact (semantic). The question's id is what
+ * memory keys on, so the model names it for what it settles, the same each time.
  */
-export const DeclaredQuestion = z.object({
-  /** `section`: the answer holds for the section the run works on; `tenant`: for the club. */
-  scope: z.enum(["tenant", "section"]),
-  /**
-   * The house fact the answer becomes (`media.player-photo`): proposed at once for a tenant
-   * question, and for a section question once three sections were given the same answer.
-   */
-  fact: z.string().optional(),
-  /** What it settles, in a few words: what the model reads in `ask`'s description. */
-  about: z.string().min(1),
-});
-export type DeclaredQuestion = z.infer<typeof DeclaredQuestion>;
+export const QuestionScope = z.enum(["tenant", "section"]);
+export type QuestionScope = z.infer<typeof QuestionScope>;
 
 /**
  * What a declared question is about, put on it by the run that asked (ADR 0033): its agent, how far
@@ -87,7 +92,7 @@ export type DeclaredQuestion = z.infer<typeof DeclaredQuestion>;
  */
 export const QuestionAbout = z.object({
   agent: z.string(),
-  scope: DeclaredQuestion.shape.scope,
+  scope: QuestionScope,
   fact: z.string().optional(),
   /** The structural signature of the section the run works on, when it knows one. */
   section: z.string().optional(),
@@ -144,6 +149,14 @@ export const OpenItem = z.object({
     .string()
     .optional()
     .describe("What memory holds for it: a decision on this section, else a fact"),
+  holds: z
+    .enum(["section", "club"])
+    .optional()
+    .describe("How far an answer to it holds, as the tool sees it: ask it with this remember"),
+  fact: z
+    .string()
+    .optional()
+    .describe("The house fact answers to it become, alike on three sections or given for the club"),
 });
 export type OpenItem = z.infer<typeof OpenItem>;
 
@@ -161,10 +174,16 @@ export type Subject = z.infer<typeof Subject>;
 
 const ID = /^[a-z][a-z0-9_]*$/;
 
+/** A question as `ask` takes it: the model always says how far its answer holds. */
+export const AskQuestion = Question.extend({
+  remember: Question.shape.remember.unwrap(),
+  fact: Question.shape.fact.unwrap(),
+});
+
 export const AskInput = z
   .object({
     questions: z
-      .array(Question)
+      .array(AskQuestion)
       .min(1)
       .max(8)
       .describe("Everything you need to know now, all at once: the person answers them together"),

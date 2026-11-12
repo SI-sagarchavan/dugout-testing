@@ -1,7 +1,9 @@
 /**
  * The facts a binder needs, from the frame and the data alone. Deterministic, and about no API in
  * particular: nothing here knows what a match, an article or a score is. The same frame and the
- * same sample always give the same facts, and the model's only job is to read them.
+ * same sample always give the same facts. They report what is there; what it means (which order
+ * a list wants, whether data is the design's, what kind of value a placeholder is) is the model's
+ * to read from them.
  *
  * - `outline`: the compiled tree as a person would skim it, with what repeats and what is a variant
  *   of one component marked from the Figma structure, not from exact sizes (two instances of one
@@ -12,9 +14,9 @@
  *   would not resolve, and which item draws no variant or two.
  */
 
-import { type About, formOf, hasForm, holdsWords } from "@dugout/agent-hook-maker";
+import { type About, formOf, hasForm } from "@dugout/agent-hook-maker";
 
-export { type About, formOf, hasForm, holdsWords };
+export { type About, formOf, hasForm };
 
 import type { Dsl, IrNode, Tree, TreeNode } from "./dsl.ts";
 
@@ -343,9 +345,9 @@ export interface DryRun {
   variants: Array<{ template: string; drew: number; times: number; example: string }>;
   /** What the first items show, per bound node: what a person would read on the page. */
   samples: Array<{ src: string; prop: string; values: string[] }>;
-  /** Texts the design writes in capitals that the data does not, with no `textCase` set. */
+  /** Texts the design writes in capitals that the data draws in lower case, with no `textCase` set. */
   capitals: Array<{ src: string; design: string; shows: string }>;
-  /** Short texts the design breaks over lines on purpose that the data draws on one. */
+  /** Short texts the design writes over several lines that the data draws on one. */
   breaks: Array<{ src: string; design: string; shows: string }>;
   /** Pictures bound to a value no browser can load: a path with no domain. */
   relative: Array<{ src: string; shows: string; times: number }>;
@@ -358,10 +360,10 @@ export interface DryRun {
   /** Unbound texts with figures in them, drawn the same in every item of a list: placeholders. */
   repeated: Array<{ src: string; copy: string; times: number }>;
   /**
-   * Short texts with a number in them (a date, a time, a score) that the data draws in another
-   * form than the design's, with the pipe or template that would write the design's.
+   * Short texts with a number in them that the data draws in another form than the design's
+   * (`formOf`: digits, words and punctuation compared, case aside).
    */
-  formats: Array<{ src: string; design: string; shows: string; fix: string }>;
+  formats: Array<{ src: string; design: string; shows: string }>;
   /**
    * Variants of a list's items (children that each carry a `when`) that no item of the sample
    * draws. `made` says it was drawn once on an item made from the sample's shape, so its refs
@@ -380,56 +382,25 @@ export interface DryRun {
   }>;
 }
 
-/** What one thing a card shows is, read from its placeholder by code. */
-export type FieldKind = "date" | "time" | "score" | "number" | "image" | "text";
-
 /** One thing each card shows, as code reads it from the design: the model names it. */
 export interface NeedField {
   /** The Figma id of the node that shows it. */
   node: string;
-  kind: FieldKind;
-  /** The design's placeholder, as drawn: "21 JULY", "166/5". */
+  /** What the node is: a text, or a picture. */
+  drawnAs: "text" | "picture";
+  /** The design's placeholder, as drawn: "21 JULY", "166/5". Empty for a picture. */
   example: string;
-  /** Other things the design's cards say at this place (a bowler's card, a batter's): the item decides. */
-  alternatives?: string[];
-}
-
-/** A month's name or its short form, as a date writes it: "July", "JUL", "Sept.". */
-const MONTH =
-  "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?";
-/** A weekday in front of a date: "Sat", "Sunday,". */
-const WEEKDAY = "(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?,?\\s+)?";
-const ORDINAL = "(?:st|nd|rd|th)?";
-/** A day and a month's name, either way round, with a year or not: "21 JULY", "Jul 21, 2026". */
-const DAY_MONTH = new RegExp(
-  `^${WEEKDAY}(?:\\d{1,2}${ORDINAL}\\s+${MONTH}(?:,?\\s+\\d{2,4})?|${MONTH}\\s+\\d{1,2}${ORDINAL}(?:,?\\s+\\d{4})?)$`,
-  "i",
-);
-
-/** The kind of a placeholder: a date, a time, a score, a number, or text. */
-export function kindOf(placeholder: string): FieldKind {
-  const t = placeholder.trim();
-  if (/^\d{1,2}:\d{2}(:\d{2})?(\s?[AaPp][Mm])?$/.test(t)) return "time";
-  if (/^\d+\/\d+(\s*\(.*\))?$|^\d+\s?-\s?\d+$/.test(t)) return "score";
-  // a date only where a month is named beside a day, or the digits are a date's: "Round 3" and
-  // "12 GOALS" are a word and a number
-  if (
-    DAY_MONTH.test(t) ||
-    /^\d{4}-\d{2}-\d{2}/.test(t) ||
-    /^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$/.test(t)
-  ) {
-    return "date";
-  }
-  if (/^[+-]?\d+([.,]\d+)?%?$/.test(t)) return "number";
-  return "text";
+  /** What the design's other cards show at this place, when it differs from the first card's. */
+  othersShow?: string[];
 }
 
 /**
- * Labels that differ from card to card at the same place (a bowler's card says "Wickets" where a
- * batter's says "Runs"): the first card's node, and what each card says there. Only text with no
- * number in it, so a name or a figure the data fills is not a label.
+ * The texts at one place that differ between the design's cards: the first card's node, and what
+ * each card shows there, in order. Cards whose texts do not line up one for one are not compared.
+ * What the difference means (other examples of one value, or a label that changes with the item)
+ * is not said: the binder reads it.
  */
-export function varyingLabels(
+export function varyingTexts(
   tree: Tree,
   members: string[],
 ): Array<{ src: string; texts: string[] }> {
@@ -451,15 +422,15 @@ export function varyingLabels(
   if (cards.length < 2 || cards.some((c) => c.length !== first.length)) return [];
   return first.flatMap((node, i) => {
     const texts = cards.map((c) => c[i]?.text ?? "");
-    const label = (t: string) => !/\d/.test(t) && t.length <= 24;
-    return texts.every(label) && new Set(texts).size > 1 ? [{ src: node.src, texts }] : [];
+    return new Set(texts).size > 1 ? [{ src: node.src, texts }] : [];
   });
 }
 
 /**
  * The draft of a need that code can build from the design: how many items the list draws and
- * what its first card shows, each with its kind and the design's placeholder. The model names the
- * list and each field and adds `must`; it does not have to find these again.
+ * what its first card shows, each with the design's placeholder (and what the other cards show
+ * there, when they differ). What kind of value each is, and what the list is, are the model's to
+ * read: it names the list and each field, and adds `must`.
  */
 export function draftNeed(
   tree: Tree,
@@ -490,21 +461,17 @@ export function draftNeed(
       typeof node.props.content === "string" &&
       node.props.content.trim()
     ) {
-      item.push({
-        node: node.src,
-        kind: kindOf(node.props.content),
-        example: clip(node.props.content, 40),
-      });
+      item.push({ node: node.src, drawnAs: "text", example: clip(node.props.content, 40) });
     } else if (node.type === "Image") {
-      item.push({ node: node.src, kind: "image", example: "" });
+      item.push({ node: node.src, drawnAs: "picture", example: "" });
     }
     for (const child of kids.get(node.id) ?? []) walkCard(child);
   };
   walkCard(first);
-  const varying = new Map(varyingLabels(tree, group.members).map((v) => [v.src, v.texts]));
+  const varying = new Map(varyingTexts(tree, group.members).map((v) => [v.src, v.texts]));
   for (const field of item) {
     const texts = varying.get(field.node);
-    if (texts) field.alternatives = [...new Set(texts)];
+    if (texts) field.othersShow = [...new Set(texts.map((t) => clip(t, 40)))].slice(0, 6);
   }
   return { count: scrolls ? "data" : group.members.length, item };
 }
@@ -516,17 +483,17 @@ export type ReadDate = (
 ) => number | undefined;
 
 /**
- * A value as the instant it names (epoch ms), by the DSL's own date reading; undefined for what is
- * no date (a score, a name, "Round 3") or cannot be read (a day with no year).
+ * A value as the instant it names (epoch ms), by the DSL's own date reading; undefined for what it
+ * does not read as a date. A plain number, or a string of digits only, is an instant only when it
+ * is epoch-sized: a count or an id is not a date.
  */
 export function dateKey(
   readDate: ReadDate,
   options: { timeZone?: string; dateOrder?: "dmy" | "mdy" } = {},
 ): (value: unknown) => number | undefined {
   return (value) => {
-    // a number is an instant only when it is that large: a count or a score is not a date
     if (typeof value === "number") return value >= 1e9 ? readDate(value, options) : undefined;
-    if (typeof value !== "string" || kindOf(value) !== "date") return undefined;
+    if (typeof value !== "string" || /^\s*-?\d+\s*$/.test(value)) return undefined;
     return readDate(value, options);
   };
 }
@@ -561,23 +528,21 @@ const at = (value: unknown, path: string): unknown =>
       value,
     );
 
-/** An item started less than this long ago may still be on: soonest first may start with it. */
-const STILL_ON_MS = 24 * 60 * 60 * 1000;
+/** How a list's dates run, item to item. */
+export type DateRun = "earliest first" | "latest first" | "neither";
 
 /**
- * Whether each list a plan draws is in the order the design means, read from the data the plan
- * binds (`data`, by the names the plan reads it by): the first field the plan binds from each item
- * that the DSL reads as a date is the one it is ordered by. Items whose date cannot be read are
- * left out. Each problem is on the list's template, so a plan may keep it with why.
+ * The order each list a plan draws comes in, by the dates it binds (`data`, by the names the plan
+ * reads it by): the first field the plan binds from each item that the DSL reads as a date for
+ * most items, its values as the data gives them, how they run, and how many are before `now`. It
+ * judges nothing: which order the design means is the binder's to read.
  */
-export function orderProblems(
-  order: ListOrder | undefined,
+export function datesInOrder(
   plan:
     | {
         collapse?: Array<{
           over: string;
           as: string;
-          members?: string[];
           fields?: Array<{ path?: string; template?: string }>;
           variants?: Array<{ fields?: Array<{ path?: string; template?: string }> }>;
         }>;
@@ -586,11 +551,15 @@ export function orderProblems(
   data: unknown,
   keyOf: (value: unknown) => number | undefined,
   now: number = Date.now(),
-): Array<{ src: string; message: string }> {
-  if (!order || order === "as-is") return [];
-  const problems: Array<{ src: string; message: string }> = [];
-  const nowKey = now;
-  const startedKey = now - STILL_ON_MS;
+): Array<{ over: string; path: string; values: string[]; run: DateRun; past: number; of: number }> {
+  const out: Array<{
+    over: string;
+    path: string;
+    values: string[];
+    run: DateRun;
+    past: number;
+    of: number;
+  }> = [];
   for (const c of plan?.collapse ?? []) {
     const list = at(data, c.over);
     if (!Array.isArray(list) || list.length < 2) continue;
@@ -600,50 +569,30 @@ export function orderProblems(
         const key = keyOf(v);
         return key === undefined ? [] : [{ key, value: v }];
       });
-      // a field the DSL reads as a date for most items: what the list is ordered by
+      // a field the DSL reads as a date for most items: what the list runs by
       if (dated.length < 2 || dated.length < values.filter((v) => v != null).length / 2) continue;
       const keys = dated.map((d) => d.key);
-      const seen = dated
-        .slice(0, 4)
-        .map((d) => JSON.stringify(d.value))
-        .join(", ");
       const up = keys.every((k, i) => i === 0 || (keys[i - 1] ?? k) <= k);
       const down = keys.every((k, i) => i === 0 || (keys[i - 1] ?? k) >= k);
-      let wrong: string | undefined;
-      let tail = `ask hook-maker for the list in that order (it sorts, then cuts to the count), or keep ${c.members?.[0] ?? "the list"} with why the order stays`;
-      if (order === "soonest-first") {
-        if (!up) wrong = "is not soonest first: the dates go back and forth";
-        else if ((keys[0] ?? nowKey) < startedKey && keys.some((k) => k >= nowKey)) {
-          wrong = "starts with past items while later ones are still to come";
-        }
-      } else if (order === "newest-first") {
-        if (!down) wrong = "is not newest first: the dates are not from the latest back";
-      } else {
-        // upcoming first (soonest), then what has happened (the latest first)
-        const split = keys.findIndex((k) => k < nowKey);
-        const coming = split === -1 ? keys : keys.slice(0, split);
-        const past = split === -1 ? [] : keys.slice(split);
-        const ordered =
-          coming.every((k, i) => i === 0 || (coming[i - 1] ?? k) <= k) &&
-          past.every((k, i) => k < nowKey && (i === 0 || (past[i - 1] ?? k) >= k));
-        if (!ordered) wrong = "is not what is next (soonest first), then the latest results";
-      }
-      // a list that wants what is next but holds only what is past: the cut came before the sort,
-      // or the feed has nothing to come (then a stand-in, or keep the list with why)
-      if (!wrong && order !== "newest-first" && keys.every((k) => k < startedKey)) {
-        wrong = "holds only past items, and the design wants what is next";
-        tail = `ask hook-maker to sort before it cuts and to look in the feed for items still to come; when the feed has none, keep ${c.members?.[0] ?? "the list"} with why (nothing upcoming exists), or settle data_source`;
-      }
-      if (wrong) {
-        problems.push({
-          src: c.members?.[0] ?? "",
-          message: `${c.over} ${wrong} (${path}: ${seen}). The design means ${order}: ${tail}`,
-        });
-      }
+      out.push({
+        over: c.over,
+        path,
+        values: dated.slice(0, 6).map((d) => clip(String(d.value), 32)),
+        run:
+          up && !down
+            ? "earliest first"
+            : down && !up
+              ? "latest first"
+              : up
+                ? "earliest first"
+                : "neither",
+        past: keys.filter((k) => k < now).length,
+        of: keys.length,
+      });
       break;
     }
   }
-  return problems;
+  return out;
 }
 
 /**
@@ -690,7 +639,7 @@ export function pictureEvidence(
     ),
   );
   const media = mediaFacts
-    .filter((f) => f.key?.startsWith("media.") && !/image-(domain|ratio)$/.test(f.key))
+    .filter((f) => f.key?.startsWith("media."))
     .map((f) => `${f.key}: ${f.content}`);
   return [
     idField ? `The items carry ${idField} (e.g. ${idValues}).` : "The items carry no id field.",
@@ -703,43 +652,44 @@ export function pictureEvidence(
   ].join(" ");
 }
 
-export type ListOrder = "soonest-first" | "newest-first" | "upcoming-then-latest" | "as-is";
-
-/** Whether data is about what the design is about, as far as its own fields say. */
-export type Reading = "about" | "other" | "unknown";
-
 /** A field whose key names a team or club, and one whose key names a competition. */
 const NAMES = {
   team: /team|club|franchise/i,
   competition: /competition|league|series|tournament|championship/i,
 } as const;
 
+/** What one list's items name, by the kind of name their field's key says it holds. */
+export interface NamesIn {
+  /** The list's path, `[]` for each item of an outer list. */
+  list: string;
+  kind: keyof typeof NAMES;
+  /** The keys that hold them, and the names most items hold, most often first. */
+  fields: string[];
+  names: Array<{ name: string; items: number }>;
+  /** How many items the list has. */
+  of: number;
+}
+
 /**
- * Whether the data is about the team and competition the design is about (ticket 09), from the
- * lists whose items name one: a field whose key says so (`team`, `home_team.name`, `league`). A
- * list whose items name none (articles, a squad's players) says nothing either way, so it is not
- * judged. `about` when some item of such a list names the must (a league table names every
- * club, one row is the club's), `other` when none does, `unknown` when no list names one.
+ * What the data's items name, from the fields whose key says they name a team or a competition
+ * (`team`, `home_team.name`, `league`): for each list of objects, the names its items hold and how
+ * often. Read so the binder can compare them with what the design is about; it judges nothing. A
+ * list whose items have no such field (articles, a squad's players) is not listed.
  */
-export function entityReading(
-  data: unknown,
-  about: About | undefined,
-): { reading: Reading; why?: string; lists: string[] } {
-  const wants = (Object.entries(about ?? {}) as Array<[keyof typeof NAMES, unknown]>).filter(
-    (e): e is [keyof typeof NAMES, string] => typeof e[1] === "string" && e[1].trim() !== "",
-  );
-  if (wants.length === 0) return { reading: "unknown", lists: [] };
-  // each list of objects, by its path, with the values its items' naming fields hold
-  const lists: Array<{ path: string; items: Array<Record<keyof typeof NAMES, string[]>> }> = [];
+export function namesIn(data: unknown, max = 5): NamesIn[] {
+  const out: NamesIn[] = [];
   const namesOf = (item: unknown) => {
-    const found = { team: [] as string[], competition: [] as string[] };
+    const found = {
+      team: [] as Array<{ key: string; v: string }>,
+      competition: [] as Array<{ key: string; v: string }>,
+    };
     const walk = (value: unknown, keys: string[], depth: number) => {
       if (depth > 4) return;
       if (typeof value === "string") {
         const v = value.trim();
         if (!v || v.length > 60 || !/\p{L}/u.test(v) || /^(https?:)?\/\//i.test(v)) return;
         for (const kind of Object.keys(NAMES) as Array<keyof typeof NAMES>) {
-          if (keys.some((k) => NAMES[kind].test(k))) found[kind].push(v);
+          if (keys.some((k) => NAMES[kind].test(k))) found[kind].push({ key: keys.join("."), v });
         }
       } else if (Array.isArray(value)) {
         for (const v of value.slice(0, 20)) walk(v, keys, depth + 1);
@@ -757,7 +707,27 @@ export function entityReading(
         (v): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v),
       );
       if (objects.length > 0) {
-        lists.push({ path, items: objects.slice(0, 200).map(namesOf) });
+        const items = objects.slice(0, 200).map(namesOf);
+        for (const kind of Object.keys(NAMES) as Array<keyof typeof NAMES>) {
+          const counts = new Map<string, number>();
+          const fields = new Set<string>();
+          for (const i of items) {
+            for (const f of i[kind]) fields.add(f.key);
+            for (const n of new Set(i[kind].map((f) => f.v)))
+              counts.set(n, (counts.get(n) ?? 0) + 1);
+          }
+          if (counts.size === 0) continue;
+          out.push({
+            list: path,
+            kind,
+            fields: [...fields].slice(0, 4),
+            names: [...counts]
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, max)
+              .map(([name, n]) => ({ name, items: n })),
+            of: items.length,
+          });
+        }
         visit(objects[0], `${path}[]`, depth + 1);
       }
       return;
@@ -765,52 +735,15 @@ export function entityReading(
     for (const [k, v] of Object.entries(value)) visit(v, path ? `${path}.${k}` : k, depth + 1);
   };
   visit(data, "", 0);
-  const verdicts = wants.map(([kind, must]) => {
-    const naming = lists.filter((l) => l.items.some((i) => i[kind].length > 0));
-    if (naming.length === 0) return { kind, must, reading: "unknown" as Reading, naming };
-    const holds = naming.some((l) => l.items.some((i) => i[kind].some((v) => holdsWords(v, must))));
-    return { kind, must, reading: (holds ? "about" : "other") as Reading, naming };
-  });
-  const wrong = verdicts.filter((v) => v.reading === "other");
-  const judged = [...new Set(verdicts.flatMap((v) => v.naming.map((l) => l.path)))];
-  if (wrong.length > 0) {
-    const counts = new Map<string, number>();
-    for (const v of wrong)
-      for (const l of v.naming)
-        for (const i of l.items) for (const n of i[v.kind]) counts.set(n, (counts.get(n) ?? 0) + 1);
-    const holds = [...counts]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([n]) => n);
-    return {
-      reading: "other",
-      lists: judged,
-      why: `the data is about ${holds.join(", ")}, the design is about ${wrong.map((v) => v.must).join(" and ")}: no item of ${[...new Set(wrong.flatMap((v) => v.naming.map((l) => l.path)))].join(", ")} names ${wrong.map((v) => `the ${v.kind} ${v.must}`).join(" or ")}`,
-    };
-  }
-  return {
-    reading: verdicts.some((v) => v.reading === "about") ? "about" : "unknown",
-    lists: judged,
-  };
+  return out;
 }
 
-/**
- * Which items a list shows and in what order, from its section's own words (its heading), and only
- * from words that name time: "AHEAD", "UPCOMING" want what is coming, soonest first; "LATEST",
- * "RECENT", "RESULTS" want the newest first; a heading with both wants what is next, then what
- * just happened. Undefined when no word names time: the list has no order of its own.
- */
-export function orderOf(words: string[]): ListOrder | undefined {
-  const text = words.join(" ").toLowerCase();
-  const coming = /\b(ahead|upcoming|coming up|forthcoming|soon)\b/.test(text);
-  const recent = /\b(latest|recent|results?|newest|previous|past)\b/.test(text);
-  return coming && recent
-    ? "upcoming-then-latest"
-    : coming
-      ? "soonest-first"
-      : recent
-        ? "newest-first"
-        : undefined;
+/** What `namesIn` found, as lines a binder reads beside what the design is about. */
+export function describeNames(found: NamesIn[]): string[] {
+  return found.map(
+    (n) =>
+      `${n.list || "(top)"}: its ${n.of} item(s) name the ${n.kind} ${n.names.map((x) => `"${x.name}"${x.items > 1 ? ` (${x.items})` : ""}`).join(", ")} in ${n.fields.join(", ")}`,
+  );
 }
 
 /**
@@ -892,51 +825,6 @@ export function cardHolds(
   );
 }
 
-/** The pipe or template that writes what the design writes, for the forms code can name. */
-function fixForm(design: string, shows: string): string {
-  const shout = shouts(design) ? ' and set textCase "upper"' : "";
-  if (/^\d{1,2}:\d{2}(?::\d{2})?$/.test(design)) {
-    return `format it with the date pipe: {item.field | date:"HH:mm"}`;
-  }
-  // a day and a month's name: "12 GOALS" is a count with a word, not a date
-  const t = design.trim();
-  if (DAY_MONTH.test(t)) {
-    const isMonth = (w: string) => new RegExp(`^${MONTH}$`, "i").test(w);
-    const words = t.match(/\p{L}+/gu) ?? [];
-    const month = words.find(isMonth) ?? "";
-    const name = month.length <= 4 && !/^(june|july)$/i.test(month) ? "MMM" : "MMMM";
-    // a weekday in front: "Sat 21 July"
-    const first = words[0] ?? "";
-    const weekday =
-      /^\p{L}/u.test(t) && !isMonth(first) ? (first.length <= 3 ? "DDD " : "DDDD ") : "";
-    const rest = weekday ? t.slice(t.indexOf(first) + first.length).replace(/^[.,\s]+/, "") : t;
-    const pattern = `${weekday}${/^\d/.test(rest) ? `DD ${name}` : `${name} DD`}`;
-    return `format it with the date pipe: {item.field | date:"${pattern}"}${shout}`;
-  }
-  if (/^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$/.test(design)) {
-    return `format it with the date pipe in the design's order: {item.field | date:"DD/MM/YYYY"}`;
-  }
-  // letters joined to the number ("2nd", "3-1W"): a suffix that may change with the value, which
-  // a template's fixed word would get wrong for every other value
-  if (/\d\p{L}|\p{L}\d/u.test(design)) {
-    return /\d\p{L}|\p{L}\d/u.test(shows)
-      ? "the data writes a word joined to its number too: compare shows with the design and set textCase if only the case differs"
-      : "the design joins a word to the number, which may change with the value: have the hook give the text as the design writes it (hook-maker), or write the word in a template only when it is the same for every value";
-  }
-  if (/[()[\]]/.test(design) || /\p{L}/u.test(design)) {
-    const unit = (t: string) =>
-      t
-        .replace(/[\d.,\s()[\]+-]+/g, " ")
-        .trim()
-        .toLowerCase();
-    const drawn = unit(shows);
-    return unit(design) !== drawn && drawn !== ""
-      ? `the data counts in "${drawn}" where the design counts in "${unit(design)}": if they are different units, have the hook derive the design's (hook-maker: ask for the field in "${unit(design)}"), and if only the word differs write it in a template ("${design.replace(/\d+(?:[.,]\d+)?/, "{item.field}")}")`
-      : `write the words and brackets the design has around the value with a template ("${design.replace(/\d+(?:[.,]\d+)?/, "{item.field}")}"), and bind only the value (${JSON.stringify(shows)} is the whole text now)`;
-  }
-  return "bind it with a template that writes the value in the design's form";
-}
-
 /** The refs of a template that read nothing (absent, null or empty) and have no `default` pipe. */
 function emptyRefs(template: string, scope: unknown, dsl: Pick<Dsl, "lookup">): string[] {
   const empty: string[] = [];
@@ -976,6 +864,7 @@ export function dryRun(
     | "overChoice"
     | "overLists"
     | "itemScope"
+    | "fillImageRatio"
   >,
   /** The frame before binding: its copy is what each text looked like in the design. */
   design?: Tree,
@@ -1035,7 +924,7 @@ export function dryRun(
       ) {
         capitals.set(node.src, { src: node.src, design: placeholder, shows: clip(drawn, 40) });
       }
-      // a date, a time or a score in another form than the design's: "5/26/2026" for "21 JULY"
+      // a short text with a number drawn in another form than the design's: "5/26/2026" for "21 JULY"
       if (
         prop === "content" &&
         placeholder !== undefined &&
@@ -1051,11 +940,10 @@ export function dryRun(
             src: node.src,
             design: placeholder,
             shows: clip(drawn, 40),
-            fix: fixForm(placeholder, drawn),
           });
         }
       }
-      // a heading the designer broke by hand ("Ben\nMcKinney"): a paragraph wraps, it is not broken
+      // a short text the design writes over lines, drawn on one (a paragraph wraps: not compared)
       if (
         prop === "content" &&
         placeholder !== undefined &&
@@ -1089,8 +977,12 @@ export function dryRun(
           relative.set(key, r);
         }
         if (prop === "src" && /^https?:\/\//i.test(drawn)) {
+          // the URL the browser asks for: the CDN's {{RATIO}} slot filled from the Image's ratio, as
+          // the renderer fills it (the slot left in answers a 68-byte stand-in; run 3b826dc5)
+          const ratio = typeof node.props.ratio === "string" ? node.props.ratio : undefined;
+          const fetched = node.type === "Image" ? dsl.fillImageRatio(drawn, ratio) : drawn;
           const urls = pictures.get(node.src) ?? [];
-          if (urls.length < 3 && !urls.includes(drawn)) urls.push(drawn);
+          if (urls.length < 3 && !urls.includes(fetched)) urls.push(fetched);
           pictures.set(node.src, urls);
         }
         if (!making) {
@@ -1326,46 +1218,32 @@ export function lostLooks(
   return found;
 }
 
-/** The ratios CMS pictures are cut in, as their file names write them (`9-16-<id>.jpg`). */
-const RATIOS: Array<[number, number]> = [
-  [1, 1],
-  [4, 3],
-  [3, 4],
-  [3, 2],
-  [2, 3],
-  [16, 9],
-  [9, 16],
-  [21, 9],
-  [4, 5],
-  [5, 4],
-  [2, 1],
-  [1, 2],
-];
-
-/**
- * The CMS ratio a picture box of w x h px is nearest, written as the file name prefix ("9-16"), or
- * undefined when the box is not near any (more than 6% off). Width comes first, as in `16-9`.
- */
-export function pictureRatio(w: unknown, h: unknown): string | undefined {
-  if (typeof w !== "number" || typeof h !== "number" || w <= 0 || h <= 0) return undefined;
-  let best: { name: string; off: number } | undefined;
-  for (const [a, b] of RATIOS) {
-    const off = Math.abs(Math.log(w / h / (a / b)));
-    if (!best || off < best.off) best = { name: `${a}-${b}`, off };
-  }
-  return best && best.off <= 0.06 ? best.name : undefined;
-}
-
 export interface OwnPicture {
   /** The picture's node in each member, the first member's first: the place it is in a card. */
   srcs: string[];
   alt: string;
-  /** The CMS ratio of the picture's box in the design ("9-16"), when it is near one. */
-  ratio?: string | undefined;
+  /** The picture's box in the design, "w x h px", when the design fixed its size. */
+  box?: string;
   /** How many different pictures the design gives that place across the members. */
   distinct: number;
   /** A glyph (an Icon), not a picture file: a mark the design draws, which a plan may keep with why. */
   icon?: true;
+}
+
+/** The box a node's size fixes, as "w x h px": a plain number or `{ raw }` on each side. */
+function boxOf(node: TreeNode): { box?: string } {
+  const size = node.props.size as { w?: unknown; h?: unknown } | undefined;
+  const px = (v: unknown) =>
+    typeof v === "number"
+      ? v
+      : v && typeof v === "object" && typeof (v as { raw?: unknown }).raw === "number"
+        ? (v as { raw: number }).raw
+        : undefined;
+  const w = px(size?.w);
+  const h = px(size?.h);
+  return w !== undefined && h !== undefined
+    ? { box: `${Math.round(w)} x ${Math.round(h)} px` }
+    : {};
 }
 
 /** What a picture shows: an Image's file, an Icon's glyph (a crest drawn as a vector is an Icon). */
@@ -1455,10 +1333,7 @@ export function ownPictures(tree: Tree, members: string[]): OwnPicture[] {
       out.push({
         srcs: at.map((n) => n.src),
         alt: String(node.props.alt ?? ""),
-        ratio: (() => {
-          const size = node.props.size as { w?: unknown; h?: unknown } | undefined;
-          return pictureRatio(size?.w, size?.h);
-        })(),
+        ...boxOf(node),
         distinct: distinct.size,
         ...(node.type === "Icon" ? { icon: true as const } : {}),
       });
@@ -1538,6 +1413,18 @@ export function someOnly(tree: Tree, members: string[]): SomeOnly[] {
     });
   }
   return out;
+}
+
+/** The template's parts that every member has, by src: what the design draws on every item. */
+export function onEvery(tree: Tree, members: string[]): { srcs: Set<string>; of: number } {
+  const all = alike(tree, members);
+  const [template, ...rest] = all;
+  if (!template || rest.length === 0) return { srcs: new Set(), of: all.length };
+  const srcs = new Set<string>();
+  for (const [key, node] of template.places)
+    if (rest.every((m) => m.places.has(key))) srcs.add(node.src);
+  srcs.delete(template.node.src);
+  return { srcs, of: all.length };
 }
 
 /** Siblings built alike, two or more: the cards, rows or tiles a section repeats, wherever they are. */
@@ -1696,23 +1583,14 @@ export interface LeftAsDesigned {
   copy?: string;
   /** Its own items, each the shape of the template of the sibling's list. */
   items: string[];
-  /** Where the template's bound nodes sit in the first of `items`: [template's src, its own]. */
-  fields: Array<[string, string]>;
-  /**
-   * When every member holds items of the list's shape: each member's share of one flat list, in
-   * document order (`[start, end)`), so the rows of a grid draw consecutive items.
-   */
-  slices?: Array<[string, [number, number]]>;
 }
 
 /**
  * A repeat the plan left showing the design's placeholders, beside a sibling of the same shape
  * that it gave data: the page shows real items next to the designer's dummy copy and pictures.
  *
- * The common case is a grid the design draws as rows: two rows of two cards, a list of rows the
- * data does not have (its list is flat). Collapsing the cards of the first row draws every item
- * there and leaves the second row as designed. Only containers count (three pictures layered in
- * a card are not a list), and a repeat with no member given data is the plan leaving it on purpose.
+ * Only containers count (three pictures layered in a card are not a list), and a repeat with no
+ * member given data is the plan leaving it on purpose. It says what is there, not how to fix it.
  */
 export function leftAsDesigned(
   design: Tree,
@@ -1739,6 +1617,13 @@ export function leftAsDesigned(
   };
   const drawn = (node: TreeNode): TreeNode[] =>
     subtree(node.id, kids).flatMap((id) => appliedById.get(id) ?? []);
+  const gated = (node: TreeNode): boolean => {
+    for (let at: TreeNode | undefined = node; at; ) {
+      if (at.props.when !== undefined) return true;
+      at = at.parent === null ? undefined : appliedById.get(at.parent);
+    }
+    return false;
+  };
   const drawsData = (node: TreeNode) =>
     insideRepeater(node) ||
     drawn(node).some((n) => n.type === "Repeater" || Object.values(n.props).some(hasRef));
@@ -1759,41 +1644,15 @@ export function leftAsDesigned(
     const repeater = likeNow ? drawn(likeNow).find((n) => n.type === "Repeater") : undefined;
     const template = repeater ? kids.get(repeater.id)?.[0] : undefined;
     const templateKey = template ? sk.get(designBySrc.get(template.src)?.id ?? "") : undefined;
-    const bound = template
-      ? drawn(template)
-          .filter((n) => Object.values(n.props).some(hasRef))
-          .map((n) => n.src)
-      : [];
-
     const itemsOf = (member: TreeNode) => itemsUnder(member, templateKey, designKids, sk);
-    const counts = members.map((m) => itemsOf(m).length);
-    let start = 0;
-    const slices = counts.every((n) => n > 0)
-      ? members.map((m, i): [string, [number, number]] => {
-          const share: [number, number] = [start, start + (counts[i] ?? 0)];
-          start = share[1];
-          return [m.src, share];
-        })
-      : undefined;
 
     for (const member of members) {
       const now = appliedBySrc.get(member.src);
-      if (!now || drawsData(now)) continue;
+      // a when on it (or around it) is the plan deciding when it draws: hidden where the data has
+      // no item for it, as unboundCopy reads one (run 75a770af kept a row its when already hid)
+      if (!now || drawsData(now) || gated(now)) continue;
       const nodes = subtree(member.id, designKids).flatMap((id) => designById.get(id) ?? []);
       const items = itemsOf(member);
-      // node for node, the template and the first item are one shape: their walks line up
-      const fields: Array<[string, string]> = [];
-      const first = items[0];
-      const templateDesign = template ? designBySrc.get(template.src) : undefined;
-      if (first && templateDesign) {
-        const a = subtree(templateDesign.id, designKids);
-        const b = subtree(first.id, designKids);
-        a.forEach((id, i) => {
-          const from = designById.get(id);
-          const to = designById.get(b[i] ?? "");
-          if (from && to && bound.includes(from.src)) fields.push([from.src, to.src]);
-        });
-      }
       // its longest copy says best what it is: a headline, not a badge's "32"
       const text = nodes
         .filter((n) => n.type === "Text" && typeof n.props.content === "string")
@@ -1806,16 +1665,77 @@ export function leftAsDesigned(
           : {}),
         ...(text ? { copy: clip(String(text.props.content)) } : {}),
         items: items.map((i) => i.src),
-        fields,
-        ...(slices ? { slices } : {}),
       });
     }
   }
   return out;
 }
 
+/** How many boxes `pageAsRead` lists before it says how many more there are. */
+const PAGE_LINES = 80;
+
+/**
+ * The page as a person reads it, box by box: every text, picture and button label it draws, each
+ * from the data (with what the sample draws there) or as the designer wrote it, and whether a
+ * `when` decides it. It judges nothing: the binder reads it and decides what is data and what
+ * stays. A list's template is listed once, as it draws its items.
+ */
+export function pageAsRead(
+  tree: Tree,
+  samples: DryRun["samples"],
+  hasRef: (value: unknown) => boolean,
+): string[] {
+  const kids = childrenOf(tree);
+  const byId = new Map(tree.nodes.map((n) => [n.id, n]));
+  const drawn = new Map(samples.map((s) => [`${s.src}|${s.prop}`, s.values]));
+  const PROP: Record<string, { prop: string; what: string }> = {
+    Text: { prop: "content", what: "text" },
+    Image: { prop: "src", what: "picture" },
+    Button: { prop: "label", what: "button" },
+  };
+  const boxes = new Map<string, string[]>();
+  const where = (n: TreeNode) => {
+    const chain: string[] = [];
+    for (let at = n.parent === null ? undefined : byId.get(n.parent); at; ) {
+      chain.unshift(at.id);
+      at = at.parent === null ? undefined : byId.get(at.parent);
+    }
+    // the root says nothing; the last three boxes say where on the page it is
+    return chain.slice(1).slice(-3).join(" / ") || "(top)";
+  };
+  const walk = (n: TreeNode) => {
+    const kind = PROP[n.type];
+    const value = kind ? n.props[kind.prop] : undefined;
+    if (kind && value !== undefined && value !== "") {
+      const when = n.props.when !== undefined ? " (a when decides it)" : "";
+      const part = hasRef(value)
+        ? `${kind.what} ${n.id} from the data: ${(drawn.get(`${n.src}|${kind.prop}`) ?? ["nothing"])
+            .slice(0, 2)
+            .map((v) => JSON.stringify(v))
+            .join(", ")}${when}`
+        : kind.what === "picture"
+          ? `picture ${n.id} as designed${when}`
+          : `${kind.what} ${n.id} as designed: ${JSON.stringify(clip(String(value), 40))}${when}`;
+      const key = where(n);
+      boxes.set(key, [...(boxes.get(key) ?? []), part]);
+    }
+    for (const k of kids.get(n.id) ?? []) walk(k);
+  };
+  for (const root of tree.nodes.filter((n) => n.parent === null)) walk(root);
+  const lines = [...boxes].map(([box, parts]) => `${box}: ${parts.join("; ")}`);
+  return lines.length > PAGE_LINES
+    ? [...lines.slice(0, PAGE_LINES), `…and ${lines.length - PAGE_LINES} more boxes`]
+    : lines;
+}
+
 function sliceOf(list: unknown[], props: Record<string, unknown>): unknown[] {
-  if (Array.isArray(props.slice)) return list.slice(Number(props.slice[0]), Number(props.slice[1]));
+  // `[start]` runs to the end of the list
+  if (Array.isArray(props.slice)) {
+    return list.slice(
+      Number(props.slice[0]),
+      props.slice[1] === undefined ? undefined : Number(props.slice[1]),
+    );
+  }
   if (typeof props.limit === "number") return list.slice(0, props.limit);
   return list;
 }

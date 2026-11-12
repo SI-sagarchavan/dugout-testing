@@ -83,6 +83,16 @@ describe("resolveNode", () => {
     expect(resolveNode({ clip: false }).style.overflow).toBeUndefined();
   });
 
+  it("scroll lets a box of fixed size scroll on its axis instead of cutting", () => {
+    const y = resolveNode({ clip: true, scroll: "y", size: { h: { _unbound: true, raw: 411 } } });
+    expect(y.style.overflowY).toBe("auto");
+    expect(y.style.overflowX).toBe("hidden");
+    expect(y.style.overflow).toBeUndefined();
+    expect(y.style.minHeight).toBe("0");
+    expect(y.dataAttrs["data-fos-scroll"]).toBe("y");
+    expect(resolveNode({ scroll: "x" }).style.overflowX).toBe("auto");
+  });
+
   it("negative token on place is preserved through resolveNode", () => {
     const r = resolveNode({
       place: { anchor: "top-end", offset: { inline: "-space.6", block: "32%" } },

@@ -80,11 +80,11 @@ export function createSharedMemory(opts: { pool: Pool; embeddings: EmbeddingClie
       const { rows } = await pool.query(
         `insert into memory_items
            (tenant_id, shared_scope, agent_id, kind, key, episode_type, version, content, embedding,
-            status, confidence, strength, sources)
+            status, confidence, strength, sources, embedding_model)
          values (null, $1, $2, $3, $4, $5,
            (select coalesce(max(version), 0) + 1 from memory_items
             where tenant_id is null and shared_scope = $1 and kind = $3 and key = $4),
-           $6, $7, 'proposed', 0.8, $8, $9)
+           $6, $7, 'proposed', 0.8, $8, $9, $10)
          returning ${COLUMNS}`,
         [
           p.scope,
@@ -96,6 +96,7 @@ export function createSharedMemory(opts: { pool: Pool; embeddings: EmbeddingClie
           vector,
           p.support,
           p.sources,
+          embeddings.model,
         ],
       );
       return toItem(rows[0]);
@@ -289,11 +290,11 @@ export function createModelGeneralizer(client: ModelClient, model: string): Gene
         {
           role: "system",
           content: [
-            `Several clients of a sports publishing platform each hold the ${kind === "semantic" ? "rule" : "lesson"} below. Write ONE sentence that states what they share, so it can be given to ${audience}.`,
-            "Name no club, team, person, competition or date, and no figure that belongs to one client. Keep the instruction as specific as the items allow.",
+            `Several clients of one platform each hold the ${kind === "semantic" ? "rule" : "lesson"} below. Write ONE sentence that states what they share, so it can be given to ${audience}.`,
+            "Name no client, organisation, team, person, event or date, and no figure that belongs to one client. Keep the instruction as specific as the items allow.",
             `Never mention any of: ${avoid.join(", ")}.`,
             "An instruction about how to do the work (what to include, leave out, order or word) usually holds for other clients too: state it as an instruction.",
-            "Reply with exactly NONE when the items describe each client itself (its ground, players or fans), merely share a topic, or set different values for the same thing (a limit, an order, a name), since then each client's value is its own.",
+            "Reply with exactly NONE when the items describe each client itself (its places, people or audience), merely share a topic, or set different values for the same thing (a limit, an order, a name), since then each client's value is its own.",
             sports.length > 0
               ? `Start the sentence with the one sport it is about and a colon, from: ${sports.join(", ")}; or with "any:" if it holds for every sport. Output only that or NONE.`
               : "Output only the sentence or NONE.",

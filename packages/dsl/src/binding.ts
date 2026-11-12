@@ -34,7 +34,8 @@ import { z } from "zod";
 // ---------------------------------------------------------------------------
 
 const NAME = "[A-Za-z_][A-Za-z0-9_]*";
-const PATH = `${NAME}(?:\\.(?:${NAME}|\\d+))*`;
+// a path may start at a state root: `$state.context.count`, `$page.followed`, `$user.name` (machine/system.ts)
+const PATH = `\\$?${NAME}(?:\\.(?:${NAME}|\\d+))*`;
 const ARG = `(?:"[^"]*"|[^\\s|:{}"]+)`;
 const PIPE = `\\s*\\|\\s*${NAME}(?:\\s*:\\s*${ARG})*`;
 
@@ -44,8 +45,11 @@ const REF_SOURCE = `(?<!\\{)\\{(${PATH})((?:${PIPE})*)\\s*\\}(?!\\})`;
 /** A fresh global regex over refs — fresh because a shared `g` regex carries `lastIndex`. */
 export const refRegex = (): RegExp => new RegExp(REF_SOURCE, "g");
 
-/** A `{…}` that opens with a name, as a ref does; `{{RATIO}}` is not one. */
-const REF_LIKE = /(?<!\{)\{(?!\{)\s*[A-Za-z_][^{}]*\}(?!\})/g;
+/**
+ * A `{…}` that opens with a name, as a ref does; `{{RATIO}}` is not one. A quoted argument may hold
+ * braces (`{g.cover | replace:"{{RATIO}}","1x1"}`, run 3b826dc5), so the span runs over them.
+ */
+const REF_LIKE = /(?<!\{)\{(?!\{)\s*[A-Za-z_](?:"[^"]*"|[^{}"]|")*\}(?!\})/g;
 const WHOLE_REF = new RegExp(`^${REF_SOURCE}$`);
 
 /**
@@ -153,6 +157,10 @@ export const PIPES: Readonly<Record<string, PipeSpec>> = {
   date: { arity: [1, 2], doc: 'date:"MMM DD, YYYY" or date:"hh:mm a":"Asia/Kolkata" — formatDate tokens; zone defaults to the render\'s' },
   default: { arity: [1], doc: 'default:"—" — used when the value is missing, null or ""' },
   pad: { arity: [1], doc: 'pad:2 — a whole number drawn with at least that many digits ("02"), as the design draws it' },
+  lines: {
+    arity: [1],
+    doc: 'lines:1 — a line break after the first word(s): "Ben McKinney" → "Ben\nMcKinney", as a design breaks a name; one word stays one line',
+  },
 };
 
 export interface ResolveOptions {
@@ -178,6 +186,12 @@ function applyPipe(pipe: Pipe, value: unknown, options: ResolveOptions): unknown
       if (whole === undefined || !Number.isInteger(width) || width < 1) return value;
       const digits = String(Math.abs(whole)).padStart(width, "0");
       return whole < 0 ? `-${digits}` : digits;
+    }
+    case "lines": {
+      const n = Number(pipe.args[0]);
+      if (typeof value !== "string" || !Number.isInteger(n) || n < 1) return value;
+      const words = value.trim().split(/\s+/);
+      return words.length <= n ? words.join(" ") : `${words.slice(0, n).join(" ")}\n${words.slice(n).join(" ")}`;
     }
     default:
       return undefined;
@@ -536,11 +550,46 @@ export interface Condition {
    * item through: see `page.ts`.
    */
   eqPath?: string;
+  /** The list at `path` holds this value: `{ path: "$state.context.selected", has: "p12" }`. */
+  has?: Scalar;
+  /** The list at `path` holds what another path holds: `{ path: "$page.followed", hasPath: "player.id" }`. */
+  hasPath?: string;
+  /** The list at `path` does not hold this value (nothing there holds nothing). */
+  lacks?: Scalar;
+  /** The list at `path` does not hold what another path holds: a row the fan has not picked. */
+  lacksPath?: string;
+  /**
+   * The text at `path` has in it what another path holds, ignoring case: a search box over a list
+   * (`{ path: "player.name", containsPath: "_page.search" }`). Nothing typed (missing, null or
+   * blank) is in every text.
+   */
+  containsPath?: string;
+  /**
+   * What `path` holds is in this text, ignoring case: a `containsPath` once the server has read
+   * the item's text (`{ path: "_page.search", within: "Ben McKinney" }`). Blank is in every text.
+   */
+  within?: string;
 }
 
 export type Predicate = Condition | Condition[];
 
-export const CONDITION_OPS = ["eq", "ne", "in", "exists", "gt", "gte", "lt", "lte", "eqPath"] as const;
+export const CONDITION_OPS = [
+  "eq",
+  "ne",
+  "in",
+  "exists",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "eqPath",
+  "has",
+  "hasPath",
+  "lacks",
+  "lacksPath",
+  "containsPath",
+  "within",
+] as const;
 
 const scalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
@@ -556,6 +605,12 @@ export const conditionSchema = z
     lt: z.number().optional(),
     lte: z.number().optional(),
     eqPath: z.string().regex(PATH_RE, "not a data path").optional(),
+    has: scalarSchema.optional(),
+    hasPath: z.string().regex(PATH_RE, "not a data path").optional(),
+    lacks: scalarSchema.optional(),
+    lacksPath: z.string().regex(PATH_RE, "not a data path").optional(),
+    containsPath: z.string().regex(PATH_RE, "not a data path").optional(),
+    within: z.string().optional(),
   })
   .strict()
   .refine((c) => CONDITION_OPS.filter((op) => op in c).length === 1, {
@@ -587,7 +642,9 @@ export function choiceValue(value: unknown): string {
     .replace(/^_+|_+$/g, "");
 }
 
-const onPage = (path: string) => path === PAGE_SCOPE || path.startsWith(`${PAGE_SCOPE}.`);
+/** `$page` is the page's values under their new name (machine/system.ts): read the same way. */
+const onPage = (path: string) =>
+  path === PAGE_SCOPE || path.startsWith(`${PAGE_SCOPE}.`) || path === "$page" || path.startsWith("$page.");
 const sameChoice = (a: unknown, b: unknown) =>
   a !== undefined && a !== null && b !== undefined && b !== null && typeof a !== "object" && typeof b !== "object"
     ? choiceValue(a) === choiceValue(b)
@@ -633,9 +690,18 @@ function pageAndData(condition: Condition): { page: string; data: string } | und
   return a ? { page: condition.path, data: condition.eqPath } : { page: condition.eqPath, data: condition.path };
 }
 
+/** Whether `needle` is in `text`, ignoring case and the spaces around it; blank is in every text. */
+export function textHas(text: unknown, needle: unknown): boolean {
+  const n = typeof needle === "string" || typeof needle === "number" ? String(needle).trim().toLowerCase() : "";
+  if (!n) return true;
+  return typeof text === "string" || typeof text === "number" ? String(text).toLowerCase().includes(n) : false;
+}
+
 export function evaluateCondition(condition: Condition, scope: unknown): boolean {
   const v = lookup(scope, condition.path);
   if (condition.exists !== undefined) return present(v) === condition.exists;
+  if (condition.containsPath !== undefined) return textHas(v, lookup(scope, condition.containsPath));
+  if (condition.within !== undefined) return textHas(condition.within, v);
   if (condition.eqPath !== undefined) {
     const other = lookup(scope, condition.eqPath);
     if (sameChoice(v, other)) return true;
@@ -645,6 +711,16 @@ export function evaluateCondition(condition: Condition, scope: unknown): boolean
     if (!sides || !held) return false;
     const chosen = lookup(scope, sides.page);
     return !held.some((h) => sameChoice(h, chosen));
+  }
+  if ("lacks" in condition || condition.lacksPath !== undefined) {
+    const { lacks, lacksPath, ...rest } = condition;
+    const flipped: Condition = lacksPath !== undefined ? { ...rest, hasPath: lacksPath } : { ...rest, has: lacks as Scalar };
+    return !evaluateCondition(flipped, scope);
+  }
+  if ("has" in condition || condition.hasPath !== undefined) {
+    const wanted = condition.hasPath !== undefined ? lookup(scope, condition.hasPath) : condition.has;
+    if (!Array.isArray(v) || wanted === undefined) return false;
+    return onPage(condition.path) ? v.some((x) => sameChoice(x, wanted)) : v.some((x) => x === wanted);
   }
   if ("eq" in condition) return onPage(condition.path) ? sameChoice(v, condition.eq) : v === condition.eq;
   if ("ne" in condition) return onPage(condition.path) ? !sameChoice(v, condition.ne) : v !== condition.ne;

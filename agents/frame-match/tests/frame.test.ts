@@ -438,7 +438,10 @@ describe("pictures of single layers (IR 1.9.0)", () => {
       } as never;
       expect(vectorArt(tools, withFade, drawn)).toEqual([]);
       expect(gradientRectangle(fade as never)).toBe(true);
-      expect(gradientRectangle({ ...fade, name: "Swoosh" } as never)).toBe(false);
+      // read from its paint and shape, never its name
+      expect(gradientRectangle({ ...fade, name: "Swoosh" } as never)).toBe(true);
+      expect(gradientRectangle({ ...fade, stroke: { raw: "#000" } } as never)).toBe(false);
+      expect(gradientRectangle({ ...fade, fill: { raw: "#0f1855" } } as never)).toBe(false);
     });
   });
 });

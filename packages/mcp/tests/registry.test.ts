@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Tool, ToolContext } from "@dugout/contracts";
+import { memoryRunState, type Tool, type ToolContext } from "@dugout/contracts";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createMcpHost,
@@ -125,6 +125,7 @@ const ctx = (tenantId: string): ToolContext => ({
   tenantId,
   runId: "r",
   signal: new AbortController().signal,
+  state: memoryRunState(),
 });
 /** A tool called as the loop calls it: schema, then the gate, then the run. */
 const use = async (tool: Tool | undefined, args: unknown, tenantId = "club-a") => {

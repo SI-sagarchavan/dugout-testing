@@ -44,7 +44,7 @@
                 "type": "string"
               },
               "kind": {
-                "description": "What kind of value the design draws there, when known (bind.load's draftNeed has it): the output is checked to hold that kind",
+                "description": "What kind of value the design draws there, as you read it from the design's example: the output is checked to hold that kind. link is no text on the card: the item's own page a press on the card opens (a URL, a path, or the slug a route.* house fact builds one from)",
                 "type": "string",
                 "enum": [
                   "date",
@@ -52,6 +52,7 @@
                   "score",
                   "number",
                   "image",
+                  "link",
                   "text"
                 ]
               },
@@ -161,6 +162,10 @@
               "url"
             ]
           }
+        },
+        "paged": {
+          "description": "The design pages through this list (LOAD MORE, a pager, more on scroll): the hook takes the page as an input (`page`, and `page_size`), and its answer says where the list stands in `next` (the next page's number, null on the last)",
+          "type": "boolean"
         }
       },
       "required": [

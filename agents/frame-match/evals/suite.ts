@@ -13,7 +13,14 @@ import {
   type Responder,
   scriptedModelConfig,
 } from "@dugout/core";
-import { type EvalSuite, endedGracefully, writesGated } from "@dugout/evals";
+import {
+  type EvalSuite,
+  endedGracefully,
+  questionsAsked,
+  type RunCaseOptions,
+  stepsTaken,
+  writesGated,
+} from "@dugout/evals";
 import type { MemoryStore } from "@dugout/memory";
 import {
   agent,
@@ -69,9 +76,24 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<(typeof
   return {
     agentId: spec.id,
     cases,
-    async runCase(c) {
+    // containers read as the wrong kind, and an override that was never measured (ADR 0034)
+    plant: (record) => {
+      const did = (record.did ?? {}) as { layouts?: Array<{ choice?: { kind?: string } }> };
+      return {
+        ...record,
+        did: {
+          ...did,
+          layouts: (did.layouts ?? []).map((l) => ({
+            ...l,
+            choice: { ...l.choice, kind: l.choice?.kind === "tabs" ? "carousel" : "tabs" },
+          })),
+          overrides: [{ change: { fill: "color.nonexistent" }, gained: 9 }],
+        },
+      };
+    },
+    async runCase(c, _attempt, options) {
       try {
-        return await runOne(c);
+        return await runOne(c, options);
       } finally {
         // the render browser keeps the process alive, so each case closes what it opened
         if (live) await (await loadToolchain()).closeBrowser();
@@ -79,7 +101,7 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<(typeof
     },
   };
 
-  async function runOne(c: (typeof cases)[number]) {
+  async function runOne(c: (typeof cases)[number], options?: RunCaseOptions) {
     {
       const sink = createMemorySink();
       const matchDir = await mkdtemp(join(tmpdir(), "frame-match-"));
@@ -95,7 +117,8 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<(typeof
         ...(process.env.FRAME_MATCH_LOOK === "last" ? { lookOrder: "last" as const } : {}),
         ...(live ? {} : { engine: fakeEngine(0), plane: fakePlane }),
         runsDir: opts.runsDir,
-        consolidate: false,
+        // the memory evals leave the record of a run, for the next one to read (ADR 0034)
+        consolidate: options?.record === true,
       });
       const result = await run({
         tenantId: c.tenant,
@@ -177,6 +200,8 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<(typeof
         grades,
         runIds: [result.runId],
         costUsd: result.usage.costUsd,
+        steps: stepsTaken(sink.events),
+        asked: questionsAsked(sink.events),
         servedModels: [
           ...new Set(
             sink.events.flatMap((event) =>

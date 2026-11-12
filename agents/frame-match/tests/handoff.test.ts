@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { memoryRunState } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import type { ControlPlane } from "../src/control-plane.ts";
 import type { Built, Bundle, Measurement } from "../src/frame.ts";
@@ -203,22 +204,23 @@ describe("a run for a Handoff", () => {
       }),
       web: "http://web",
     }) as unknown as Array<{ name: string; run(i: unknown, c: unknown): Promise<unknown> }>;
-    const run = (name: string) => {
+    const run = (name: string, args: unknown = {}) => {
       const tool = list.find((t) => t.name === name);
       if (!tool) throw new Error(name);
-      return tool.run(
-        {},
-        {
-          tenantId: "ibl",
-          runId: "h1",
-          signal: new AbortController().signal,
-          input: { handoffId: HANDOFF, project: "default" },
-        },
-      );
+      return tool.run(args, {
+        tenantId: "ibl",
+        runId: "h1",
+        signal: new AbortController().signal,
+        state: memoryRunState(),
+        input: { handoffId: HANDOFF, project: "default" },
+      });
     };
 
     await run("frame.load");
-    await run("frame.publish");
+    await run("frame.publish", {
+      content: { data: "none", why: "nothing on it is data" },
+      slots: [],
+    });
 
     // every load reads it afresh (new signed URLs), always for the run's own tenant
     expect(sources.length).toBeGreaterThan(0);
@@ -258,6 +260,7 @@ describe("a run for a Handoff", () => {
           tenantId: "ibl",
           runId: "h2",
           signal: new AbortController().signal,
+          state: memoryRunState(),
           input: { handoffId: HANDOFF, project: "default" },
         },
       ),

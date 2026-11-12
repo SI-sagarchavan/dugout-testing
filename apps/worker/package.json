@@ -14,6 +14,7 @@
     "@dugout/agent-data-bind": "workspace:^",
     "@dugout/agent-frame-match": "workspace:^",
     "@dugout/agent-hook-maker": "workspace:^",
+    "@dugout/agent-interaction": "workspace:^",
     "@dugout/agent-section-builder": "workspace:^",
     "@dugout/agent-ui-editor": "workspace:^",
     "@dugout/contracts": "workspace:^",

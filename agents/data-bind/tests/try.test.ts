@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Tool, ToolContext } from "@dugout/contracts";
+import { memoryRunState, type Tool, type ToolContext } from "@dugout/contracts";
 import { createMcpHost } from "@dugout/mcp";
 import { fakeHub } from "@dugout/mcp/testing";
 import { describe, expect, it } from "vitest";
@@ -93,13 +93,14 @@ const ctx = (runId: string): ToolContext => ({
   tenantId: `try-${runId}`,
   runId,
   signal: new AbortController().signal,
+  state: memoryRunState(),
   input: { preview: `http://localhost:3000/preview/default/${TREE_ID}` },
 });
 const tool = (tools: Tool[], name: string) => tools.find((t) => t.name === name) as Tool;
 const problemsOf = (out: unknown) => [(out as { problems: string[] | string }).problems].flat();
 
 describe("bind.try on a hook's live output", () => {
-  it("faults articles sent oldest first where the design means the latest, and passes them sorted", async () => {
+  it("reports how the articles' dates run, and leaves the order to the binder", async () => {
     const articles = (dates: string[]) => ({
       items: dates.map((published, i) => ({ title: `Story ${i}`, published })),
     });
@@ -122,19 +123,25 @@ describe("bind.try on a hook's live output", () => {
         plane: () => planeFor(frame("LATEST NEWS")),
         mcp: hookGiving(articles(dates)),
       });
-      await tool(tools, "bind.source").run(
-        { hookId: "dugout_news", as: "news", order: "newest-first" },
-        ctx(id),
-      );
-      return problemsOf(await tool(tools, "bind.try").run({ plan }, ctx(id)));
+      await tool(tools, "bind.source").run({ hookId: "dugout_news", as: "news" }, ctx(id));
+      return (await tool(tools, "bind.try").run({ plan }, ctx(id))) as {
+        problems: string[] | string;
+        order?: string[];
+        orderRule?: string;
+      };
     };
-    const wrong = await run(["2026-06-01T10:00:00Z", "2026-07-01T10:00:00Z"], "order-wrong");
-    expect(wrong.join("\n")).toContain("news.items is not newest first");
-    const sorted = await run(["2026-07-01T10:00:00Z", "2026-06-01T10:00:00Z"], "order-ok");
-    expect(sorted.join("\n")).not.toContain("newest first");
+    const oldest = await run(["2026-06-01T10:00:00Z", "2026-07-01T10:00:00Z"], "order-up");
+    expect(oldest.order).toEqual([
+      "news.items by published: 2026-06-01T10:00:00Z, 2026-07-01T10:00:00Z (earliest first; 2 of 2 before now)",
+    ]);
+    expect(oldest.orderRule).toMatch(/yours to read from the design/);
+    // an order is never a problem code raises: the binder compares it with the design
+    expect(problemsOf(oldest).join("\n")).not.toMatch(/first|order/);
+    const latest = await run(["2026-07-01T10:00:00Z", "2026-06-01T10:00:00Z"], "order-down");
+    expect(latest.order?.[0]).toContain("(latest first;");
   });
 
-  it("faults fixtures about other clubs, and takes a keep with why: advice, so it can end bound", async () => {
+  it("says what the data's items name beside what the design is about, and raises nothing on it", async () => {
     const fixtures = {
       items: [
         { title: "Riverside v Hill Town", kickoff: "2026-07-21T19:00:00Z", home_team: "Riverside" },
@@ -150,8 +157,12 @@ describe("bind.try on a hook's live output", () => {
     const read = (await tool(tools, "bind.source").run(
       { hookId: "dugout_fixtures", as: "fixtures", about: { team: "Western Stars" } },
       c,
-    )) as { about: { reading: string } };
-    expect(read.about.reading).toBe("other");
+    )) as { about: { team?: string; dataNames: string[] | string }; aboutRule: string };
+    expect(read.about.team).toBe("Western Stars");
+    expect(read.about.dataNames).toEqual([
+      'fixtures.items: its 2 item(s) name the team "Riverside", "Hill Town" in home_team',
+    ]);
+    expect(read.aboutRule).toMatch(/Code does not judge them/);
     const collapse = {
       over: "fixtures.items",
       as: "m",
@@ -161,26 +172,16 @@ describe("bind.try on a hook's live output", () => {
         { src: "c1-d", prop: "content", path: 'kickoff | date:"DD MMM YYYY"' },
       ],
     };
-    const open = problemsOf(
+    const tried = problemsOf(
       await tool(tools, "bind.try").run({ plan: JSON.stringify({ collapse: [collapse] }) }, c),
     );
-    expect(open.join("\n")).toContain("the design is about Western Stars");
-    const kept = (await tool(tools, "bind.try").run(
-      {
-        plan: JSON.stringify({
-          collapse: [collapse],
-          keep: [{ src: "c1", why: "the feed writes the club by its old name" }],
-        }),
-      },
+    expect(tried.join("\n")).not.toContain("Western Stars");
+    const done = (await tool(tools, "bind.publish").run(
+      { despite: "a test publish" },
       c,
-    )) as { problems: string[] | string; kept?: string[] };
-    expect(problemsOf(kept).join("\n")).not.toContain("Western Stars");
-    expect(kept.kept?.join("\n")).toContain("Western Stars");
-    const done = (await tool(tools, "bind.publish").run({ despite: "a test publish" }, c)) as {
-      standIn?: string;
-      readings: Array<{ reading: string; kept?: boolean }>;
-    };
+    )) as Record<string, unknown>;
+    // the ending is the model's to say in final: the tool records no reading of its own
     expect(done.standIn).toBeUndefined();
-    expect(done.readings).toEqual([expect.objectContaining({ reading: "other", kept: true })]);
+    expect(done.readings).toBeUndefined();
   });
 });

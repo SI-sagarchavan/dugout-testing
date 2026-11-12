@@ -13,5 +13,10 @@
     "id": "sb",
     "name": "SI Build (FanXP client sb)",
     "sports": ["cricket"]
+  },
+  {
+    "id": "ibl",
+    "name": "IBL (FanXP client ibl)",
+    "sports": ["cricket"]
   }
 ]

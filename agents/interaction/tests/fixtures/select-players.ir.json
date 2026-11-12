@@ -1,0 +1,1264 @@
+{
+  "root": {
+    "id": "551:13329",
+    "type": "FRAME",
+    "clipsContent": true,
+    "geometry": { "bbox": { "h": 667, "w": 375, "x": 9780, "y": 4614 } },
+    "children": [
+      {
+        "id": "551:13330",
+        "type": "VECTOR",
+        "clipsContent": false,
+        "geometry": { "bbox": { "h": 667, "w": 375, "x": 9780, "y": 4614 } }
+      },
+      {
+        "id": "551:13333",
+        "type": "FRAME",
+        "clipsContent": false,
+        "geometry": { "bbox": { "h": 694, "w": 375, "x": 9780, "y": 4614 } },
+        "children": [
+          {
+            "id": "551:13334",
+            "type": "FRAME",
+            "clipsContent": false,
+            "geometry": { "bbox": { "h": 694, "w": 375, "x": 9780, "y": 4614 } },
+            "children": [
+              {
+                "id": "551:13335",
+                "type": "FRAME",
+                "clipsContent": false,
+                "geometry": { "bbox": { "h": 56, "w": 375, "x": 9780, "y": 4614 } },
+                "children": [
+                  {
+                    "id": "551:13336",
+                    "type": "FRAME",
+                    "clipsContent": false,
+                    "geometry": { "bbox": { "h": 24, "w": 345, "x": 9796, "y": 4630 } },
+                    "children": [
+                      {
+                        "id": "551:13337",
+                        "type": "FRAME",
+                        "clipsContent": false,
+                        "geometry": { "bbox": { "h": 11, "w": 144, "x": 9796, "y": 4636.5 } },
+                        "children": [
+                          {
+                            "id": "551:13338",
+                            "type": "TEXT",
+                            "clipsContent": false,
+                            "geometry": { "bbox": { "h": 11, "w": 144, "x": 9796, "y": 4636.5 } }
+                          }
+                        ]
+                      },
+                      {
+                        "id": "551:13339",
+                        "type": "INSTANCE",
+                        "clipsContent": false,
+                        "geometry": { "bbox": { "h": 24, "w": 24, "x": 10117, "y": 4630 } },
+                        "children": [
+                          {
+                            "id": "I551:13339;8899:54523",
+                            "type": "VECTOR",
+                            "clipsContent": false,
+                            "geometry": {
+                              "bbox": {
+                                "h": 15.000835418701172,
+                                "w": 15.000835418701172,
+                                "x": 10121.5,
+                                "y": 4634.49951171875
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "551:13346",
+                "type": "FRAME",
+                "clipsContent": true,
+                "geometry": { "bbox": { "h": 622, "w": 343, "x": 9796, "y": 4686 } },
+                "children": [
+                  {
+                    "id": "551:13347",
+                    "type": "FRAME",
+                    "clipsContent": false,
+                    "geometry": { "bbox": { "h": 96, "w": 343, "x": 9796, "y": 4686 } },
+                    "children": [
+                      {
+                        "id": "551:13348",
+                        "type": "FRAME",
+                        "clipsContent": false,
+                        "geometry": { "bbox": { "h": 40, "w": 343, "x": 9796, "y": 4686 } },
+                        "children": [
+                          {
+                            "id": "551:13349",
+                            "type": "FRAME",
+                            "clipsContent": true,
+                            "geometry": { "bbox": { "h": 40, "w": 343, "x": 9796, "y": 4686 } },
+                            "children": [
+                              {
+                                "id": "551:13350",
+                                "type": "TEXT",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 8, "w": 89, "x": 9812, "y": 4702 } }
+                              },
+                              {
+                                "id": "551:13351",
+                                "type": "VECTOR",
+                                "clipsContent": false,
+                                "geometry": {
+                                  "bbox": {
+                                    "h": 16.002344131469727,
+                                    "w": 15.999218940734863,
+                                    "x": 10107.0009765625,
+                                    "y": 4697.9990234375
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "id": "551:13352",
+                        "type": "FRAME",
+                        "clipsContent": true,
+                        "geometry": { "bbox": { "h": 40, "w": 343, "x": 9796, "y": 4742 } },
+                        "children": [
+                          {
+                            "id": "551:13353",
+                            "type": "FRAME",
+                            "clipsContent": true,
+                            "geometry": { "bbox": { "h": 40, "w": 171.5, "x": 9796, "y": 4742 } },
+                            "children": [
+                              {
+                                "id": "551:13354",
+                                "type": "TEXT",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 8, "w": 54, "x": 9854.75, "y": 4758 } }
+                              }
+                            ]
+                          },
+                          {
+                            "id": "551:13355",
+                            "type": "FRAME",
+                            "clipsContent": true,
+                            "geometry": { "bbox": { "h": 40, "w": 171.5, "x": 9967.5, "y": 4742 } },
+                            "children": [
+                              {
+                                "id": "551:13356",
+                                "type": "VECTOR",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 1, "w": 1, "x": 10052.5, "y": 4761 } }
+                              },
+                              {
+                                "id": "551:13357",
+                                "type": "TEXT",
+                                "clipsContent": false,
+                                "geometry": {
+                                  "bbox": { "h": 8, "w": 30, "x": 10038.25, "y": 4758 }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "551:13362",
+                    "type": "FRAME",
+                    "clipsContent": true,
+                    "geometry": { "bbox": { "h": 411, "w": 343, "x": 9796, "y": 4782 } },
+                    "children": [
+                      {
+                        "id": "551:13363",
+                        "type": "FRAME",
+                        "clipsContent": true,
+                        "geometry": { "bbox": { "h": 572, "w": 343, "x": 9796, "y": 4782 } },
+                        "children": [
+                          {
+                            "id": "551:13364",
+                            "type": "INSTANCE",
+                            "clipsContent": false,
+                            "geometry": { "bbox": { "h": 50, "w": 343, "x": 9796, "y": 4798 } },
+                            "children": [
+                              {
+                                "id": "I551:13364;19645:16084",
+                                "type": "GROUP",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 57, "w": 73, "x": 9796, "y": 4791 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13364;19645:16085",
+                                    "type": "VECTOR",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": { "h": 57, "w": 73, "x": 9796, "y": 4791 }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13364;19645:16086",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 96.56391143798828,
+                                        "w": 51.7685546875,
+                                        "x": 9812,
+                                        "y": 4791
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13364;19645:16087",
+                                        "type": "IMAGE",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 96.56391143798828,
+                                            "w": 51.7685546875,
+                                            "x": 9812,
+                                            "y": 4791
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "id": "I551:13364;19645:16073",
+                                "type": "FRAME",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 50, "w": 254, "x": 9869, "y": 4798 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13364;19645:16074",
+                                    "type": "TEXT",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 26,
+                                        "w": 181.25030517578125,
+                                        "x": 9877,
+                                        "y": 4810
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13364;19645:16075",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 20,
+                                        "w": 64.74968719482422,
+                                        "x": 10058.25,
+                                        "y": 4813
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13364;19645:16076",
+                                        "type": "FRAME",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 20,
+                                            "w": 64.74968719482422,
+                                            "x": 10058.25,
+                                            "y": 4813
+                                          }
+                                        },
+                                        "children": [
+                                          {
+                                            "id": "I551:13364;19645:16079",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": {
+                                                "h": 19.783065795898438,
+                                                "w": 20.74968910217285,
+                                                "x": 10058.25,
+                                                "y": 4813.1083984375
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "id": "I551:13364;19645:16258",
+                                            "type": "FRAME",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": { "h": 20, "w": 20, "x": 10103, "y": 4813 }
+                                            },
+                                            "children": [
+                                              {
+                                                "id": "I551:13364;19645:16259",
+                                                "type": "INSTANCE",
+                                                "clipsContent": false,
+                                                "geometry": {
+                                                  "bbox": {
+                                                    "h": 12,
+                                                    "w": 12,
+                                                    "x": 10107,
+                                                    "y": 4817
+                                                  }
+                                                },
+                                                "children": [
+                                                  {
+                                                    "id": "I551:13364;19645:16259;8899:43384",
+                                                    "type": "VECTOR",
+                                                    "clipsContent": false,
+                                                    "geometry": {
+                                                      "bbox": {
+                                                        "h": 6.7505035400390625,
+                                                        "w": 9.375417709350586,
+                                                        "x": 10108.5,
+                                                        "y": 4820
+                                                      }
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "id": "551:13365",
+                            "type": "INSTANCE",
+                            "clipsContent": false,
+                            "geometry": { "bbox": { "h": 50, "w": 343, "x": 9796, "y": 4864 } },
+                            "children": [
+                              {
+                                "id": "I551:13365;19645:16084",
+                                "type": "GROUP",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 57, "w": 73, "x": 9796, "y": 4857 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13365;19645:16085",
+                                    "type": "VECTOR",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": { "h": 57, "w": 73, "x": 9796, "y": 4857 }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13365;19645:16086",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 96.56391143798828,
+                                        "w": 51.7685546875,
+                                        "x": 9812,
+                                        "y": 4857
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13365;19645:16087",
+                                        "type": "IMAGE",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 96.56391143798828,
+                                            "w": 51.7685546875,
+                                            "x": 9812,
+                                            "y": 4857
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "id": "I551:13365;19645:16073",
+                                "type": "FRAME",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 50, "w": 254, "x": 9869, "y": 4864 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13365;19645:16074",
+                                    "type": "TEXT",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 26,
+                                        "w": 181.25030517578125,
+                                        "x": 9877,
+                                        "y": 4876
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13365;19645:16075",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 20,
+                                        "w": 64.74968719482422,
+                                        "x": 10058.25,
+                                        "y": 4879
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13365;19645:16076",
+                                        "type": "FRAME",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 20,
+                                            "w": 64.74968719482422,
+                                            "x": 10058.25,
+                                            "y": 4879
+                                          }
+                                        },
+                                        "children": [
+                                          {
+                                            "id": "I551:13365;19645:16079",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": {
+                                                "h": 19.783065795898438,
+                                                "w": 20.74968910217285,
+                                                "x": 10058.25,
+                                                "y": 4879.1083984375
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "id": "I551:13365;19645:16081",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": { "h": 20, "w": 20, "x": 10103, "y": 4879 }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "id": "551:13366",
+                            "type": "INSTANCE",
+                            "clipsContent": false,
+                            "geometry": { "bbox": { "h": 50, "w": 343, "x": 9796, "y": 4930 } },
+                            "children": [
+                              {
+                                "id": "I551:13366;19645:17054",
+                                "type": "GROUP",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 57, "w": 73, "x": 9796, "y": 4923 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13366;19645:17055",
+                                    "type": "VECTOR",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": { "h": 57, "w": 73, "x": 9796, "y": 4923 }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13366;19645:17056",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 96.56391143798828,
+                                        "w": 51.7685546875,
+                                        "x": 9812,
+                                        "y": 4923
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13366;19645:17057",
+                                        "type": "IMAGE",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 96.56391143798828,
+                                            "w": 51.7685546875,
+                                            "x": 9812,
+                                            "y": 4923
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "id": "I551:13366;19645:17058",
+                                "type": "FRAME",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 50, "w": 254, "x": 9869, "y": 4930 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13366;19645:17059",
+                                    "type": "TEXT",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": { "h": 26, "w": 178, "x": 9877, "y": 4942 }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13366;19645:17060",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": { "h": 24, "w": 68, "x": 10055, "y": 4943 }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13366;19645:17061",
+                                        "type": "FRAME",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": { "h": 24, "w": 68, "x": 10055, "y": 4943 }
+                                        },
+                                        "children": [
+                                          {
+                                            "id": "I551:13366;19645:17062",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": { "h": 24, "w": 24, "x": 10055, "y": 4943 }
+                                            }
+                                          },
+                                          {
+                                            "id": "I551:13366;19645:17064",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": { "h": 20, "w": 20, "x": 10103, "y": 4945 }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "id": "551:13367",
+                            "type": "INSTANCE",
+                            "clipsContent": false,
+                            "geometry": { "bbox": { "h": 50, "w": 343, "x": 9796, "y": 4996 } },
+                            "children": [
+                              {
+                                "id": "I551:13367;19645:16084",
+                                "type": "GROUP",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 57, "w": 73, "x": 9796, "y": 4989 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13367;19645:16085",
+                                    "type": "VECTOR",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": { "h": 57, "w": 73, "x": 9796, "y": 4989 }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13367;19645:16086",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 96.56391143798828,
+                                        "w": 51.7685546875,
+                                        "x": 9812,
+                                        "y": 4989
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13367;19645:16087",
+                                        "type": "IMAGE",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 96.56391143798828,
+                                            "w": 51.7685546875,
+                                            "x": 9812,
+                                            "y": 4989
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "id": "I551:13367;19645:16073",
+                                "type": "FRAME",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 50, "w": 254, "x": 9869, "y": 4996 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13367;19645:16074",
+                                    "type": "TEXT",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 26,
+                                        "w": 181.25030517578125,
+                                        "x": 9877,
+                                        "y": 5008
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13367;19645:16075",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 20,
+                                        "w": 64.74968719482422,
+                                        "x": 10058.25,
+                                        "y": 5011
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13367;19645:16076",
+                                        "type": "FRAME",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 20,
+                                            "w": 64.74968719482422,
+                                            "x": 10058.25,
+                                            "y": 5011
+                                          }
+                                        },
+                                        "children": [
+                                          {
+                                            "id": "I551:13367;19645:16079",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": {
+                                                "h": 19.783065795898438,
+                                                "w": 20.74968910217285,
+                                                "x": 10058.25,
+                                                "y": 5011.1083984375
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "id": "I551:13367;19645:16258",
+                                            "type": "FRAME",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": { "h": 20, "w": 20, "x": 10103, "y": 5011 }
+                                            },
+                                            "children": [
+                                              {
+                                                "id": "I551:13367;19645:16259",
+                                                "type": "INSTANCE",
+                                                "clipsContent": false,
+                                                "geometry": {
+                                                  "bbox": {
+                                                    "h": 12,
+                                                    "w": 12,
+                                                    "x": 10107,
+                                                    "y": 5015
+                                                  }
+                                                },
+                                                "children": [
+                                                  {
+                                                    "id": "I551:13367;19645:16259;8899:43384",
+                                                    "type": "VECTOR",
+                                                    "clipsContent": false,
+                                                    "geometry": {
+                                                      "bbox": {
+                                                        "h": 6.7505035400390625,
+                                                        "w": 9.375417709350586,
+                                                        "x": 10108.5,
+                                                        "y": 5018
+                                                      }
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "id": "551:13368",
+                            "type": "INSTANCE",
+                            "clipsContent": false,
+                            "geometry": { "bbox": { "h": 50, "w": 343, "x": 9796, "y": 5062 } },
+                            "children": [
+                              {
+                                "id": "I551:13368;19645:16084",
+                                "type": "GROUP",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 57, "w": 73, "x": 9796, "y": 5055 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13368;19645:16085",
+                                    "type": "VECTOR",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": { "h": 57, "w": 73, "x": 9796, "y": 5055 }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13368;19645:16086",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 96.56391143798828,
+                                        "w": 51.7685546875,
+                                        "x": 9812,
+                                        "y": 5055
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13368;19645:16087",
+                                        "type": "IMAGE",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 96.56391143798828,
+                                            "w": 51.7685546875,
+                                            "x": 9812,
+                                            "y": 5055
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "id": "I551:13368;19645:16073",
+                                "type": "FRAME",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 50, "w": 254, "x": 9869, "y": 5062 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13368;19645:16074",
+                                    "type": "TEXT",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 26,
+                                        "w": 181.25030517578125,
+                                        "x": 9877,
+                                        "y": 5074
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13368;19645:16075",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 20,
+                                        "w": 64.74968719482422,
+                                        "x": 10058.25,
+                                        "y": 5077
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13368;19645:16076",
+                                        "type": "FRAME",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 20,
+                                            "w": 64.74968719482422,
+                                            "x": 10058.25,
+                                            "y": 5077
+                                          }
+                                        },
+                                        "children": [
+                                          {
+                                            "id": "I551:13368;19645:16079",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": {
+                                                "h": 19.783065795898438,
+                                                "w": 20.74968910217285,
+                                                "x": 10058.25,
+                                                "y": 5077.1083984375
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "id": "I551:13368;19645:16081",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": { "h": 20, "w": 20, "x": 10103, "y": 5077 }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "id": "551:13369",
+                            "type": "INSTANCE",
+                            "clipsContent": false,
+                            "geometry": { "bbox": { "h": 50, "w": 343, "x": 9796, "y": 5128 } },
+                            "children": [
+                              {
+                                "id": "I551:13369;19645:16084",
+                                "type": "GROUP",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 57, "w": 73, "x": 9796, "y": 5121 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13369;19645:16085",
+                                    "type": "VECTOR",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": { "h": 57, "w": 73, "x": 9796, "y": 5121 }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13369;19645:16086",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 96.56391143798828,
+                                        "w": 51.7685546875,
+                                        "x": 9812,
+                                        "y": 5121
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13369;19645:16087",
+                                        "type": "IMAGE",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 96.56391143798828,
+                                            "w": 51.7685546875,
+                                            "x": 9812,
+                                            "y": 5121
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "id": "I551:13369;19645:16073",
+                                "type": "FRAME",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 50, "w": 254, "x": 9869, "y": 5128 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13369;19645:16074",
+                                    "type": "TEXT",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 26,
+                                        "w": 181.25030517578125,
+                                        "x": 9877,
+                                        "y": 5140
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13369;19645:16075",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 20,
+                                        "w": 64.74968719482422,
+                                        "x": 10058.25,
+                                        "y": 5143
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13369;19645:16076",
+                                        "type": "FRAME",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 20,
+                                            "w": 64.74968719482422,
+                                            "x": 10058.25,
+                                            "y": 5143
+                                          }
+                                        },
+                                        "children": [
+                                          {
+                                            "id": "I551:13369;19645:16079",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": {
+                                                "h": 19.783065795898438,
+                                                "w": 20.74968910217285,
+                                                "x": 10058.25,
+                                                "y": 5143.1083984375
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "id": "I551:13369;19645:16081",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": { "h": 20, "w": 20, "x": 10103, "y": 5143 }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "id": "551:13370",
+                            "type": "INSTANCE",
+                            "clipsContent": false,
+                            "geometry": { "bbox": { "h": 50, "w": 343, "x": 9796, "y": 5194 } },
+                            "children": [
+                              {
+                                "id": "I551:13370;19645:16084",
+                                "type": "GROUP",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 57, "w": 73, "x": 9796, "y": 5187 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13370;19645:16085",
+                                    "type": "VECTOR",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": { "h": 57, "w": 73, "x": 9796, "y": 5187 }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13370;19645:16086",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 96.56391143798828,
+                                        "w": 51.7685546875,
+                                        "x": 9812,
+                                        "y": 5187
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13370;19645:16087",
+                                        "type": "IMAGE",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 96.56391143798828,
+                                            "w": 51.7685546875,
+                                            "x": 9812,
+                                            "y": 5187
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "id": "I551:13370;19645:16073",
+                                "type": "FRAME",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 50, "w": 254, "x": 9869, "y": 5194 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13370;19645:16074",
+                                    "type": "TEXT",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 26,
+                                        "w": 181.25030517578125,
+                                        "x": 9877,
+                                        "y": 5206
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13370;19645:16075",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 20,
+                                        "w": 64.74968719482422,
+                                        "x": 10058.25,
+                                        "y": 5209
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13370;19645:16076",
+                                        "type": "FRAME",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 20,
+                                            "w": 64.74968719482422,
+                                            "x": 10058.25,
+                                            "y": 5209
+                                          }
+                                        },
+                                        "children": [
+                                          {
+                                            "id": "I551:13370;19645:16079",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": {
+                                                "h": 19.783065795898438,
+                                                "w": 20.74968910217285,
+                                                "x": 10058.25,
+                                                "y": 5209.1083984375
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "id": "I551:13370;19645:16081",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": { "h": 20, "w": 20, "x": 10103, "y": 5209 }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "id": "551:13371",
+                            "type": "INSTANCE",
+                            "clipsContent": false,
+                            "geometry": { "bbox": { "h": 50, "w": 343, "x": 9796, "y": 5260 } },
+                            "children": [
+                              {
+                                "id": "I551:13371;19645:16084",
+                                "type": "GROUP",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 57, "w": 73, "x": 9796, "y": 5253 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13371;19645:16085",
+                                    "type": "VECTOR",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": { "h": 57, "w": 73, "x": 9796, "y": 5253 }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13371;19645:16086",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 96.56391143798828,
+                                        "w": 51.7685546875,
+                                        "x": 9812,
+                                        "y": 5253
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13371;19645:16087",
+                                        "type": "IMAGE",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 96.56391143798828,
+                                            "w": 51.7685546875,
+                                            "x": 9812,
+                                            "y": 5253
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "id": "I551:13371;19645:16073",
+                                "type": "FRAME",
+                                "clipsContent": false,
+                                "geometry": { "bbox": { "h": 50, "w": 254, "x": 9869, "y": 5260 } },
+                                "children": [
+                                  {
+                                    "id": "I551:13371;19645:16074",
+                                    "type": "TEXT",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 26,
+                                        "w": 181.25030517578125,
+                                        "x": 9877,
+                                        "y": 5272
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "id": "I551:13371;19645:16075",
+                                    "type": "GROUP",
+                                    "clipsContent": false,
+                                    "geometry": {
+                                      "bbox": {
+                                        "h": 20,
+                                        "w": 64.74968719482422,
+                                        "x": 10058.25,
+                                        "y": 5275
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "id": "I551:13371;19645:16076",
+                                        "type": "FRAME",
+                                        "clipsContent": false,
+                                        "geometry": {
+                                          "bbox": {
+                                            "h": 20,
+                                            "w": 64.74968719482422,
+                                            "x": 10058.25,
+                                            "y": 5275
+                                          }
+                                        },
+                                        "children": [
+                                          {
+                                            "id": "I551:13371;19645:16079",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": {
+                                                "h": 19.783065795898438,
+                                                "w": 20.74968910217285,
+                                                "x": 10058.25,
+                                                "y": 5275.1083984375
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "id": "I551:13371;19645:16081",
+                                            "type": "VECTOR",
+                                            "clipsContent": false,
+                                            "geometry": {
+                                              "bbox": { "h": 20, "w": 20, "x": 10103, "y": 5275 }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "551:13372",
+        "type": "FRAME",
+        "clipsContent": false,
+        "geometry": { "bbox": { "h": 88, "w": 375, "x": 9780, "y": 5193 } },
+        "children": [
+          {
+            "id": "551:13373",
+            "type": "FRAME",
+            "clipsContent": false,
+            "geometry": { "bbox": { "h": 40, "w": 343, "x": 9796, "y": 5217 } },
+            "children": [
+              {
+                "id": "551:13374",
+                "type": "INSTANCE",
+                "clipsContent": false,
+                "geometry": { "bbox": { "h": 40, "w": 343, "x": 9796, "y": 5217 } },
+                "children": [
+                  {
+                    "id": "I551:13374;13031:7705",
+                    "type": "INSTANCE",
+                    "clipsContent": false,
+                    "geometry": { "bbox": { "h": 40, "w": 343, "x": 9796, "y": 5217 } },
+                    "children": [
+                      {
+                        "id": "I551:13374;13031:7705;13031:7493",
+                        "type": "TEXT",
+                        "clipsContent": false,
+                        "geometry": { "bbox": { "h": 20, "w": 34, "x": 9950.5, "y": 5227 } }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

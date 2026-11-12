@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { fitIssues, isKind, parseCover, valuesAt } from "../src/fit.ts";
+import {
+  countEvidence,
+  fieldEvidence,
+  filterEvidence,
+  fitIssues,
+  isKind,
+  orderEvidence,
+  orderIssues,
+  parseCover,
+  valuesAt,
+} from "../src/fit.ts";
 
 const output = {
   days: [
@@ -80,20 +90,40 @@ describe("an answer against the output a run really gave", () => {
 
   it("faults a required item the answer does not account for", () => {
     const issues = fitIssues(items, { covers: [], missing: [] }, output);
-    expect(issues).toContain(
-      '"team crest" is required by the need and is in neither covers nor missing: say which',
+    expect(issues[0]).toContain(
+      '"team crest" is required by the need and is in neither covers nor missing: name it as the need writes it',
     );
     expect(issues).toHaveLength(2);
   });
 
-  it("faults a value of the wrong kind, such as a name where a picture is drawn", () => {
+  it("matches a field by its words as the need writes them, never by a guess", () => {
+    const said = (covers: string[], missing: string[]) =>
+      fitIssues([{ field: "team crest", required: true }], { covers, missing }, output);
+    expect(said(["Team Crest → days[].matches[].teams[0].logo"], [])).toEqual([]);
+    expect(said([], ["team crest: the feed has no picture"])).toEqual([]);
+    // a line that only mentions it, or a label that holds it among other words, is not it
+    expect(said(["crest → days[].matches[].teams[0].logo"], [])).toHaveLength(1);
+    expect(said([], ["no team crest in the feed"])).toHaveLength(1);
+  });
+
+  it("faults a path that holds no value of the field's kind, such as names where a picture is drawn", () => {
     const wrong = { rows: [{ crest: "Southern Brave" }, { crest: "Brave" }] };
     const issues = fitIssues(
       [{ field: "team crest", required: true, kind: "image" }],
       { covers: ["team crest → rows[].crest"], missing: [] },
       wrong,
     );
-    expect(issues[0]).toContain("should read as a image");
+    expect(issues[0]).toContain(
+      'holds no image (the need\'s kind for it): its values are "Southern Brave", "Brave"',
+    );
+    // some of the kind: the model judges the rest from the evidence
+    expect(
+      fitIssues(
+        [{ field: "team crest", required: true, kind: "image" }],
+        { covers: ["team crest → rows[].crest"], missing: [] },
+        { rows: [{ crest: "https://cdn/a.png" }, { crest: "TBC" }] },
+      ),
+    ).toEqual([]);
   });
 
   it("does not fault a field some items lack", () => {
@@ -136,149 +166,139 @@ describe("a list a page choice filters (ticket 13)", () => {
   });
 });
 
-describe("the design's form (ticket 14)", () => {
-  const items = [{ field: "balls faced", required: true, example: "(100 Balls)" }];
-
-  it("faults overs passed through where the design writes balls, and passes the derived number", () => {
-    const overs = { rows: [{ balls: "19.3" }, { balls: "20.0" }] };
-    const issues = fitIssues(items, { covers: ["balls faced → rows[].balls"], missing: [] }, overs);
-    expect(issues[0]).toContain('holds "19.3" where the design writes "(100 Balls)"');
-    expect(issues[0]).toContain("derive what the design shows");
+describe("the design's form is the model's to judge: code reports the values beside the example", () => {
+  it("never refuses a value for its form, whatever the example", () => {
+    const items = [{ field: "length", required: true, example: "12 min" }];
+    const clips = { clips: [{ mins: "4.5" }, { mins: "7.25" }] };
+    expect(fitIssues(items, { covers: ["length → clips[].mins"], missing: [] }, clips)).toEqual([]);
   });
 
-  it("passes a value in the design's form, a count with its unit among them", () => {
-    const derived = { rows: [{ balls: "(98 Balls)" }, { balls: "(100 Balls)" }] };
-    expect(
-      fitIssues(items, { covers: ["balls faced → rows[].balls"], missing: [] }, derived),
-    ).toEqual([]);
-  });
-
-  it("leaves a date or a time as the instant, and a field with no figure in its example alone", () => {
-    const dated = [
-      { field: "kick-off", required: true, kind: "date" as const, example: "21 JULY" },
-      { field: "role", required: false, example: "Batter" },
+  it("shows each path's values beside the example and kind, with how many items have one", () => {
+    const items = [
+      { field: "length", required: true, example: "12 min" },
+      { field: "thumbnail", required: false, kind: "image" as const },
     ];
-    expect(
-      fitIssues(
-        dated,
-        { covers: ["kick-off → rows[].start", "role → rows[].role"], missing: [] },
-        { rows: [{ start: "2026-07-21T19:30:00Z", role: "Bowler" }] },
-      ),
-    ).toEqual([]);
+    const clips = {
+      clips: [
+        { mins: "4.5", pic: "https://cdn/a.png" },
+        { mins: "4.5", pic: "none" },
+        { mins: "", pic: "https://cdn/b.png" },
+      ],
+    };
+    const [length, thumb, other] = fieldEvidence(
+      items,
+      ["length → clips[].mins", "thumbnail → clips[].pic", "views → clips[].views"],
+      clips,
+    );
+    expect(length).toMatchObject({
+      field: "length",
+      example: "12 min",
+      reached: 3,
+      filled: 2,
+      values: ["4.5"],
+    });
+    expect(thumb).toMatchObject({ kind: "image", notKind: { count: 1, sample: "none" } });
+    expect(other).toMatchObject({ field: null, reached: 0 });
+  });
+
+  it("counts the items of each list a path goes through, beside the design's count", () => {
+    const days = { days: [{ matches: [{ v: 1 }, { v: 2 }] }, { matches: [{ v: 3 }] }] };
+    expect(countEvidence(5, ["venue → days[].matches[].v"], days)).toEqual({
+      count: 5,
+      lists: [
+        { list: "days[]", items: 2 },
+        { list: "days[].matches[]", items: 3 },
+      ],
+    });
   });
 });
 
-describe("which items, in what order (ticket 15)", () => {
+describe("which items, in what order: the model judges from the dates in output order", () => {
   const now = Date.parse("2026-07-20T12:00:00Z");
   const rows = (...dates: string[]) => ({ rows: dates.map((start) => ({ start })) });
   const cover = ["order → rows[].start"];
 
-  it("asks for the date field when the answer does not name it", async () => {
-    const { orderIssues } = await import("../src/fit.ts");
-    expect(orderIssues("newest-first", [], rows("2026-07-01"), now)[0]).toContain(
+  it("asks for the date field when the items carry dates and the answer does not name it", () => {
+    expect(orderIssues("newest-first", [], rows("2026-07-01"))[0]).toContain(
       'say the date field the items are ordered by in covers as "order → <path>"',
     );
-    expect(orderIssues("as-is", [], rows("2026-07-01"), now)).toEqual([]);
-    expect(orderIssues(undefined, [], rows("2026-07-01"), now)).toEqual([]);
+    expect(orderIssues("as-is", [], rows("2026-07-01"))).toEqual([]);
+    expect(orderIssues(undefined, [], rows("2026-07-01"))).toEqual([]);
+    expect(orderIssues("newest-first", [], { players: [{ name: "A" }] })).toEqual([]);
   });
 
-  it("upcoming then latest: what is next first, then results from the latest back", async () => {
-    const { orderIssues } = await import("../src/fit.ts");
-    const good = rows("2026-07-22", "2026-07-25", "2026-07-18", "2026-07-10");
-    expect(orderIssues("upcoming-then-latest", cover, good, now)).toEqual([]);
-    // the season's first three results, as a schedule sorted ascending gives them
-    const wrong = rows("2026-07-10", "2026-07-18", "2026-07-22");
-    expect(orderIssues("upcoming-then-latest", cover, wrong, now)[0]).toContain(
-      "not upcoming then latest",
-    );
+  it("never refuses an order: a list of only past items, or dates both ways, is the model's call", () => {
+    expect(orderIssues("soonest-first", cover, rows("2026-07-10", "2026-07-12"))).toEqual([]);
+    expect(orderIssues("newest-first", cover, rows("2026-06-30", "2026-07-10"))).toEqual([]);
   });
 
-  it("wants what is next: only past items is a fault, unless missing says nothing is to come", async () => {
-    const { orderIssues } = await import("../src/fit.ts");
-    const past = rows("2026-07-10", "2026-07-12");
-    expect(orderIssues("soonest-first", cover, past, now)[0]).toContain("holds only past items");
-    expect(
-      orderIssues("upcoming-then-latest", cover, rows("2026-07-12", "2026-07-10"), now)[0],
-    ).toContain("holds only past items");
-    expect(
-      orderIssues("soonest-first", cover, past, now, ["no upcoming fixtures in the feed"]),
-    ).toEqual([]);
-    // articles are past by nature
-    expect(orderIssues("newest-first", cover, rows("2026-07-12", "2026-07-10"), now)).toEqual([]);
+  it("reports the dates in output order, how they run, and how many are before and after now", () => {
+    const past = orderEvidence("soonest-first", cover, rows("2026-07-10", "2026-07-12"), now);
+    expect(past).toMatchObject({
+      order: "soonest-first",
+      now: "2026-07-20T12:00:00.000Z",
+      path: "rows[].start",
+      groups: [
+        { dates: ["2026-07-10", "2026-07-12"], runs: "rising", before: 2, after: 0, unread: 0 },
+      ],
+    });
+    const mixed = orderEvidence(
+      "upcoming-then-latest",
+      cover,
+      rows("2026-07-22", "2026-07-25", "2026-07-18", "soon"),
+      now,
+    );
+    expect(mixed).toMatchObject({
+      groups: [{ runs: "both ways", before: 1, after: 2, count: 4, unread: 1 }],
+    });
+    expect(orderEvidence("as-is", cover, rows("2026-07-10"), now)).toBeUndefined();
+    expect(orderEvidence("newest-first", [], rows("2026-07-10"), now)).toMatchObject({
+      note: expect.stringContaining("order → <path>"),
+    });
   });
 
-  it("newest first: articles from the latest back", async () => {
-    const { orderIssues } = await import("../src/fit.ts");
-    expect(
-      orderIssues("newest-first", cover, rows("2026-07-18", "2026-07-10", "2026-06-30"), now),
-    ).toEqual([]);
-    expect(orderIssues("newest-first", cover, rows("2026-06-30", "2026-07-10"), now)[0]).toContain(
-      "not newest first",
+  it("reports each option's dates on their own when a choice filters the list", () => {
+    const joined = {
+      events: [
+        { cat: "music", at: "2026-07-21T19:00:00Z" },
+        { cat: "talks", at: "2026-07-23T09:00:00Z" },
+        { cat: "music", at: "2026-07-25T19:00:00Z" },
+        { cat: "talks", at: "2026-07-22T09:00:00Z" },
+      ],
+    };
+    const report = orderEvidence(
+      "soonest-first",
+      ["order → events[].at", "filterBy → events[].cat"],
+      joined,
+      now,
     );
-  });
-
-  it("soonest first: starts at the next one, not at a past date", async () => {
-    const { orderIssues } = await import("../src/fit.ts");
-    expect(orderIssues("soonest-first", cover, rows("2026-07-21", "2026-07-23"), now)).toEqual([]);
-    expect(orderIssues("soonest-first", cover, rows("2026-07-10", "2026-07-23"), now)[0]).toContain(
-      "starts with a past date",
-    );
-    expect(orderIssues("soonest-first", cover, rows("2026-07-23", "2026-07-21"), now)[0]).toContain(
-      "not soonest first",
-    );
+    expect(report).toMatchObject({
+      groups: [
+        { option: "music", runs: "rising" },
+        { option: "talks", runs: "falling" },
+      ],
+    });
   });
 });
 
-describe("a field compared with the part of the example it fills (ticket 14 review)", () => {
-  it("passes the number a design writes words around, and a score given apart", () => {
-    const balls = [{ field: "balls faced", required: true, example: "(100 Balls)" }];
+describe("how many items hold each option of a page choice", () => {
+  it("counts them as the page compares them", () => {
     expect(
-      fitIssues(
-        balls,
-        { covers: ["balls faced → rows[].balls"], missing: [] },
-        {
-          rows: [{ balls: 98 }, { balls: "100" }],
-        },
-      ),
-    ).toEqual([]);
-    const runs = [{ field: "runs", required: true, kind: "score" as const, example: "166/5" }];
-    expect(
-      fitIssues(
-        runs,
-        { covers: ["runs → rows[].runs"], missing: [] },
-        {
-          rows: [{ runs: "166" }, { runs: "98" }],
-        },
-      ),
-    ).toEqual([]);
-    // a video's length in minutes: the number, not the seconds' decimal minutes
-    const length = [{ field: "length", required: true, example: "12 min" }];
-    expect(
-      fitIssues(
-        length,
-        { covers: ["length → clips[].mins"], missing: [] },
-        {
-          clips: [{ mins: "4.5" }, { mins: "7.25" }],
-        },
-      )[0],
-    ).toContain('where the design writes "12 min"');
-  });
-
-  it("still faults another unit's words", () => {
-    const balls = [{ field: "balls faced", required: true, example: "(100 Balls)" }];
-    expect(
-      fitIssues(
-        balls,
-        { covers: ["balls faced → rows[].balls"], missing: [] },
-        {
-          rows: [{ balls: "(20 Overs)" }],
-        },
-      )[0],
-    ).toContain("derive what the design shows");
+      filterEvidence({ key: "squad", options: ["mens", "womens"] }, ["filterBy → items[].g"], {
+        items: [{ g: "Men's" }, { g: "Men's" }, { g: "Women's" }],
+      }),
+    ).toEqual({
+      key: "squad",
+      path: "items[].g",
+      options: [
+        { option: "mens", items: 2 },
+        { option: "womens", items: 1 },
+      ],
+    });
   });
 });
 
-describe("the form of a value (ticket 14 review)", async () => {
+describe("the form of a value, for data-bind (ticket 14 review)", async () => {
   const { formOf } = await import("../src/form.ts");
   it("is the same across signs, ordinals, plurals, separators, codes and case", () => {
     expect(formOf("+3")).toBe(formOf("-2"));
@@ -289,54 +309,6 @@ describe("the form of a value (ticket 14 review)", async () => {
     expect(formOf("5 mins ago")).toBe(formOf("2 hours ago"));
     expect(formOf("1,234")).toBe(formOf("999"));
     expect(formOf("21 JULY")).toBe(formOf("21 July"));
-    expect(formOf("(20.0 Overs)")).not.toBe(formOf("(100 Balls)"));
-  });
-});
-
-describe("which items, in what order: the review (ticket 15)", async () => {
-  const { orderIssues } = await import("../src/fit.ts");
-  const now = Date.parse("2026-07-20T12:00:00Z");
-
-  it("orders each option's items on their own when a choice filters the list", () => {
-    // two feeds joined, each sorted soonest first
-    const joined = {
-      events: [
-        { cat: "music", at: "2026-07-21T19:00:00Z" },
-        { cat: "music", at: "2026-07-25T19:00:00Z" },
-        { cat: "talks", at: "2026-07-22T09:00:00Z" },
-        { cat: "talks", at: "2026-07-23T09:00:00Z" },
-      ],
-    };
-    const covers = ["order → events[].at", "filterBy → events[].cat"];
-    expect(orderIssues("soonest-first", covers, joined, now)).toEqual([]);
-    expect(orderIssues("soonest-first", ["order → events[].at"], joined, now)[0]).toContain(
-      "not soonest first",
-    );
-    const wrong = { events: [...joined.events].reverse() };
-    expect(orderIssues("soonest-first", covers, wrong, now)[0]).toContain('option "talks"');
-  });
-
-  it("lets soonest first start with an item under way", () => {
-    const rows = { rows: [{ at: "2026-07-20T11:00:00Z" }, { at: "2026-07-21T19:00:00Z" }] };
-    expect(orderIssues("soonest-first", ["order → rows[].at"], rows, now)).toEqual([]);
-    const live = {
-      rows: [
-        { at: "2026-07-20T11:00:00Z" },
-        { at: "2026-07-21T19:00:00Z" },
-        { at: "2026-07-18T19:00:00Z" },
-      ],
-    };
-    expect(orderIssues("upcoming-then-latest", ["order → rows[].at"], live, now)).toEqual([]);
-  });
-
-  it("does not ask an undated list for its date field, and skips dates it cannot read", () => {
-    const undated = { players: [{ name: "A" }, { name: "B" }] };
-    expect(orderIssues("newest-first", [], undated, now)).toEqual([]);
-    expect(orderIssues("newest-first", [], { rows: [{ at: "2026-07-01" }] }, now)[0]).toContain(
-      "order → <path>",
-    );
-    const some = { rows: [{ at: "2026-07-18" }, { at: "soon" }, { at: "2026-07-10" }] };
-    expect(orderIssues("newest-first", ["order → rows[].at"], some, now)).toEqual([]);
   });
 });
 

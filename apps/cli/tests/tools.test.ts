@@ -24,7 +24,9 @@ describe("tools", () => {
 
   it("lists what follows a group word", () => {
     expect(subcommandsOf(AGENT_TOOLS, "memory").sort()).toEqual([
+      "builds",
       "decisions",
+      "embed",
       "fact",
       "promote",
       "review",

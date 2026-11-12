@@ -8,6 +8,7 @@ import {
   defineHook,
   defineTool,
   type RunCheckpoint,
+  readRunState,
 } from "@dugout/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -240,7 +241,12 @@ describe("the harness's hooks", () => {
       }),
       hooks.afterTool({ stage: "denied", reason: "no", step: 5, call: toolCall, args: "{}" }),
       hooks.afterTool({ stage: "denied", reason: "no", step: 5, call: toolCall, args: "{}" }),
-      hooks.beforeFinal({ value: { summary: "x" }, ctx: { runId: "r", tenantId: "t" }, messages }),
+      hooks.beforeFinal({
+        value: { summary: "x" },
+        ctx: { runId: "r", tenantId: "t" },
+        messages,
+        state: readRunState(undefined),
+      }),
       state.hooks,
     ];
   }

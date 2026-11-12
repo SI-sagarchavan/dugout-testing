@@ -799,6 +799,19 @@ function emit(
       if (rowWise && node.layout.sizing[along] === "fixed" && length > 0) {
         props.size = { [along]: { _unbound: true, raw: Math.round(length * 100) / 100 } };
       }
+      /**
+       * And its thickness, when the stroke is not the 1px a rule is drawn at: a 0.5px hairline
+       * drawn as two solid device rows was far darker than the design, and pushed every row below
+       * it down by half a pixel.
+       */
+      const weight = node.stroke?.weight;
+      if (typeof weight === "number" && weight > 0 && weight !== 1) {
+        const across = along === "w" ? "h" : "w";
+        props.size = {
+          ...((props.size as Record<string, unknown> | undefined) ?? {}),
+          [across]: { _unbound: true, raw: Math.round(weight * 100) / 100 },
+        };
+      }
       break;
     }
     case "Box": {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { approve, defineTool, type RunEvent } from "@dugout/contracts";
+import { approve, defineState, defineTool, type RunEvent } from "@dugout/contracts";
 import {
   createBedrockClient,
   createMemorySink,
@@ -88,6 +88,80 @@ const script = () =>
     { toolCalls: [{ name: "notes.save", arguments: { title: "Season opener" } }] },
     { toolCalls: [{ name: "final", arguments: { title: "Season opener" } }] },
   ]);
+
+describe("the smallest agent", () => {
+  /** What the tool made, kept in the run's state for the check on final (ADR 0035). */
+  const SAVED = defineState<{ title: string }>("memo.saved");
+  const save = defineTool({
+    name: "memo.save",
+    description: "Saves a memo.",
+    input: z.object({ title: z.string() }),
+    effect: "write",
+    timeoutMs: 1_000,
+    async run({ title }, ctx) {
+      ctx.state.set(SAVED, { title });
+      return { saved: true };
+    },
+  });
+  const memo = defineAgent({
+    // id, instructions and a model: everything else has its default
+    spec: { id: "memo", instructions: "Save one memo, then call final.", model: "nova-lite" },
+    input: z.object({ topic: z.string() }),
+    output: z.object({ title: z.string() }),
+    // a list: allowed without being named in the spec
+    tools: [save],
+    completeFinal: (output, { state }) => ({ ...(output as object), ...state.get(SAVED) }),
+    verifyFinal: (_output, { state }) => (state.get(SAVED) ? undefined : "Call memo.save first."),
+  });
+
+  it("needs an id, instructions and a model, and takes its tools as a list", () => {
+    expect(memo.spec).toMatchObject({
+      version: 1,
+      tools: ["memo.save"],
+      skills: [],
+      memory: { read: ["procedural"], write: [] },
+      budget: { usdPerRun: 1, maxSteps: 30, maxDepth: 0 },
+      approvals: ["effect:write"],
+    });
+  });
+
+  it("runs: the write is approved, the date is in the first message, the result is the tool's", async () => {
+    const client = createScriptedModel([
+      { toolCalls: [{ name: "final", arguments: { title: "made up" } }] },
+      { toolCalls: [{ name: "memo.save", arguments: { title: "Season opener" } }] },
+      { toolCalls: [{ name: "final", arguments: { title: "made up" } }] },
+    ]);
+    const run = memo.create({
+      store,
+      client,
+      models: scriptedModelConfig(),
+      runsDir: await mkdtemp(join(tmpdir(), "runs-")),
+      consolidate: false,
+    });
+    const sink = createMemorySink();
+    const result = await run({
+      tenantId: `sdk-${randomUUID().slice(0, 6)}`,
+      input: { topic: "the opener" },
+      responder: async () => approve("editor"),
+      sinks: [sink],
+    });
+    expect(result).toMatchObject({ status: "completed", output: { title: "Season opener" } });
+    expect(sink.events.filter((e) => e.type === "final.refused")).toHaveLength(1);
+    expect(sink.events.map((e) => e.type)).toContain("question.answered");
+    expect(client.requests[0]?.messages[1]?.content).toMatch(
+      /^Today is \d{4}-\d{2}-\d{2} \(UTC\)\.\n\n\{"topic":"the opener"\}$/,
+    );
+  });
+
+  it("says so when skills are listed and no folder holds them", () => {
+    expect(() =>
+      defineAgent({
+        spec: { id: "lost", instructions: "x", model: "nova-lite", skills: ["notes"] },
+        input: z.object({}),
+      }),
+    ).toThrow("lists skills, so dir must say where its skills/ folder is");
+  });
+});
 
 describe("defineAgent", () => {
   it("runs an agent from its definition: skill and house facts in, approval, output out", async () => {

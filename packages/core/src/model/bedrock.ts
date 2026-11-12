@@ -107,7 +107,9 @@ export function createBedrockClient(opts: BedrockClientOptions = {}): ModelClien
   };
 }
 
-const GRAMMAR_TOO_LARGE = /compiled grammar is too large/i;
+/** Bedrock's words for a strict grammar past its limit; it has said it more than one way. */
+const GRAMMAR_TOO_LARGE =
+  /compiled grammar is too large|compilation exceeded limits|schema is too complex/i;
 
 const errorText = (err: unknown): string =>
   err instanceof Error ? err.message : typeof err === "string" ? err : "";

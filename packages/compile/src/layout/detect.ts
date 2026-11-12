@@ -14,8 +14,11 @@
  * - **tabs evidence**: a row of label items where exactly one is drawn differently.
  *
  * What a frame cannot show goes in `ask`, as plain questions, with the defaults the proposal
- * already uses. Nothing here guesses past the frame: a row that merely fits is `unsure`, and the
- * question goes to a person.
+ * already uses. Nothing here guesses past the frame: a row that merely fits is `unsure`.
+ *
+ * Every intent is a PROPOSAL with its evidence and a score, never a decision: whoever reads it (the
+ * frame-match agent's model, a person) settles what each container is. A layer's name is a fact to
+ * report ("a layer is named as a slider"), never enough on its own to settle a kind.
  *
  * One DSL per device: values are plain, for the frame's own width.
  */
@@ -95,14 +98,15 @@ function detectContainer(
   parents: Map<string, FrameIRNode | null>,
 ): LayoutIntent | undefined {
   if (isArt(container)) return undefined;
-  const items = collectionOf(container);
-  if (!items) return segmentedControl(root, container, parents);
+  const collection = collectionOf(container);
+  if (!collection) return segmentedControl(root, container, parents);
+  const items = collection.items;
   const arranged = arrangement(items.map(box));
   if (!arranged) return undefined;
 
   const clip = clipBoxOf(root, container, parents);
-  const first = box(items[0]!);
-  const evidence: string[] = [];
+  // items grouped only by the name a designer gave them: said, so a reader can weigh it
+  const evidence: string[] = collection.byName ? [`grouped as siblings named "${collection.byName}" alike, drawn the same size`] : [];
   const base = {
     src: container.id,
     name: container.name,
@@ -112,7 +116,7 @@ function detectContainer(
 
   if (arranged.kind === "grid") {
     if (items.length < MIN_ITEMS) return undefined;
-    evidence.push(`${items.length} matching items on ${arranged.columns} columns and ${arranged.rows} rows`);
+    evidence.unshift(`${items.length} matching items on ${arranged.columns} columns and ${arranged.rows} rows`);
     const choice: LayoutChoice = {
       src: container.id,
       kind: "grid",
@@ -124,7 +128,7 @@ function detectContainer(
   if (arranged.kind === "column") {
     if (items.length < MIN_ITEMS) return undefined;
     const below = cutOff(items, clip, "y");
-    evidence.push(`${items.length} matching items in one column`);
+    evidence.unshift(`${items.length} matching items in one column`);
     if (below > 0) evidence.push(`${below} cut off by the bottom edge: the list scrolls`);
     return {
       ...base,
@@ -177,24 +181,19 @@ function detectContainer(
       clip,
       chrome,
       dots,
-      [`${items.length} matching items in one row`, ...carouselEvidence],
+      [`${items.length} matching items in one row`, ...evidence, ...carouselEvidence],
       Math.min(1, strong),
     );
   }
 
   // Two labels are tabs only as one control (a segmented toggle): apart, they are two buttons.
   if (items.length >= MIN_ITEMS || touching(items) || namedTabs(container, items)) {
-    const tabs = tabsIntent(base, container, items, [`${items.length} matching items in one row`]);
+    const tabs = tabsIntent(base, container, items, [`${items.length} matching items in one row`, ...evidence]);
     if (tabs) return tabs;
   }
 
   if (items.length < MIN_ITEMS) return undefined;
-  evidence.push(`${items.length} matching items in one row`);
-
-  if (/\b(menu|nav|navigation)\b/i.test(container.name)) {
-    evidence.push("named as navigation");
-    return { ...base, kind: "row", confidence: "likely", score: 0.75, evidence, ask: [], choice: { src: container.id, kind: "row" }, chrome: {} };
-  }
+  evidence.unshift(`${items.length} matching items in one row`);
 
   // Nothing is cut off and nothing is drawn to move it: the weaker signs add up. A static frame
   // of a carousel looks like this, and so does a fixed row, so the score is rarely high.
@@ -231,12 +230,13 @@ function detectContainer(
 const CAROUSEL_DOUBT = 0.35;
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
-/** Layer names that mean "this scrolls", on the container or the layer holding it. */
-const SLIDER_NAME = /(slider|carou?sel|swiper|slides?\b|scroller|scrollable|\brail\b|\bstrip\b)/i;
+/** Layer names a designer gives a slider, on the container or the layer holding it: reported, never weighed. */
+const SLIDER_NAME = /(slider|carou?sel|swiper|slides?\b|scroller|scrollable)/i;
 
 /**
- * The signs of a carousel in a row whose items all fit: each adds its weight, a sign against takes
- * it off. None is proof; together they say how likely a designer meant a slider.
+ * The signs of a carousel in a row whose items all fit: each measured sign adds its weight, a sign
+ * against takes it off. None is proof; together they are the proposal's score. A layer's name is
+ * reported with them and adds nothing: a name is what a designer typed, not what the frame shows.
  */
 function weakCarouselSignals(
   root: FrameIRNode,
@@ -252,8 +252,7 @@ function weakCarouselSignals(
   const fills = items.every((i) => i.layout.sizing.w === "fill");
   const parent = parents.get(container.id);
   if (SLIDER_NAME.test(container.name) || (parent && SLIDER_NAME.test(parent.name))) {
-    score += 0.5;
-    up.push(`a layer is named as a slider ("${SLIDER_NAME.test(container.name) ? container.name : parent!.name}")`);
+    up.push(`a layer is named "${SLIDER_NAME.test(container.name) ? container.name : parent!.name}" (a name, not a measurement)`);
   }
   const cards = first.w >= CARD.w && first.h >= CARD.h;
   if (!fills && cards && items.length >= 4) {
@@ -384,12 +383,13 @@ function isArt(n: FrameIRNode): boolean {
 }
 
 /**
- * The largest set of children that are one thing repeated.
+ * The largest set of children that are one thing repeated, and the name that grouped them when
+ * only a name did.
  *
  * Instances group by name: a component's variants (the active fixture card, the selected tab)
  * have different keys and shapes but one name. Everything else groups by shape.
  */
-function collectionOf(container: FrameIRNode): FrameIRNode[] | undefined {
+function collectionOf(container: FrameIRNode): { items: FrameIRNode[]; byName?: string } | undefined {
   const groups = new Map<string, FrameIRNode[]>();
   for (const child of container.children ?? []) {
     if (isArt(child) || isRule(child) || child.layout.positioning === "absolute") continue;
@@ -412,11 +412,13 @@ function collectionOf(container: FrameIRNode): FrameIRNode[] | undefined {
     if (Math.abs(first.w - b.w) > TOL || Math.abs(first.h - b.h) > TOL) continue;
     groups.set(key, [...group, child]);
   }
-  let best: FrameIRNode[] | undefined;
+  let best: { items: FrameIRNode[]; byName?: string } | undefined;
   for (const [key, group] of groups) {
     // a pair named alike is a toggle's two halves, which `segmentedControl` reads as one control
     const least = key.startsWith("n:") ? 3 : 2;
-    if (group.length >= least && group.length > (best?.length ?? 0)) best = group;
+    if (group.length >= least && group.length > (best?.items.length ?? 0)) {
+      best = key.startsWith("n:") ? { items: group, byName: key.slice(2) } : { items: group };
+    }
   }
   return best;
 }
@@ -659,13 +661,13 @@ function tabsIntent(
   evidence.push(
     `each item is one label, and only "${tabs.options[tabs.active]}" is drawn differently: the selected tab`,
   );
-  const named = namedTabs(container, items);
-  if (named) evidence.push("the layers are named as tabs");
+  // a name is reported, and is no more certain than the drawing: what a person reads it as decides
+  if (namedTabs(container, items)) evidence.push("the layers are named as tabs (a name, not a measurement)");
   return {
     ...base,
     kind: "tabs",
-    confidence: named ? "certain" : "likely",
-    score: named ? 0.9 : 0.7,
+    confidence: "likely",
+    score: 0.7,
     evidence,
     ask: [],
     choice: { src: container.id, kind: "tabs", config: tabs },

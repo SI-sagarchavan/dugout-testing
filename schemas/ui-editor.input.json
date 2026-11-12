@@ -6,6 +6,21 @@
       "type": "string",
       "pattern": "^https?:\\/\\/",
       "description": "The preview link the comments were left on: /preview/<project>/<tree>?…"
+    },
+    "section": {
+      "description": "The section the comments are on: the run Studio opens for it (the run that built it). Its comments and versions are kept under it",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "comments": {
+      "description": "The comments the host handed to this run, by id; left out, the open ones on the preview",
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      }
     }
   },
   "required": [

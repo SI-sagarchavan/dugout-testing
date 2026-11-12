@@ -88,7 +88,8 @@ const humanise = (name: string): string =>
   LABELS[name] ?? name.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
 
 /** Props whose subtree is too structural to edit by hand here: edited through a comment instead. */
-const SKIPPED = new Set(["when", "controlFor", "clock", "states", "transition", "deviations", "platform"]);
+// behaviour (`on`, `statesWhen`, `machine`, `follow`) is the section's machine's, edited as one, not prop by prop
+const SKIPPED = new Set(["when", "controlFor", "clock", "states", "transition", "deviations", "platform", "on", "statesWhen", "machine", "follow"]);
 
 function controlOf(type: FieldType): PanelControl {
   switch (type.k) {

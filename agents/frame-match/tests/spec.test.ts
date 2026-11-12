@@ -9,7 +9,10 @@ describe("frame-match memory", () => {
     expect(spec.memory.write).toEqual([]);
   });
 
-  it("has no memory tools, since there is nothing for them to read or write", () => {
-    expect(spec.tools.filter((tool) => tool.startsWith("memory."))).toEqual([]);
+  it("reads how sections were built before (ADR 0034) and proposes and writes nothing", () => {
+    expect(spec.tools.filter((tool) => tool.startsWith("memory."))).toEqual([
+      "memory.read",
+      "memory.search",
+    ]);
   });
 });

@@ -49,6 +49,8 @@ export const DRAFT_QUESTIONS = [
     ],
     allowOther: false,
     proposed: ["measured"],
+    remember: "no",
+    fact: "",
   },
   {
     id: "title",
@@ -58,6 +60,8 @@ export const DRAFT_QUESTIONS = [
     options: [],
     allowOther: false,
     proposed: ["Season opener"],
+    remember: "no",
+    fact: "",
   },
 ];
 

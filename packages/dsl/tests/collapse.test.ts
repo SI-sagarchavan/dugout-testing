@@ -355,10 +355,19 @@ describe("Repeater.slice", () => {
     expect(codes(repeater({ slice: [-1, 3] }))).toContain("S13");
   });
 
-  it("rejects a slice that is not a pair of integers", () => {
-    expect(codes(repeater({ slice: [1] }))).toContain("S13");
+  it("rejects a slice that is not a pair of integers, or one start", () => {
     expect(codes(repeater({ slice: [1, 2, 3] }))).toContain("S13");
     expect(codes(repeater({ slice: [0.5, 3] }))).toContain("S13");
+    expect(codes(repeater({ slice: [0.5] }))).toContain("S13");
+    expect(codes(repeater({ slice: [] }))).toContain("S13");
+  });
+
+  it("takes [start] as from start to the end of the list, however long it grows", () => {
+    // the cards after a mosaic bound by position, as LOAD MORE adds pages
+    expect(codes(repeater({ slice: [1] }))).not.toContain("S13");
+    expect(codes(tiers([0, 1], [1, 3], [3]))).toEqual([]);
+    const result = validate(tiers([0, 1], [1, 3], [2]), { registry: registry() });
+    expect(issuesByCode(result, "S14")[0]!.message).toMatch(/\[2\] over the same .* items 2\.\.2 are drawn twice/);
   });
 
   /**
@@ -387,7 +396,7 @@ describe("Repeater.slice", () => {
 // ---------------------------------------------------------------------------
 
 /** Three columns, each holding a Repeater over one source. */
-function tiers(...windows: [number, number][]): FlatTree {
+function tiers(...windows: Array<[number, number] | [number]>): FlatTree {
   const nodes: FlatNode[] = [{ id: "root", parent: null, idx: 0, type: "Stack", src: "1:1", props: {} }];
   windows.forEach((slice, i) => {
     nodes.push({ id: `col${i}`, parent: "root", idx: i, type: "Stack", src: `2:${i}`, props: {} });

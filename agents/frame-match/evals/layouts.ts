@@ -7,8 +7,8 @@
  * listed are not scored, except that a carousel anywhere unlisted is a failure: a static row
  * shipped as a carousel is the worse mistake.
  *
- * `confidence` is how sure detection should be: `unsure` means the frame cannot tell, and the
- * right result is a question for a person.
+ * `confidence` is how sure detection should be: `unsure` means the frame cannot tell. Detection only
+ * proposes: frame-match's model settles every carousel and tab bar, whatever the confidence.
  */
 
 import type { Confidence, LayoutKind } from "../src/layout.ts";
@@ -99,7 +99,9 @@ export const LAYOUT_LABELS: Record<string, LayoutLabel[]> = {
       src: "294:14767",
       what: "SCORECARD / SQUAD / GRAPHS / MORE INFO, GRAPHS selected",
       kind: "tabs",
-      confidence: "certain",
+      // was "certain" because its layers are named "tabs": a name is evidence, not certainty, and
+      // frame-match's model settles every tab bar, so detection proposes it as likely
+      confidence: "likely",
     },
     {
       src: "294:14097",

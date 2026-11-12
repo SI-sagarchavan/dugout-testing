@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AUTO_APPROVED, type RunEvent } from "@dugout/contracts";
-import { createPool } from "@dugout/db";
+import { AUTO_APPROVED, memoryRunState, type RunEvent } from "@dugout/contracts";
+import { createPool, withTenant } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
 import { afterAll, beforeEach, describe, expect, inject, it } from "vitest";
 import {
@@ -90,6 +90,7 @@ describe("tenant isolation", () => {
         tenantId,
         runId: "r",
         signal: new AbortController().signal,
+        state: memoryRunState(),
       });
     expect(await run(a)).toHaveLength(1);
     expect(await run(b)).toEqual([]);
@@ -246,7 +247,7 @@ describe("episodes", () => {
     expect(found.map((l) => l.content)).toEqual(["Never use betting language in previews"]);
   });
 
-  it("leave a run record of how each run ended, alongside its lessons", async () => {
+  it("leave the lesson and no run record (ADR 0034)", async () => {
     const runId = randomUUID();
     const ev = (seq: number, type: string, data: unknown) =>
       ({ runId, seq, at: "2026-10-30T00:00:00Z", type, data }) as RunEvent;
@@ -282,10 +283,14 @@ describe("episodes", () => {
       ],
     });
     expect(out.episodes.map((e) => e.episodeType)).toEqual(["lesson"]);
-    expect(out.run).toMatchObject({
-      episodeType: "run",
-      content: 'Input {"id":"c-1"}: completed. Reviewer asked for a change: "Shorter title".',
-    });
+    expect(out).not.toHaveProperty("run");
+    const { rows } = await withTenant(pool, a, (db) =>
+      db.query(
+        "select count(*)::int as n from memory_items where source_run_id = $1 and episode_type = 'run'",
+        [runId],
+      ),
+    );
+    expect(rows[0].n).toBe(0);
   });
 });
 
@@ -604,7 +609,7 @@ describe("consolidation", () => {
         ev(4, "run.completed", { status: "rejected", output: null, usage: {} }),
       ],
     });
-    const text = JSON.stringify([out.episodes, out.run]);
+    const text = JSON.stringify(out.episodes);
     expect(text).not.toContain("example.com");
     expect(text).not.toContain("example.org");
     expect(text).toContain("[REDACTED:email]");
@@ -806,14 +811,14 @@ describe("context builder", () => {
 
     const full = await context();
     expect(full.text).toContain("## Skill: preview\n\nWrite a preview.");
-    // run records are still written but no longer shown
+    // run records are no longer written (ADR 0034); the ones still stored are not shown
     expect(full.text).not.toContain("Similar past runs");
     expect(full.text).not.toContain("Input preview headline: completed.");
     // lessons are recalled memory: in `recalled`, with the date, not in the instructions
     expect(full.text).not.toContain("Lessons from past runs");
     expect(full.text).not.toContain("Lesson 0");
     expect(full.recalled).toMatch(
-      /^<recalled_memory>\nToday is \d{4}-\d{2}-\d{2}\.\n\n## Lessons from past runs\n\n/,
+      /^<recalled_memory>\nToday is \d{4}-\d{2}-\d{2} \(UTC\)\.\n\n## Lessons from past runs\n\n/,
     );
     expect(full.recalled).toContain("Lesson 0 about the preview headline");
     expect(full.recalled).toMatch(/<\/recalled_memory>$/);
@@ -844,7 +849,7 @@ describe("context builder", () => {
     const first = await context({ query: "cup final", now: new Date("2026-03-04T23:30:00Z") });
     const second = await context({ query: "derby headline" });
     expect(second.text).toBe(first.text);
-    expect(first.recalled).toContain("Today is 2026-03-04.");
+    expect(first.recalled).toContain("Today is 2026-03-04 (UTC).");
     expect(first.recalled).not.toEqual(second.recalled);
   });
 
@@ -877,6 +882,47 @@ describe("context builder", () => {
     expect(nothing.text).toContain("## Skill: preview");
   });
 
+  it("tells every run the date, with or without recalled memory", async () => {
+    const plain = await context({
+      readSemantic: false,
+      readEpisodic: false,
+      now: new Date("2026-03-04T23:30:00Z"),
+    });
+    expect(plain.recalled).toBe("Today is 2026-03-04 (UTC).");
+  });
+
+  it("puts the agent's own approved lessons in its instructions, whatever else it reads", async () => {
+    await fact(a, "lesson.1a2b3c4d", "Never use betting language.", AGENT);
+    await fact(a, "lesson.5e6f7a8b", "Lead with the venue.", "another-agent");
+    await fact(a, "style.a", "Fact one about spelling");
+
+    // an agent that reads no house facts still reads what reviewers taught it
+    const skillsOnly = await context({
+      readSemantic: false,
+      readEpisodic: false,
+      readLessons: true,
+    });
+    expect(skillsOnly.text).toContain(
+      "## Rules reviewers taught you\n\nWhat reviewers said about your earlier work often enough that a person approved it as a rule. Follow them.\n\n- Never use betting language.",
+    );
+    expect(skillsOnly.text).not.toContain("Lead with the venue.");
+    expect(skillsOnly.text).not.toContain("Fact one about spelling");
+
+    // a pin that leaves lessons out does not hide the agent's own
+    const pinned = await context({ pin: ["style."], readEpisodic: false, readLessons: true });
+    expect(pinned.text).toContain("- Fact one about spelling");
+    expect(pinned.text).toContain("- Never use betting language.");
+
+    // read with the house facts already: said once
+    const all = await context({ readEpisodic: false, readLessons: true });
+    expect(all.text.match(/Never use betting language\./g)).toHaveLength(1);
+    expect(all.text).not.toContain("Rules reviewers taught you");
+
+    // and not at all for an agent that does not ask
+    const off = await context({ readSemantic: false, readEpisodic: false });
+    expect(off.text).not.toContain("Never use betting language.");
+  });
+
   it("lists skills to load by name and description, without their text", async () => {
     const { text, sources } = await context({ onDemandSkills: ["derby"] });
     expect(text).toContain(
@@ -893,7 +939,12 @@ describe("context builder", () => {
 });
 
 describe("skill.load", () => {
-  const ctx = { tenantId: "t", runId: "r", signal: new AbortController().signal };
+  const ctx = {
+    tenantId: "t",
+    runId: "r",
+    signal: new AbortController().signal,
+    state: memoryRunState(),
+  };
 
   it("returns an on-demand skill whole, and only one the agent lists", async () => {
     const dir = await mkdtemp(join(tmpdir(), "skills-"));

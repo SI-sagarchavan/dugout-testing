@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Tool, ToolContext } from "@dugout/contracts";
+import { memoryRunState, type Tool, type ToolContext } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import { createBindTools, type Plane } from "../src/tools.ts";
 
@@ -119,6 +119,7 @@ const ctx = (runId: string, slot: unknown): ToolContext => ({
   tenantId: `slot-${runId}`,
   runId,
   signal: new AbortController().signal,
+  state: memoryRunState(),
   input: { preview: `http://localhost:3000/preview/default/${TREE_ID}`, data: "ds", slot },
 });
 const tool = (tools: Tool[], name: string) => tools.find((t) => t.name === name) as Tool;

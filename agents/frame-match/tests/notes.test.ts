@@ -1,6 +1,5 @@
-import type { Message } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
-import { listedNoteIds, notesOf, unreportedNotes } from "../src/notes.ts";
+import { notesOf, unreportedNotes } from "../src/notes.ts";
 
 const names = new Map([
   ["1:1", "Home"],
@@ -38,17 +37,8 @@ describe("designer notes", () => {
     );
   });
 
-  it("reads the ids a tool listed, and asks for the ones the answer misses", () => {
-    const messages: Message[] = [
-      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "frame.load", input: {} }] },
-      {
-        role: "tool",
-        toolCallId: "c1",
-        content: JSON.stringify({ designerNotes: [{ id: "n1" }, { id: "n2" }] }),
-      },
-    ] as Message[];
-    const listed = listedNoteIds(messages, "frame.load");
-    expect(listed).toEqual(["n1", "n2"]);
+  it("asks for the notes the answer misses", () => {
+    const listed = ["n1", "n2"];
     expect(
       unreportedNotes(listed, [{ id: "n1", status: "addressed", detail: "carousel" }]),
     ).toMatch(/n2/);

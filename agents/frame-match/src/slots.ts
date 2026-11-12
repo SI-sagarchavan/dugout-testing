@@ -29,6 +29,8 @@ export interface FoundSlot {
   why?: string;
   /** The structural signature of its layers, as the section library signs one. */
   signature: string;
+  /** Parts the finder joined into it for sitting side by side: a proposal, kept apart by `apart`. */
+  joined?: Array<[string, string]>;
 }
 
 export interface FoundSlots {
@@ -51,14 +53,16 @@ export function findFrameSlots(
   bundle: Bundle,
   joins: readonly Join[] = [],
   shape?: SlotShape,
+  /** Pairs the finder would join for sitting side by side that were said to be two sections. */
+  apart: readonly Join[] = [],
 ): FoundSlots {
   const doc = bundle.doc as unknown as IrDoc;
-  const found = findSlots(
-    doc,
-    shape
+  const found = findSlots(doc, {
+    ...(shape
       ? { layouts: shape.layouts, groups: shape.groups }
-      : { layouts: tools.detectLayout(bundle.doc) },
-  );
+      : { layouts: tools.detectLayout(bundle.doc) }),
+    apart,
+  });
   const within = (id: string): string[] => {
     const out: string[] = [];
     const walk = (n: IrNode) => {
@@ -81,6 +85,7 @@ export function findFrameSlots(
         confidence: s.confidence,
         ...(s.why ? { why: s.why } : {}),
         signature: tools.sign && layers.length > 0 ? tools.sign(holding(layers) as never) : s.id,
+        ...(s.joined && s.joined.length > 0 ? { joined: s.joined } : {}),
       };
     });
   const sign = (ids: string[]) => {
@@ -120,6 +125,7 @@ export function joined(
     if (group.length === 1) return group[0] as FoundSlot;
     const nodes = group.flatMap((s) => s.nodes);
     const named = group.find((s) => s.confidence === "sure") ?? group[0];
+    const merged = group.flatMap((s) => s.joined ?? []);
     return {
       id: (group[0] as FoundSlot).id,
       name: (named as FoundSlot).name,
@@ -127,6 +133,7 @@ export function joined(
       ir: group.flatMap((s) => s.ir),
       confidence: "sure" as const,
       signature: sign(nodes),
+      ...(merged.length > 0 ? { joined: merged } : {}),
     };
   });
 }
@@ -136,6 +143,13 @@ export const SPLIT_QUESTION = "section_split";
 export const KEEP_APART = "apart";
 /** A join as a candidate's value: the ids of the two parts, joined by `+`. */
 export const joinValue = ([a, b]: Join) => `${a}+${b}`;
+/** A pair kept apart as a candidate's value: the ids of the two parts, split by `|`. */
+export const apartValue = ([a, b]: Join) => `${a}|${b}`;
+
+/** The pairs the finder joined for sitting side by side, with the part each is now in. */
+export function joinedPairs(found: FoundSlots): Array<{ pair: Join; in: FoundSlot }> {
+  return found.slots.flatMap((slot) => (slot.joined ?? []).map((pair) => ({ pair, in: slot })));
+}
 
 /**
  * The parts the finder was unsure of, as joins a person may make: a heading with nothing under it
@@ -170,29 +184,54 @@ export function splitChoices(found: FoundSlots): { joins: Join[]; proposed: Join
 
 /**
  * What is open about the split (ADR 0029, 0033 amendment), as data and never as a question: the
- * parts the finder was unsure of, each join a tool can make, the finder's own proposal and what
- * memory holds. Nothing when the finder was sure. The agent's model settles it from memory, from
- * the evidence, or by asking a person in its own words, and passes the joins to `frame.split`.
+ * parts the finder was unsure of, each join a tool can make, the parts it joined itself for
+ * sitting side by side (each a pair that can be kept apart), the finder's own proposal and what
+ * memory holds. Nothing when the finder was sure and joined nothing. The agent's model settles it
+ * from memory, from the evidence, or by asking a person in its own words, and passes the joins (and
+ * the pairs to keep apart) to `frame.split`.
  */
 export function splitOpen(found: FoundSlots, before?: string): OpenItem | undefined {
   const { joins, proposed } = splitChoices(found);
-  if (joins.length === 0) return undefined;
+  const merged = joinedPairs(found);
+  if (joins.length === 0 && merged.length === 0) return undefined;
   const name = (id: string) => found.slots.find((s) => s.id === id)?.name ?? id;
   const unsure = found.slots.filter((s) => s.confidence === "unsure");
+  const proposal = [
+    ...(proposed.length > 0 ? proposed.map(joinValue) : joins.length > 0 ? [KEEP_APART] : []),
+    ...(merged.length > 0 ? ["the side-by-side joins stand"] : []),
+  ];
   return {
     id: SPLIT_QUESTION,
     about: "which parts of the frame are one section",
-    evidence: `The frame reads as ${found.slots.length} parts (${found.slots.map((s) => `${s.name} [${s.id}]`).join(", ")}), and some are unclear: ${unsure.map((s) => `${s.name}: ${s.why ?? "unsure"}`).join("; ")}. Each section is bound to its own data, so parts joined here share one data source.`,
+    holds: "section",
+    evidence: [
+      `The frame reads as ${found.slots.length} parts (${found.slots.map((s) => `${s.name} [${s.id}]`).join(", ")}).`,
+      ...(unsure.length > 0
+        ? [`Unclear: ${unsure.map((s) => `${s.name}: ${s.why ?? "unsure"}`).join("; ")}.`]
+        : []),
+      ...(merged.length > 0
+        ? [
+            `The finder joined layers that sit side by side on one row into one part: ${merged.map((m) => `${m.pair[0]} and ${m.pair[1]} (now in ${m.in.name} [${m.in.id}])`).join("; ")}.`,
+          ]
+        : []),
+      "Each section is bound to its own data, so parts joined share one data source.",
+    ].join(" "),
     candidates: [
-      { value: KEEP_APART, does: "each part is its own section (joins [])" },
+      ...(joins.length > 0
+        ? [{ value: KEEP_APART, does: "each part is its own section (joins [])" }]
+        : []),
       ...joins.map((pair) => ({
         value: joinValue(pair),
         does: `${name(pair[0])} and ${name(pair[1])} are one section, bound together to one data source`,
       })),
+      ...merged.map((m) => ({
+        value: apartValue(m.pair),
+        does: `${m.pair[0]} and ${m.pair[1]} are two sections, each bound to its own data (apart)`,
+      })),
     ],
-    proposed: proposed.length > 0 ? proposed.map(joinValue).join(", ") : KEEP_APART,
+    proposed: proposal.join(", "),
     canTake:
-      "frame.split's joins: [{ upper, lower }, ...], any pairs of the parts' ids above (the upper one first); [] keeps every part apart",
+      "frame.split's joins: [{ upper, lower }, ...], any pairs of the parts' ids above (the upper one first), [] for none; and apart: [{ first, second }, ...], the side-by-side pairs above that are two sections",
     ...(before ? { before } : {}),
   };
 }

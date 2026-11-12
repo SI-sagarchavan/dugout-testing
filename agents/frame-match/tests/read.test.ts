@@ -58,6 +58,8 @@ describe("the outline the vision model names layers from", () => {
     expect(prompt).toContain("1366 x 768 px");
     expect(prompt).toContain('"slide":["h2","h6"]');
     expect(prompt).toContain(outline.lines[0]);
+    // nothing in it names one design or one sport
+    expect(prompt).not.toMatch(/sports|match card|feature blocks|fixtures/);
   });
 });
 
@@ -135,7 +137,7 @@ describe("a reading checked against the IR", () => {
     expect(reading.parts[1]?.nodes).toEqual(["I542:10713;13744:55540"]);
   });
 
-  it("does not apply a carousel nothing drawn moves, and drops what the IR does not bear out", () => {
+  it("proposes a carousel nothing drawn moves as unsure, and reports what the IR does not bear out", () => {
     const raw = parsed(
       JSON.stringify({
         layouts: [
@@ -152,8 +154,10 @@ describe("a reading checked against the IR", () => {
     const reading = checkReading(raw, outline, ir);
     expect(reading.layouts[0]).toMatchObject({ confidence: "unsure", alternative: "row" });
     expect(reading.groups).toEqual([]);
-    expect(reading.dropped.join(" ")).toMatch(/too big for an arrow/);
-    expect(reading.dropped.join(" ")).toMatch(/not a text with a number/);
+    expect(reading.dropped.join(" ")).toMatch(/larger than an arrow's 96px/);
+    expect(reading.dropped.join(" ")).toMatch(/IMAGE layer, not a text/);
+    // said on the container too, with the values, for the agent to weigh
+    expect(reading.layouts[0]?.evidence.join(" ")).toMatch(/not in the proposal: prev .* larger/);
   });
 
   it("refuses handles that are not in the outline, and a reply that is not JSON", () => {
@@ -263,13 +267,16 @@ describe("a reading on the band around a carousel", () => {
     },
   ];
 
-  it("is the carousel the IR finds inside the band, applied when the two agree", () => {
+  it("is the carousel the IR finds inside the band, the reading's score kept as its own", () => {
     const raw = parsed(
       JSON.stringify({ layouts: [{ kind: "carousel", container: stripHandle, sure: 0.5 }] }),
     );
     const reading = checkReading(raw, stripOutline, { byId, parents }, detected);
     const carousel = reading.layouts.find((l) => l.choice.kind === "carousel");
-    expect(carousel).toMatchObject({ src: "row", confidence: "certain" });
+    // the IR being sure does not raise the reading's score: it is evidence beside it
+    expect(carousel).toMatchObject({ src: "row", confidence: "unsure", score: 0.5 });
+    expect(carousel?.evidence).toContain("the IR detector proposes carousel (certain)");
+    expect(carousel?.evidence.join(" ")).toContain('the IR finds its items in "cards" inside it');
     // what the IR measures stays: centred on the third card
     expect(carousel?.choice).toMatchObject({ config: { centered: true, initialSlide: 2 } });
     expect(reading.layouts.filter((l) => l.src === "row")).toHaveLength(1);
@@ -283,7 +290,7 @@ describe("a reading on the band around a carousel", () => {
     const reading = checkReading(raw, stripOutline, { byId, parents }, detected);
     expect(reading.layouts.find((l) => l.choice.kind === "carousel")).toMatchObject({
       src: "row",
-      confidence: "certain",
+      score: 0.7,
     });
   });
 });
@@ -304,6 +311,9 @@ describe("a grid on one line", () => {
     // two layers stacked in the match card: one column, so a list
     const reading = checkReading(raw, outline, ir);
     expect(reading.layouts[0]?.choice.kind).toBe("list");
+    // the reading's grid stays in view, as the other kind it may be
+    expect(reading.layouts[0]?.alternative).toBe("grid");
+    expect(reading.layouts[0]?.evidence.join(" ")).toContain("read as a grid");
   });
 });
 

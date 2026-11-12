@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ControlPlane } from "@dugout/agent-frame-match";
-import { AwaitingAnswers, defineTool, type OpenItem } from "@dugout/contracts";
+import { AwaitingAnswers, type OpenItem } from "@dugout/contracts";
 import {
   createMemoryOutputStore,
   createMemoryRunStore,
@@ -12,15 +12,7 @@ import {
   scriptedModelConfig,
 } from "@dugout/core";
 import { describe, expect, it } from "vitest";
-import {
-  BuildArgs,
-  Final,
-  makePipeline,
-  Output,
-  slotsToBind,
-  spec,
-  threadNote,
-} from "../src/agent.ts";
+import { type BudgetDecision, makeStages, Output, settleBudget, threadNote } from "../src/agent.ts";
 import { mergeBindings } from "../src/merge.ts";
 
 const EXPORT = "6f0e8c1a-0000-4000-8000-000000000001";
@@ -87,15 +79,18 @@ const fake = () => {
     applyBindingPlan: (tree: unknown) => ({ tree, bound: 0, collapsed: 0, drift: [] }),
     check: () => [],
   };
-  const pipeline = makePipeline({ plane: () => plane, dsl: async () => dsl as never });
-  return { pipeline, uploads };
+  const build = makeStages({
+    plane: () => plane,
+    dsl: async () => dsl as never,
+  });
+  return { build, uploads };
 };
 
 describe("section-builder on a frame of two slots", () => {
   it("binds each slot with its own run, merges the plans and publishes once", async () => {
-    const { pipeline, uploads } = fake();
+    const { build, uploads } = fake();
     const calls: Array<{ agent: string; input: unknown; key?: string | undefined }> = [];
-    const answer = await pipeline.run(
+    const answer = await build(
       async (child, input, opts) => {
         calls.push({ agent: child.spec.id, input, key: opts?.key });
         if (child.spec.id === "frame-match") return frame;
@@ -142,10 +137,10 @@ describe("section-builder on a frame of two slots", () => {
   });
 
   it("reports a slot bound to another team's data as a stand-in, in the output, the remaining and the thread note", async () => {
-    const { pipeline } = fake();
+    const { build } = fake();
     const why =
       "the data is not about the design's team (Southern Brave): the hook gives an IPL squad";
-    const answer = (await pipeline.run(
+    const answer = (await build(
       async (child, input) => {
         if (child.spec.id === "frame-match") return frame;
         const id = (input as { slot: { id: string } }).slot.id;
@@ -177,8 +172,8 @@ describe("section-builder on a frame of two slots", () => {
   });
 
   it("hands a frame of one slot over as a stand-in when bind says so", async () => {
-    const { pipeline } = fake();
-    const answer = (await pipeline.run(
+    const { build } = fake();
+    const answer = (await build(
       async (child) =>
         child.spec.id === "frame-match"
           ? { ...frame, slots: [slot("sq", "the-brave-squad")] }
@@ -194,9 +189,9 @@ describe("section-builder on a frame of two slots", () => {
   });
 
   it("lists what the pass created in Cast, in the output and the thread note (ticket 12)", async () => {
-    const { pipeline } = fake();
+    const { build } = fake();
     const made = ["provider prov_1 (dugout: www.example.com)", "connector api_1 (dugout: Squad)"];
-    const answer = (await pipeline.run(
+    const answer = (await build(
       async (child, input) => {
         if (child.spec.id === "frame-match") return frame;
         const id = (input as { slot: { id: string } }).slot.id;
@@ -212,9 +207,9 @@ describe("section-builder on a frame of two slots", () => {
   });
 
   it("leaves a slot with no data as published, and binds the other", async () => {
-    const { pipeline } = fake();
+    const { build } = fake();
     const ran: string[] = [];
-    const answer = await pipeline.run(
+    const answer = await build(
       async (child, input) => {
         ran.push(child.spec.id);
         if (child.spec.id === "frame-match") {
@@ -237,8 +232,8 @@ describe("section-builder on a frame of two slots", () => {
   });
 
   it("publishes the slots that bound when another failed for good, and says which", async () => {
-    const { pipeline } = fake();
-    const answer = await pipeline.run(
+    const { build } = fake();
+    const answer = await build(
       async (child, input) => {
         if (child.spec.id === "frame-match") return frame;
         const id = (input as { slot: { id: string } }).slot.id;
@@ -262,28 +257,30 @@ describe("section-builder on a frame of two slots", () => {
     );
   });
 
-  it("fails the pass, keeping the others, when a slot has tries left", async () => {
-    const { pipeline, uploads } = fake();
-    await expect(
-      pipeline.run(
-        async (child, input) => {
-          if (child.spec.id === "frame-match") return frame;
-          const id = (input as { slot: { id: string } }).slot.id;
-          if (id === "fx") throw new Error("data-bind failed. Try 1 of 3; it may be called again");
-          return bound(id, "dugout_squad");
-        },
-        { exportId: EXPORT, project: "default" },
-      ),
-    ).rejects.toThrow(/Try 1 of 3/);
-    // nothing is published until every slot is bound or out of tries
-    expect(uploads).toEqual([]);
+  it("asks for each stage to be tried again when it fails, three times at most", async () => {
+    const { build } = fake();
+    const tries: Array<[string, number | undefined]> = [];
+    await build(
+      async (child, input, opts) => {
+        tries.push([child.spec.id, opts?.tries]);
+        if (child.spec.id === "frame-match") return frame;
+        return bound((input as { slot: { id: string } }).slot.id, "dugout_squad");
+      },
+      { exportId: EXPORT, project: "default" },
+    );
+    // the trying again is the workflow's (`ctx.run`): a slot that still fails after it is final
+    expect(tries).toEqual([
+      ["frame-match", 3],
+      ["data-bind", 3],
+      ["data-bind", 3],
+    ]);
   });
 
   it("passes a pause for a person up, not swallowing it as a failed slot", async () => {
-    const { pipeline } = fake();
+    const { build } = fake();
     const asking = new AwaitingAnswers([], ["child"]);
     await expect(
-      pipeline.run(
+      build(
         async (child, input) => {
           if (child.spec.id === "frame-match") return frame;
           if ((input as { slot: { id: string } }).slot.id === "fx") throw asking;
@@ -296,49 +293,53 @@ describe("section-builder on a frame of two slots", () => {
 
   describe("when the slots could spend more of Cast than an hour holds", () => {
     const many = Array.from({ length: 5 }, (_, i) => slot(`s${i}`, `slot-${i}`));
-    const runWith = async (args?: {
-      bind?: string[];
-      decidedBy?: "person" | "memory" | "agent";
-    }) => {
-      const { pipeline } = fake();
+    /** Runs the pass with a settle step that answers `decided`, and says what the step was given. */
+    const runWith = async (decided: BudgetDecision = { bind: [], decidedBy: "agent" }) => {
+      const { build } = fake();
       const keys: string[] = [];
-      const answer = await pipeline.run(
-        async (child, _input, opts) => {
+      const asked: Array<{ open: OpenItem; parts: string[] }> = [];
+      const answer = await build(
+        async (child, input, opts) => {
           if (child.spec.id === "frame-match") return { ...frame, slots: many };
+          if (child.spec.id === settleBudget.spec.id) {
+            asked.push(input as { open: OpenItem; parts: string[] });
+            return decided;
+          }
           keys.push(opts?.key ?? "");
           return bound("fx", "h");
         },
         { exportId: EXPORT, project: "default" },
-        args ? { args } : {},
       );
       return {
-        answer: answer as {
+        answer: answer as unknown as {
           slots: Array<{ name: string; data: string }>;
           remaining: string[];
           settled: Array<{ id: string; by: string; value: string }>;
         },
         keys,
+        asked,
       };
     };
 
-    it("reports the budget as an open item, with its evidence, and binds nothing", async () => {
-      const { answer, keys } = await runWith();
+    it("hands the budget to a step as an open item, with its evidence, before anything is bound", async () => {
+      const { keys, asked } = await runWith();
       expect(keys).toEqual([]);
-      // no question is built by code: the model asks, in its own words
-      const open = (answer as unknown as { open: OpenItem[]; note: string }).open;
-      expect(open).toHaveLength(1);
-      expect(open[0]).toMatchObject({ id: "cast_budget" });
-      expect(open[0]?.evidence).toContain("slot-0, slot-1, slot-2, slot-3, slot-4");
-      expect(open[0]?.evidence).toContain("30 in all");
-      expect(open[0]?.evidence).toContain("25 an hour");
+      // no question is built by code: the step's model asks, in its own words
+      expect(asked).toHaveLength(1);
+      const open = asked[0]?.open;
+      expect(asked[0]?.parts).toEqual(["slot-0", "slot-1", "slot-2", "slot-3", "slot-4"]);
+      expect(open).toMatchObject({ id: "cast_budget" });
+      expect(open?.evidence).toContain("slot-0, slot-1, slot-2, slot-3, slot-4");
+      expect(open?.evidence).toContain("30 in all");
+      expect(open?.evidence).toContain("25 an hour");
       // every candidate is on offer, and what else it takes is said
-      expect(open[0]?.candidates?.map((c) => c.value)).toEqual([
+      expect(open?.candidates?.map((c) => c.value)).toEqual([
         "the first 4: slot-0, slot-1, slot-2, slot-3",
         "all 5: slot-0, slot-1, slot-2, slot-3, slot-4",
         "none",
       ]);
-      expect(open[0]?.canTake).toContain("the names of the parts to bind now");
-      expect(open[0]?.proposed).toContain("the first 4");
+      expect(open?.canTake).toContain("the names of the parts to bind now");
+      expect(open?.proposed).toContain("the first 4");
     });
 
     it("binds the parts it was told to, lists the rest as skipped, and says who decided", async () => {
@@ -373,86 +374,71 @@ describe("section-builder on a frame of two slots", () => {
       await expect(runWith({ bind: ["all"] })).rejects.toThrow(/not a part of this frame/);
     });
 
-    it("binds every part without an open item when an hour covers them", async () => {
-      const { pipeline } = fake();
-      const answer = (await pipeline.run(
-        async (child) => (child.spec.id === "frame-match" ? frame : bound("sq", "h")),
+    it("binds every part, with nothing to settle, when an hour covers them", async () => {
+      const { build } = fake();
+      const ran: string[] = [];
+      const answer = (await build(
+        async (child) => {
+          ran.push(child.spec.id);
+          return child.spec.id === "frame-match" ? frame : bound("sq", "h");
+        },
         { exportId: EXPORT, project: "default" },
-        {},
-      )) as { slots: unknown[]; settled: unknown[]; open?: unknown };
-      expect(answer.open).toBeUndefined();
+      )) as { slots: unknown[]; settled: unknown[] };
+      expect(ran).not.toContain(settleBudget.spec.id);
       expect(answer.slots).toHaveLength(2);
       expect(answer.settled).toEqual([]);
     });
   });
 
-  describe("the model settles it, and a fact memory holds settles it with no question", () => {
-    it("asks memory under the item's id, and passes what it answered as input, by memory", async () => {
-      const dir = await mkdtemp(join(tmpdir(), "dugout-sb-"));
-      const slots = ["slot-0", "slot-1", "slot-2", "slot-3", "slot-4"];
-      const seen: unknown[] = [];
-      const build = defineTool({
-        name: "page.build",
-        description: "stands in for the pipeline",
-        input: BuildArgs.strict(),
-        effect: "read",
-        timeoutMs: 1_000,
-        async run(args) {
-          seen.push(args);
-          const decision = slotsToBind(
-            slots.map((name) => ({ name })),
-            args,
-          );
-          return "open" in decision
-            ? decision.open
-            : { settled: decision.settled, bound: decision.bind.map((s) => s.name) };
+  describe("the step that settles it: its model asks, and a fact memory holds answers with no person", () => {
+    const parts = ["slot-0", "slot-1", "slot-2", "slot-3", "slot-4"];
+    const open: OpenItem = {
+      id: "cast_budget",
+      about: "which parts of this frame to bind to Cast data in this pass",
+      evidence: "5 parts show data; Cast's hour covers about 4",
+      canTake: "bind: the names of the parts to bind now",
+    };
+    const ask = {
+      toolCalls: [
+        {
+          name: "ask",
+          arguments: {
+            questions: [
+              {
+                id: "cast_budget",
+                question: "Which parts should I bind now?",
+                why: "Five parts show data; Cast's hour covers about four",
+                kind: "choice",
+                options: [
+                  { value: "first4", label: "The first four", description: "" },
+                  { value: "all", label: "All five", description: "" },
+                ],
+                allowOther: true,
+                proposed: ["first4"],
+                remember: "club",
+                fact: "cast.budget",
+              },
+            ],
+          },
         },
-      });
+      ],
+    };
+    const settle = async (finals: unknown[]) => {
       const asked: unknown[] = [];
       const sink = createMemorySink();
       const model = createScriptedModel([
-        { toolCalls: [{ name: "page.build", arguments: {} }] },
-        {
-          toolCalls: [
-            {
-              name: "ask",
-              arguments: {
-                questions: [
-                  {
-                    id: "cast_budget",
-                    question: "Which parts should I bind now?",
-                    why: "Five parts show data; Cast's hour covers about four",
-                    kind: "choice",
-                    options: [
-                      { value: "first4", label: "The first four", description: "" },
-                      { value: "all", label: "All five", description: "" },
-                    ],
-                    allowOther: true,
-                    proposed: ["first4"],
-                  },
-                ],
-              },
-            },
-          ],
-        },
-        {
-          toolCalls: [
-            {
-              name: "page.build",
-              arguments: { bind: ["slot-0", "slot-1"], decidedBy: "memory" },
-            },
-          ],
-        },
-        { toolCalls: [{ name: "final", arguments: { summary: "bound two parts" } }] },
+        ask,
+        ...finals.map((f) => ({ toolCalls: [{ name: "final", arguments: f }] })),
       ]);
       const result = await runLocal({
-        agent: { spec: { ...spec, tools: ["page.build"] }, output: Final },
-        input: "go",
+        // the step as the workflow runs it: its spec, its answer's shape and its check
+        agent: settleBudget.definition,
+        input: { open, parts },
         tenantId: "demo-cricket",
-        runId: "memory-1",
-        tools: [build],
+        tools: [],
         client: model,
         models: scriptedModelConfig(),
+        context: async () => ({ text: "", recalled: "", tokens: 0, sources: [] }),
         // a person is never asked: the club's active fact answers it
         responder: async (req) => {
           asked.push(req);
@@ -464,32 +450,54 @@ describe("section-builder on a frame of two slots", () => {
           answer: async (qs) =>
             qs.every((q) => q.id === "cast_budget") ? { cast_budget: "first4" } : undefined,
         },
-        runsDir: dir,
+        runsDir: await mkdtemp(join(tmpdir(), "dugout-sb-")),
         sinks: [sink],
         outputs: createMemoryOutputStore(),
         store: createMemoryRunStore(),
       });
-      expect(result.status).toBe("completed");
+      return { result, asked, events: sink.events, model };
+    };
+
+    it("asks memory under the item's id, and answers with the parts' names, by memory", async () => {
+      const { result, asked, events, model } = await settle([
+        { bind: ["slot-0", "slot-1"], decidedBy: "memory", why: "the club binds the first" },
+      ]);
+      expect(result).toMatchObject({
+        status: "completed",
+        output: { bind: ["slot-0", "slot-1"], decidedBy: "memory" },
+      });
       expect(asked).toEqual([]);
       // the question went to memory, which answered it: no person was stopped for
-      const answered = sink.events.filter((e) => e.type === "question.answered");
+      const answered = events.filter((e) => e.type === "question.answered");
       expect(answered).toHaveLength(1);
       expect(answered[0]?.data).toMatchObject({
         source: "memory",
         answers: { cast_budget: "first4" },
       });
-      // the open item reached the model as data; the decision came back as ordinary input
-      expect(seen).toEqual([{}, { bind: ["slot-0", "slot-1"], decidedBy: "memory" }]);
-      const out = model.requests[3]?.messages.at(-1);
-      expect(String(out?.content)).toContain('"by":"memory"');
+      // what the club answers is a fact: the question says so, for memory to learn it
+      const question = events.find((e) => e.type === "question.asked")?.data.questions[0];
+      expect(question?.about).toMatchObject({ scope: "tenant", fact: "cast.budget" });
+      // the open item reached the model as data
+      expect(String(model.requests[0]?.messages[1]?.content)).toContain("Cast's hour covers");
+    });
+
+    it("refuses a word that is not a part's name, and takes the names", async () => {
+      const { result, events } = await settle([
+        { bind: ["all"], decidedBy: "agent", why: "all of them" },
+        { bind: parts, decidedBy: "agent", why: "all of them" },
+      ]);
+      expect(events.filter((e) => e.type === "final.refused").map((e) => e.data.reason)).toEqual([
+        "bind names all, which is not a part of this frame that shows data. The parts are: slot-0, slot-1, slot-2, slot-3, slot-4",
+      ]);
+      expect(result).toMatchObject({ status: "completed", output: { bind: parts } });
     });
   });
 
   it("hands over a frame of one slot as before, with a slots entry of one", async () => {
-    const { pipeline } = fake();
+    const { build } = fake();
     const one = { ...frame, slots: [slot("fx", "the-road-ahead")] };
     const calls: unknown[] = [];
-    const answer = await pipeline.run(
+    const answer = await build(
       async (child, input, opts) => {
         calls.push([child.spec.id, input, opts]);
         return child.spec.id === "frame-match" ? one : bound("fx", "dugout_fixtures");
@@ -497,7 +505,7 @@ describe("section-builder on a frame of two slots", () => {
       { exportId: EXPORT, project: "default" },
     );
     // bind gets the whole preview, no slot and no key
-    expect(calls[1]).toEqual(["data-bind", { preview: frame.previewUrl }, undefined]);
+    expect(calls[1]).toEqual(["data-bind", { preview: frame.previewUrl }, { tries: 3 }]);
     expect(answer).toMatchObject({
       slots: [{ name: "the-road-ahead", data: "bound", hookId: "dugout_fixtures", bound: 5 }],
     });

@@ -268,7 +268,9 @@ describe("tabs", () => {
     const bar = n({ name: "Tab", at: [0, 0, 926, 40], mode: "horizontal", children: labels.map((l, i) => tab(i, l, i === 2)) });
     const [intent] = detectLayout(doc(bar));
     expect(intent?.kind).toBe("tabs");
-    expect(intent?.confidence).toBe("certain");
+    // named "tabs": said as evidence, and no more certain than the drawing
+    expect(intent?.confidence).toBe("likely");
+    expect(intent?.evidence.join(" ")).toContain("named as tabs (a name, not a measurement)");
     expect(intent?.choice).toEqual({ src: bar.id, kind: "tabs", config: { options: labels, active: 2 } });
   });
 
@@ -331,12 +333,23 @@ describe("scores", () => {
     expect(fits?.context.join(" ")).toContain("4 items of");
   });
 
-  it("is sure of a row named as a slider that is made of fixed-width cards", () => {
-    const slider = row(cards(5), 1172);
+  it("reports a slider's name as evidence and scores the row by what it measures", () => {
+    const slider = row(cards(4), 1172);
     slider.name = "Squad slider";
-    const [intent] = detectLayout(doc(slider));
-    expect(intent?.kind).toBe("carousel");
-    expect(intent?.score).toBeGreaterThanOrEqual(0.6);
+    const [named] = detectLayout(doc(slider));
+    const [plain] = detectLayout(doc(row(cards(4), 1172)));
+    expect(named?.kind).toBe(plain?.kind);
+    expect(named?.score).toBe(plain?.score);
+    expect(named?.evidence.join(" ")).toContain('a layer is named "Squad slider" (a name, not a measurement)');
+  });
+
+  it("does not make a row a fixed row because it is named as a menu", () => {
+    const menu = row(cards(4), 1172);
+    menu.name = "Main menu";
+    const [named] = detectLayout(doc(menu));
+    const [plain] = detectLayout(doc(row(cards(4), 1172)));
+    expect(named?.kind).toBe(plain?.kind);
+    expect(named?.score).toBe(plain?.score);
   });
 
   it("gives every intent a score between 0 and 1", () => {
@@ -647,6 +660,39 @@ describe("a carousel that draws one slide", () => {
     expect(errors.filter((e) => e.code.startsWith("S")).map((e) => `${e.nodeId} ${e.path} ${e.message}`)).toEqual([]);
   });
 
+  /** The hero with its progress bar: a 161px track after the arrows, and a 33px segment drawn at its start. */
+  const withBar = (): { tree: FlatTree; doc: FrameIRDocument } => {
+    const tree = hero();
+    tree.nodes.push(
+      { id: "track", parent: "controls", idx: 3, type: "Divider", src: "9:10", props: { orientation: "horizontal", size: { w: { raw: 161, _unbound: true } } } },
+      { id: "segment", parent: "controls", idx: 4, type: "Box", src: "9:11", props: { size: { w: { raw: 33, _unbound: true }, h: { raw: 2, _unbound: true } } } },
+    );
+    const part = (id: string, at: [number, number, number, number]) => Object.assign(n({ at }), { id });
+    const root = Object.assign(n({ name: "hero", at: [0, 0, 1366, 768], children: [part("9:10", [1036, 657, 161, 1]), part("9:11", [1036, 657, 33, 2])] }), { id: "9:1" });
+    return { tree, doc: doc(root) };
+  };
+  const barChoice = (autoplay: false | { delayMs: number }): LayoutChoice =>
+    ({ ...choice, config: { ...choice.config, autoplay }, chrome: { ...choice.chrome, progress: "9:10" } }) as LayoutChoice;
+
+  it("fills the progress bar over each slide's time when the carousel moves on its own", () => {
+    const { tree: before, doc: d } = withBar();
+    const { tree } = lowerLayout(before, d, [barChoice({ delayMs: 5000 })]);
+    const carousel = tree.nodes.find((x) => x.type === "Carousel")!;
+    expect(carousel.props.autoplay).toEqual({ delay: { raw: 5000, _unbound: true } });
+    // the segment is the bar, as wide as the track; the track stays as drawn
+    expect(byId(tree, "segment").props).toMatchObject({ controlFor: { target: carousel.id, part: "progress" }, size: { w: { raw: 161 }, h: { raw: 2 } } });
+    expect(byId(tree, "track").props.controlFor).toBeUndefined();
+    const errors = validate(tree, { registry: createRegistry(loadTheme(THEME), { surfaces: loadSurfaces(SURFACES) }) }).errors;
+    expect(errors.filter((e) => e.code.startsWith("S")).map((e) => `${e.nodeId} ${e.path} ${e.message}`)).toEqual([]);
+  });
+
+  it("leaves the progress bar as drawn without autoplay", () => {
+    const { tree: before, doc: d } = withBar();
+    const { tree, notes } = lowerLayout(before, d, [barChoice(false)]);
+    expect(byId(tree, "segment").props).toEqual({ size: { w: { raw: 33, _unbound: true }, h: { raw: 2, _unbound: true } } });
+    expect(notes.map((x) => x.message).join(" ")).toContain("progress bar stays as drawn");
+  });
+
   it("refuses layers that are not one run: something drawn between them would change order", () => {
     const { lowered, notes } = lowerLayout(hero(), heroDoc(), [{ ...choice, slide: ["9:2", "9:9"] }]);
     expect(lowered).toEqual([]);
@@ -674,6 +720,7 @@ describe("tabs a designer named alike", () => {
     });
     const [intent] = detectLayout(doc(bar), { kinds: ["tabs"] });
     expect(intent?.items).toHaveLength(3);
+    expect(intent?.evidence.join(" ")).toContain('grouped as siblings named "second tabs" alike');
     expect(intent?.choice).toMatchObject({ kind: "tabs", config: { options: ["SPIDER", "MANHATTAN", "WORM"], active: 0 } });
   });
 

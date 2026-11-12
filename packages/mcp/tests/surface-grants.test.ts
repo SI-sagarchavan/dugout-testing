@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Tool, ToolContext } from "@dugout/contracts";
+import { memoryRunState, type Tool, type ToolContext } from "@dugout/contracts";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createMcpHost,
@@ -229,6 +229,7 @@ describe("an MCP server reached with a grant from Surface Studio", () => {
     tenantId,
     runId: "r",
     signal: new AbortController().signal,
+    state: memoryRunState(),
   });
   const run = async (tool: Tool | undefined, tenantId: string) => {
     if (!tool) throw new Error("no such tool");

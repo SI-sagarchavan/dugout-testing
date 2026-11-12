@@ -1,6 +1,6 @@
 import { type Client, type Pool, toVector, withTenant } from "@dugout/db";
 import { type DataShape, shapeWords } from "./data-shape.ts";
-import type { MultimodalEmbeddings } from "./embeddings.ts";
+import type { EmbeddingUse, MultimodalEmbeddings } from "./embeddings.ts";
 import type { Rect } from "./ir.ts";
 import type { Skeleton } from "./skeleton.ts";
 
@@ -88,9 +88,32 @@ export interface SectionQuery {
   kind?: string;
   layout?: string;
   limit?: number;
+  /** Results to skip, for the next page. */
+  offset?: number;
   /** `own` (the default): the tenant's sections. `shared`: its own and every shared one. */
   scope?: "own" | "shared";
 }
+
+/**
+ * How close to the question a section has to be to be a result at all. Rank fusion alone returns
+ * the nearest rows however far they are, so a small library fills a page with sections that have
+ * nothing to do with the question. A section is kept when its cosine similarity (words to words, a
+ * picture to pictures) is at least `floor` and within `gap` of the best match.
+ */
+export interface Relevance {
+  textFloor: number;
+  textGap: number;
+  imageFloor: number;
+  imageGap: number;
+}
+
+/** Measured on Nova embeddings (.scratch/section-library): relevant words sit within 0.06 of the best. */
+export const DEFAULT_RELEVANCE: Relevance = {
+  textFloor: 0.2,
+  textGap: 0.06,
+  imageFloor: 0.3,
+  imageGap: 0.12,
+};
 
 export interface SectionLibrary {
   findBySignature(tenantId: string, signature: string): Promise<Section | undefined>;
@@ -116,6 +139,13 @@ export interface SectionLibrary {
   setSkeleton(tenantId: string, id: string, skeleton: Skeleton): Promise<Section>;
   /** What data it shows; its words are searched from then on. */
   setDataShape(tenantId: string, id: string, shape: DataShape): Promise<Section>;
+  /**
+   * The DSL subtree that draws it, from the latest preview built from it (`sectionTree`). Its
+   * words are not embedded, and only its own club reads it: it holds that club's texts.
+   */
+  setTree(tenantId: string, id: string, tree: unknown): Promise<Section>;
+  /** The tenant's own sections of one kind and layout, newest first: what likeness is read from. */
+  ofKind(tenantId: string, kind: string, layout: string, limit?: number): Promise<Section[]>;
   /** The tenant's sections seen in a Handoff. */
   ofHandoff(tenantId: string, handoffId: string): Promise<Section[]>;
   /**
@@ -219,6 +249,7 @@ function toSection(r: Record<string, unknown>, viewer: string): Section {
     cropKey: null,
     sources: [],
     previews: [],
+    tree: null,
     modelTags: [],
     personTags: [],
     removedTags: [],
@@ -233,13 +264,17 @@ export function createSectionLibrary(opts: {
    * also ranks words. Off for the hash embedder, whose two kinds of vector mean nothing together.
    */
   crossModal?: boolean;
+  /** Which sections are close enough to be results. Default: on for a real embedder, off for the hash one. */
+  relevance?: Relevance | false;
 }): SectionLibrary {
   const { pool, embeddings } = opts;
   const crossModal = opts.crossModal ?? embeddings.model !== "hash-v1";
+  const relevance =
+    opts.relevance ?? (embeddings.model !== "hash-v1" ? DEFAULT_RELEVANCE : (false as const));
   const tx = <T>(tenantId: string, fn: (db: Client) => Promise<T>) =>
     withTenant(pool, tenantId, fn);
-  const textVector = async (text: string) =>
-    toVector((await embeddings.embedText([text]))[0] ?? []);
+  const textVector = async (text: string, use: EmbeddingUse = "index") =>
+    toVector((await embeddings.embedText([text], use))[0] ?? []);
 
   const one = async (db: Client, viewer: string, sql: string, params: unknown[]) => {
     const { rows } = await db.query(sql, params);
@@ -282,6 +317,17 @@ export function createSectionLibrary(opts: {
           [tenantId, signature],
         );
         return rows[0] ? toSection(rows[0], tenantId) : undefined;
+      }),
+
+    ofKind: (tenantId, kind, layout, limit = 200) =>
+      tx(tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select ${COLUMNS} from library_sections
+           where tenant_id = $1 and kind = $2 and layout = $3 and not hidden
+           order by updated_at desc limit $4`,
+          [tenantId, kind, layout, limit],
+        );
+        return rows.map((r) => toSection(r, tenantId));
       }),
 
     async add(tenantId, s) {
@@ -351,10 +397,13 @@ export function createSectionLibrary(opts: {
     async search(tenantId, q) {
       const text = q.text?.trim() ?? "";
       const limit = Math.min(Math.max(q.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+      const offset = Math.min(Math.max(Math.trunc(q.offset ?? 0), 0), RANKER_DEPTH * 3);
       if (!text && !q.image) throw new Error("a search needs words, an image, or both");
       const [textVec, imageVec] = await Promise.all([
-        text ? textVector(text) : undefined,
-        q.image ? embeddings.embedImages([q.image]).then(([v]) => toVector(v ?? [])) : undefined,
+        text ? textVector(text, "query") : undefined,
+        q.image
+          ? embeddings.embedImages([q.image], "query").then(([v]) => toVector(v ?? []))
+          : undefined,
       ]);
 
       const shared = q.scope === "shared";
@@ -364,11 +413,14 @@ export function createSectionLibrary(opts: {
         return `$${params.length}`;
       };
       const rankers: string[] = [];
+      let textParam: string | undefined;
+      let imageParam: string | undefined;
       const byVector = (column: string, vector: string) =>
         `select id, row_number() over (order by ${column} <=> ${vector}::vector) as r
          from candidates order by ${column} <=> ${vector}::vector limit $4`;
       if (textVec) {
         const v = param(textVec);
+        textParam = v;
         rankers.push(byVector("text_embedding", v));
         if (crossModal) rankers.push(byVector("image_embedding", v));
         const words = orQuery(text);
@@ -383,10 +435,27 @@ export function createSectionLibrary(opts: {
       }
       if (imageVec) {
         const v = param(imageVec);
+        imageParam = v;
         rankers.push(byVector("image_embedding", v));
         if (crossModal) rankers.push(byVector("text_embedding", v));
       }
       const limitParam = param(limit);
+      const offsetParam = param(offset);
+      // only words-to-words and picture-to-picture similarity counts: across kinds it is lower and
+      // the baseline differs, which is no measure of "the same thing"
+      const gate = relevance
+        ? `, sims as (
+             select id,
+               ${textParam ? `1 - (text_embedding <=> ${textParam}::vector)` : "null::float8"} as st,
+               ${imageParam ? `1 - (image_embedding <=> ${imageParam}::vector)` : "null::float8"} as si
+             from candidates where id in (select id from fused)
+           ),
+           kept as (
+             select s.id from sims s, (select max(st) as mt, max(si) as mi from sims) t
+             where (s.st is not null and s.st >= greatest(${relevance.textFloor}, t.mt - ${relevance.textGap}))
+                or (s.si is not null and s.si >= greatest(${relevance.imageFloor}, t.mi - ${relevance.imageGap}))
+           )`
+        : "";
 
       return tx(tenantId, async (db) => {
         const { rows } = await db.query(
@@ -401,13 +470,14 @@ export function createSectionLibrary(opts: {
            ),
            fused as (
              select id, sum(1.0 / (${RRF_K} + r)) as score from ranks group by id
-           )
+           )${gate}
            select ${COLUMNS.split(",")
              .map((c) => `c.${c.trim()}`)
              .join(", ")}, f.score
            from fused f join candidates c using (id)
+           ${relevance ? "where f.id in (select id from kept)" : ""}
            order by f.score desc, c.updated_at desc
-           limit ${limitParam}`,
+           limit ${limitParam} offset ${offsetParam}`,
           params,
         );
         return rows.map((r) => ({ ...toSection(r, tenantId), score: Number(r.score) }));
@@ -486,6 +556,17 @@ export function createSectionLibrary(opts: {
         );
         return rewrite(db, section);
       }),
+
+    setTree: (tenantId, id, tree) =>
+      tx(tenantId, async (db) =>
+        one(
+          db,
+          tenantId,
+          `update library_sections set tree = $2::jsonb, updated_at = now()
+           where id = $1 and tenant_id = $3 returning ${COLUMNS}`,
+          [id, JSON.stringify(tree), tenantId],
+        ),
+      ),
 
     ofHandoff: (tenantId, handoffId) =>
       tx(tenantId, async (db) => {

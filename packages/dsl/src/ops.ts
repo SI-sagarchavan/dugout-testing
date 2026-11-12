@@ -132,6 +132,71 @@ export function insertBefore(
   return withNodes(tree, nodes);
 }
 
+export interface InsertSubtreeOptions {
+  /** The node the subtree goes under. */
+  parent: string;
+  /** Its place among the parent's children (0 first); the end when left out. */
+  idx?: number;
+  /** Put before every inserted id so none is taken already; the first free `ins<n>:` when left out. */
+  idPrefix?: string;
+}
+
+/**
+ * Puts a section's subtree (another page's, as the section library keeps it) into this tree:
+ * one root, its descendants, ids renamed so none is taken, and each `src` made a synthetic one
+ * (`synthetic:inserted:<src>`) because the layers it names are in another design: a binding plan
+ * or the repair loop that looked them up here would find the wrong layer. Siblings from `idx` on
+ * move down one place. Props are carried as they are, so a page choice the subtree reads
+ * (`_page.<key>`) is still the other page's.
+ */
+export function insertSubtree(
+  tree: FlatTree,
+  subtree: FlatTree,
+  options: InsertSubtreeOptions,
+): FlatTree {
+  const parent = requireNode(tree, options.parent);
+  const roots = subtree.nodes.filter((n) => n.parent === null);
+  if (roots.length !== 1) {
+    throw new TreeOpError(`a subtree has one root, this one has ${roots.length}`);
+  }
+  const taken = new Set(tree.nodes.map((n) => n.id));
+  let prefix = options.idPrefix;
+  if (prefix === undefined) {
+    let n = 1;
+    while ([...taken].some((id) => id.startsWith(`ins${n}:`))) n++;
+    prefix = `ins${n}:`;
+  }
+  const renamed = subtree.nodes.map((n) => ({
+    ...n,
+    id: `${prefix}${n.id}`,
+    parent: n.parent === null ? options.parent : `${prefix}${n.parent}`,
+    src: `synthetic:inserted:${n.src}`,
+  }));
+  for (const n of renamed) {
+    if (taken.has(n.id)) throw new TreeOpError(`node id "${n.id}" is already taken`, n.id);
+  }
+  const siblings = tree.nodes.filter((n) => n.parent === parent.id);
+  const idx = Math.min(Math.max(options.idx ?? siblings.length, 0), siblings.length);
+  const root = renamed.find((n) => n.id === `${prefix}${roots[0]?.id}`);
+  if (root) root.idx = idx;
+
+  const shifted = tree.nodes.map((n) =>
+    n.parent === parent.id && n.idx >= idx ? { ...n, idx: n.idx + 1 } : n,
+  );
+  // document order: right after the last node under the sibling before it, or under the parent
+  const lastUnder = (id: string): number => {
+    let at = shifted.findIndex((n) => n.id === id);
+    for (const child of shifted.filter((n) => n.parent === id)) {
+      at = Math.max(at, lastUnder(child.id));
+    }
+    return at;
+  };
+  const before = siblings.find((n) => n.idx === idx - 1);
+  const at = before ? lastUnder(before.id) : shifted.findIndex((n) => n.id === parent.id);
+  shifted.splice(at + 1, 0, ...renamed);
+  return withNodes(tree, shifted);
+}
+
 export interface RemoveOptions {
   /** Remove the whole subtree. Without it, removing a node with children errors. */
   cascade?: boolean;
@@ -364,7 +429,8 @@ export interface Binding {
   /** What one item is called inside the template, e.g. `article`. */
   as: string;
   /** `[start, end)` window on the source. See the Repeater schema and S13. */
-  slice?: [number, number];
+  /** `[start, end)`, or `[start]` to the end of the list. */
+  slice?: [number, number] | [number];
   /**
    * Which template node's prop takes which field of the item.
    *
@@ -416,10 +482,11 @@ export function applyCollapse(
     );
   }
   if (binding.slice) {
+    // `[start]` runs to the end of the list, however long it grows
     const [start, end] = binding.slice;
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) {
+    if (!Number.isInteger(start) || start < 0 || (end !== undefined && (!Number.isInteger(end) || end <= start))) {
       throw new TreeOpError(
-        `applyCollapse: slice must be [start, end) with 0 <= start < end, got [${start}, ${end})`,
+        `applyCollapse: slice must be [start, end) with 0 <= start < end, or [start], got ${JSON.stringify(binding.slice)}`,
       );
     }
   }

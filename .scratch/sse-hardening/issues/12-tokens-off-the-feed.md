@@ -81,3 +81,9 @@ Frontend half done; backend half by another agent.
 - `followRunLive` takes an optional `openFragments`; after the record is read it follows `/surface/runs/:id/events` for `token` and `tool.input.delta` only, with its own cursor (a state event on the feed may be ahead of a fragment still on its way). Both shapes tolerated: the same fragment from feed and stream shows once. Stream reconnects through `followRunStream` (`retryDelay`/`abortableSleep`); if it gives up or is refused, only live text is lost and the follow goes on from the feed. The stream is closed when the follow ends (feed `run.completed`). Mock mode (no feed) unchanged.
 - Tests (written first, saw 3 fail): `src/entities/surface/api/__tests__/feed.test.ts`, 5 new. `pnpm vitest --run src/entities/surface` 147 pass, `pnpm typecheck` clean, `pnpm lint` no errors (existing warnings only).
 - Not checked: real backend, HTTP/2 on the load balancer (decision's pre-check), fragments' `seq` lining up with the record in a live run, and one extra connection per open run in a browser.
+
+## Done (dugout, 2026-11-10)
+
+The worker is the writer for real runs, and it still copied fragments to the feed (`feedSink` in `apps/worker/src/event-log.ts`). It now skips `token` and `tool.input.delta`; they stay on the run's own stream. Test: `apps/worker/tests/event-log.test.ts`.
+
+Checked live against Valkey: the worker's event log wrote a 207-event run (200 fragments), and the backend's `subscribeClientFeed` and `subscribeRun` read it in two processes plus one resuming after seq 100. Each run stream came whole, in order, with no gap or repeat (the resume got 101–207); each feed got the 7 state events and no fragment.

@@ -1,0 +1,149 @@
+{
+  "squad": {
+    "items": [],
+    "pages": [],
+    "pagination": null,
+    "players": [
+      {
+        "captain_badge": "",
+        "id": "4311",
+        "is_captain": false,
+        "name": "Marcus Stoinis",
+        "photo": "https://www.southernbrave.com/static-assets/images/players/4311.png?v=1.16&w=285",
+        "role": "All-Rounder",
+        "squad": "men",
+        "stats": [
+          { "label": "MATCHES", "value": 7 },
+          { "label": "RUNS", "value": 195 },
+          { "label": "STRIKE RATE", "value": 147.72 }
+        ]
+      },
+      {
+        "captain_badge": "",
+        "id": "4661",
+        "is_captain": false,
+        "name": "Adil Rashid",
+        "photo": "https://www.southernbrave.com/static-assets/images/players/4661.png?v=1.16&w=285",
+        "role": "Bowler",
+        "squad": "men",
+        "stats": [
+          { "label": "MATCHES", "value": 8 },
+          { "label": "RUNS", "value": null },
+          { "label": "STRIKE RATE", "value": 0 }
+        ]
+      },
+      {
+        "captain_badge": "",
+        "id": "4688",
+        "is_captain": false,
+        "name": "Moeen Ali",
+        "photo": "https://www.southernbrave.com/static-assets/images/players/4688.png?v=1.16&w=285",
+        "role": "All-Rounder",
+        "squad": "men",
+        "stats": [
+          { "label": "MATCHES", "value": 4 },
+          { "label": "RUNS", "value": 26 },
+          { "label": "STRIKE RATE", "value": 81.25 }
+        ]
+      },
+      {
+        "captain_badge": "",
+        "id": "5313",
+        "is_captain": false,
+        "name": "David Miller",
+        "photo": "https://www.southernbrave.com/static-assets/images/players/5313.png?v=1.16&w=285",
+        "role": "Batter",
+        "squad": "men",
+        "stats": [
+          { "label": "MATCHES", "value": 8 },
+          { "label": "RUNS", "value": 166 },
+          { "label": "STRIKE RATE", "value": 121.16 }
+        ]
+      },
+      {
+        "captain_badge": "C",
+        "id": "26718",
+        "is_captain": true,
+        "name": "Chris Jordan",
+        "photo": "https://www.southernbrave.com/static-assets/images/players/26718.png?v=1.16&w=285",
+        "role": "Bowler",
+        "squad": "men",
+        "stats": [
+          { "label": "MATCHES", "value": 8 },
+          { "label": "RUNS", "value": 22 },
+          { "label": "STRIKE RATE", "value": 137.5 }
+        ]
+      },
+      {
+        "captain_badge": "",
+        "id": "63271",
+        "is_captain": false,
+        "name": "Daniel Worrall",
+        "photo": "https://www.southernbrave.com/static-assets/images/players/63271.png?v=1.16&w=285",
+        "role": "Bowler",
+        "squad": "men",
+        "stats": [
+          { "label": "MATCHES", "value": 3 },
+          { "label": "RUNS", "value": null },
+          { "label": "STRIKE RATE", "value": 0 }
+        ]
+      },
+      {
+        "captain_badge": "",
+        "id": "64192",
+        "is_captain": false,
+        "name": "Lizelle Lee",
+        "photo": "https://www.southernbrave.com/static-assets/images/players/64192.png?v=1.16&w=285",
+        "role": "Wicket-Keeper",
+        "squad": "women",
+        "stats": [
+          { "label": "MATCHES", "value": 9 },
+          { "label": "RUNS", "value": 183 },
+          { "label": "STRIKE RATE", "value": 116.56 }
+        ]
+      },
+      {
+        "captain_badge": "",
+        "id": "66176",
+        "is_captain": false,
+        "name": "Laura Wolvaardt",
+        "photo": "https://www.southernbrave.com/static-assets/images/players/66176.png?v=1.16&w=285",
+        "role": "Batter",
+        "squad": "women",
+        "stats": [
+          { "label": "MATCHES", "value": 9 },
+          { "label": "RUNS", "value": 229 },
+          { "label": "STRIKE RATE", "value": 111.16 }
+        ]
+      },
+      {
+        "captain_badge": "C",
+        "id": "67041",
+        "is_captain": true,
+        "name": "Sophie Molineux",
+        "photo": "https://www.southernbrave.com/static-assets/images/players/67041.png?v=1.16&w=285",
+        "role": "Bowler",
+        "squad": "women",
+        "stats": [
+          { "label": "MATCHES", "value": 8 },
+          { "label": "RUNS", "value": 128 },
+          { "label": "STRIKE RATE", "value": 99.22 }
+        ]
+      },
+      {
+        "captain_badge": "",
+        "id": "68442",
+        "is_captain": false,
+        "name": "Jemimah Rodrigues",
+        "photo": "https://www.southernbrave.com/static-assets/images/players/68442.png?v=1.16&w=285",
+        "role": "Batter",
+        "squad": "women",
+        "stats": [
+          { "label": "MATCHES", "value": 6 },
+          { "label": "RUNS", "value": 143 },
+          { "label": "STRIKE RATE", "value": 131.19 }
+        ]
+      }
+    ]
+  }
+}

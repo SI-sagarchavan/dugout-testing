@@ -4,8 +4,10 @@ import { interpolate, formatUnresolvedWarnings } from "../resolve/data.js";
 import { resolveNode } from "../resolve/style.js";
 import { localeOf, type NodeRenderContext } from "../context.js";
 import { styleToReact } from "./dom.js";
+import { Anchor, linkOf } from "./link.js";
 import { clockParts } from "../resolve/clock.js";
-import { ClockText } from "@fanos/renderer/client";
+import { ClockText, StateText } from "@fanos/renderer/client";
+import { stateParts } from "../resolve/state.js";
 
 const AS_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6", "p", "span"]);
 
@@ -20,7 +22,11 @@ export function Text({ node, ctx }: { node: Node; ctx: NodeRenderContext }) {
   const { value: drawnNow, unresolved } = interpolate(contentRaw, ctx.data, localeOf(ctx));
   // Characters that read a clock tick in the browser; the server draws them as they read now.
   const ticking = clockParts(contentRaw, ctx);
-  const value = ticking ? (
+  // Characters that read state (a count, a name typed): drawn as the state is now, then live.
+  const live = ticking ? undefined : stateParts(contentRaw, ctx);
+  const value = live ? (
+    <StateText instance={ctx.instance} parts={live.parts} initial={live.initial} {...localeOf(ctx)} />
+  ) : ticking ? (
     <ClockText
       parts={ticking.parts}
       clocks={ticking.clocks}
@@ -137,6 +143,15 @@ export function Text({ node, ctx }: { node: Node; ctx: NodeRenderContext }) {
     style.justifyContent = along[align] ?? along.start!;
   }
 
+  const drawnText = vertical ? (
+    <span className={orientation === "vertical-up" ? "fos-text-vertical-up" : "fos-text-vertical-down"}>
+      {value}
+    </span>
+  ) : (
+    value
+  );
+  // a linked text (VIEW ALL) keeps its element (a heading stays a heading) and holds the link
+  const link = linkOf(node, ctx);
   return (
     <Tag
       className={classes.filter(Boolean).join(" ")}
@@ -147,14 +162,12 @@ export function Text({ node, ctx }: { node: Node; ctx: NodeRenderContext }) {
       {...(orientation ? { "data-fos-orientation": orientation } : {})}
       {...resolved.dataAttrs}
     >
-      {vertical ? (
-        <span
-          className={orientation === "vertical-up" ? "fos-text-vertical-up" : "fos-text-vertical-down"}
-        >
-          {value}
-        </span>
+      {link ? (
+        <Anchor to={link} ctx={ctx} className="fos-link">
+          {drawnText}
+        </Anchor>
       ) : (
-        value
+        drawnText
       )}
     </Tag>
   );

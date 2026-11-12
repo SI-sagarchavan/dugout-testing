@@ -1,22 +1,22 @@
 import { createHash } from "node:crypto";
 import {
   type AgentSpec,
-  type Answers,
   AUTO_APPROVED,
   AwaitingAnswers,
   approve,
   type ChildRef,
+  defineState,
   defineTool,
   type EventSink,
   NEEDS_SETUP,
   NeedsSetup,
   type RunCheckpoint,
+  type RunStateReader,
   reject,
   type Tool,
   type ToolContext,
 } from "@dugout/contracts";
 import type { Responder } from "@dugout/core";
-import { z } from "zod";
 import type { AgentResult, AnyAgent, RunOptions } from "./agent.ts";
 
 /** A child run can take this long, model turns included, before its parent's call gives up. */
@@ -127,6 +127,21 @@ const ONCE = "once:";
 export const MAX_WRITING_ATTEMPTS = 3;
 
 /**
+ * A writing child with no tries left in this run: a person has to look, so neither the model nor a
+ * workflow's code tries it again. Its message says so to the model.
+ */
+export class TriesSpent extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TriesSpent";
+  }
+}
+
+/** A `TriesSpent`, from this realm or another copy of this package. */
+export const isTriesSpent = (err: unknown): err is TriesSpent =>
+  err instanceof TriesSpent || (err instanceof Error && err.name === "TriesSpent");
+
+/**
  * How many tries a writing child has in one parent run (and key), whatever became of them: each
  * new need is a try a person approves, so a run that keeps changing the need still ends. Past this
  * many the call is refused and says a person has to look.
@@ -135,7 +150,7 @@ export const MAX_WRITING_TRIES = 5;
 
 /**
  * The run id of the n-th try of a writing child: the first keeps the id it always had. A call
- * with a `key` is a child of its own, one per key (a pipeline's several bindings, one per slot);
+ * with a `key` is a child of its own, one per key (a workflow's several bindings, one per slot);
  * no key is the one-thing-per-run child it always was.
  */
 const attemptId = (parentRunId: string, agentId: string, attempt: number, key?: string) => {
@@ -145,7 +160,7 @@ const attemptId = (parentRunId: string, agentId: string, attempt: number, key?: 
 
 /** What a person is shown on a repeat call to a writing child: which try this is, and the last failure. */
 interface Retry {
-  /** The agent that failed, when a pipeline runs several. */
+  /** The agent that failed, when a workflow runs several. */
   stage?: string;
   /** Which of its keyed calls, where it was called with keys. */
   key?: string;
@@ -190,7 +205,7 @@ export function inputKey(input: unknown): string {
 /**
  * One child agent, as its parent calls it: starts its run, counts its spend, remembers a try that
  * completed (a writing child builds one thing per parent run) and how the tries that failed failed.
- * `agentTool` fronts one of these for the model; `pipelineTool` runs several in code. A crash
+ * `agentTool` fronts one of these for the model; a workflow's tool runs several in code. A crash
  * mid-call is safe to run again: the child carries on from its save.
  */
 export interface ChildCaller {
@@ -225,7 +240,7 @@ export interface ChildCaller {
 }
 
 export interface CallOptions {
-  /** Which of a pipeline's runs of one stage this is, where it runs several. */
+  /** Which of a workflow's steps this is, where it runs several. */
   stage?: string;
   /**
    * Names this call among several to one writing child (a slot's name). Each key is a child of
@@ -418,7 +433,7 @@ export function childCaller(
           const own = completed.get(mine)?.get(hash);
           if (own) return own.answer;
           const refused = outOfTries(mine, key);
-          if (refused) throw new Error(refused);
+          if (refused) throw new TriesSpent(refused);
           attempt = Math.max(tries.length, tried.get(mine) ?? 0) + 1;
         }
         runId = attemptId(ctx.runId, child.spec.id, attempt, key);
@@ -532,7 +547,7 @@ export function childCaller(
         if (!counted) failures.set(mine, [...failedTries(ctx.runId, key), reason]);
         const nth = failedTries(ctx.runId, key).length;
         const left = MAX_WRITING_ATTEMPTS - nth;
-        throw new Error(
+        throw new (left > 0 ? Error : TriesSpent)(
           `${child.spec.id}${key !== undefined ? ` for ${key}` : ""} (run ${runId}) ${why}. Try ${nth} of ${MAX_WRITING_ATTEMPTS}; ${
             left > 0
               ? "it may be called again, and a person approves that."
@@ -572,6 +587,23 @@ const needsAPerson = (child: AnyAgent, n: number, last: string | undefined, key?
 const alreadyAnswered = (child: AnyAgent, output: unknown) =>
   `${child.spec.id} already answered for this same need in this run; it is not run again for the same need, so change the need to ask again. Its answer, which was built once and is not a new result: ${JSON.stringify(output)}`;
 
+/** One call a run made to a child agent: what it asked, and the answer when it fits in the state. */
+export interface Asked {
+  input: unknown;
+  output?: unknown;
+}
+
+const asked = (childId: string) => defineState<Asked[]>(`asked:${childId}`);
+
+/**
+ * What this run asked a child agent, in order, from its state (ADR 0039): the need a parent's model
+ * settled (data-bind's `need.count`, `need.paged`), for the parent's own tools and checks to hold
+ * what it builds to. Kept by `agentTool` after each answered call.
+ */
+export function askedOf(state: RunStateReader, childId: string): Asked[] {
+  return state.get(asked(childId)) ?? [];
+}
+
 /** The input a tool that fronts children takes back out of its resolved form: the retry note is for the person. */
 const withoutRetry = (given: unknown): unknown => {
   if (typeof given !== "object" || given === null) return given;
@@ -593,8 +625,12 @@ const withoutRetry = (given: unknown): unknown => {
  * MAX_WRITING_ATTEMPTS, each a new call a person approves and is shown the last failure for; and
  * no run makes more than MAX_WRITING_TRIES tries of one child, whatever became of them.
  */
-export function agentTool(caller: ChildCaller): Tool {
+export function agentTool(
+  caller: ChildCaller,
+  opts: { approval: "once" | "none" } = { approval: "once" },
+): Tool {
   const { child, writes } = caller;
+  const asks = opts.approval === "once";
   return defineTool<unknown, unknown, unknown>({
     name: agentToolName(child.spec.id),
     description: [
@@ -602,12 +638,13 @@ export function agentTool(caller: ChildCaller): Tool {
         `Hand a part of the work to the ${child.spec.id} agent, and get its answer.`,
       ...(writes
         ? [
-            `It builds one thing for each thing you ask: once it has completed, asking the same again answers with what it built and builds nothing new; ask something different (a changed input) and it runs again. If a try fails you may call it again with what the failure says to change: a person approves each try, and after ${MAX_WRITING_ATTEMPTS} failures, or ${MAX_WRITING_TRIES} tries of any kind in this run, it is not tried again.`,
+            `It builds one thing for each thing you ask: once it has completed, asking the same again answers with what it built and builds nothing new; ask something different (a changed input) and it runs again. If a try fails you may call it again with what the failure says to change${asks ? ": a person approves each try, and" : ";"} after ${MAX_WRITING_ATTEMPTS} failures, or ${MAX_WRITING_TRIES} tries of any kind in this run, it is not tried again.`,
           ]
         : []),
     ].join(" "),
     input: child.input,
     effect: writes ? "write" : "read",
+    ...(writes && !asks ? { noApproval: true } : {}),
     resumable: true,
     timeoutMs: CHILD_TIMEOUT_MS,
     // a repeat call is shown to the person with which try it is and what the last one failed on
@@ -630,218 +667,21 @@ export function agentTool(caller: ChildCaller): Tool {
       : {}),
     // the retry note is for the person who approved the call, not for the child
     run: async (given, ctx) => {
-      const answer = await caller.call(withoutRetry(given), ctx);
-      return answer.again ? alreadyAnswered(child, answer.output) : answer;
-    },
-  }) as Tool;
-}
-
-/** How a pipeline calls one child. */
-export interface PipelineCall {
-  /**
-   * Names the call among several to one writing child, so each is a child of its own: its own
-   * run, its own answer once completed, its own tries (ADR 0025, amendment). Without one, the
-   * child builds one thing per run.
-   */
-  key?: string;
-}
-
-/** What a pipeline's own pause brought back: a person's answers to the questions it asked. */
-export interface PipelineContext {
-  /**
-   * The answers, when the pipeline itself stopped the run with questions (`AwaitingAnswers`) and
-   * runs again now that they came. Answers to a child's questions go to that child, not here.
-   */
-  answered?: { by: string; answers: Answers };
-  /** What the model passed the pipeline's tool, checked against `Pipeline.input`: its decisions, as ordinary input. */
-  args?: unknown;
-}
-
-/**
- * A pipeline that reports what is open and stops short (tools report, the agent asks) returns only
- * `open` (and a `note`): it has not completed, so a later call runs it again.
- */
-export function isOpenResult(output: unknown): boolean {
-  if (typeof output !== "object" || output === null) return false;
-  const o = output as { open?: unknown };
-  return (
-    Array.isArray(o.open) &&
-    o.open.length > 0 &&
-    Object.keys(output).every((k) => k === "open" || k === "note")
-  );
-}
-
-/** A fixed sequence of the agents a parent may call, run by code. */
-export interface Pipeline {
-  /** The tool's name, e.g. `page.build`. */
-  name: string;
-  description: string;
-  /**
-   * What the model may pass the tool: the decisions the pipeline reported as open, as ordinary
-   * input (the pipeline reads them from `own.args`). No arguments when left out.
-   */
-  input?: z.ZodObject;
-  /** Start without a person approving the call; the children's writes still go through under it. */
-  noApproval?: boolean;
-  /** How many calls may run at once, where the pipeline starts several together. Default 2. */
-  concurrency?: number;
-  /**
-   * Runs the agents. `call` runs one and answers with its output; it throws when that agent
-   * failed. Calls with different keys may be started together (`Promise.all`); `concurrency` of
-   * them run at a time. `input` is the run's own input. The pipeline may stop the run for a person
-   * itself (throw `AwaitingAnswers`): it is run again with their answers in `own.answered`, and the
-   * children that completed are not run again.
-   */
-  run(
-    call: (child: AnyAgent, input: unknown, opts?: PipelineCall) => Promise<unknown>,
-    input: unknown,
-    own?: PipelineContext,
-  ): Promise<unknown>;
-}
-
-/** Longer than one child's wait: a pipeline runs several. */
-export const PIPELINE_TIMEOUT_MS = 45 * 60_000;
-
-/** The most calls a pipeline runs at once unless it says otherwise. */
-export const PIPELINE_CONCURRENCY = 2;
-
-/** A call that was never started, because another stopped the run to ask a person. */
-export class PausedForAnswers extends Error {
-  constructor() {
-    super("not started: another call stopped the run to ask a person");
-  }
-}
-
-/** At most `limit` of the functions passed run at once; the rest wait their turn. */
-function limiter(limit: number) {
-  let running = 0;
-  const queue: Array<() => void> = [];
-  return async <T>(fn: () => Promise<T>): Promise<T> => {
-    if (running >= limit) await new Promise<void>((go) => queue.push(go));
-    running++;
-    try {
-      return await fn();
-    } finally {
-      running--;
-      queue.shift()?.();
-    }
-  };
-}
-
-/**
- * A tool that runs several agents in code: the steps are known, so the model does not decide
- * them (the spec's R5: prefer a program when the steps are known). It is one write a person
- * approves once; the children's writes go through under that yes. A stage that completed stays
- * done when the tool is called again after a later stage failed, and a stage that failed is tried
- * again, each call approved, up to MAX_WRITING_ATTEMPTS per stage and key.
- *
- * Calls with different keys to one child may run together. When one of them asks a person, the
- * others are let finish or ask first, so no child is left running while the run waits; the pause
- * carries the first one's questions, and the answers go to that child alone (`answered.from`
- * names it). The others that were waiting ask again, one pause each (ADR 0029's one pause at a time).
- */
-export function pipelineTool(pipeline: Pipeline, callers: ChildCaller[]): Tool {
-  const byId = new Map(callers.map((c) => [c.child.spec.id, c]));
-  const writes = callers.some((c) => c.writes);
-  const done = new Map<string, unknown>();
-  /** Every (caller, key) that has state in this parent run; the unkeyed one first. */
-  const calls = (runId: string) =>
-    callers.flatMap((caller) =>
-      [undefined, ...caller.keysFor(runId)].map((key) => ({ caller, key })),
-    );
-  const lastFailure = (runId: string): Retry | undefined => {
-    for (const { caller, key } of calls(runId)) {
-      const failed = caller.failuresFor(runId, key);
-      if (failed.length > 0 && !caller.completedFor(runId, key)) {
-        return {
-          stage: caller.child.spec.id,
-          ...(key !== undefined ? { key } : {}),
-          attempt: failed.length + 1,
-          of: MAX_WRITING_ATTEMPTS,
-          lastFailure: failed.at(-1) ?? "",
-        };
-      }
-    }
-    return undefined;
-  };
-  return defineTool<unknown, unknown, unknown>({
-    name: pipeline.name,
-    description: pipeline.description,
-    input: (pipeline.input ?? z.object({})).strict(),
-    effect: writes ? "write" : "read",
-    ...(pipeline.noApproval ? { noApproval: true } : {}),
-    resumable: true,
-    timeoutMs: PIPELINE_TIMEOUT_MS,
-    resolve(input: unknown, ctx: { runId: string }) {
-      const retry = lastFailure(ctx.runId);
-      return retry && !done.has(ctx.runId) ? { ...(input as object), retry } : input;
-    },
-    block(_input: unknown, ctx: { runId: string }) {
-      if (done.has(ctx.runId)) {
-        return `${pipeline.name} already completed in this run, with this answer: ${JSON.stringify(done.get(ctx.runId))}`;
-      }
-      const spent = calls(ctx.runId).find(
-        ({ caller, key }) => caller.failuresFor(ctx.runId, key).length >= MAX_WRITING_ATTEMPTS,
-      );
-      return spent
-        ? needsAPerson(
-            spent.caller.child,
-            spent.caller.failuresFor(ctx.runId, spent.key).length,
-            spent.caller.failuresFor(ctx.runId, spent.key).at(-1),
-            spent.key,
-          )
-        : undefined;
-    },
-    async run(given, ctx) {
-      const limit = limiter(Math.max(1, pipeline.concurrency ?? PIPELINE_CONCURRENCY));
-      const inflight = new Set<Promise<unknown>>();
-      // Once a call has stopped the run to ask a person, a call still waiting its turn is not
-      // started: the question reaches the person now, not after the rest have run (ticket 11).
-      let asking = false;
-      const call = (child: AnyAgent, input: unknown, opts: PipelineCall = {}) => {
-        const caller = byId.get(child.spec.id);
-        if (!caller) {
-          return Promise.reject(
-            new Error(`${child.spec.id} is not an agent ${pipeline.name} may run`),
-          );
-        }
-        const { key } = opts;
-        const turn = limit(async () => {
-          if (asking) throw new PausedForAnswers();
-          try {
-            return (
-              await caller.call(input, ctx, {
-                stage: child.spec.id,
-                ...(key !== undefined ? { key } : {}),
-              })
-            ).output;
-          } catch (err) {
-            if (err instanceof AwaitingAnswers) asking = true;
-            throw err;
-          }
-        });
-        inflight.add(turn);
-        turn.then(
-          () => inflight.delete(turn),
-          () => inflight.delete(turn),
-        );
-        return turn;
-      };
-      let output: unknown;
+      const input = withoutRetry(given);
+      const answer = await caller.call(input, ctx);
+      // what was asked, for the parent's tools: the answer too when it is small enough to keep
+      const key = asked(child.spec.id);
+      const before = ctx.state.get(key) ?? [];
       try {
-        // answers that came from no child are to the pipeline's own questions
-        const answered = ctx.answered && !ctx.answered.from?.length ? ctx.answered : undefined;
-        output = await pipeline.run(call, ctx.input, {
-          ...(answered ? { answered } : {}),
-          args: given,
-        });
-      } finally {
-        // no child is left running when this call ends: a pause or a failure waits for the rest
-        await Promise.allSettled([...inflight]);
+        ctx.state.set(key, [...before, { input, output: answer.output }]);
+      } catch {
+        try {
+          ctx.state.set(key, [...before, { input }]);
+        } catch {
+          // an input too large to keep is not kept: the call's answer stands
+        }
       }
-      // open items are not an answer: the model decides them and calls again
-      if (!isOpenResult(output)) done.set(ctx.runId, output);
-      return output;
+      return answer.again ? alreadyAnswered(child, answer.output) : answer;
     },
   }) as Tool;
 }

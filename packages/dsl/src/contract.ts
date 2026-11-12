@@ -31,6 +31,7 @@
 import { clockAlias, clockSchema, clockUnits } from "./clock.js";
 import type { FlatNode, FlatTree } from "./flat.js";
 import { isPagePath, overChoice, selectOf } from "./page.js";
+import { isStatePath } from "./machine/system.js";
 import type { Issue } from "./validate.js";
 import {
   brokenRefs,
@@ -187,7 +188,8 @@ function templatesIn(props: Record<string, unknown>): Array<{ prop: string; valu
   };
   for (const [k, v] of Object.entries(props)) {
     // `when` and `over` are paths, not templates — checked on their own below.
-    if (k === "_meta" || k === "when") continue;
+    // a machine is expressions, not templates; its own checks are S18's
+    if (k === "_meta" || k === "when" || k === "machine" || k === "statesWhen") continue;
     // an `over` that follows a page choice (`squad.{_page.squad}`) names the choice, not a ref
     if (k === "over" && typeof v === "string" && overChoice(v)) continue;
     walk(v, k);
@@ -313,6 +315,8 @@ export function checkBindings(tree: FlatTree, data: unknown, options: BindingChe
     // --- refs in templates ----------------------------------------------
     for (const t of templatesIn(node.props)) {
       for (const ref of parseRefs(t.value)) {
+        // a machine's state, the page, the signed-in fan: never in this data
+        if (isStatePath(ref.path)) continue;
         const w = walkShape(scope, ref.path);
         if (w.pageKey) pageKey(node, t.prop, ref.text, w.pageKey);
         if (!w.ok) {
@@ -404,11 +408,12 @@ export function checkBindings(tree: FlatTree, data: unknown, options: BindingChe
     if (parsed?.success) {
       for (const c of conditionsOf(parsed.data)) {
         // the page's choices are another section's to write, so they are never in this data
-        if (c.eqPath !== undefined && !isPagePath(c.eqPath)) {
-          const other = walkShape(scope, c.eqPath);
-          if (!other.ok) missing(node, "when", `when "${c.eqPath}"`, c.eqPath, other);
+        for (const other of [c.eqPath, c.hasPath, c.lacksPath, c.containsPath]) {
+          if (other === undefined || isPagePath(other) || isStatePath(other)) continue;
+          const found = walkShape(scope, other);
+          if (!found.ok) missing(node, "when", `when "${other}"`, other, found);
         }
-        if (isPagePath(c.path)) continue;
+        if (isPagePath(c.path) || isStatePath(c.path)) continue;
         const w = walkShape(scope, c.path);
         if (!w.ok) {
           missing(node, "when", `when "${c.path}"`, c.path, w);

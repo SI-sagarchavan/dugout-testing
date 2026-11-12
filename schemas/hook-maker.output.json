@@ -32,14 +32,39 @@
       "items": {
         "type": "string"
       },
-      "description": "What the design shows that it gives, each with its path from the root of the output, [] for each item of a list: team crest → matches[].teams[0].logo"
+      "description": "What the design shows that it gives: `<the need's field, as the need writes it> → <path>`, the path from the root of the output, [] for each item of a list (team crest → matches[].teams[0].logo). `order → <path>` names the date the items are ordered by, `filterBy → <path>` the field that holds a page choice's option"
     },
     "missing": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "description": "What the design shows that it does not give. When the data is about another team or competition than the need's must, say so in a line that names the must's team or competition as the need writes it: code reads that line to report the data as a stand-in"
+      "description": "For people: what the design shows that it does not give, each line starting with the need's field as the need writes it, then why (`tickets link: no connector has it`), and anything else a person should know about the data"
+    },
+    "about": {
+      "description": "Whether the data is about what the need's must names, as you judge it from the data. Required when the need has a must and you answer with a hook",
+      "type": "object",
+      "properties": {
+        "reading": {
+          "type": "string",
+          "enum": [
+            "design",
+            "other",
+            "unknown"
+          ],
+          "description": "design: the data is about the need's must; other: about another team or competition; unknown: the data does not say"
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What in the data says so (hook.evidence's names)"
+        }
+      },
+      "required": [
+        "reading",
+        "why"
+      ],
+      "additionalProperties": false
     },
     "why": {
       "type": "string",
@@ -63,7 +88,7 @@
       ]
     },
     "existing": {
-      "description": "Only when a hook of dugout's was already there and you built a new one anyway: which, and what it lacks for the need (a field, or the grouping the design reads). Not that its envelope differs: the page binds any shape",
+      "description": "Only when you built a new hook after looking at another of dugout's: which one, and why it would not do",
       "type": "string"
     }
   },

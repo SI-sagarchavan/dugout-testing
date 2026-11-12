@@ -2,7 +2,7 @@ import type { RunMemoryContext } from "@dugout/contracts";
 import { groupLabel } from "./shared.ts";
 import { loadSkill } from "./skills.ts";
 import type { MemoryItem, MemoryReader } from "./store.ts";
-import { SKILL_TOOL } from "./tools.ts";
+import { SEARCH_TOOL, SKILL_TOOL } from "./tools.ts";
 
 /** Share of the model's context window that retrieved memory may use. */
 export const MEMORY_SHARE = 0.12;
@@ -35,8 +35,19 @@ export interface BuildContextOptions {
   /** The date shown to the model; the real clock unless a test sets it. */
   now?: Date;
   readSemantic: boolean;
+  /**
+   * Key prefixes of the facts that go in the prompt (`memory.pin`, ADR 0034). Left out, every
+   * fact does; given, the rest are one line and are searched.
+   */
+  pin?: string[];
   readEpisodic: boolean;
   episodes?: number;
+  /**
+   * The agent's own lessons a person approved as rules (`lesson.<hash>` facts, proposed the third
+   * time a reviewer says the same): how it works, like a skill, so they go in its instructions
+   * whether or not it reads house facts, and whatever its `pin`.
+   */
+  readLessons?: boolean;
 }
 
 /**
@@ -104,7 +115,7 @@ export async function buildContext(opts: BuildContextOptions): Promise<RunMemory
     bucket: { used: number; cap: number },
     title: string,
     lines: ListItem[],
-  ) => {
+  ): number => {
     const kept: string[] = [];
     const titleTokens = estimateTokens(title);
     for (const item of lines) {
@@ -120,13 +131,24 @@ export async function buildContext(opts: BuildContextOptions): Promise<RunMemory
       used += titleTokens;
       bucket.used += titleTokens;
     }
+    // what did not fit is said, never dropped in silence
+    return lines.length - kept.length;
   };
 
   const groups = opts.groups ?? [];
+  // read once, for the house facts and for the agent's approved lessons
+  const everything =
+    opts.readSemantic || opts.readLessons
+      ? await opts.reader.activeFacts(opts.tenantId, groups)
+      : [];
+  const shown = new Set<string>();
   if (opts.readSemantic) {
-    const active = await opts.reader.activeFacts(opts.tenantId, groups);
+    const pinned = (f: MemoryItem) =>
+      !opts.pin || opts.pin.some((prefix) => (f.key ?? "").startsWith(prefix));
+    const active = everything.filter(pinned);
+    for (const f of active) shown.add(f.id);
     const own = active.filter((f) => f.tenantId !== null);
-    addList(
+    let cut = addList(
       sections,
       facts,
       "## House facts\n\nThese are reviewed facts for this tenant. Follow them.",
@@ -137,7 +159,7 @@ export async function buildContext(opts: BuildContextOptions): Promise<RunMemory
     for (const scope of [...groups].reverse()) {
       const shared = active.filter((f) => f.sharedScope === scope && !taken.has(f.key));
       for (const f of shared) taken.add(f.key);
-      addList(
+      cut += addList(
         sections,
         facts,
         `## Shared with ${groupLabel(scope)}\n\nReviewed rules learned across clients. Where a house fact above disagrees, follow the house fact.`,
@@ -149,6 +171,26 @@ export async function buildContext(opts: BuildContextOptions): Promise<RunMemory
         })),
       );
     }
+    // the facts the prompt does not hold: how many, and where to look (ADR 0034)
+    const rest = everything.filter((f) => !pinned(f));
+    const note = factsNote(rest, cut);
+    if (note) {
+      sections.push(note);
+      used += estimateTokens(note);
+    }
+  }
+
+  if (opts.readLessons) {
+    const lessons = everything.filter(
+      (f) =>
+        (f.key ?? "").startsWith(LESSON_FACT) && f.agentId === opts.agentId && !shown.has(f.id),
+    );
+    addList(
+      sections,
+      facts,
+      "## Rules reviewers taught you\n\nWhat reviewers said about your earlier work often enough that a person approved it as a rule. Follow them.",
+      lessons.map((f) => ({ id: f.id, kind: "semantic", line: `- ${f.content}`, text: f.content })),
+    );
   }
 
   if (opts.readEpisodic) {
@@ -159,8 +201,11 @@ export async function buildContext(opts: BuildContextOptions): Promise<RunMemory
 
   return {
     text: sections.join("\n\n"),
-    // only for an agent that reads episodic memory; the date is why it is there with nothing to recall
-    recalled: opts.readEpisodic ? recalledBlock(opts.now ?? new Date(), recalledSections) : "",
+    // every run is told the date, in the first user message so the instructions stay the same
+    // from day to day; an agent that reads episodic memory gets what was recalled with it
+    recalled: opts.readEpisodic
+      ? recalledBlock(opts.now ?? new Date(), recalledSections)
+      : today(opts.now ?? new Date()),
     tokens: used,
     sources,
   };
@@ -220,10 +265,15 @@ async function recallLists(
   ];
 }
 
+/** The key prefix of a lesson a person approved as a fact (`proposeLesson` in consolidation). */
+export const LESSON_FACT = "lesson.";
+
+/** The date as the run is told it: UTC, and said to be, so a club in another zone is not misled. */
+const today = (now: Date) => `Today is ${now.toISOString().slice(0, 10)} (UTC).`;
+
 /** The recalled memory as one message-sized block, marked so the model reads it as data. */
 function recalledBlock(now: Date, sections: string[]): string {
-  const date = `Today is ${now.toISOString().slice(0, 10)}.`;
-  return `<recalled_memory>\n${[date, ...sections].join("\n\n")}\n</recalled_memory>`;
+  return `<recalled_memory>\n${[today(now), ...sections].join("\n\n")}\n</recalled_memory>`;
 }
 
 /** The first paragraph, on one line: enough to recognise a skill without printing the whole file. */
@@ -236,4 +286,22 @@ function lessonLine(e: MemoryItem): string {
   if (e.sharedScope) return `- (from ${e.strength} clients) ${e.content}`;
   const times = e.strength > 1 ? `, ${e.strength} times` : "";
   return `- (${e.lastSeenAt.slice(0, 10)}${times}) ${e.content}`;
+}
+
+/**
+ * One line on the facts the prompt does not hold: those a pin left out, under which prefixes, and
+ * those that did not fit. `memory.search` finds them. Nothing when every fact is there.
+ */
+export function factsNote(unpinned: MemoryItem[], cut: number): string {
+  const parts: string[] = [];
+  if (unpinned.length > 0) {
+    const prefixes = [
+      ...new Set(unpinned.map((f) => (f.key ?? "").split(/(?<=\.)/)[0]).filter(Boolean)),
+    ].sort();
+    parts.push(
+      `${unpinned.length} more fact${unpinned.length === 1 ? " is" : "s are"} not shown${prefixes.length ? `, under ${prefixes.join(" ")}` : ""}.`,
+    );
+  }
+  if (cut > 0) parts.push(`${cut} did not fit here.`);
+  return parts.length ? `${parts.join(" ")} Find one with ${SEARCH_TOOL}.` : "";
 }

@@ -484,6 +484,20 @@ describe("hairline frames", () => {
     expect(ruleNode(hairline({}))?.type).toBe("Divider");
   });
 
+  it("draws a rule as thick as its stroke when that is not 1px", () => {
+    // a 0.5px footer divider drew as two solid device rows, far darker than the design
+    const stroked = (weight: number) =>
+      ruleNode(
+        hairline({
+          fill: null,
+          stroke: { weight, unbound: false, tokenRef: "border/main/disable" },
+        }),
+      );
+    expect(stroked(0.5)?.type).toBe("Divider");
+    expect(stroked(0.5)?.props.size).toEqual({ h: { _unbound: true, raw: 0.5 } });
+    expect(stroked(1)?.props.size).toBeUndefined();
+  });
+
   /**
    * The real thing. A rule nested in a component instance comes back through a
    * transform as 1.0000104904174805 wide, so an exact `<= 1` bound classified

@@ -67,7 +67,8 @@ export interface PlanCollapse {
   over: string;
   /** What one item is called inside the template, e.g. `article`. */
   as: string;
-  slice?: [number, number];
+  /** `[start, end)`, or `[start]`: from start to the end of the list, as pages are added. */
+  slice?: [number, number] | [number];
   /** The instances, by `src`, in document order. The first is the template. */
   members: string[];
   /** Bound inside the template, so paths are relative to one item. */

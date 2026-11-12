@@ -8,7 +8,7 @@ export default defineConfig([
     clean: true,
     sourcemap: true,
     target: "node22",
-    external: ["zod", "@fanos/tokens"],
+    external: ["zod", "xstate", "@fanos/tokens"],
   },
   {
     // the browser-safe part: binding and clocks, no tokens
@@ -18,7 +18,7 @@ export default defineConfig([
     clean: false,
     sourcemap: true,
     target: "es2022",
-    external: ["zod"],
+    external: ["zod", "xstate"],
   },
   {
     entry: ["src/bin.ts"],
@@ -27,6 +27,6 @@ export default defineConfig([
     clean: false,
     sourcemap: true,
     target: "node22",
-    external: ["zod", "@fanos/tokens"],
+    external: ["zod", "xstate", "@fanos/tokens"],
   },
 ]);

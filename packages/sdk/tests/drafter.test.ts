@@ -108,7 +108,7 @@ describe("the test agent on the harness", () => {
     expect(requests[0]?.messages[0]).toEqual(requests[1]?.messages[0]);
     for (const [i, topicId] of ["t-101", "t-102"].entries()) {
       const first = requests[i]?.messages[1]?.content ?? "";
-      expect(first).toMatch(/^<recalled_memory>\nToday is \d{4}-\d{2}-\d{2}\./);
+      expect(first).toMatch(/^<recalled_memory>\nToday is \d{4}-\d{2}-\d{2} \(UTC\)\./);
       expect(first.endsWith(`</recalled_memory>\n\n{"topicId":"${topicId}"}`)).toBe(true);
     }
   });

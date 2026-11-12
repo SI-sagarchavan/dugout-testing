@@ -13,6 +13,8 @@ import {
   type Generalizer,
   memoryGroups,
   promoteSharedMemory,
+  reembed,
+  staleEmbeddings,
 } from "../src/index.ts";
 
 const pool = createPool(inject("databaseUrl"));
@@ -251,3 +253,41 @@ describe("promotion", () => {
     expect(offered).toContainEqual([sport, swim]);
   });
 });
+
+describe("embedding again", () => {
+  it("embeds the rows another embedder made, and only those", async () => {
+    const tenant = `embed${suffix}`;
+    const row = await lesson(tenant, "Name the venue in the first line");
+    created.push(row.id);
+    const model = `test-${suffix}`;
+    const next = { model, embed: async (texts: string[]) => texts.map(() => unit(7)) };
+    expect(await staleEmbeddings(adminPool, model, tenant)).toEqual({ "hash-v1": 1 });
+    expect(await reembed({ pool: adminPool, embeddings: next, tenantId: tenant })).toBe(1);
+    const { rows } = await adminPool.query(
+      "select embedding_model, embedding::text as v from memory_items where id = $1",
+      [row.id],
+    );
+    expect(rows[0].embedding_model).toBe(model);
+    expect(JSON.parse(rows[0].v)[7]).toBe(1);
+    // nothing left to do, and a row written by the new embedder says so itself
+    expect(await reembed({ pool: adminPool, embeddings: next, tenantId: tenant })).toBe(0);
+    const written = await createMemoryStore({ pool, embeddings: next }).addEpisode({
+      tenantId: tenant,
+      agentId: AGENT,
+      episodeType: "lesson",
+      content: "Say who is unavailable",
+      confidence: 0.9,
+      sourceRunId: randomUUID(),
+      ttlDays: 30,
+    });
+    created.push(written.id);
+    expect(await staleEmbeddings(adminPool, model, tenant)).toEqual({});
+  });
+});
+
+/** A unit vector along one axis. */
+function unit(axis: number): number[] {
+  const v = new Array<number>(1024).fill(0);
+  v[axis] = 1;
+  return v;
+}

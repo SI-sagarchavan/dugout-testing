@@ -25,6 +25,13 @@ import {
   overLists,
   selectOf,
   splitPageWhen,
+  createSystem,
+  machineOf,
+  splitLiveWhen,
+  stateScope,
+  systemSnapshot,
+  type Json,
+  type PageSystem,
 } from "@fanos/dsl";
 import type { NodeRenderContext, RenderConfig } from "../context.js";
 import { Box } from "./Box.js";
@@ -40,7 +47,8 @@ import { Checkbox } from "./Checkbox.js";
 import { Carousel } from "./Carousel.js";
 import { stateRules } from "../resolve/look.js";
 import { splitWhen, withClock } from "../resolve/clock.js";
-import { ClockGate, PageChoices, PageGate } from "@fanos/renderer/client";
+import { ClockGate, FollowItem, MachineHost, PageChoices, PageGate, StateGate } from "@fanos/renderer/client";
+import { behaviourOf, entryIn, isLegacyPage } from "../resolve/state.js";
 import { PAGE_SELECTED } from "../resolve/style.js";
 
 export interface RenderProps {
@@ -55,6 +63,26 @@ export interface RenderProps {
   now?: RenderConfig["now"];
   /** Where the page's choices start, when the host draws several sections (`pageDefaults`). */
   page?: RenderConfig["page"];
+  /**
+   * This section's name on the page: what its machine is called, and what its nodes' events go
+   * to. Defaults to the root's id; a section drawn twice on one page needs two.
+   */
+  instance?: string;
+  /**
+   * The host's link for its own pages: the Next.js site passes `next/link`. Left out (the widget,
+   * Studio), links are plain `<a href>`.
+   */
+  link?: RenderConfig["link"];
+  /** The signed-in fan, or null: `$user`. Ignored when `system` is given. */
+  user?: Json;
+  /** The page shown: `$route`. Ignored when `system` is given. */
+  route?: Json;
+  /**
+   * The page's machines, built by a host that draws several sections (`createSystem` over each
+   * tree's `machineOf`), so a section reads what another shares (`$page`) at the first paint. Without
+   * it the section's own machine is the page's only one.
+   */
+  system?: PageSystem;
   /** Optional root width in px (harness sets this). */
   width?: number;
   /**
@@ -73,7 +101,7 @@ export interface RenderProps {
   designWidth?: number;
 }
 
-export function Render({ tree, data, assets, themeSlug, origin, timeZone, dateOrder, now, width, designWidth, page }: RenderProps) {
+export function Render({ tree, data, assets, themeSlug, origin, timeZone, dateOrder, now, width, designWidth, page, instance: named, link, user, route, system: given }: RenderProps) {
   // Validate structure early — reify throws on broken trees.
   reify(tree);
   const root = rootOf(tree);
@@ -83,11 +111,19 @@ export function Render({ tree, data, assets, themeSlug, origin, timeZone, dateOr
   // The choices and fields this tree writes start as drawn, unless the host says otherwise.
   const writes = pageDefaults([tree]);
   const pageState = { ...writes, ...(page ?? {}) };
+  // The section's machine, at its first moment (or where the host's page of machines has it). The
+  // server draws every node as that state reads; the browser takes over from the same snapshot.
+  const spec = machineOf(tree);
+  const instance = named ?? root.id;
+  const system = given ?? createSystem(spec ? [{ instance, spec }] : [], { user: user ?? null, route: route ?? null, page: pageState }).system;
+  const own = spec ? system.machines[instance] : undefined;
   const ctx: NodeRenderContext = {
-    data,
+    data: { ...(data ?? {}), ...stateScope(system, own ? instance : undefined) },
+    ...(own ? { instance } : {}),
     assets,
     themeSlug,
     origin,
+    ...(link ? { link } : {}),
     timeZone,
     ...(dateOrder ? { dateOrder } : {}),
     now: now ?? Date.now(),
@@ -113,6 +149,7 @@ export function Render({ tree, data, assets, themeSlug, origin, timeZone, dateOr
       data-fos-theme={themeSlug}
       data-fos-root
       data-fos-tree={root.id}
+      data-fos-instance={instance}
       {...(scaled ? { "data-fos-scale": scale.toFixed(4) } : {})}
       style={{
         ...(width ? { width: `${width}px` } : {}),
@@ -125,6 +162,9 @@ export function Render({ tree, data, assets, themeSlug, origin, timeZone, dateOr
     >
       {states && <style>{states}</style>}
       {Object.keys(writes).length > 0 && <PageChoices initial={pageState} />}
+      {spec && own && (
+        <MachineHost instance={instance} spec={spec} snapshot={own} host={systemSnapshot(system).host} free={system.free} />
+      )}
       {scaled ? (
         <div
           data-fos-scaler
@@ -165,7 +205,7 @@ function resolveList(path: string | undefined, data: unknown): unknown[] | undef
  * right failure for a section whose CMS came back with four items instead of six.
  */
 function repetitions(node: Node, ctx: NodeRenderContext, list?: unknown[]): NodeRenderContext[] | undefined {
-  const props = node.props as { over?: string; as?: string; limit?: number; slice?: [number, number] };
+  const props = node.props as { over?: string; as?: string; limit?: number; slice?: [number, number] | [number] };
   const key = overChoice(String(props.over ?? ""));
   // a list that follows a page choice, outside a gate (a carousel's slides): the one the page is at
   const items = list ?? (key ? overList(String(props.over), ctx.data, ctx.page?.[key]) : resolveList(props.over, ctx.data));
@@ -222,8 +262,11 @@ function RenderNode({ node: given, tree, ctx: outer }: { node: Node; tree: FlatT
   // A condition on the page's choices changes as a person chooses, so the browser decides it too:
   // the node is drawn, and shown while it holds; the server's first paint is the page's start.
   const paged = splitPageWhen(when.now, ctx.data);
-  if (!evaluateWhen(paged.now, ctx.data)) return null;
-  const drawn = <DrawNode node={chosen(node, ctx)} tree={tree} ctx={ctx} />;
+  // A condition on a machine's state, or on what another section shares, changes as the fan presses
+  // and types: drawn, and shown while it holds, from the server's snapshot first.
+  const live = splitLiveWhen(paged.now, ctx.data);
+  if (!evaluateWhen(live.now, ctx.data)) return null;
+  const drawn = <DrawNode node={behaviourOf(chosen(node, ctx), ctx)} tree={tree} ctx={ctx} />;
   const ticking =
     when.ticking.length === 0 ? (
       drawn
@@ -232,10 +275,22 @@ function RenderNode({ node: given, tree, ctx: outer }: { node: Node; tree: FlatT
         {drawn}
       </ClockGate>
     );
-  if (paged.page.length === 0) return ticking;
+  // `_page` keeps ADR 0032's gate; everything else that is live reads the page's store
+  const legacy = live.live.filter(isLegacyPage);
+  const stateful = live.live.filter((c) => !isLegacyPage(c));
+  const gated =
+    stateful.length === 0 ? (
+      ticking
+    ) : (
+      <StateGate instance={ctx.instance} conditions={stateful} initial={stateful.every((c) => evaluateCondition(c, ctx.data))}>
+        {ticking}
+      </StateGate>
+    );
+  const pageConditions = [...paged.page, ...legacy];
+  if (pageConditions.length === 0) return gated;
   return (
-    <PageGate conditions={paged.page} page={ctx.page ?? {}}>
-      {ticking}
+    <PageGate conditions={pageConditions} page={ctx.page ?? {}}>
+      {gated}
     </PageGate>
   );
 }
@@ -256,7 +311,33 @@ function drawRepeats(node: Node, kids: Node[], tree: FlatTree, ctx: NodeRenderCo
   const each = repeated(node, kids);
   return (
     <>
-      {scopes.map((scope, i) => (
+      {scopes.map((given, i) => {
+        // An item of a list in state (`follow`): drawn while the state's list holds it, its entry `$entry`
+        const follow = followOf(node);
+        if (follow) {
+          const item = lookup(given.data, String((node.props as { as?: string }).as ?? "item"));
+          const itemKey = (lookup(item, follow.key) ?? null) as Json;
+          const entry = entryIn(lookup(given.data, follow.list), itemKey, follow.by);
+          const scope = { ...given, data: { ...(given.data ?? {}), $entry: entry ?? null } };
+          return (
+            <FollowItem
+              key={`${node.id}-${i}`}
+              instance={ctx.instance}
+              list={follow.list}
+              itemKey={itemKey}
+              {...(follow.by ? { by: follow.by } : {})}
+              {...(entry === undefined ? {} : { initial: entry })}
+              attrs={{ "data-fos-repeat": i, "data-fos-repeat-of": node.id }}
+            >
+              {i > 0 ? separator.map((between) => <RenderNode key={between.id} node={between} tree={tree} ctx={ctx} />) : null}
+              {each.map((child) => (
+                <RenderNode key={child.id} node={child} tree={tree} ctx={scope} />
+              ))}
+            </FollowItem>
+          );
+        }
+        const scope = given;
+        return (
         // `display: contents` keeps each repetition out of the layout box
         // tree — a Repeater under a Stack must place its children directly
         // into that flex flow, not inside a wrapper. The attribute still
@@ -274,9 +355,17 @@ function drawRepeats(node: Node, kids: Node[], tree: FlatTree, ctx: NodeRenderCo
             />
           ))}
         </div>
-      ))}
+        );
+      })}
     </>
   );
+}
+
+/** A Repeater's `follow`, when it is one. */
+function followOf(node: Node): { list: string; key: string; by?: string } | undefined {
+  const follow = (node.props as { follow?: { list?: unknown; key?: unknown; by?: unknown } }).follow;
+  if (!follow || typeof follow.list !== "string" || typeof follow.key !== "string") return undefined;
+  return { list: follow.list, key: follow.key, ...(typeof follow.by === "string" ? { by: follow.by } : {}) };
 }
 
 function DrawNode({

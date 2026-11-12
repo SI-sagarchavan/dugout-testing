@@ -78,7 +78,12 @@ export interface Dsl {
   ):
     | { as: string; to: number | undefined; values: Record<string, unknown> | undefined }
     | undefined;
-  /** Structure (S rules) and refs the renderer cannot read (B4): a plan must leave a tree it takes. */
+  /** The CDN's `{{RATIO}}` slot in a picture URL, filled from the Image's `ratio` as the renderer does. */
+  fillImageRatio(url: string, ratio: string | undefined): string;
+  /**
+   * Structure (S rules), refs the renderer cannot read (B4) and a `when` that is no condition: a
+   * plan must leave a tree the renderer draws as the plan means.
+   */
   check(tree: Tree): Issue[];
 }
 
@@ -101,6 +106,8 @@ export function loadDsl(): Promise<Dsl> {
       overLists: Dsl["overLists"];
       itemScope: Dsl["itemScope"];
       clockScope: Dsl["clockScope"];
+      fillImageRatio: Dsl["fillImageRatio"];
+      predicateSchema: { safeParse(value: unknown): { success: boolean } };
       checkPipes(tree: unknown): Array<{ severity: string; message: string; nodeId?: string }>;
       flatTreeSchema: {
         safeParse(tree: unknown): {
@@ -122,19 +129,32 @@ export function loadDsl(): Promise<Dsl> {
       overLists: dsl.overLists,
       itemScope: dsl.itemScope,
       clockScope: dsl.clockScope,
+      fillImageRatio: dsl.fillImageRatio,
       check(tree) {
         const parsed = dsl.flatTreeSchema.safeParse(tree);
         if (parsed.success) {
           // a ref no renderer reads draws as written, braces and all: the page shows the template
-          return dsl
+          const refs = dsl
             .checkPipes(tree)
             .filter((i) => i.severity === "error")
-            .slice(0, 10)
             .map((i) => ({
               code: "B4",
               message: i.message,
               ...(i.nodeId ? { nodeId: i.nodeId } : {}),
             }));
+          // a when that is no condition draws the node on every page (the renderer's rule): `false`
+          // hides nothing (run 3b826dc5)
+          const whens = tree.nodes
+            .filter(
+              (n) =>
+                n.props.when !== undefined && !dsl.predicateSchema.safeParse(n.props.when).success,
+            )
+            .map((n) => ({
+              code: "S12",
+              nodeId: n.id,
+              message: `${n.src} when ${JSON.stringify(n.props.when)}: not a condition, so the page draws ${n.src} for every item as if it had no when. A when reads the data: {"path":"<field>","exists":true}, eq, ne, in, gt, lt, or a list of them; a part drawn only when a list holds that many items tests that item ({"path":"<list>.<index>","exists":true})`,
+            }));
+          return [...refs, ...whens].slice(0, 10);
         }
         return (parsed.error?.issues ?? []).slice(0, 10).map((i) => ({
           code: "S",

@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { BuildRecord } from "@dugout/contracts";
 import type { Grade } from "./graders.ts";
 import type { JudgeVerdict } from "./judge.ts";
 
@@ -16,6 +17,10 @@ export interface CaseOutcome {
   judge?: JudgeVerdict;
   runIds: string[];
   costUsd: number;
+  /** Model steps the run took, child runs included, where the suite counts them. */
+  steps?: number;
+  /** Questions the run put to a person (approvals of a write are not questions). */
+  asked?: number;
   servedModels: string[];
   /** Set when the case could not run at all (e.g. no live model for a memory case). */
   skipped?: string;
@@ -37,10 +42,65 @@ export interface CaseResult {
   skipped?: string;
 }
 
+/** What a case cost on average over its attempts: the numbers memory is meant to lower (ADR 0034). */
+export interface CaseEffort {
+  attempts: number;
+  steps: number | null;
+  costUsd: number;
+  asked: number | null;
+}
+
+/** The effort of each case that ran, averaged over the attempts that reported it. */
+export function effortOf(results: CaseResult[]): Record<string, CaseEffort> {
+  const mean = (values: number[]) =>
+    values.length
+      ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100
+      : null;
+  const out: Record<string, CaseEffort> = {};
+  for (const r of results) {
+    const ran = r.attempts.filter((a) => a.runIds.length > 0);
+    if (ran.length === 0) continue;
+    out[r.id] = {
+      attempts: ran.length,
+      steps: mean(ran.flatMap((a) => (a.steps === undefined ? [] : [a.steps]))),
+      costUsd:
+        Math.round((ran.reduce((sum, a) => sum + a.costUsd, 0) / ran.length) * 10000) / 10000,
+      asked: mean(ran.flatMap((a) => (a.asked === undefined ? [] : [a.asked]))),
+    };
+  }
+  return out;
+}
+
+/** Model steps in a run's stream: its own and, since a child's events are in it, its children's. */
+export const stepsTaken = (events: Array<{ type: string }>): number =>
+  events.filter((e) => e.type === "step.completed").length;
+
+/** Questions a run asked a person, from its events: a pause with no call under review. */
+export function questionsAsked(events: Array<{ type: string; data?: unknown }>): number {
+  let n = 0;
+  for (const e of events) {
+    if (e.type !== "question.asked") continue;
+    const data = e.data as { subject?: unknown; questions?: unknown[] };
+    if (!data.subject) n += data.questions?.length ?? 0;
+  }
+  return n;
+}
+
+/** How a case's run treats memory (ADR 0034). */
+export interface RunCaseOptions {
+  /** Leave memory's record of the run (a build record, lessons), which evals leave out by default. */
+  record?: boolean;
+}
+
 export interface EvalSuite<C extends EvalCase> {
   agentId: string;
   cases: C[];
-  runCase(c: C, attempt: number): Promise<CaseOutcome>;
+  runCase(c: C, attempt: number, options?: RunCaseOptions): Promise<CaseOutcome>;
+  /**
+   * Makes the agent's own build record wrong in the way that would hurt (a hook that does not
+   * exist, a container read as the wrong kind), for the wrong-record eval (ADR 0034).
+   */
+  plant?(record: BuildRecord): BuildRecord;
 }
 
 export interface RunSuiteOptions {

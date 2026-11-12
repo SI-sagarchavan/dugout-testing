@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "previewUrl": {
+      "type": "string"
+    },
+    "treeArtifactId": {
+      "type": "string"
+    },
+    "behaviours": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What the section does now, one line each"
+    },
+    "settled": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string",
+            "enum": [
+              "person",
+              "memory",
+              "agent"
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "by",
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Each thing that was open and who decided it"
+    },
+    "remaining": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What it should do and does not, with why"
+    },
+    "unmet": {
+      "description": "An obligation ix.load or ix.apply reported that the section does not meet, and why: only for a reason listed. What the data holds today is never one",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "The data source an obligation is about (ix.load's obligations)"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "nothing-asks"
+            ],
+            "description": "nothing-asks: the design draws nothing a fan presses for more of it (no LOAD MORE, no pager, no list running past its sheet)"
+          },
+          "why": {
+            "type": "string",
+            "description": "What in the design shows it, in a sentence"
+          }
+        },
+        "required": [
+          "source",
+          "reason",
+          "why"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "previewUrl",
+    "treeArtifactId",
+    "behaviours",
+    "settled",
+    "remaining"
+  ],
+  "additionalProperties": false
+}

@@ -1,3 +1,4 @@
+import type { BuildRecord } from "@dugout/contracts";
 import { type Client, type Pool, toVector, withTenant } from "@dugout/db";
 import type { EmbeddingClient } from "./embeddings.ts";
 
@@ -8,7 +9,7 @@ export type MemoryStatus = "proposed" | "active" | "retired";
  * an editor approved in a completed run), or a decision: what a person answered to a question
  * about one section (ADR 0033).
  */
-export type EpisodeType = "run" | "lesson" | "example" | "decision";
+export type EpisodeType = "run" | "lesson" | "example" | "decision" | "build";
 
 export interface MemoryItem {
   id: string;
@@ -75,6 +76,25 @@ export interface MemoryReader {
   recallEpisodes(
     q: Omit<SearchQuery, "kinds"> & { episodeType: EpisodeType; agentId: string },
   ): Promise<Array<MemoryItem & { score: number }>>;
+  /**
+   * The live build records of these sections (ADR 0034), newest first; one agent's when named.
+   * With no sections, every section's.
+   */
+  builds(
+    tenantId: string,
+    q?: { sections?: string[]; agentId?: string; limit?: number },
+  ): Promise<MemoryItem[]>;
+  /**
+   * The build records whose links name this id as a path segment: the run that made it
+   * (`run.previewUrl`), or a correction a person's comments made from it (`run.edited`).
+   */
+  buildsNaming(tenantId: string, id: string): Promise<MemoryItem[]>;
+  /** @deprecated `buildsNaming`, under the name ui-editor's tools still call it by. */
+  buildsOfPreview(tenantId: string, id: string): Promise<MemoryItem[]>;
+  /** The live lessons about these sections (ADR 0034), the strongest and newest first. */
+  lessonsOn(tenantId: string, sections: string[], limit?: number): Promise<MemoryItem[]>;
+  /** One live build record of the tenant, by its item id (ADR 0034). */
+  build(tenantId: string, id: string): Promise<MemoryItem | undefined>;
   /** The latest live decision for a key (`decisionKey`), whoever made it. */
   decision(tenantId: string, key: string): Promise<MemoryItem | undefined>;
   /** The latest live decision for each question about one section, newest first. */
@@ -98,6 +118,12 @@ export interface MemoryReader {
 export const decisionKey = (agentId: string, questionId: string, section: string) =>
   `${agentId}:${questionId}@${section}`;
 
+/** The key of an agent's build records for one section (ADR 0034). */
+/** The key of a lesson about one section (ADR 0034). */
+export const lessonKey = (section: string) => `lesson@${section}`;
+
+export const buildKey = (agentId: string, section: string) => `${agentId}:build@${section}`;
+
 /** Only the consolidation step and the review command hold a writer. */
 export interface MemoryWriter {
   /**
@@ -114,6 +140,12 @@ export interface MemoryWriter {
      * a similar input can find the lesson, and it is not part of the stored text.
      */
     situation?: string;
+    /**
+     * The section a lesson is about (ADR 0034): it is kept under the section, found by it, and
+     * strengthened only by a lesson about the same section. Its words, not the run input, are what
+     * the lesson is embedded with.
+     */
+    section?: { signature: string; name?: string; kind?: string; layout?: string };
     confidence: number;
     sourceRunId: string;
     ttlDays: number;
@@ -146,6 +178,31 @@ export interface MemoryWriter {
     sourceRunId: string;
     ttlDays: number;
   }): Promise<MemoryItem & { reinforced: boolean }>;
+  /**
+   * Records how a run built a section (ADR 0034). The same work with the same verdict again
+   * strengthens the record and pushes back its expiry; different work is a new record, so the
+   * earlier stays as history and the latest is the one read. Of the records that were not good,
+   * only the latest per key stays live.
+   */
+  recordBuild(b: {
+    tenantId: string;
+    agentId: string;
+    record: BuildRecord;
+    content: string;
+    ttlDays: number;
+  }): Promise<MemoryItem & { reinforced: boolean }>;
+  /**
+   * Adds what a person changed after a build to its record (ADR 0034), and the preview that came
+   * of it, so the next comment on that preview finds the record too.
+   */
+  correctBuild(
+    tenantId: string,
+    id: string,
+    change: {
+      corrected: NonNullable<BuildRecord["corrected"]>;
+      edited?: string;
+    },
+  ): Promise<MemoryItem | undefined>;
   /** Edits a proposal before a person approves it: its sentence and its value. */
   reviseProposal(
     tenantId: string,
@@ -270,6 +327,8 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
            where (tenant_id = $1 or (tenant_id is null and shared_scope = any($7::text[])))
              and kind = any($2) and ($6::text is null or episode_type = $6) and ${LIVE}
              and episode_type is distinct from 'example'
+             -- a build record is read by its section, from the load tools (ADR 0034)
+             and ($6::text is not null or episode_type is distinct from 'build')
          ),
          text_rank as (
            select id, row_number() over (order by ts_rank_cd(tsv, q) desc) as r
@@ -302,6 +361,23 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
       return rows.map((r) => ({ ...toItem(r), score: Number(r.score) }));
     });
   };
+
+  const buildsNaming: MemoryStore["buildsNaming"] = (tenantId, id) =>
+    tx(tenantId, async (db) => {
+      // an id is one path segment; anything else matches nothing
+      if (!/^[A-Za-z0-9_-]+$/.test(id)) return [];
+      const at = `/${id}([/?#]|$)`;
+      const { rows } = await db.query(
+        `select ${COLUMNS} from memory_items
+         where tenant_id = $1 and episode_type = 'build' and ${LIVE}
+           and (value->'run'->>'previewUrl' ~ $2
+             or exists (select 1 from jsonb_array_elements_text(
+                  coalesce(value->'run'->'edited', '[]'::jsonb)) e where e ~ $2))
+         order by last_seen_at desc`,
+        [tenantId, at],
+      );
+      return rows.map(toItem);
+    });
 
   return {
     activeFacts: (tenantId, groups = []) =>
@@ -378,15 +454,22 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
     async addEpisode(e) {
       // A lesson's words rarely repeat the next run's input, so the embedding also carries the
       // input it was learned on. The stored text stays the lesson.
-      const vector = await embedOne(e.situation ? `${e.situation}\n${e.content}` : e.content);
+      // a lesson about a section is embedded with the section's words, not the run input (ADR 0034)
+      const situation = e.section
+        ? [e.section.name, e.section.kind, e.section.layout].filter(Boolean).join(" ")
+        : e.situation;
+      const vector = await embedOne(situation ? `${situation}\n${e.content}` : e.content);
+      const key = e.section ? lessonKey(e.section.signature) : null;
       return tx(e.tenantId, async (db) => {
-        // the same lesson from any agent of the tenant strengthens the one already there
+        // the same lesson from any agent of the tenant strengthens the one already there; one
+        // about a section only the same section's
         if (e.episodeType === "lesson") {
           const { rows } = await db.query(
             `select id, 1 - (embedding <=> $2::vector) as similarity from memory_items
              where tenant_id = $1 and kind = 'episodic' and episode_type = 'lesson' and ${LIVE}
+               and key is not distinct from $3::text
              order by embedding <=> $2::vector limit 1`,
-            [e.tenantId, vector],
+            [e.tenantId, vector, key],
           );
           const nearest = rows[0];
           if (nearest && Number(nearest.similarity) >= REINFORCE_SIMILARITY) {
@@ -405,8 +488,9 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
           db,
           `insert into memory_items
              (tenant_id, agent_id, kind, episode_type, content, embedding, status, confidence,
-              source_run_id, expires_at)
-           values ($1, $2, 'episodic', $3, $4, $5, 'active', $6, $7, now() + make_interval(days => $8))
+              source_run_id, expires_at, embedding_model, key, value)
+           values ($1, $2, 'episodic', $3, $4, $5, 'active', $6, $7,
+             now() + make_interval(days => $8), $9, $10, $11::jsonb)
            returning ${COLUMNS}`,
           [
             e.tenantId,
@@ -417,6 +501,9 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
             e.confidence,
             e.sourceRunId,
             e.ttlDays,
+            embeddings.model,
+            key,
+            e.section ? JSON.stringify(e.section) : null,
           ],
         );
         return { ...item, reinforced: false };
@@ -430,11 +517,11 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
           db,
           `insert into memory_items
              (tenant_id, agent_id, kind, key, version, content, embedding, status, confidence,
-              source_run_id, value, sources)
+              source_run_id, value, sources, embedding_model)
            values ($1, $2, 'semantic', $3,
              (select coalesce(max(version), 0) + 1 from memory_items
               where tenant_id = $1 and kind = 'semantic' and key = $3),
-             $4, $5, 'proposed', $6, $7, $8::jsonb, $9::uuid[])
+             $4, $5, 'proposed', $6, $7, $8::jsonb, $9::uuid[], $10)
            returning ${COLUMNS}`,
           [
             f.tenantId,
@@ -446,6 +533,7 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
             f.sourceRunId,
             f.value === undefined ? null : JSON.stringify(f.value),
             f.sources ?? [],
+            embeddings.model,
           ],
         ),
       );
@@ -475,9 +563,9 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
           db,
           `insert into memory_items
              (tenant_id, agent_id, kind, key, episode_type, content, embedding, status, confidence,
-              source_run_id, expires_at, value)
+              source_run_id, expires_at, value, embedding_model)
            values ($1, $2, 'episodic', $3, 'decision', $4, $5, 'active', 1, $6,
-             now() + make_interval(days => $7), $8::jsonb)
+             now() + make_interval(days => $7), $8::jsonb, $9)
            returning ${COLUMNS}`,
           [
             d.tenantId,
@@ -488,11 +576,152 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
             d.sourceRunId,
             d.ttlDays,
             JSON.stringify(d.value),
+            embeddings.model,
           ],
         );
         return { ...item, reinforced: false };
       });
     },
+
+    async recordBuild(b) {
+      const { record } = b;
+      const key = buildKey(b.agentId, record.section.signature);
+      // the section's words and the sentence, never the JSON: an embedder ranks JSON by its ids
+      const words = [record.section.kind, record.section.layout, record.section.name, b.content];
+      const vector = await embedOne(words.filter(Boolean).join(" "));
+      return tx(b.tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select id, value from memory_items
+           where tenant_id = $1 and episode_type = 'build' and key = $2 and ${LIVE}
+           order by last_seen_at desc limit 1`,
+          [b.tenantId, key],
+        );
+        const latest = rows[0] as { id: string; value: BuildRecord } | undefined;
+        if (
+          latest &&
+          sameValue(latest.value.did, record.did) &&
+          latest.value.outcome.good === record.outcome.good
+        ) {
+          // what a person corrected since stays on the record
+          const value = {
+            ...record,
+            ...(latest.value.corrected ? { corrected: latest.value.corrected } : {}),
+          };
+          const item = await one(
+            db,
+            `update memory_items set strength = strength + 1, last_seen_at = now(), content = $4,
+               source_run_id = $3, value = $5::jsonb, embedding = $6, embedding_model = $7,
+               expires_at = greatest(expires_at, now() + make_interval(days => $2))
+             where id = $1 returning ${COLUMNS}`,
+            [
+              latest.id,
+              b.ttlDays,
+              record.run.runId,
+              b.content,
+              JSON.stringify(value),
+              vector,
+              embeddings.model,
+            ],
+          );
+          return { ...item, reinforced: true };
+        }
+        if (!record.outcome.good) {
+          await db.query(
+            `update memory_items set expires_at = now()
+             where tenant_id = $1 and episode_type = 'build' and key = $2 and ${LIVE}
+               and (value->'outcome'->>'good')::boolean = false`,
+            [b.tenantId, key],
+          );
+        }
+        const item = await one(
+          db,
+          `insert into memory_items
+             (tenant_id, agent_id, kind, key, episode_type, content, embedding, status, confidence,
+              source_run_id, expires_at, value, embedding_model)
+           values ($1, $2, 'episodic', $3, 'build', $4, $5, 'active', 1, $6,
+             now() + make_interval(days => $7), $8::jsonb, $9)
+           returning ${COLUMNS}`,
+          [
+            b.tenantId,
+            b.agentId,
+            key,
+            b.content,
+            vector,
+            record.run.runId,
+            b.ttlDays,
+            JSON.stringify(record),
+            embeddings.model,
+          ],
+        );
+        return { ...item, reinforced: false };
+      });
+    },
+
+    builds: (tenantId, q = {}) =>
+      tx(tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select ${COLUMNS} from memory_items
+           where tenant_id = $1 and episode_type = 'build' and ${LIVE}
+             and ($2::text[] is null or value->'section'->>'signature' = any($2))
+             and ($3::text is null or agent_id = $3)
+           order by last_seen_at desc limit $4`,
+          [tenantId, q.sections ?? null, q.agentId ?? null, q.limit ?? 200],
+        );
+        return rows.map(toItem);
+      }),
+
+    buildsNaming,
+    buildsOfPreview: buildsNaming,
+
+    lessonsOn: (tenantId, sections, limit = 5) =>
+      tx(tenantId, async (db) => {
+        if (sections.length === 0) return [];
+        const { rows } = await db.query(
+          `select ${COLUMNS} from memory_items
+           where tenant_id = $1 and episode_type = 'lesson' and key = any($2) and ${LIVE}
+           order by strength desc, last_seen_at desc limit $3`,
+          [tenantId, sections.map(lessonKey), limit],
+        );
+        return rows.map(toItem);
+      }),
+
+    async correctBuild(tenantId, id, change) {
+      return tx(tenantId, async (db) => {
+        const { rows } = await db.query(
+          `select value from memory_items
+           where tenant_id = $1 and id = $2 and episode_type = 'build' and ${LIVE} for update`,
+          [tenantId, id],
+        );
+        const value = rows[0]?.value as BuildRecord | undefined;
+        if (!value) return undefined;
+        const next: BuildRecord = {
+          ...value,
+          run: {
+            ...value.run,
+            ...(change.edited
+              ? { edited: [...new Set([...(value.run.edited ?? []), change.edited])] }
+              : {}),
+          },
+          corrected: [...(value.corrected ?? []), ...change.corrected],
+        };
+        return one(
+          db,
+          `update memory_items set value = $2::jsonb where id = $1 returning ${COLUMNS}`,
+          [id, JSON.stringify(next)],
+        );
+      });
+    },
+
+    build: (tenantId, id) =>
+      tx(tenantId, async (db) => {
+        if (!/^[0-9a-f-]{36}$/i.test(id)) return undefined;
+        const { rows } = await db.query(
+          `select ${COLUMNS} from memory_items
+           where tenant_id = $1 and id = $2 and episode_type = 'build' and ${LIVE}`,
+          [tenantId, id],
+        );
+        return rows[0] ? toItem(rows[0]) : undefined;
+      }),
 
     decision: (tenantId, key) =>
       tx(tenantId, async (db) => {
@@ -562,7 +791,8 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
           db,
           `update memory_items set content = $2,
              value = case when $3::boolean then $4::jsonb else value end,
-             embedding = coalesce($5::vector, embedding)
+             embedding = coalesce($5::vector, embedding),
+             embedding_model = case when $5::vector is null then embedding_model else $6 end
            where id = $1 returning ${COLUMNS}`,
           [
             id,
@@ -570,6 +800,7 @@ export function createMemoryStore(opts: { pool: Pool; embeddings: EmbeddingClien
             change.value !== undefined,
             change.value === undefined ? null : JSON.stringify(change.value),
             vector ?? null,
+            embeddings.model,
           ],
         );
       }),

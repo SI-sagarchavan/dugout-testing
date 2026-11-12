@@ -41,4 +41,4 @@ export { DEFAULT_PAGE_WIDTH, preparePage } from "./page.js";
 export type { PageSource, PreparedPage } from "./page.js";
 
 // Context
-export type { RenderConfig, NodeRenderContext } from "./context.js";
+export type { HostLink, HostLinkProps, RenderConfig, NodeRenderContext } from "./context.js";

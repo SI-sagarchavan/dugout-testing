@@ -15,6 +15,17 @@ export interface CompactionOptions {
   window: number;
   /** Compact when the request passes this share of the window. */
   at?: number;
+  /**
+   * Compact when the request passes this many tokens, whatever the window: a window of a million
+   * is never 65% full within a run's budget, and every turn reads the whole request again.
+   * Defaults to `COMPACT_AT_TOKENS`; the lower of this and the share is the limit.
+   */
+  maxTokens?: number;
+  /**
+   * What the request was measured at, when the model's last reply said (its input and output
+   * tokens, and whatever was added since, estimated). The estimate is used when it is higher.
+   */
+  measuredTokens?: number;
   /** The latest assistant turns (with their results) that are always kept as they are. */
   keep?: number;
   /** Stores a tool result that leaves the transcript and returns its reference. */
@@ -27,6 +38,8 @@ export interface CompactionOptions {
 }
 
 export const COMPACT_AT = 0.65;
+/** A request past this is compacted even in a window many times larger. */
+export const COMPACT_AT_TOKENS = 150_000;
 export const COMPACT_KEEP = 3;
 /** A tool result shorter than this stays as it is: its reference would be hardly smaller. */
 const ELIDE_OVER = 2_000;
@@ -88,9 +101,16 @@ export async function compact(
   tools: ToolDefinition[],
   opts: CompactionOptions,
 ): Promise<Compaction | undefined> {
-  const limit = Math.floor(opts.window * (opts.at ?? COMPACT_AT));
-  const tokensBefore = estimateTokens(compactedView(messages, state.compacted), tools);
+  const limit = Math.min(
+    Math.floor(opts.window * (opts.at ?? COMPACT_AT)),
+    opts.maxTokens ?? COMPACT_AT_TOKENS,
+  );
+  const estimated = estimateTokens(compactedView(messages, state.compacted), tools);
+  const tokensBefore = Math.max(estimated, opts.measuredTokens ?? 0);
   if (tokensBefore <= limit) return undefined;
+  // the estimate counts characters; where the model counted more, every later estimate is as short
+  const scale = estimated > 0 ? tokensBefore / estimated : 1;
+  const sized = (view: Message[]) => Math.ceil(estimateTokens(view, tools) * scale);
 
   const assistants = messages.flatMap((m, i) => (m.role === "assistant" ? [i] : []));
   // the first message the model reads as it was written; before it is fair game
@@ -116,13 +136,12 @@ export async function compact(
     elided++;
   }
   let summarized = 0;
-  if (estimateTokens(compactedView(messages, next), tools) > limit) {
+  if (sized(compactedView(messages, next)) > limit) {
     const from = next.summary ? next.upTo : 2;
     if (cut > from) {
-      const older = compactedView(messages, { ...next, summary: undefined, upTo: 0 }).slice(
-        from,
-        cut,
-      );
+      // the turns as they were, not their references: a summary of previews keeps nothing of
+      // what a long result said
+      const older = messages.slice(from, cut);
       const summary = await opts.summarize(summaryPrompt(next.summary, older));
       if (summary) {
         next.summary = summary;
@@ -135,10 +154,48 @@ export async function compact(
   state.compacted = next;
   return {
     tokensBefore,
-    tokensAfter: estimateTokens(compactedView(messages, next), tools),
+    tokensAfter: sized(compactedView(messages, next)),
     elided,
     summarized,
   };
+}
+
+/**
+ * Takes the earlier results of a tool whose every result replaces the last (`Tool.latestOnly`) out
+ * of the request, once a newer one came: each becomes a reference, as compaction makes them, and
+ * can be read again. Nothing is summarised and the transcript is untouched. Returns how many.
+ */
+export async function supersede(
+  messages: Message[],
+  state: RunCheckpoint,
+  tool: string,
+  latestCallId: string,
+  store: (content: string) => Promise<string>,
+): Promise<number> {
+  const names = new Map<string, string>();
+  const next: Compacted = state.compacted
+    ? { ...state.compacted, elided: { ...state.compacted.elided } }
+    : { upTo: 0, elided: {} };
+  let dropped = 0;
+  for (const m of messages) {
+    if (m.role === "assistant") {
+      for (const call of m.toolCalls ?? []) names.set(call.id, call.name);
+      continue;
+    }
+    if (m.role !== "tool" || names.get(m.toolCallId) !== tool) continue;
+    if (m.toolCallId === latestCallId || m.isError || m.toolCallId in next.elided) continue;
+    if (m.content.length <= ELIDE_OVER) continue;
+    const ref = await store(m.content);
+    next.elided[m.toolCallId] = JSON.stringify({
+      ref,
+      chars: m.content.length,
+      preview: m.content.slice(0, PREVIEW),
+      note: `Replaced by a later ${tool} result. Call run.readOutput with this ref to read it again.`,
+    });
+    dropped++;
+  }
+  if (dropped > 0) state.compacted = next;
+  return dropped;
 }
 
 export const SUMMARY_SYSTEM =
@@ -153,7 +210,7 @@ export function summaryPrompt(previous: string | undefined, older: Message[]): s
       const calls = (m.toolCalls ?? []).map((c) => `  call ${c.name} ${clip(c.arguments, 1_500)}`);
       return [`assistant: ${clip(m.content, 2_000)}`, ...calls].join("\n");
     }
-    if (m.role === "tool") return `result${m.isError ? " (error)" : ""}: ${clip(m.content, 1_500)}`;
+    if (m.role === "tool") return `result${m.isError ? " (error)" : ""}: ${clip(m.content, 4_000)}`;
     return `${m.role}: ${clip(m.content, 2_000)}`;
   });
   return [

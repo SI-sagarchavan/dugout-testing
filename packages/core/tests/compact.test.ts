@@ -7,6 +7,7 @@ import {
   defineTool,
   type ModelClient,
   type RunEvent,
+  type Tool,
 } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -17,6 +18,7 @@ import {
   createMemorySink,
   createScriptedModel,
   runLocal,
+  type ScriptStep,
   scriptedModelConfig,
 } from "../src/index.ts";
 
@@ -48,14 +50,29 @@ const reads = Array.from({ length: 8 }, (_, n) => ({
 }));
 const script = [...reads, { toolCalls: [{ name: "final", arguments: { summary: "done" } }] }];
 
-async function run(opts: { window: number; compaction?: false; summaryFails?: boolean }) {
+async function run(opts: {
+  window: number;
+  compaction?: false;
+  summaryFails?: boolean;
+  /** Compact past this many tokens, whatever the window. */
+  maxTokens?: number;
+  /** What the model says each request cost, when the estimate should not be the judge. */
+  inputTokens?: number;
+  tools?: Tool[];
+  script?: ScriptStep[];
+}) {
   const models = scriptedModelConfig();
   for (const m of Object.values(models.models)) m.contextWindow = opts.window;
-  const scripted = createScriptedModel(script);
+  const scripted = createScriptedModel(opts.script ?? script);
   const summaries: string[] = [];
   const client: ModelClient = {
     async complete(req, ...rest) {
-      if (req.model !== "haiku") return scripted.complete(req, ...rest);
+      if (req.model !== "haiku") {
+        const turn = await scripted.complete(req, ...rest);
+        return opts.inputTokens === undefined
+          ? turn
+          : { ...turn, tokens: { ...turn.tokens, inputTokens: opts.inputTokens } };
+      }
       if (opts.summaryFails) throw new Error("no summary today");
       summaries.push(String(req.messages[1]?.content));
       return {
@@ -78,11 +95,14 @@ async function run(opts: { window: number; compaction?: false; summaryFails?: bo
   const sink = createMemorySink();
   const store = createMemoryRunStore();
   const result = await runLocal({
-    agent: { spec, output: z.object({ summary: z.string() }) },
+    agent: {
+      spec: opts.tools ? { ...spec, tools: opts.tools.map((t) => t.name) } : spec,
+      output: z.object({ summary: z.string() }),
+    },
     input: "Read them all",
     tenantId: "demo-cricket",
     runId: "r1",
-    tools: [bigRead],
+    tools: opts.tools ?? [bigRead],
     client,
     models,
     responder: async () => approve("editor"),
@@ -91,7 +111,10 @@ async function run(opts: { window: number; compaction?: false; summaryFails?: bo
     outputs: createMemoryOutputStore(),
     store,
     // a model of its own, so the fake client can tell a summary from the run's turns
-    compaction: opts.compaction === false ? false : { summarizer: "haiku" },
+    compaction:
+      opts.compaction === false
+        ? false
+        : { summarizer: "haiku", ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}) },
   });
   return { result, events: sink.events, scripted, summaries, store };
 }
@@ -148,6 +171,29 @@ describe("compaction", () => {
     expect(JSON.stringify(roomy.scripted.requests)).toBe(JSON.stringify(off.scripted.requests));
   });
 
+  it("compacts past a number of tokens, however large the window", async () => {
+    // a million-token window is never 65% full within a run's budget
+    const { result, events } = await run({ window: 1_000_000, maxTokens: 8_000 });
+    expect(result.status).toBe("completed");
+    expect(compacted(events).length).toBeGreaterThan(0);
+  });
+
+  it("goes by what the model counted, when that is more than the estimate", async () => {
+    // by the estimate this run stays under the limit; the model says each request is far over
+    const under = await run({ window: 1_000_000, maxTokens: 60_000 });
+    expect(compacted(under.events)).toEqual([]);
+    const over = await run({ window: 1_000_000, maxTokens: 60_000, inputTokens: 90_000 });
+    expect(over.result.status).toBe("completed");
+    expect(compacted(over.events).length).toBeGreaterThan(0);
+  });
+
+  it("writes the summary from the turns as they were, not from their references", async () => {
+    const { summaries } = await run({ window: 12_000 });
+    // a reference holds 300 characters of a result; the summariser reads far more of each
+    expect(summaries[0]).toContain("x".repeat(3_000));
+    expect(summaries[0]).not.toContain("Compacted to save room");
+  });
+
   it("goes on with the references when the summary cannot be written", async () => {
     const { result, events, scripted } = await run({ window: 12_000, summaryFails: true });
     expect(result.status).toBe("completed");
@@ -155,5 +201,67 @@ describe("compaction", () => {
     const last = JSON.stringify(scripted.requests.at(-1)?.messages);
     expect(last).toContain("Call run.readOutput");
     expect(last).not.toContain("State so far");
+  });
+});
+
+describe("a tool whose every result replaces the last", () => {
+  const planTry = defineTool({
+    name: "plan.try",
+    description: "Tries the whole plan again",
+    input: z.object({ n: z.number() }),
+    effect: "read",
+    timeoutMs: 1_000,
+    // a try that applied nothing replaces nothing: what the last one said still holds
+    latestOnly: (output) => !String(output).startsWith("not applied"),
+    run: async ({ n }) => {
+      if (n === 2) throw new Error("the plan does not parse");
+      if (n === 4) return "not applied: the plan names no node";
+      return `try ${n} ${"y".repeat(5_000)}`;
+    },
+  });
+  const tries = [0, 1, 2, 3, 4].map((n) => ({
+    toolCalls: [{ name: "plan.try", arguments: { n } }],
+  }));
+  const script = [
+    ...tries,
+    { toolCalls: [{ name: "big.read", arguments: { n: 9 } }] },
+    { toolCalls: [{ name: "final", arguments: { summary: "done" } }] },
+  ];
+  const results = (messages: Array<{ role: string; content: string }>) =>
+    messages.filter((m) => m.role === "tool").map((m) => m.content.slice(0, 40));
+
+  it("leaves only the latest result in the request, and the rest by reference", async () => {
+    const { result, events, scripted, store } = await run({
+      window: 1_000_000,
+      tools: [planTry, bigRead],
+      script,
+    });
+    expect(result.status).toBe("completed");
+    const last = results(scripted.requests.at(-1)?.messages ?? []);
+    // tries 0 and 1 are references, the failed one stays (it is short), try 3 is whole (the try
+    // after it applied nothing, so it still holds), and another tool's result is untouched
+    expect(last[0]).toContain('"ref"');
+    expect(last[1]).toContain('"ref"');
+    expect(last[2]).toContain("the plan does not parse");
+    expect(last[3]).toContain("try 3 yyy");
+    expect(last[4]).toContain("not applied");
+    expect(last[5]).toContain("result 9 xxx");
+    expect(JSON.stringify(scripted.requests.at(-1)?.messages)).toContain(
+      "Replaced by a later plan.try result",
+    );
+    // said in the stream, and the transcript keeps every result as it was
+    expect(compacted(events).map((e) => (e.data as { elided: number }).elided)).toEqual([1, 1]);
+    const transcript = store.runs.get("demo-cricket/r1")?.messages ?? [];
+    expect(results(transcript).filter((c) => c.startsWith("try"))).toHaveLength(3);
+  });
+
+  it("changes nothing when compaction is off", async () => {
+    const { scripted } = await run({
+      window: 1_000_000,
+      compaction: false,
+      tools: [planTry, bigRead],
+      script,
+    });
+    expect(JSON.stringify(scripted.requests.at(-1)?.messages)).not.toContain('"ref"');
   });
 });

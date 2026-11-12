@@ -247,6 +247,22 @@ describe("syncPreviews", () => {
           ],
         },
       }),
+      tree: async () => ({
+        schemaVersion: "1",
+        nodes: [
+          { id: "n0", parent: null, idx: 0, type: "Page", src: "1:1", props: {} },
+          { id: "n1", parent: "n0", idx: 0, type: "Stack", src: "2:1", props: {} },
+          {
+            id: "n2",
+            parent: "n1",
+            idx: 0,
+            type: "Text",
+            src: "I2:5;9:1",
+            props: { content: "A headline" },
+          },
+          { id: "n3", parent: "n0", idx: 1, type: "Stack", src: "3:1", props: {} },
+        ],
+      }),
       artifact: async (_run, id) =>
         id === "p1"
           ? { bind: [{ path: "news.articles.0.title", prop: "content", src: "I2:5;9:1" }] }
@@ -259,6 +275,7 @@ describe("syncPreviews", () => {
     expect(first.failed).toEqual([]);
     expect(first.marked.map((m) => m.sections)).toEqual([2, 2]);
     expect(first.shaped).toEqual([expect.objectContaining({ handoffId: "h-news", sections: 1 })]);
+    expect(first.treed.map((t) => t.sections)).toEqual([2, 2]);
 
     const news = await library.findBySignature(a, "s:news");
     expect(news?.dataShape).toEqual({
@@ -268,11 +285,21 @@ describe("syncPreviews", () => {
       fields: [],
     });
     expect((await library.findBySignature(a, "s:footer"))?.dataShape).toBeNull();
+    // each section keeps the DSL subtree that draws it, as a tree of its own
+    const newsTree = news?.tree as { nodes: Array<{ id: string; parent: string | null }> } | null;
+    expect(newsTree?.nodes).toEqual([
+      expect.objectContaining({ id: "n1", parent: null }),
+      expect.objectContaining({ id: "n2", parent: "n1" }),
+    ]);
+    expect((await library.findBySignature(a, "s:footer"))?.tree).toMatchObject({
+      nodes: [expect.objectContaining({ id: "n3", parent: null })],
+    });
     // another club finds it by the data it shows, and reads the shape, never the values
     expect(await ids(b, "news articles title", "shared")).toContain(news?.id);
     const seen = await library.get(b, news?.id ?? "");
     expect(seen?.dataShape?.lists[0]?.path).toBe("news.articles");
     expect(JSON.stringify(seen)).not.toContain("headline");
+    expect(seen?.tree).toBeNull();
 
     const again = await syncPreviews({ pool, tenantId: a, library, index, shapes });
     expect(again.shaped).toEqual([]);

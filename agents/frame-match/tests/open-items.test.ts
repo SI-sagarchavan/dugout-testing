@@ -126,6 +126,9 @@ function fake(intent: LayoutIntent, section: string) {
   return { engine, plane };
 }
 
+/** frame.publish's input: the model settles whether the section shows data. */
+const PUBLISH = { content: { data: "some", why: "the cards repeat with names" }, slots: [] };
+
 const call = (name: string, args: unknown = {}): ScriptStep => ({
   toolCalls: [{ name, arguments: args }],
 });
@@ -183,7 +186,6 @@ async function run(
     engine,
     plane: () => plane,
     vision: false,
-    judge: false,
     runsDir: await mkdtemp(join(tmpdir(), "runs-")),
     consolidate: true,
   })({
@@ -259,6 +261,8 @@ describe.each([
               ],
               allowOther: true,
               proposed: ["off"],
+              remember: "section",
+              fact: "layout.carousel.autoplay",
             },
           ],
         }),
@@ -289,7 +293,7 @@ describe.each([
       tenant,
       intent,
       section,
-      [layout(5000), call("frame.publish"), finalCall],
+      [layout(5000), call("frame.publish", PUBLISH), finalCall],
       {
         runId,
         runStore: first.runStore,
@@ -330,7 +334,7 @@ describe.each([
           },
           settled: [{ id: "autoplay", by: "memory" }],
         }),
-        call("frame.publish"),
+        call("frame.publish", PUBLISH),
         finalCall,
       ],
       { runId: `run2-${tenant}`, approving: true },

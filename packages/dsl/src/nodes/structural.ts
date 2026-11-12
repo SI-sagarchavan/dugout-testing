@@ -43,6 +43,13 @@ export const STRUCTURAL_NODES: NodeSpec[] = [
        * that, and the overflow paints over whatever follows.
        */
       clip: opt(f.bool(), { doc: "default false" }),
+      /**
+       * What is past the box scrolls along this axis instead of being cut: a list in a sheet of
+       * fixed height (Figma's `overflowDirection`). The box keeps its size; `clip` is implied.
+       */
+      scroll: opt(f.enum("y", "x", "both"), {
+        doc: "what is past the box scrolls on this axis instead of being cut; the box keeps its size",
+      }),
       direction: opt(f.enum("row", "column"), { resp: true, doc: 'default "column"' }),
       gap: opt(f.val(), { resp: true }),
       align: opt(f.enum(...ALIGN), { resp: true, doc: "cross axis" }),
@@ -240,7 +247,7 @@ export const STRUCTURAL_NODES: NodeSpec[] = [
        * Mutually exclusive with `limit` (S13): both cap the same list, and a
        * tree that says `slice: [3, 6], limit: 2` has two answers.
        */
-      slice: opt(f.arr(f.num(true)), { doc: "[start, end) — end exclusive; not with `limit` (S13)" }),
+      slice: opt(f.arr(f.num(true)), { doc: "[start, end) — end exclusive; or [start], to the end of the list however long it grows (the cards after a mosaic, as LOAD MORE adds pages); not with `limit` (S13)" }),
       /**
        * Its own children drawn once between two items instead of in each, in order: the rule
        * between stats (`stat | stat | stat`), a spacer and a rule, a chevron between crumbs. They
@@ -248,6 +255,21 @@ export const STRUCTURAL_NODES: NodeSpec[] = [
        * between slides.
        */
       separator: opt(f.arr(f.str()), { doc: "ids of its children drawn between items instead of in each, in order (a rule between stats)" }),
+      /**
+       * Draw only the items a list in STATE holds, in its order: the players picked in the drawer
+       * shown on the page, the products in the cart. `over` is still the data's list (everything
+       * that can be drawn, so the server draws each); `list` is the list in state (`$page.followed`,
+       * `$state.context.lines`), whose entries are the items' `key` field (`id`), or objects whose
+       * `by` field is. Inside, `$entry` is the item's entry: a cart line's `{ id, qty }`.
+       */
+      follow: opt(
+        f.obj({
+          list: req(f.str(), { doc: "the list in state: $page.<key> or $state.context.<field>" }),
+          key: req(f.str(), { doc: "the item field its entries hold: id" }),
+          by: opt(f.str(), { doc: "when entries are objects: their field that holds the key" }),
+        }),
+        { doc: "draw only the items a list in state holds, in its order; $entry is the item's entry" },
+      ),
       paginate: opt(
         f.obj({
           mode: req(f.enum("pages", "more", "infinite")),

@@ -1,6 +1,8 @@
+import { memoryRunState } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import { completeFinal, verifyFinal } from "../src/agent.ts";
 import { choiceProblems, describeChoice, describeLink, linksOf } from "../src/choices.ts";
+import { STATIC } from "../src/tools.ts";
 
 const toggle = {
   key: "women_men",
@@ -48,20 +50,10 @@ describe("a list that follows another section's choice", () => {
 });
 
 describe("a frame with nothing to bind", () => {
-  const run = {
-    messages: [
-      {
-        role: "assistant",
-        content: "",
-        toolCalls: [{ id: "s", name: "bind.static", arguments: "{}" }],
-      },
-      {
-        role: "tool",
-        toolCallId: "s",
-        content: JSON.stringify({ static: true, previewUrl: "http://x/preview/default/t" }),
-      },
-    ],
-  } as never;
+  // what bind.static keeps in the run's state (ADR 0035)
+  const state = memoryRunState();
+  state.set(STATIC, { previewUrl: "http://x/preview/default/t" });
+  const run = { messages: [], state };
 
   it("ends with the frame as published, nothing bound", () => {
     const out = completeFinal(
@@ -86,9 +78,9 @@ describe("a frame with nothing to bind", () => {
   });
 
   it("still needs a publish when it never said so", () => {
-    expect(verifyFinal({ remaining: [], notes: [] }, { messages: [] } as never)).toContain(
-      "bind.static",
-    );
+    expect(
+      verifyFinal({ remaining: [], notes: [] }, { messages: [], state: memoryRunState() }),
+    ).toContain("bind.static");
   });
 });
 

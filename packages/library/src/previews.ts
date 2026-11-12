@@ -21,6 +21,7 @@ import {
   type HandoffSource,
 } from "./source.ts";
 import type { SectionLibrary } from "./store.ts";
+import { sectionTree } from "./tree.ts";
 
 /** The agents whose finished runs are a preview of a Handoff: frame-match publishes the frame. */
 export const PREVIEW_AGENTS = ["frame-match", "section-builder"] as const;
@@ -134,6 +135,8 @@ export interface ShapeReader {
   ir(run: PreviewRun, irRef: string): Promise<IrDoc>;
   /** A stored artifact of the preview's project: the binding plan, the bound data. */
   artifact(run: PreviewRun, id: string): Promise<unknown>;
+  /** The DSL tree the run's preview link shows (a flat tree); without it, no trees. */
+  tree?(run: PreviewRun): Promise<unknown>;
 }
 
 export interface PreviewSync {
@@ -142,6 +145,8 @@ export interface PreviewSync {
   indexed: IndexReport[];
   /** Sections marked previewed, by run. */
   marked: Array<{ runId: string; handoffId: string; sections: number }>;
+  /** Sections given the DSL subtree that draws them, by run. */
+  treed: Array<{ runId: string; handoffId: string; sections: number }>;
   /** Sections given their data shape, by run. */
   shaped: Array<{ runId: string; handoffId: string; sections: number }>;
   failed: Array<{ runId: string; handoffId: string; error: string }>;
@@ -167,7 +172,14 @@ export async function syncPreviews(opts: {
 }): Promise<PreviewSync> {
   const { tenantId, library } = opts;
   const runs = await previewRuns(opts.pool, tenantId, opts.runId ? { runId: opts.runId } : {});
-  const out: PreviewSync = { runs: runs.length, indexed: [], marked: [], shaped: [], failed: [] };
+  const out: PreviewSync = {
+    runs: runs.length,
+    indexed: [],
+    marked: [],
+    treed: [],
+    shaped: [],
+    failed: [],
+  };
   const known = new Map<string, boolean>();
   for (const run of runs) {
     const handoffId = run.handoff.id;
@@ -186,7 +198,17 @@ export async function syncPreviews(opts: {
         at: run.at,
       });
       out.marked.push({ runId: run.runId, handoffId, sections });
-      // a run counted before was shaped then
+      // a run counted before was treed and shaped then; the latest preview's tree is the one kept
+      if (opts.shapes?.tree && (sections > 0 || opts.reindex)) {
+        const treed = await treeSections(tenantId, run, library, opts.shapes).catch(
+          (err: unknown) => {
+            throw new Error(
+              `shared, but no tree: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          },
+        );
+        out.treed.push({ runId: run.runId, handoffId, sections: treed });
+      }
       if (run.bound && opts.shapes && (sections > 0 || opts.reindex)) {
         const shaped = await shapeSections(tenantId, run, library, opts.shapes).catch(
           (err: unknown) => {
@@ -209,22 +231,23 @@ export async function syncPreviews(opts: {
   return out;
 }
 
-/** Gives each section of the run's Handoff that its plan binds the shape of that data. */
-async function shapeSections(
+/**
+ * The run's Handoff's sections, each with whether a layer (an IR node id) is inside it: the
+ * layer is the section's node or below it.
+ */
+async function scopedSections(
   tenantId: string,
   run: PreviewRun,
   library: SectionLibrary,
   read: ShapeReader,
-): Promise<number> {
-  const bound = run.bound;
-  if (!bound) return 0;
-  const [plan, data] = await Promise.all([
-    read.artifact(run, bound.planId),
-    read.artifact(run, bound.dataId),
-  ]);
+) {
   const sections = await library.ofHandoff(tenantId, run.handoff.id);
   const irs = new Map<string, Promise<ReturnType<typeof indexNodes>>>();
-  let shaped = 0;
+  const out: Array<{
+    section: (typeof sections)[number];
+    nodeId: string;
+    within: (src: string) => boolean;
+  }> = [];
   for (const section of sections) {
     const source = section.sources.find((s) => s.handoffId === run.handoff.id);
     if (!source) continue;
@@ -241,6 +264,45 @@ async function shapeSections(
       }
       return false;
     };
+    out.push({ section, nodeId: source.nodeId, within });
+  }
+  return out;
+}
+
+/** Gives each section of the run's Handoff the DSL subtree its preview draws it with. */
+async function treeSections(
+  tenantId: string,
+  run: PreviewRun,
+  library: SectionLibrary,
+  read: ShapeReader,
+): Promise<number> {
+  if (!read.tree) return 0;
+  const tree = await read.tree(run);
+  let treed = 0;
+  for (const { section, nodeId, within } of await scopedSections(tenantId, run, library, read)) {
+    const subtree = sectionTree(tree, nodeId, within);
+    if (!subtree) continue;
+    await library.setTree(tenantId, section.id, subtree);
+    treed++;
+  }
+  return treed;
+}
+
+/** Gives each section of the run's Handoff that its plan binds the shape of that data. */
+async function shapeSections(
+  tenantId: string,
+  run: PreviewRun,
+  library: SectionLibrary,
+  read: ShapeReader,
+): Promise<number> {
+  const bound = run.bound;
+  if (!bound) return 0;
+  const [plan, data] = await Promise.all([
+    read.artifact(run, bound.planId),
+    read.artifact(run, bound.dataId),
+  ]);
+  let shaped = 0;
+  for (const { section, within } of await scopedSections(tenantId, run, library, read)) {
     const shape = dataShapeOf({ plan: plan as BindingPlan, data, within });
     if (!shape) continue;
     await library.setDataShape(tenantId, section.id, shape);
@@ -280,6 +342,11 @@ export function previewReaders(opts: {
     ir: async (run, irRef) => (await opts.tools()).parseIr(await source(run).json(irRef)) as IrDoc,
     artifact: (run, id) =>
       createControlPlaneSource(run.bound?.project ?? run.theme?.project ?? "default").json(id),
+    tree: (run) => {
+      const target = previewTarget(run.previewUrl);
+      if (!target) throw new Error(`not a preview link: ${run.previewUrl}`);
+      return createControlPlaneSource(target.project).json(target.tree);
+    },
   };
   return { source, shapes };
 }

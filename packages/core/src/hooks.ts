@@ -92,8 +92,8 @@ const repeatedCalls = defineHook<Repeats>({
 const verifyFinal = (agent: AgentDefinition) =>
   defineHook<undefined>({
     id: "verifyFinal",
-    beforeFinal({ value, ctx, messages }: BeforeFinal) {
-      const refuse = agent.verifyFinal?.(value, { ctx, messages: messages as Message[] });
+    beforeFinal({ value, ctx, messages, state }: BeforeFinal) {
+      const refuse = agent.verifyFinal?.(value, { ctx, messages: messages as Message[], state });
       return refuse === undefined ? undefined : { refuse };
     },
   });

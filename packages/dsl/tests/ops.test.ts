@@ -17,6 +17,7 @@ import {
   collapseToRepeater,
   detachAsVariant,
   insertBefore,
+  insertSubtree,
   moveNode,
   removeNode,
   replaceNode,
@@ -421,5 +422,58 @@ describe("detachAsVariant", () => {
     expect(() => detachAsVariant(second, "card", { key: "item.id", value: 7 })).toThrow(TreeOpError);
     expect(() => detachAsVariant(listTree(), "name", { key: "item.id", value: 1 })).toThrow(TreeOpError);
     expect(() => detachAsVariant(listTree(), "card", { key: "other.id", value: 1 })).toThrow(TreeOpError);
+  });
+});
+
+describe("insertSubtree", () => {
+  // a section from another page, as the library keeps it: its own root, ids and Figma origins
+  const strip = (): FlatTree => ({
+    schemaVersion: "1.0.0",
+    nodes: [
+      { id: "root", parent: null, idx: 0, type: "Stack", src: "7:1", props: { direction: "row", gap: "space.2" } },
+      { id: "a", parent: "root", idx: 0, type: "Text", src: "7:2", props: { content: "A", style: "type.body_xs_regular" } },
+      { id: "b", parent: "root", idx: 1, type: "Text", src: "7:3", props: { content: "B", style: "type.body_xs_regular" } },
+    ],
+  });
+
+  it("puts the section under a node, ids renamed and origins synthetic, and the tree still validates", () => {
+    const out = insertSubtree(tree(), strip(), { parent: "root", idx: 1 });
+    expect(reify(out).children?.map((c) => c.id)).toEqual(["header", "ins1:root", "body"]);
+    const under = out.nodes.filter((n) => n.parent === "ins1:root");
+    expect(under.map((n) => n.id)).toEqual(["ins1:a", "ins1:b"]);
+    expect(out.nodes.find((n) => n.id === "ins1:a")?.src).toBe("synthetic:inserted:7:2");
+    expect(out.nodes.find((n) => n.id === "body")).toMatchObject({ parent: "root", idx: 2 });
+    expect(check(out).errors).toEqual([]);
+  });
+
+  it("goes last when no place is given, and first at 0", () => {
+    const last = insertSubtree(tree(), strip(), { parent: "root" });
+    expect(reify(last).children?.map((c) => c.id)).toEqual(["header", "body", "ins1:root"]);
+    const first = insertSubtree(tree(), strip(), { parent: "root", idx: 0 });
+    expect(reify(first).children?.map((c) => c.id)).toEqual(["ins1:root", "header", "body"]);
+  });
+
+  it("keeps document order, so flatten(reify(x)) is the same list", () => {
+    const out = insertSubtree(tree(), strip(), { parent: "root", idx: 1 });
+    expect(out.nodes.map((n) => n.id)).toEqual([
+      "root", "header", "ins1:root", "ins1:a", "ins1:b", "body", "left", "right",
+    ]);
+  });
+
+  it("the same section twice gets two sets of ids", () => {
+    const once = insertSubtree(tree(), strip(), { parent: "root" });
+    const twice = insertSubtree(once, strip(), { parent: "root" });
+    expect(twice.nodes.some((n) => n.id === "ins2:root")).toBe(true);
+    expect(reify(twice).children).toHaveLength(4);
+  });
+
+  it("does not change the tree it was given, and refuses a missing parent or a second root", () => {
+    const base = tree();
+    const copy = JSON.stringify(base);
+    insertSubtree(base, strip(), { parent: "root" });
+    expect(JSON.stringify(base)).toBe(copy);
+    expect(() => insertSubtree(base, strip(), { parent: "nope" })).toThrow(TreeOpError);
+    const two = { ...strip(), nodes: [...strip().nodes, { id: "x", parent: null, idx: 1, type: "Text", src: "7:9", props: {} }] };
+    expect(() => insertSubtree(base, two, { parent: "root" })).toThrow(/one root/);
   });
 });

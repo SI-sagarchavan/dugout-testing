@@ -68,6 +68,12 @@
         "name",
         "nodes"
       ]
+    },
+    "request": {
+      "description": "What a person asked of this section's data, in comments on its bound preview: each comment's words with the node it is on (`on name (Text, src 1:2): show the surname only`). The run starts from the plan the preview binds now and changes what is asked",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
     }
   },
   "required": [

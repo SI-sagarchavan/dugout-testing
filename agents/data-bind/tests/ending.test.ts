@@ -1,11 +1,11 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Message, Tool, ToolContext } from "@dugout/contracts";
+import { type Message, memoryRunState, type Tool, type ToolContext } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
 import { completeFinal, threadNote, verifyFinal } from "../src/agent.ts";
-import { createdIn, dataSourceAnswer, standInIn } from "../src/ending.ts";
-import { createBindTools, type Plane } from "../src/tools.ts";
+import { createdIn } from "../src/ending.ts";
+import { createBindTools, type Plane, PUBLISHED } from "../src/tools.ts";
 
 const TREE_ID = "6f0e8c1a-0000-4000-8000-000000000009";
 const PREVIEW = `http://localhost:3000/preview/default/${TREE_ID}`;
@@ -39,6 +39,7 @@ const ctx = (runId: string, slot?: unknown): ToolContext => ({
   tenantId: "sb",
   runId,
   signal: new AbortController().signal,
+  state: memoryRunState(),
   input: { preview: PREVIEW, ...(slot ? { slot } : {}) },
 });
 const SLOT = { id: "sq", name: "the-brave-squad", nodes: ["t"], readFrom: [] };
@@ -62,83 +63,25 @@ const hookMaker = (output: object, must = { team: "Southern Brave" }): Message[]
     { role: "tool", toolCallId: "h", content: JSON.stringify({ runId: "r", output }) },
   ] as never;
 
-/** bind.source's result: the source's name, its hook, and what code read of its data. */
-const sourced = (hookId: string, reading: string, why?: string, as = "squad"): Message[] =>
-  [
-    {
-      role: "assistant",
-      content: "",
-      toolCalls: [
-        { id: `s-${hookId}`, name: "bind.source", arguments: JSON.stringify({ hookId }) },
-      ],
-    },
-    {
-      role: "tool",
-      toolCallId: `s-${hookId}`,
-      content: JSON.stringify({
-        as,
-        hookId,
-        data: "",
-        about: { reading, ...(why ? { why } : {}) },
-      }),
-    },
-  ] as never;
+/** What bind.done answered, as it keeps it in the run's state (ADR 0035). */
+const published = (extra: object = {}): Record<string, unknown> => ({
+  previewUrl: PREVIEW,
+  planArtifactId: "plan-1",
+  dataArtifactId: "data-1",
+  bound: 4,
+  collapsed: 1,
+  problems: [],
+  kept: [],
+  sources: [],
+  ...extra,
+});
 
-/** bind.load's result, with what a person decided on the section before (memory). */
-const loadedWith = (settled?: string): Message[] =>
-  [
-    {
-      role: "assistant",
-      content: "",
-      toolCalls: [{ id: "l", name: "bind.load", arguments: "{}" }],
-    },
-    {
-      role: "tool",
-      toolCallId: "l",
-      content: JSON.stringify({
-        frame: "",
-        ...(settled ? { settled: { data_source: settled } } : {}),
-      }),
-    },
-  ] as never;
-
-const asked = (answer: string): Message[] =>
-  [
-    {
-      role: "assistant",
-      content: "",
-      toolCalls: [{ id: "a", name: "ask", arguments: "{}" }],
-    },
-    {
-      role: "tool",
-      toolCallId: "a",
-      content: JSON.stringify({ answeredBy: "p", answers: [{ id: "data_source", answer }] }),
-    },
-  ] as never;
-
-const published = (extra: object = {}): Message[] =>
-  [
-    {
-      role: "assistant",
-      content: "",
-      toolCalls: [{ id: "p", name: "bind.done", arguments: "{}" }],
-    },
-    {
-      role: "tool",
-      toolCallId: "p",
-      content: JSON.stringify({
-        previewUrl: PREVIEW,
-        planArtifactId: "plan-1",
-        dataArtifactId: "data-1",
-        bound: 4,
-        collapsed: 1,
-        problems: [],
-        kept: [],
-        sources: [],
-        ...extra,
-      }),
-    },
-  ] as never;
+/** A run as the checks on final read it: its transcript, and what bind.done kept in its state. */
+const runOf = (messages: Message[], kept?: Record<string, unknown>) => {
+  const state = memoryRunState();
+  if (kept) state.set(PUBLISHED, kept);
+  return { messages, state };
+};
 
 const final = {
   previewUrl: "",
@@ -146,6 +89,7 @@ const final = {
   dataArtifactId: "",
   bound: 0,
   collapsed: 0,
+  data: "bound" as const,
   remaining: [],
   notes: [],
 };
@@ -162,13 +106,15 @@ describe("a slot ends bound, stand-in or none, never by failing (ticket 05)", ()
     const out = (await done.run({ none: why }, run)) as Record<string, unknown>;
     expect(out).toMatchObject({ none: why, planArtifactId: "", dataArtifactId: "", bound: 0 });
 
-    const messages = [
-      ...hookMaker({ hookId: null, missing: ["everything"] }),
-      ...published({ none: why, planArtifactId: "", dataArtifactId: "", bound: 0, collapsed: 0 }),
-    ];
-    const result = completeFinal(final, { messages }) as Record<string, unknown>;
+    // the tool kept its answer in the run's state, where the checks on final read it
+    expect(run.state.get(PUBLISHED)).toMatchObject({ none: why });
+    const ended = runOf(
+      hookMaker({ hookId: null, missing: ["everything"] }),
+      published({ none: why, planArtifactId: "", dataArtifactId: "", bound: 0, collapsed: 0 }),
+    );
+    const result = completeFinal(final, ended) as Record<string, unknown>;
     expect(result).toMatchObject({ static: true, data: "none", dataWhy: why, bound: 0 });
-    expect(verifyFinal(result, { messages })).toBeUndefined();
+    expect(verifyFinal(result, ended)).toBeUndefined();
     expect(threadNote({}, result)).toContain(why);
   });
 
@@ -186,114 +132,53 @@ describe("a slot ends bound, stand-in or none, never by failing (ticket 05)", ()
   });
 
   it("still says what to do when nothing was published, and names none", () => {
-    expect(verifyFinal({ remaining: [], notes: [] }, { messages: [] })).toMatch(/with none/);
+    expect(verifyFinal({ remaining: [], notes: [] }, runOf([]))).toMatch(/with none/);
   });
 
-  it("reports a plan as bound, unless the source's data is about something else", () => {
-    // what hook-maker writes in missing is no evidence either way: a line naming the team is not
-    const bound = [
-      ...hookMaker({ hookId: "dugout_squad", missing: ["Southern Brave crest URL"] }),
-      ...sourced("dugout_squad", "unknown"),
-    ];
-    const ok = completeFinal(final, { messages: [...bound, ...published()] }) as Record<
-      string,
-      unknown
-    >;
-    expect(ok).toMatchObject({ data: "bound" });
+  it("takes the model's reading of the evidence: bound, or a stand-in with why", () => {
+    const run = runOf(hookMaker({ hookId: "dugout_squad", missing: [] }), published());
+    const ok = completeFinal({ ...final, dataWhy: "" }, run) as Record<string, unknown>;
+    expect(ok).toMatchObject({ data: "bound", bound: 4 });
     expect(ok.dataWhy).toBeUndefined();
+    expect(verifyFinal(ok, run)).toBeUndefined();
 
-    // set by code: the data's team fields name only other teams
-    const other = [
-      ...hookMaker({ hookId: "dugout_other_squad", missing: [] }),
-      ...sourced("dugout_other_squad", "other", "the data is about Riverside FC"),
-    ];
-    const standIn = completeFinal(final, { messages: [...other, ...published()] }) as Record<
-      string,
-      unknown
-    >;
+    // code does not read the team from the data: what the model says stands
+    const standIn = completeFinal(
+      {
+        ...final,
+        data: "stand-in",
+        dataWhy: "the data names Riverside FC, the design Western Stars",
+      },
+      run,
+    ) as Record<string, unknown>;
     expect(standIn).toMatchObject({
       data: "stand-in",
-      dataWhy: expect.stringContaining("Riverside FC"),
-      bound: 4,
+      dataWhy: expect.stringContaining("Riverside"),
     });
+    expect(verifyFinal(standIn, run)).toBeUndefined();
     expect(threadNote({}, standIn)).toContain("stand-in data");
   });
 
-  it("reads the readings bind.publish recorded: a wrong team the plan kept with why is bound", () => {
-    const messages = [
-      ...hookMaker({ hookId: "dugout_table", missing: [] }),
-      ...sourced("dugout_table", "other", "the data is about Riverside FC"),
-      ...published({
-        readings: [{ as: "squad", hookId: "dugout_table", reading: "other", why: "x", kept: true }],
-      }),
-    ];
-    expect(completeFinal(final, { messages })).toMatchObject({ data: "bound" });
+  it("asks for why with a stand-in, and refuses none when a plan was published", () => {
+    const run = runOf([], published());
+    expect(verifyFinal(completeFinal({ ...final, data: "stand-in" }, run), run)).toMatch(
+      /say in dataWhy/,
+    );
+    expect(verifyFinal(completeFinal({ ...final, data: "none" }, run), run)).toMatch(
+      /binds 4 prop\(s\): data is bound or stand-in/,
+    );
   });
 
-  it("takes a stand-in from the data itself when bind.publish read it so, whatever hook-maker wrote", () => {
-    // hook-maker's missing says nothing of the team; the published data does not name it
-    const quiet = hookMaker({ hookId: "dugout_other_squad", missing: [] });
-    const result = completeFinal(final, {
-      messages: [
-        ...quiet,
-        ...published({
-          standIn: "the data is about Punjab Kings, the design is about Southern Brave",
-        }),
-      ],
-    }) as Record<string, unknown>;
-    expect(result).toMatchObject({
-      data: "stand-in",
-      dataWhy: expect.stringContaining("Punjab Kings"),
+  it("is none whatever the model says when nothing was bound", () => {
+    const why = "no feed was given";
+    const run = runOf(
+      [],
+      published({ none: why, planArtifactId: "", dataArtifactId: "", bound: 0, collapsed: 0 }),
+    );
+    expect(completeFinal({ ...final, data: "bound" }, run)).toMatchObject({
+      data: "none",
+      dataWhy: why,
     });
-  });
-
-  it("is a stand-in when a person chose the closest hook, and not once the right data came", () => {
-    const closest = [
-      ...hookMaker({ hookId: "dugout_ipl_squad", missing: [] }),
-      ...asked("stand_in"),
-      ...sourced("dugout_ipl_squad", "unknown"),
-    ];
-    expect(standInIn(closest)).toMatch(/person chose the closest hook, dugout_ipl_squad/);
-    // feeds given instead: no stand-in
-    expect(
-      standInIn([
-        ...hookMaker({ hookId: "dugout_ipl_squad", missing: [] }),
-        ...asked("women: https://x.test/s?team_id=1"),
-        ...sourced("dugout_ipl_squad", "unknown"),
-      ]),
-    ).toBeUndefined();
-    // stand_in, then the right hook (another, after the answer): the latest source decides
-    const mended = [
-      ...closest,
-      ...hookMaker({ hookId: "dugout_brave", missing: [], basis: "found" }),
-      ...sourced("dugout_brave", "unknown"),
-    ];
-    expect(standInIn(mended)).toBeUndefined();
-    // a hook the person's own feeds built is theirs, whatever they answered before
-    const theirs = [
-      ...asked("stand_in"),
-      ...hookMaker({ hookId: "dugout_ipl_squad", missing: [], basis: "sources" }),
-      ...sourced("dugout_ipl_squad", "unknown"),
-    ];
-    expect(standInIn(theirs)).toBeUndefined();
-    // data that names the design's team is not a stand-in
-    expect(
-      standInIn([...closest.slice(0, 4), ...sourced("dugout_ipl_squad", "about")]),
-    ).toBeUndefined();
-  });
-
-  it("is a stand-in when memory settled it before this run: whoever settled it", () => {
-    const fromMemory = [
-      ...loadedWith("stand_in"),
-      ...hookMaker({ hookId: "dugout_events", missing: [], basis: "found" }),
-      ...sourced("dugout_events", "unknown", undefined, "events"),
-    ];
-    expect(dataSourceAnswer(fromMemory)).toBe("stand_in");
-    const result = completeFinal(final, { messages: [...fromMemory, ...published()] });
-    expect(result).toMatchObject({ data: "stand-in" });
-    // a person answering again in this run wins over memory
-    expect(dataSourceAnswer([...fromMemory, ...asked("find_hook")])).toBe("find_hook");
-    expect(standInIn([...fromMemory, ...asked("find_hook")])).toBeUndefined();
   });
 
   it("lists what hook-maker created, once, from its answers", () => {
@@ -312,7 +197,7 @@ describe("a slot ends bound, stand-in or none, never by failing (ticket 05)", ()
       "connector c1 (dugout: a)",
     ]);
     expect(createdIn(hookMaker({ hookId: null, missing: [] }))).toEqual([]);
-    const done = completeFinal(final, { messages: [...first, ...published()] }) as {
+    const done = completeFinal(final, runOf(first, published())) as {
       created?: string[];
     };
     expect(done.created).toHaveLength(2);

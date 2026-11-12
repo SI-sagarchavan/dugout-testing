@@ -497,6 +497,38 @@ describe("cancelling a run", () => {
   });
 });
 
+describe("cancelling a run with child runs", () => {
+  it("ends every child under it, even when the parent had already ended", async () => {
+    // c1bb5117: a frame-match child left `running` under a section-builder run cancelled mid-call
+    const [parent, child, grandchild] = [randomUUID(), randomUUID(), randomUUID()];
+    await withTenant(pool, TENANT, async (db) => {
+      await db.query(
+        `insert into runs (id, tenant_id, agent_id, status, input) values ($1, $2, 'drafter', 'cancelled', $3)`,
+        [parent, TENANT, INPUT],
+      );
+      // a child runs inside its parent's call: a lease owner, no lease of its own
+      for (const [id, of] of [
+        [child, parent],
+        [grandchild, child],
+      ]) {
+        await db.query(
+          `insert into runs (id, tenant_id, agent_id, status, input, parent_run_id, parent_call_id, lease_owner)
+           values ($1, $2, 'drafter', 'running', $3, $4, 'call-1', 'gone-worker/x')`,
+          [id, TENANT, INPUT, of],
+        );
+      }
+    });
+    expect(await queue.cancel(TENANT, parent, "editor")).toBeUndefined();
+    for (const id of [child, grandchild]) {
+      expect(await runRow(id)).toMatchObject({ status: "cancelled", lease_owner: null });
+      expect((await events.read(id, 0)).at(-1)).toMatchObject({
+        type: "run.cancelled",
+        data: { by: "editor", reason: `its parent run ${parent} was cancelled` },
+      });
+    }
+  });
+});
+
 describe("cancelling a run whose worker then died", () => {
   it("leaves it to the next worker to write run.cancelled, and nobody runs it", async () => {
     const runId = randomUUID();
@@ -674,6 +706,23 @@ describe("save points and forks", () => {
     ).rowCount as number;
     // the parent's whole transcript, then the new input, then the follow-up's own turns
     expect(rows[parentCount]?.message.content).toBe(correctedInput({ topicId: "t-102" }));
+  });
+
+  it("a retry (a follow-up with the parent's own input) goes on from a save point in the middle of a turn", async () => {
+    const worker = workerWith(writerModel);
+    const runId = await queue.start(TENANT, "drafter", INPUT);
+    await untilWaiting(worker, runId);
+    // the run failed while a call was in flight: its last save point is mid-turn
+    await withTenant(pool, TENANT, (db) =>
+      db.query("update runs set status = 'failed', lease_owner = null where id = $1", [runId]),
+    );
+    const retryId = await queue.continueFrom(TENANT, runId, INPUT);
+    await worker.poll();
+    await eventsUntil(retryId, (es) =>
+      ["question.asked", "run.completed", "run.failed"].includes(es.at(-1)?.type ?? ""),
+    );
+    await worker.idle();
+    expect(await queue.find(TENANT, retryId)).not.toMatchObject({ status: "failed" });
   });
 
   it("gives up a follow-up whose parent has no save point", async () => {

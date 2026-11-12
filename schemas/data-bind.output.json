@@ -19,6 +19,19 @@
       "type": "number",
       "description": "Lists the plan made"
     },
+    "data": {
+      "description": "bound: its data is the design's; stand-in: bound to data about something else (another team), shown for the shape; none: nothing was bound. The model's reading of the evidence, none when nothing was bound",
+      "type": "string",
+      "enum": [
+        "bound",
+        "stand-in",
+        "none"
+      ]
+    },
+    "dataWhy": {
+      "description": "Why the data is a stand-in (the model's, from what the data names), or why nothing was bound",
+      "type": "string"
+    },
     "remaining": {
       "type": "array",
       "items": {
@@ -64,19 +77,6 @@
       "items": {
         "type": "string"
       }
-    },
-    "data": {
-      "description": "bound: its data is the design's; stand-in: bound to data about something else (another team), shown for the shape; none: nothing was bound. Set by code, never by the model",
-      "type": "string",
-      "enum": [
-        "bound",
-        "stand-in",
-        "none"
-      ]
-    },
-    "dataWhy": {
-      "description": "Why the data is a stand-in, or why nothing was bound (code's, never the model's)",
-      "type": "string"
     },
     "static": {
       "description": "Nothing on the frame is data, so nothing was bound (bind.static)",

@@ -91,7 +91,8 @@ export const pageKeyOfPath = (path: string): string | undefined =>
   isPagePath(path) ? path.slice(PAGE_SCOPE.length + 1).split(".")[0] || undefined : undefined;
 
 /** Does this condition read the page? */
-export const readsPage = (c: Condition): boolean => isPagePath(c.path) || (c.eqPath !== undefined && isPagePath(c.eqPath));
+export const readsPage = (c: Condition): boolean =>
+  isPagePath(c.path) || [c.eqPath, c.containsPath].some((p) => p !== undefined && isPagePath(p));
 
 /** A node's `select`, or undefined. */
 export function selectOf(node: Pick<FlatNode, "props">): Select | undefined {
@@ -269,7 +270,7 @@ export function pageReads(tree: FlatTree): string[] {
     const parsed = predicateSchema.safeParse(when);
     if (!parsed.success) continue;
     for (const c of conditionsOf(parsed.data)) {
-      for (const path of [c.path, c.eqPath]) {
+      for (const path of [c.path, c.eqPath, c.containsPath]) {
         const key = path === undefined ? undefined : pageKeyOfPath(path);
         if (key) keys.add(key);
       }
@@ -295,6 +296,14 @@ export function splitPageWhen(when: unknown, data: unknown): { now: unknown; pag
   for (const c of all) {
     if (!readsPage(c)) {
       now.push(c);
+      continue;
+    }
+    if (c.containsPath !== undefined) {
+      // a search over an item's text: the server reads the text, the browser compares what is typed
+      if (isPagePath(c.containsPath) && !isPagePath(c.path)) {
+        const text = lookup(data, c.path);
+        page.push({ path: c.containsPath, within: typeof text === "string" || typeof text === "number" ? String(text) : "" });
+      } else page.push(c);
       continue;
     }
     if (c.eqPath === undefined || (isPagePath(c.path) && isPagePath(c.eqPath))) {

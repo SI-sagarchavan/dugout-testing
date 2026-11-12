@@ -1,6 +1,6 @@
 # SSE hardening: the Studio's live streams
 
-Status: ready-for-agent (01–12)
+Status: done; merged into both base branches 2026-11-10 (backend `merge/surface-all` 578c3e2b, frontend `feat/surface-merge-all` fb9753002). Not pushed. Still open: one run in a browser, and HTTP/2 at the load balancer
 Opened: 2026-11-08, from a review of the SSE endpoints and the Studio's event binding
 
 ## What this is
@@ -15,7 +15,7 @@ tracker.
 
 | Repo | Path | Base branch | Test, lint, types |
 | ---- | ---- | ----------- | ----------------- |
-| backend | `../wnm-fanxp-backend-surface-auth` | `merge/surface-all` | `npx jest tests/services/surface-run tests/routes/surface-run.routes.test.ts`, `npx tsc --noEmit`, `npx eslint <files>` |
+| backend | `../wnm-fanxp-backend` (the main working tree since 2026-11-10; it was the `wnm-fanxp-backend-surface-auth` worktree) | `merge/surface-all` | `npx jest tests/services/surface-run tests/routes/surface-run.routes.test.ts`, `npx tsc --noEmit`, `npx eslint <files>` |
 | frontend | `../wnm-fanxp-frontend` | `feat/surface-merge-all` | from `apps/surface-studio`: `pnpm vitest --run src/entities/surface`, `pnpm typecheck`, `pnpm lint` |
 
 Paths in the tickets are relative to the repo they name.

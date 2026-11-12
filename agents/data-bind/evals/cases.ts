@@ -16,7 +16,18 @@ export interface DataCase extends EvalCase {
   why: string;
   /** Set when the case cannot run yet, and what it needs. */
   needs?: string;
+  /**
+   * The house facts the case assumes the tenant has, made active in the eval's memory before it
+   * runs: a real client's facts are not kept in the repo, so a case names the ones it relies on.
+   */
+  facts?: Array<{ key: string; content: string }>;
 }
+
+/** What Southern Brave's people answered once and the club keeps: who it is, where pictures live. */
+const SB_FACTS = [
+  { key: "club.team", content: "The club is Southern Brave (The Hundred, women and men)." },
+  { key: "media.team-crest", content: "Team crests: https://www.southernbrave.com{logo}" },
+];
 
 const TEAM_FRAME = "http://localhost:3000/preview/default/4ef6a64d-7b6c-4b55-ae93-bd3b05e47b45";
 
@@ -32,23 +43,17 @@ export const CASES: DataCase[] = [
     tenant: "sb",
     preview: TEAM_FRAME,
     slot: "the-brave-squad",
+    facts: SB_FACTS,
+    // the output's shape is the hook's to choose: with the WOMEN | MEN tabs filtering the list,
+    // hook-maker gives one list whose items say which squad each player is in (need.filterBy), so
+    // no schema pins key names; the team, the bound name and nothing broken are graded
     expect: {
       ending: "bound",
-      hook: {
-        schema: {
-          type: "object",
-          required: ["women", "men"],
-          properties: {
-            women: { type: "array", items: { type: "object", required: ["name"] } },
-            men: { type: "array", items: { type: "object", required: ["name"] } },
-          },
-        },
-      },
       must: { team: "Southern Brave" },
       required: ["name"],
     },
     confirmed: false,
-    why: "Southern Brave's women's and men's squads, so the WOMEN and MEN tabs switch between them. Today the slot binds an IPL franchise's squad.",
+    why: "Southern Brave's women's and men's squads in one list, each player tagged with the squad the WOMEN and MEN tabs choose.",
   },
   {
     id: "team-fixtures",
@@ -56,10 +61,12 @@ export const CASES: DataCase[] = [
     tenant: "sb",
     preview: TEAM_FRAME,
     slot: "the-road-ahead",
-    // no Southern Brave fixtures feed exists: the slot must say so, never bind another team's
-    expect: { ending: "stand-in", must: { team: "Southern Brave" } },
+    facts: SB_FACTS,
+    // dugout_cricket_fixture_day_cards holds Southern Brave's matches (2026-11-12: all 17 name
+    // team 2034 or 2042), so the slot binds them; another team's data would still be a stand-in
+    expect: { ending: "bound", must: { team: "Southern Brave" } },
     confirmed: false,
-    why: "Southern Brave's fixtures. None exists in Cast today, so the honest ending is a stand-in or none, never bound.",
+    why: "Southern Brave's fixtures, from the day-card hook, which now holds their matches (women and men), so the ending is bound.",
   },
   {
     id: "fixtures-strip",

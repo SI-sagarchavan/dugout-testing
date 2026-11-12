@@ -65,6 +65,12 @@ describe("the ref grammar", () => {
 });
 
 describe("resolveTemplate", () => {
+  it("breaks a name after its first word with lines", () => {
+    expect(resolveTemplate("{p.name | lines:1}", { p: { name: "Ben  McKinney" } }).value).toBe("Ben\nMcKinney");
+    expect(resolveTemplate("{p.name | lines:1}", { p: { name: "Rassie van der Dussen" } }).value).toBe("Rassie\nvan der Dussen");
+    expect(resolveTemplate("{p.name | lines:1}", { p: { name: "Sikandar" } }).value).toBe("Sikandar");
+  });
+
   it("draws CAST fields through pipes", () => {
     const r = resolveTemplate('{news.items.0.title} · {news.items.0.published_date | date:"MMM DD, YYYY"}', scope());
     expect(r).toEqual({

@@ -119,6 +119,27 @@ importers:
         specifier: workspace:^
         version: link:../../packages/db
 
+  agents/interaction:
+    dependencies:
+      '@dugout/agent-data-bind':
+        specifier: workspace:^
+        version: link:../data-bind
+      '@dugout/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@dugout/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@dugout/db':
+        specifier: workspace:^
+        version: link:../../packages/db
+      '@dugout/sdk':
+        specifier: workspace:^
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
   agents/section-builder:
     dependencies:
       '@dugout/agent-data-bind':
@@ -127,6 +148,9 @@ importers:
       '@dugout/agent-frame-match':
         specifier: workspace:^
         version: link:../frame-match
+      '@dugout/agent-interaction':
+        specifier: workspace:^
+        version: link:../interaction
       '@dugout/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -143,6 +167,12 @@ importers:
 
   agents/ui-editor:
     dependencies:
+      '@dugout/agent-data-bind':
+        specifier: workspace:^
+        version: link:../data-bind
+      '@dugout/agent-interaction':
+        specifier: workspace:^
+        version: link:../interaction
       '@dugout/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -265,6 +295,9 @@ importers:
       '@dugout/agent-hook-maker':
         specifier: workspace:^
         version: link:../../agents/hook-maker
+      '@dugout/agent-interaction':
+        specifier: workspace:^
+        version: link:../../agents/interaction
       '@dugout/agent-section-builder':
         specifier: workspace:^
         version: link:../../agents/section-builder
@@ -389,6 +422,9 @@ importers:
       '@fanos/tokens':
         specifier: workspace:*
         version: link:../tokens
+      xstate:
+        specifier: 5.33.3
+        version: 5.33.3
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -435,6 +471,9 @@ importers:
 
   packages/library:
     dependencies:
+      '@aws-sdk/client-bedrock-runtime':
+        specifier: ^3.1160.0
+        version: 3.1160.0
       '@dugout/core':
         specifier: workspace:^
         version: link:../core
@@ -544,6 +583,9 @@ importers:
       '@dugout/db':
         specifier: workspace:^
         version: link:../db
+      '@dugout/library':
+        specifier: workspace:^
+        version: link:../library
       '@dugout/mcp':
         specifier: workspace:^
         version: link:../mcp
@@ -3645,6 +3687,9 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
+  xstate@5.33.3:
+    resolution: {integrity: sha512-AnDRjS/GyKHmbA1PyhVCYBqYsA7EGe3KGgeD0ht3NFsXzoz7leX/HQDFX9QlHFJ/ltLHPsgChJYwPzRvB/0b4g==}
+
   xtend@4.0.2:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
     engines: {node: '>=0.4'}
@@ -6159,6 +6204,8 @@ snapshots:
   why-is-node-running@3.2.1: {}
 
   wrappy@1.0.2: {}
+
+  xstate@5.33.3: {}
 
   xtend@4.0.2: {}
 

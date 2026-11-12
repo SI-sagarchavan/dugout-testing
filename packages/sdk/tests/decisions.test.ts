@@ -46,6 +46,8 @@ const hookChoice = {
   ],
   allowOther: false,
   proposed: ["build"],
+  remember: "section" as const,
+  fact: "",
 };
 
 const binder = defineAgent({
@@ -62,7 +64,6 @@ const binder = defineAgent({
     memory: { read: [], write: [] },
     budget: { usdPerRun: 0.5, maxSteps: 6, maxDepth: 0 },
     approvals: [],
-    questions: { hook_choice: { scope: "section", about: "use the hook found or build one" } },
   },
   input: z.object({ handoff: z.string() }),
   output: z.object({ hook: z.string() }),

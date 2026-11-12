@@ -46,3 +46,56 @@ export const Message = z.discriminatedUnion("role", [
 export type Message = z.infer<typeof Message>;
 export type AssistantMessage = z.infer<typeof AssistantMessage>;
 export type ToolMessage = z.infer<typeof ToolMessage>;
+
+/** One tool call of a transcript, with the result it got. */
+export interface AnsweredCall {
+  /** Where its result is in the transcript. */
+  at: number;
+  id: string;
+  name: string;
+  /** Its arguments, parsed; undefined when they are not JSON. */
+  args: unknown;
+  /** Its result as the model read it: a long one is only its reference. */
+  content: string;
+  isError: boolean;
+}
+
+/**
+ * The calls of a transcript that were answered, in the order their results came, to `name` when
+ * one is given (or any of several). For what the run did with tools that are not the agent's own
+ * (a server's, a child agent, `ask`). What an agent's own tool made is kept in the run's state
+ * (`ToolContext.state`, ADR 0035), not read back from here.
+ */
+export function answeredCalls(
+  messages: readonly Message[],
+  name?: string | readonly string[],
+): AnsweredCall[] {
+  const wanted = name === undefined ? undefined : new Set(typeof name === "string" ? [name] : name);
+  const calls = new Map<string, ToolCall>();
+  const found: AnsweredCall[] = [];
+  for (const [at, message] of messages.entries()) {
+    if (message.role === "assistant") {
+      for (const call of message.toolCalls ?? []) {
+        if (!wanted || wanted.has(call.name)) calls.set(call.id, call);
+      }
+    } else if (message.role === "tool") {
+      const call = calls.get(message.toolCallId);
+      if (!call) continue;
+      let args: unknown;
+      try {
+        args = JSON.parse(call.arguments);
+      } catch {
+        // left undefined: the call's result still says what happened
+      }
+      found.push({
+        at,
+        id: call.id,
+        name: call.name,
+        args,
+        content: message.content,
+        isError: Boolean(message.isError),
+      });
+    }
+  }
+  return found;
+}

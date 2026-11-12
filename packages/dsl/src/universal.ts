@@ -161,6 +161,13 @@ const statesFields: Fields = {
   disabled: opt(f.obj(stateFields)),
 };
 
+/** An event a node sends its section's machine. */
+const handlerFields: Fields = {
+  send: req(f.str(), { doc: "the event type, dotted words: menu.toggle, player.toggle" }),
+  payload: opt(f.opaque(), { doc: "what the event carries: { name: literal or \"{template}\" }" }),
+  to: opt(f.enum("self", "page"), { doc: "self (default): this section's machine; page: every section's that handles it too" }),
+};
+
 export const universalFields: Fields = {
   surface: opt(f.token("surface"), { resp: true }),
   space: opt(f.obj(spaceFields)),
@@ -227,6 +234,15 @@ export const universalFields: Fields = {
     },
   ),
   /**
+   * Where pressing this node goes: a card that opens its article, a "View all" heading, a partner's
+   * logo. A literal or a template read where the node is drawn (`/news/{item.slug}`,
+   * `{item.detail_url}`); a path on the tenant's site is anchored to it. The node is drawn as a real
+   * link, so it can be opened in a new tab and a crawler follows it. A Button says it in its
+   * `action` (navigate) instead, and a link never holds another (S19).
+   */
+  href: opt(f.str(), { doc: "where pressing it goes, drawn as a link: /news/{item.slug} or {item.url} (a Button uses action navigate)" }),
+  external: opt(f.bool(), { doc: "with href: another site, opened in a new tab" }),
+  /**
    * This node is one option of a choice the page holds under `key`: a tab, one half of a toggle, a
    * filter chip. Pressing it sets the key to `value`. While the key holds `value` the node is in its
    * `active` state, otherwise `inactive`, and `states` gives each its designed look. Any section of
@@ -241,6 +257,46 @@ export const universalFields: Fields = {
     }),
     { doc: "one option of a page choice (a tab, a toggle half): pressing it sets _page.<key> to value; active while it holds it" },
   ),
+  /**
+   * What pressing, typing in, or leaving this node does: an event for the section's machine
+   * (`machine` on the tree's root; see `machine/`). `payload` is what the event carries, each value
+   * a literal or a template read where the node is drawn (`"{player.id}"` in a Repeater), so a row
+   * says which item it is. A field's events carry what is typed (`value`) or ticked (`checked`) as
+   * well. `to: "page"` offers it to every section's machine too: SELECT PLAYER opens a drawer
+   * another section draws. `outside` is a press anywhere else (a menu closing), `escape` the key.
+   */
+  on: opt(
+    f.obj({
+      click: opt(f.obj(handlerFields)),
+      input: opt(f.obj(handlerFields), { doc: "a field: each keystroke; carries value" }),
+      change: opt(f.obj(handlerFields), { doc: "a field: a committed change; carries value or checked" }),
+      submit: opt(f.obj(handlerFields), { doc: "a field: Enter" }),
+      outside: opt(f.obj(handlerFields), { doc: "a press anywhere outside this node while it is shown" }),
+      escape: opt(f.obj(handlerFields), { doc: "the Escape key while this node is shown" }),
+    }),
+    { doc: "events for the section's machine: { click|input|change|submit|outside|escape: { send, payload?, to? } }" },
+  ),
+  /**
+   * Which of its designed looks (`states`) the node is in, from the machine or the page: the star
+   * filled while the player is a favourite, the row ticked while it is in the draft, the arrow
+   * turned while the menu is open. Each is a `when`; `expanded` is no look, it tells a screen
+   * reader that what this node opens is open.
+   */
+  statesWhen: opt(
+    f.obj({
+      active: opt(f.predicate()),
+      inactive: opt(f.predicate()),
+      disabled: opt(f.predicate()),
+      expanded: opt(f.predicate(), { doc: "aria-expanded: what this node opens is open" }),
+    }),
+    { doc: "its look from state: { active|inactive|disabled|expanded: when }, e.g. { active: { path: \"$state.context.selected\", hasPath: \"player.id\" } }" },
+  ),
+  /**
+   * The section's machine, on the tree's ROOT only (S18): what the section remembers and the states
+   * it moves between, as JSON (`machine/schema.ts`). Nodes read it as `$state.<…>`, and what it
+   * shares (`exports`) as `$page.<key>` from any section.
+   */
+  machine: opt(f.opaque(), { doc: "root only: the section's statechart, JSON (context, computed, exports, states, on, requests)" }),
   /**
    * A clock over this node's subtree: the time left until an instant, or since it. Inside,
    * `{<as>.d}` `{<as>.h}` `{<as>.m}` `{<as>.s}` read the units listed, `{<as>.past}` is true once
@@ -298,6 +354,9 @@ export const REPEATER_FORBIDDEN_PROPS = [
   "transition",
   // an option is pressed, and a fragment has nothing to press
   "select",
+  "on",
+  "statesWhen",
+  "machine",
 ] as const;
 
 /**

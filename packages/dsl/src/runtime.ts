@@ -58,3 +58,11 @@ export type { Clock, ClockScope, ClockUnit, ClockValues } from "./clock.js";
 // Reading and writing a prop as the property panel shows it (the panel itself is `panelOf`, server side)
 export { measureOf, measureText, readProp, shownValue, storedValue } from "./panel-values.js";
 export type { PanelControl } from "./panel-values.js";
+
+// Interaction state: a machine per section, a page of them, and what nodes read (`machine/`)
+export * from "./machine/index.js";
+export { splitLiveWhen, readsLive } from "./machine/when.js";
+export { machineOf } from "./machine/tree.js";
+
+// More of a data source, added to what the page holds of it (a request with `source`)
+export { addToSource } from "./source.js";

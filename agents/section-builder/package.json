@@ -13,6 +13,7 @@
   "dependencies": {
     "@dugout/agent-data-bind": "workspace:^",
     "@dugout/agent-frame-match": "workspace:^",
+    "@dugout/agent-interaction": "workspace:^",
     "@dugout/contracts": "workspace:^",
     "@dugout/sdk": "workspace:^",
     "zod": "^4.6.7"

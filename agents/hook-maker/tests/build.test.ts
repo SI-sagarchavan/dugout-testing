@@ -1,8 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Tool, ToolContext } from "@dugout/contracts";
-import { approve } from "@dugout/contracts";
+import { approve, memoryRunState, type Tool, type ToolContext } from "@dugout/contracts";
 import { createScriptedModel, scriptedModelConfig } from "@dugout/core";
 import { createPool } from "@dugout/db";
 import type {} from "@dugout/db/vitest-setup"; // types for inject()
@@ -69,6 +68,7 @@ const ctx = (): ToolContext => ({
   tenantId: "demo-cricket",
   runId: "r",
   signal: new AbortController().signal,
+  state: memoryRunState(),
 });
 /** A tool called as the loop calls it: schema, then the gate, then the run. */
 const use = async (tool: Tool | undefined, args: unknown) => {
@@ -189,6 +189,7 @@ describe("hook-maker", () => {
       ...(finalAt === "early" ? [final] : []),
       call("cast.runHook", { hookId: HOOK, applyTransform: true, input: { page_size: "2" } }),
       call("cast.publishHook", { hookId: HOOK }),
+      call("hook.evidence", { hookId: HOOK, covers: ["venue → data.1[].venue"] }),
       final,
     ];
   };
@@ -259,6 +260,8 @@ describe("hook-maker", () => {
   const call = (name: string, args: Record<string, unknown>) => ({
     toolCalls: [{ name, arguments: args }],
   });
+  const read = (hookId = HOOK) =>
+    call("hook.evidence", { hookId, covers: ["venue → data.1[].venue"] });
   const asked: string[] = [];
   const runWith = async (
     script: Parameters<typeof createScriptedModel>[0],
@@ -324,6 +327,7 @@ describe("hook-maker", () => {
       call("cast.setTransform", { hookId: "dugout_brave_squad", mode: "whole", expression: "$" }),
       call("cast.runHook", { hookId: "dugout_brave_squad", applyTransform: true }),
       call("cast.publishHook", { hookId: "dugout_brave_squad" }),
+      read("dugout_brave_squad"),
       {
         toolCalls: [
           {
@@ -416,6 +420,7 @@ describe("hook-maker", () => {
       call("cast.listHooks", {}),
       call("cast.describeHook", { hookId: HOOK }),
       call("cast.runHook", { hookId: HOOK, applyTransform: true, input: { page_size: "2" } }),
+      read(),
       finalFor(HOOK),
     ]);
     expect(refusals).toEqual([]);
@@ -446,6 +451,7 @@ describe("hook-maker", () => {
     const { result, refusals } = await runWith([
       call("cast.describeHook", { hookId: HOOK }),
       call("cast.runHook", { hookId: HOOK, applyTransform: true }),
+      read(),
       wrong,
       finalFor(HOOK),
     ]);
@@ -462,6 +468,7 @@ describe("hook-maker", () => {
       call("cast.runHook", { hookId: HOOK }),
       finalFor(HOOK),
       call("cast.runHook", { hookId: HOOK, applyTransform: true }),
+      read(),
       finalFor(HOOK),
     ]);
     expect(result.status).toBe("completed");
@@ -478,6 +485,7 @@ describe("hook-maker", () => {
       call("cast.setTransform", { hookId: HOOK, mode: "whole", expression: "$" }),
       finalFor(HOOK, true),
       call("cast.runHook", { hookId: HOOK, applyTransform: true }),
+      read(),
       finalFor(HOOK, true),
       call("cast.publishHook", { hookId: HOOK }),
       finalFor(HOOK, true),
@@ -497,6 +505,7 @@ describe("hook-maker", () => {
       finalFor(HOOK, false),
       call("cast.runHook", { hookId: HOOK, applyTransform: true }),
       call("cast.publishHook", { hookId: HOOK }),
+      read(),
       finalFor(HOOK, true),
     ]);
     expect(result.status).toBe("completed");
@@ -514,6 +523,7 @@ describe("hook-maker", () => {
       call("cast.setTransform", { hookId: HOOK, mode: "whole", expression: "$" }),
       call("cast.runHook", { hookId: HOOK, applyTransform: true }),
       call("cast.publishHook", { hookId: HOOK }),
+      read(),
       finalFor(HOOK, true),
     ]);
     expect(refusals).toEqual([
@@ -536,6 +546,7 @@ describe("hook-maker", () => {
       call("cast.setTransform", { hookId: HOOK, mode: "whole", expression: "$" }),
       finalFor(HOOK, true),
       call("cast.runHook", { hookId: HOOK, applyTransform: true }),
+      read(),
       finalFor(HOOK, true),
       call("cast.publishHook", { hookId: HOOK }),
       finalFor(HOOK, true),
@@ -547,14 +558,30 @@ describe("hook-maker", () => {
     ]);
   });
 
-  it("builds next to a hook whose own run shows another team's data, without having to say why (ticket 17)", async () => {
+  it("says why it built next to a hook it looked at, and what the data is about, as it judged them (ticket 17)", async () => {
     const OTHER = "dugout_other_fixtures";
+    const final = (extra: Record<string, unknown>) => ({
+      toolCalls: [
+        {
+          name: "final",
+          arguments: {
+            hookId: HOOK,
+            name: "dugout: Rovers fixtures",
+            built: true,
+            input: {},
+            covers: ["venue → data.1[].venue"],
+            missing: [],
+            why: "Built on the club's connector.",
+            ...extra,
+          },
+        },
+      ],
+    });
     const { result, refusals } = await runWith(
       [
         call("cast.describeHook", { hookId: OTHER }),
-        // its output (the fake's: a venue, no team) does not name the team the design is about
         call("cast.runHook", { hookId: OTHER, applyTransform: true }),
-        call("cast.createHook", { id: HOOK, name: "dugout: Brave fixtures" }),
+        call("cast.createHook", { id: HOOK, name: "dugout: Rovers fixtures" }),
         call("cast.addStep", {
           hookId: HOOK,
           kind: "api_call",
@@ -565,27 +592,25 @@ describe("hook-maker", () => {
         call("cast.setTransform", { hookId: HOOK, mode: "whole", expression: "$" }),
         call("cast.runHook", { hookId: HOOK, applyTransform: true }),
         call("cast.publishHook", { hookId: HOOK }),
-        {
-          toolCalls: [
-            {
-              name: "final",
-              arguments: {
-                hookId: HOOK,
-                name: "dugout: Brave fixtures",
-                built: true,
-                input: {},
-                covers: ["venue → data.1[].venue"],
-                missing: [],
-                why: "Built on the club's connector.",
-              },
-            },
-          ],
-        },
+        read(),
+        final({}),
+        final({ existing: `${OTHER}'s data is about another team` }),
+        final({
+          existing: `${OTHER}'s data is about another team`,
+          about: { reading: "unknown", why: "the output names no team, only a venue" },
+        }),
       ],
       { must: { team: "Zzyzx Rovers" } },
     );
-    expect(refusals.filter((r) => r.includes("was already there"))).toEqual([]);
-    expect(result).toMatchObject({ status: "completed", output: { built: true } });
+    expect(refusals).toEqual([
+      expect.stringContaining(`You built ${HOOK} after looking at ${OTHER}: say in existing why`),
+      expect.stringContaining("say in about whether"),
+    ]);
+    // the model's judgement is taken as it is: no code reads the data's names over it
+    expect(result).toMatchObject({
+      status: "completed",
+      output: { built: true, about: { reading: "unknown" } },
+    });
   });
 
   it("will not build a second hook next to one it looked at without saying what that one lacks", async () => {
@@ -603,6 +628,7 @@ describe("hook-maker", () => {
       call("cast.setTransform", { hookId: HOOK, mode: "whole", expression: "$" }),
       call("cast.runHook", { hookId: HOOK, applyTransform: true }),
       call("cast.publishHook", { hookId: HOOK }),
+      read(),
     ];
     const withWhy = (existing?: string) => ({
       toolCalls: [
@@ -628,7 +654,7 @@ describe("hook-maker", () => {
     ]);
     expect(result).toMatchObject({ status: "completed", output: { existing: expect.any(String) } });
     expect(refusals).toEqual([
-      expect.stringContaining(`You built ${HOOK} though ${OTHER} was already there`),
+      expect.stringContaining(`You built ${HOOK} after looking at ${OTHER}: say in existing why`),
     ]);
   });
 });
@@ -693,6 +719,7 @@ describe("hook-maker gives what the design shows, in its form and order", () => 
       step("cast.setTransform", { hookId: HOOK_ID, mode: "whole", expression }),
       step("cast.runHook", { hookId: HOOK_ID, applyTransform: true }),
       step("cast.publishHook", { hookId: HOOK_ID }),
+      step("hook.evidence", { hookId: HOOK_ID, covers }),
       answer(covers),
     ];
     const model = createScriptedModel([
@@ -719,14 +746,17 @@ describe("hook-maker gives what the design shows, in its form and order", () => 
       input: { need: { count: "data", ...need } as never },
       responder: async () => approve("editor"),
     });
-    const refusals = model.requests
-      .map((r) => String(r.messages.at(-1)?.content))
-      .filter((m) => m.startsWith("Not accepted"));
-    return { result, refusals };
+    const said = model.requests.map((r) => String(r.messages.at(-1)?.content));
+    const refusals = said.filter((m) => m.startsWith("Not accepted"));
+    // what hook.evidence answered, each time it was read
+    const evidence = said
+      .filter((m) => m.startsWith(`{"hookId":"${HOOK_ID}"`))
+      .map((m) => JSON.parse(m) as Record<string, unknown>);
+    return { result, refusals, evidence };
   };
 
-  it("a unit converted: a ratio the design writes as a percentage", async () => {
-    const { result, refusals } = await build(
+  it("a unit converted: the values beside the example, for the model to judge, never refused", async () => {
+    const { result, refusals, evidence } = await build(
       {
         list: "players",
         item: [{ field: "shooting", required: true, kind: "number", example: "45%" }],
@@ -735,8 +765,11 @@ describe("hook-maker gives what the design shows, in its form and order", () => 
       { players: [{ shooting: "45" }, { shooting: "38" }] },
       ["shooting → players[].shooting"],
     );
-    expect(refusals).toHaveLength(1);
-    expect(refusals[0]).toContain('holds "0.452" where the design writes "45%"');
+    // the form is the model's call: what it answers is taken, and the evidence showed both
+    expect(refusals).toEqual([]);
+    expect(evidence[0]).toMatchObject({
+      fields: [{ field: "shooting", example: "45%", values: ["0.452", "0.381"] }],
+    });
     expect(result).toMatchObject({ status: "completed", output: { hookId: HOOK_ID } });
   });
 
@@ -811,12 +844,12 @@ describe("hook-maker gives what the design shows, in its form and order", () => 
     expect(result).toMatchObject({ status: "completed" });
   });
 
-  it("which items in what order: fixtures grouped by day, sent in the wrong order", async () => {
+  it("which items in what order: the dates in output order, for the model to judge, never refused", async () => {
     const day = (date: string, ...kickoffs: string[]) => ({
       date,
       matches: kickoffs.map((kickoff) => ({ kickoff, venue: "Ground" })),
     });
-    const { result, refusals } = await build(
+    const { result, refusals, evidence } = await build(
       {
         list: "fixtures",
         groupBy: "date",
@@ -837,8 +870,26 @@ describe("hook-maker gives what the design shows, in its form and order", () => 
       },
       ["venue → days[].matches[].venue", "order → days[].matches[].kickoff"],
     );
-    expect(refusals).toHaveLength(1);
-    expect(refusals[0]).toContain("not soonest first");
+    expect(refusals).toEqual([]);
+    expect(evidence[0]).toMatchObject({
+      order: {
+        order: "soonest-first",
+        path: "days[].matches[].kickoff",
+        groups: [
+          {
+            dates: ["2030-08-02T19:00:00Z", "2030-07-30T15:00:00Z", "2030-07-30T19:00:00Z"],
+            runs: "both ways",
+            after: 3,
+          },
+        ],
+      },
+      count: {
+        lists: [
+          { list: "days[]", items: 2 },
+          { list: "days[].matches[]", items: 3 },
+        ],
+      },
+    });
     expect(result).toMatchObject({ status: "completed" });
   });
 });
@@ -847,7 +898,7 @@ describe("an existing hook on the feeds a person gave (ticket 17 review)", () =>
   const FEED = "https://media.example.net/v1/clips?channel=7";
   const OTHER = "dugout_clips";
   const NEW = "dugout_clips_two";
-  it("counts as fitting though its data names no team: a copy needs a reason", async () => {
+  it("is a hook it looked at: a copy needs a reason, whatever its data names", async () => {
     const hub = cast({
       cast_describe_hook: (args) => ({
         text: `HOOK  ${args.hookId}\nSTEPS\n  n1  apiCall\n      GET {{env.base_url}}/v1/clips\n      provider: "dugout: media.example.net" — base https://media.example.net\n      overrides: channel=7`,
@@ -876,6 +927,7 @@ describe("an existing hook on the feeds a person gave (ticket 17 review)", () =>
             covers: ["venue → data.1[].venue"],
             missing: [],
             why: "Built.",
+            about: { reading: "design", why: "the person's own feed" },
             ...(existing ? { existing } : {}),
           },
         },
@@ -888,6 +940,7 @@ describe("an existing hook on the feeds a person gave (ticket 17 review)", () =>
       call("cast.setTransform", { hookId: NEW, mode: "whole", expression: "$" }),
       call("cast.runHook", { hookId: NEW, applyTransform: true }),
       call("cast.publishHook", { hookId: NEW }),
+      call("hook.evidence", { hookId: NEW, covers: ["venue → data.1[].venue"] }),
       final(),
       final(`${OTHER} has no venue`),
     ]);
@@ -914,7 +967,9 @@ describe("an existing hook on the feeds a person gave (ticket 17 review)", () =>
     const refusals = model.requests
       .map((r) => String(r.messages.at(-1)?.content))
       .filter((m) => m.startsWith("Not accepted"));
-    expect(refusals).toEqual([expect.stringContaining(`though ${OTHER} was already there`)]);
+    expect(refusals).toEqual([
+      expect.stringContaining(`after looking at ${OTHER}: say in existing`),
+    ]);
     expect(result).toMatchObject({ status: "completed", output: { basis: "sources" } });
   });
 });

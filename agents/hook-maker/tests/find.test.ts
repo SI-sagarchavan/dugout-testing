@@ -171,7 +171,7 @@ describe("hook-maker finding a hook", () => {
   });
 
   it("answers with a hook it ran with the transform, the input copied by the host", async () => {
-    const { result, hub } = await runWith([
+    const { result, hub, model } = await runWith([
       { toolCalls: [{ name: "cast.describeHook", arguments: { hookId: "dugout_schedule" } }] },
       {
         toolCalls: [
@@ -185,12 +185,31 @@ describe("hook-maker finding a hook", () => {
           },
         ],
       },
+      // what the output holds against the need, read before answering
+      {
+        toolCalls: [
+          {
+            name: "hook.evidence",
+            arguments: {
+              hookId: "dugout_schedule",
+              covers: ["result or upcoming → data.1[].state (R, U)"],
+            },
+          },
+        ],
+      },
       // the model misremembers the input: the host keeps the one the run had
       answer("dugout_schedule", { page_size: "20" }),
     ]);
     expect(result).toMatchObject({
       status: "completed",
       output: { hookId: "dugout_schedule", built: false, input: { page_size: "2" } },
+    });
+    const evidence = JSON.parse(String(model.requests[3]?.messages.at(-1)?.content));
+    expect(evidence).toMatchObject({
+      hookId: "dugout_schedule",
+      fields: [{ field: "result or upcoming", values: ["R", "U"], filled: 2 }],
+      notInCovers: ["both teams' short names", "both teams' crests", "both teams' scores"],
+      count: { count: "data", lists: [{ list: "data.1[]", items: 2 }] },
     });
     // running checks first that the hook only reads, then runs it, each under the run's tenant
     expect(hub.calls.map((c) => [c.tool, c.tenantId])).toEqual([
@@ -222,6 +241,33 @@ describe("hook-maker finding a hook", () => {
     expect(String(model.requests[2]?.messages.at(-1)?.content)).toContain(
       "dugout_schedule was not run in this run",
     );
+  });
+
+  it("will not answer with a hook before reading what its run's output holds", async () => {
+    const { result, model } = await runWith([
+      {
+        toolCalls: [
+          {
+            name: "cast.runHook",
+            arguments: { hookId: "dugout_schedule", applyTransform: true, input: {} },
+          },
+        ],
+      },
+      answer("dugout_schedule"),
+      {
+        toolCalls: [
+          {
+            name: "hook.evidence",
+            arguments: { hookId: "dugout_schedule", covers: [] },
+          },
+        ],
+      },
+      answer("dugout_schedule"),
+    ]);
+    expect(String(model.requests[2]?.messages.at(-1)?.content)).toContain(
+      "Read hook.evidence for dugout_schedule with your covers, after its last run",
+    );
+    expect(result).toMatchObject({ status: "completed", output: { hookId: "dugout_schedule" } });
   });
 
   it("refuses an answer that names a hook it never ran; with no hook it is built false", async () => {

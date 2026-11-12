@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type RunEvent, RunUsage } from "./events.ts";
+import { RunUsage } from "./events.ts";
 import type { Message, ToolCall } from "./messages.ts";
 import type { ModelTurn, StepUsage, ToolDefinition } from "./model.ts";
 import {
@@ -9,18 +9,9 @@ import {
   reviewQuestion,
   Subject,
 } from "./questions.ts";
+import { Situation } from "./situation.ts";
+import type { StateValues } from "./state.ts";
 import type { ToolOutcome } from "./tools.ts";
-
-/**
- * What a run works on (ADR 0033): the section, by the structural signature of its tree's root, set
- * by a tool from what it loaded, never by the model. A decision a person makes is about it.
- */
-export const Situation = z.object({
-  section: z.string().min(1),
-  /** The section's name, for people (the frame's name). */
-  name: z.string().optional(),
-});
-export type Situation = z.infer<typeof Situation>;
 
 /** Verified identity for one run. Built by the caller (CLI now, API later), never by the model. */
 export interface RunContext {
@@ -76,6 +67,8 @@ export interface ToolStepRequest {
   answered?: { by: string; answers: Answers; from?: string[] };
   /** What the run works on so far (ADR 0033). */
   situation?: Situation;
+  /** The run's state when the call starts (ADR 0035). */
+  state?: StateValues;
 }
 
 /**
@@ -207,6 +200,11 @@ export const RunCheckpoint = z.object({
   /** What the run works on, once a tool said (ADR 0033). Absent before, and on older saves. */
   situation: Situation.optional(),
   /**
+   * The run's state (ADR 0035): what its tools kept, by key name. Absent until a tool keeps
+   * something, and on older saves.
+   */
+  state: z.record(z.string(), z.unknown()).optional(),
+  /**
    * A child run's input, as its parent hashed it (`inputKey`): a writing child is built once for
    * each input, and a restarted parent finds the try for this input by it (ADR 0025).
    */
@@ -288,9 +286,4 @@ export interface Steps {
   interrupt(req: InterruptRequest): Promise<Decision | InterruptPending>;
   /** Saves the run's state; without it the run cannot outlive this invocation. */
   checkpoint?(checkpoint: RunCheckpoint, appended: Message[]): Promise<void>;
-}
-
-/** Adapter for agents whose loop is not ours (e.g. LangGraph). Not used by the core loop. */
-export interface AgentRuntime {
-  run(input: unknown, ctx: RunContext): AsyncIterable<RunEvent>;
 }

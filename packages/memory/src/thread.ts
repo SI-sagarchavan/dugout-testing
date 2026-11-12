@@ -10,8 +10,11 @@
  * thread's notes (this), and memory a person approved (facts, lessons, ADR 0013), which
  * consolidation proposes from runs.
  *
- * Notes are made from the run's own record, without a model: the agent's `threadNote` when it has
- * one, else what its output and events say.
+ * Notes are made from the run's own record, without a model: the agent's `threadNote` says what it
+ * did and, by name, what it made and left open; the events say what a person decided and which
+ * children ran. The harness knows no agent's output: without the agent's word, what a run made is
+ * read from its output's top-level single-word strings (ids and links), and nothing is open but a
+ * failure.
  */
 
 import type { RunEvent } from "@dugout/contracts";
@@ -26,7 +29,7 @@ export interface ThreadNote {
   at: string;
   /** What it did, in a sentence or two. */
   did: string;
-  /** What it made, by name: `previewUrl`, `planArtifactId`, `hookId`. The latest note's win. */
+  /** What it made, by the names its agent gives them. The latest note's win. */
   made: Record<string, string>;
   /** What a person decided when the run asked. */
   decided: string[];
@@ -36,15 +39,39 @@ export interface ThreadNote {
   children: Array<{ agentId: string; status: string }>;
 }
 
+/**
+ * One version of the thread's section (migration 026): a preview it had after it was built, made
+ * by a run's edits, a person's hand edits, or a person going back to an earlier one.
+ */
+export interface SectionVersion {
+  tree: string;
+  fromTree: string | null;
+  by: string;
+  what: string;
+  restored: boolean;
+  at: string;
+}
+
+/** The versions shown, newest first; the rest are counted. */
+const MAX_VERSIONS = 6;
+
 /** What an invocation may add to a thread's context, in tokens. */
 export const THREAD_BUDGET_TOKENS = 1_500;
 const MAX_OPEN = 8;
 const MAX_DECIDED = 6;
 const MAX_LINE = 240;
-/** Output keys that name a thing a run made. */
-const MADE_KEY = /(url|id|ref|key|link)$/i;
-/** Output keys that list what is still open. */
-const OPEN_KEYS = ["remaining", "issues", "open", "notAddressed", "missing"];
+/** The longest value a note keeps as a thing made. */
+const MAX_MADE = 600;
+
+/**
+ * What an agent says about a run, for its thread's note (`threadNote` in the SDK): a sentence, or
+ * the sentence with what the run made (`{ previewUrl: … }`) and left open, by its own names.
+ */
+export interface ThreadNoteParts {
+  did: string;
+  made?: Record<string, string>;
+  open?: string[];
+}
 
 const clip = (s: string, n = MAX_LINE) => {
   const flat = s.replace(/\s+/g, " ").trim();
@@ -53,23 +80,24 @@ const clip = (s: string, n = MAX_LINE) => {
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** The things an output names: string values under keys like `previewUrl`, `hookId`. */
+/**
+ * What an output names, when its agent did not say: each top-level string that is one word (an id,
+ * a link), under its own key. Prose, numbers and lists are not things made.
+ */
 function madeOf(output: unknown, into: Record<string, string>): void {
   if (!isObject(output)) return;
   for (const [key, value] of Object.entries(output)) {
-    if (typeof value === "string" && value && MADE_KEY.test(key) && value.length <= 600) {
+    if (typeof value === "string" && value && value.length <= MAX_MADE && !/\s/.test(value)) {
       into[key] = value;
     }
   }
 }
 
-function openOf(output: unknown): string[] {
-  if (!isObject(output)) return [];
-  return OPEN_KEYS.flatMap((key) => {
-    const v = output[key];
-    if (!Array.isArray(v)) return [];
-    return v.map((item) => (typeof item === "string" ? item : JSON.stringify(item)));
-  });
+/** What the agent said made, kept as strings within bounds. */
+function declared(made: Record<string, string>, into: Record<string, string>): void {
+  for (const [key, value] of Object.entries(made)) {
+    if (typeof value === "string" && value && value.length <= MAX_MADE) into[key] = value;
+  }
 }
 
 /** `{ question → answer }` from what the run asked and what a person (or an auto host) answered. */
@@ -116,8 +144,8 @@ export function noteOf(opts: {
   result: CompletedRun["result"];
   events: readonly RunEvent[];
   childEvents?: readonly RunEvent[];
-  /** The agent's own sentence on what it did, from its input and output. */
-  said?: string | undefined;
+  /** The agent's own word on what it did (and made, and left open), from its input and output. */
+  said?: string | ThreadNoteParts | undefined;
   at?: string;
 }): ThreadNote {
   const { result } = opts;
@@ -134,8 +162,10 @@ export function noteOf(opts: {
       children.push({ agentId: e.child.agentId, status: "failed" });
     }
   }
-  madeOf(output, made);
-  const open = openOf(output);
+  const said = typeof opts.said === "string" ? { did: opts.said } : opts.said;
+  if (said?.made) declared(said.made, made);
+  else madeOf(output, made);
+  const open = (said?.open ?? []).filter((o) => typeof o === "string" && o.trim());
   if (result.status === "failed") open.unshift(`failed (${result.reason}): ${result.message}`);
   if (result.status === "rejected")
     open.unshift(`a person rejected ${result.output.tool}: ${result.output.reason}`);
@@ -145,7 +175,7 @@ export function noteOf(opts: {
     agentId: opts.agentId,
     status: result.status,
     at: opts.at ?? new Date().toISOString(),
-    did: clip(opts.said?.trim() || fallback, 600),
+    did: clip(said?.did?.trim() || fallback, 600),
     made,
     decided: decidedOf(opts.events).slice(0, MAX_DECIDED),
     open: open.map((o) => clip(o)).slice(0, MAX_OPEN),
@@ -161,12 +191,13 @@ export function noteOf(opts: {
 export function renderThread(
   notes: readonly ThreadNote[],
   budgetTokens = THREAD_BUDGET_TOKENS,
+  versions: readonly SectionVersion[] = [],
 ): string {
-  if (notes.length === 0) return "";
+  if (notes.length === 0 && versions.length === 0) return "";
   const ordered = [...notes].sort((a, b) => a.at.localeCompare(b.at));
   const made: Record<string, string> = {};
   for (const n of ordered) Object.assign(made, n.made);
-  const latest = ordered[ordered.length - 1] as ThreadNote;
+  const latest = ordered[ordered.length - 1];
 
   const head = [
     "## This thread so far",
@@ -175,7 +206,29 @@ export function renderThread(
   const state: string[] = [];
   const madeLines = Object.entries(made).map(([k, v]) => `- ${k}: ${v}`);
   if (madeLines.length) state.push("What exists now:", ...madeLines);
-  if (latest.open.length) {
+  // a version newer than any run's note (a person's, by hand or going back) is what exists now
+  const newest = [...versions].sort((a, b) => a.at.localeCompare(b.at)).at(-1);
+  if (newest && (!latest || newest.at > latest.at)) {
+    state.push(
+      `Newer than the last run: tree ${newest.tree}, ${newest.by}${newest.restored ? ", went back" : ""}. It is what exists now, not what the last run made.`,
+    );
+  }
+  if (versions.length) {
+    const newestFirst = [...versions].sort((a, b) => b.at.localeCompare(a.at));
+    state.push(
+      "Versions of the section, newest first (the first one is what the preview shows; the section's first, as it was built, is not listed):",
+      ...newestFirst
+        .slice(0, MAX_VERSIONS)
+        .map(
+          (v, i) =>
+            `- v${versions.length + 1 - i} tree ${v.tree}${v.fromTree ? ` ← ${v.fromTree}` : ""}, ${v.by}${v.restored ? ", went back" : ""}, ${v.at.slice(0, 16).replace("T", " ")}: ${clip(v.what, 160)}`,
+        ),
+      ...(newestFirst.length > MAX_VERSIONS
+        ? [`- …and ${newestFirst.length - MAX_VERSIONS} older`]
+        : []),
+    );
+  }
+  if (latest?.open.length) {
     state.push("Left open by the last run:", ...latest.open.map((o) => `- ${o}`));
   }
 
@@ -190,7 +243,21 @@ export function renderThread(
   const short = (n: ThreadNote) =>
     `- ${n.at.slice(0, 10)} ${n.agentId} (${n.status}): ${clip(n.did, 120)}`;
 
-  let text = [...head, ...state].join("\n");
+  // where things stand may take half the budget: the rest is for what happened. A line that
+  // does not fit is counted, never dropped in silence
+  const kept: string[] = [];
+  let stateTokens = 0;
+  for (const [i, line] of state.entries()) {
+    const tokens = estimateTokens(line) + 1;
+    if (stateTokens + tokens > budgetTokens / 2) {
+      const left = state.length - i;
+      kept.push(`- …and ${left} more line${left === 1 ? "" : "s"}`);
+      break;
+    }
+    kept.push(line);
+    stateTokens += tokens;
+  }
+  let text = [...head, ...kept].join("\n");
   let used = estimateTokens(text);
   const history: string[] = [];
   const newestFirst = [...ordered].reverse();
@@ -205,7 +272,7 @@ export function renderThread(
     history.push(line);
     used += tokens;
   }
-  text += `\n\nWhat happened, newest first:\n${history.join("\n")}`;
+  if (history.length) text += `\n\nWhat happened, newest first:\n${history.join("\n")}`;
   return text;
 }
 
@@ -217,6 +284,8 @@ export interface ThreadNotes {
   add(tenantId: string, threadId: string, note: ThreadNote): Promise<void>;
   /** The thread's notes, oldest first. */
   list(tenantId: string, threadId: string): Promise<ThreadNote[]>;
+  /** The versions of the thread's section, oldest first (migration 026). */
+  versions?(tenantId: string, threadId: string): Promise<SectionVersion[]>;
 }
 
 export function createThreadNotes(pool: Pool): ThreadNotes {
@@ -246,6 +315,29 @@ export function createThreadNotes(pool: Pool): ThreadNotes {
           [threadId],
         );
         return rows.map((r) => r.note);
+      }),
+    versions: (tenantId, threadId) =>
+      withTenant(pool, tenantId, async (db) => {
+        const { rows } = await db.query<{
+          tree: string;
+          from_tree: string | null;
+          by: string;
+          what: string;
+          restored: boolean;
+          created_at: Date;
+        }>(
+          `select tree, from_tree, by, what, restored_from is not null as restored, created_at
+           from section_versions where thread_id = $1 order by created_at`,
+          [threadId],
+        );
+        return rows.map((r) => ({
+          tree: r.tree,
+          fromTree: r.from_tree,
+          by: r.by,
+          what: r.what,
+          restored: r.restored,
+          at: new Date(r.created_at).toISOString(),
+        }));
       }),
   };
 }

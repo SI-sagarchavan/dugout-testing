@@ -1,7 +1,8 @@
 /**
- * Whether data is about the team or competition a design is about (`.scratch/data-sources/issues/09`
- * and `17`). Code only, so it holds for any club. Lives with hook-maker, which judges the data it
- * finds, and data-bind's `bind.try` uses the same reading.
+ * What data names, against the team or competition a design is about. hook-maker reports it
+ * (`namesIn`, in `hook.evidence`) and its model judges whether the data is about the design's
+ * entity; it never refuses an answer on that judgement. `holdsWords` is kept for its readers
+ * outside hook-maker (data-bind's `bind.try`, the build record).
  */
 
 /** What the design is about, from the need's `must`: the data has to be about it. */
@@ -94,44 +95,63 @@ export function holdsWords(text: string, must: string): boolean {
 /** How the data came to be the section's: by a person's feed or choice, or found by the agent. */
 export type Basis = "sources" | "chosen" | "found" | "built";
 
+export interface NamesReport {
+  /** Each value of the need's `must`, and how many strings of the data hold its words as written. */
+  must: Array<{ kind: string; value: string; appears: number }>;
+  /** The short texts the data holds most often, each with how often and the path it is most at. */
+  repeated: Array<{ value: string; times: number; at: string }>;
+}
+
+/** How many repeated texts a report shows, and how long a text may be to count as a name. */
+const SHOWN = 8;
+const NAME_LENGTH = 60;
+
 /**
- * Why the sample is not about the team or competition the design is about, or undefined.
- *
- * A hook found or built by the agent has to name what the design is about somewhere (an item's
- * team name, a heading, the feed's own fields). Data from a person's feed, a club's feed fact or
- * a hook a person chose (`trusted`) is the design's entity until it names another: many feeds,
- * a squad's among them, never name their own team, so naming none is no evidence, and naming only
- * other teams is. It reports the team names the data does have.
+ * What the data names, for the model to judge whether it is about what the design is about: how
+ * often each value of `must` appears in the data's texts (as written, case aside), and the short
+ * texts it repeats most (team names in fixtures, a club in a table, a category), each with where.
+ * It judges nothing: a feed may never name its own team, and a short name or initials may stand
+ * for the must; the model reads it.
  */
-export function wrongEntity(
-  sample: unknown,
-  about: About | undefined,
-  opts: { trusted?: boolean } = {},
-): string | undefined {
-  const wants = Object.entries(about ?? {}).filter(([, v]) => typeof v === "string" && v);
+export function namesIn(output: unknown, about: About | undefined): NamesReport | undefined {
+  const wants = Object.entries(about ?? {}).filter(
+    (e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== "",
+  );
   if (wants.length === 0) return undefined;
   const strings: string[] = [];
-  const teams = new Map<string, number>();
-  const walk = (value: unknown, key = "") => {
+  const seen = new Map<string, { times: number; at: Map<string, number> }>();
+  const walk = (value: unknown, path: string) => {
     if (strings.length > 20_000) return;
     if (typeof value === "string") {
       strings.push(value);
-      if (/team|club|franchise|squad/i.test(key) && value.length <= 40) {
-        teams.set(value, (teams.get(value) ?? 0) + 1);
+      const text = value.trim();
+      // a name: some letters, short, not a link or a path
+      if (text.length > NAME_LENGTH || !/\p{L}/u.test(text) || /^(https?:)?\/\/|^\//i.test(text)) {
+        return;
       }
-    } else if (Array.isArray(value)) for (const v of value) walk(v, key);
+      const entry = seen.get(text) ?? { times: 0, at: new Map<string, number>() };
+      entry.times++;
+      entry.at.set(path, (entry.at.get(path) ?? 0) + 1);
+      seen.set(text, entry);
+    } else if (Array.isArray(value)) for (const v of value) walk(v, `${path}[]`);
     else if (value && typeof value === "object")
-      for (const [k, v] of Object.entries(value)) walk(v, k);
+      for (const [k, v] of Object.entries(value)) walk(v, path ? `${path}.${k}` : k);
   };
-  walk(sample);
-  const text = strings.join("\n");
-  const lacking = wants.filter(([, must]) => !holdsWords(text, String(must)));
-  if (lacking.length === 0) return undefined;
-  // a trusted feed that names no team at all says nothing against itself
-  if (opts.trusted && teams.size === 0) return undefined;
-  const holds = [...teams]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([name]) => name);
-  return `the data is about ${holds.length ? holds.join(", ") : "something else"}, the design is about ${lacking.map(([, must]) => must).join(" and ")}: nothing in the data names ${lacking.map(([kind, must]) => `the ${kind} ${must}`).join(" or ")}. This is another team's data: ask for a feed that is about it (data_source), or, to bind it as a stand-in, publish with despite saying so`;
+  walk(output, "");
+  const lower = strings.map((s) => s.toLowerCase());
+  return {
+    must: wants.map(([kind, value]) => ({
+      kind,
+      value,
+      appears: lower.filter((s) => s.includes(value.trim().toLowerCase())).length,
+    })),
+    repeated: [...seen]
+      .sort((a, b) => b[1].times - a[1].times)
+      .slice(0, SHOWN)
+      .map(([value, e]) => ({
+        value,
+        times: e.times,
+        at: [...e.at].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "",
+      })),
+  };
 }

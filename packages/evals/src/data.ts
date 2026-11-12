@@ -270,6 +270,22 @@ export function dataEnding(expected: DataEnding, outcome: DataOutcome): Grade[] 
   ];
 }
 
+/**
+ * Nothing the page shows broken was published: bind.try's problems left in the published plan (a
+ * picture that loads nothing, a ref with nothing behind it), which `despite` let through. What a
+ * keep accepted is not here: a person would agree it stays.
+ */
+export function dataNothingBroken(outcome: DataOutcome): Grade {
+  const left = outcome.problems;
+  return grade(
+    "nothing-broken",
+    left.length === 0,
+    left.length === 0
+      ? "no problem left in the published plan"
+      : `published with ${left.length} problem(s) left: ${left.slice(0, 3).join(" | ")}`,
+  );
+}
+
 /** All the graders a case asks for. Cost and steps are reported, never graded. */
 export function gradeData(expect: DataExpect, outcome: DataOutcome): Grade[] {
   const bound = outcome.status === "completed" && expect.ending !== "none";
@@ -281,6 +297,7 @@ export function gradeData(expect: DataExpect, outcome: DataOutcome): Grade[] {
           // a stand-in is about another team by definition: it is graded on its ending alone
           ...(expect.ending === "bound" ? [dataEntity(expect.must, outcome)] : []),
           dataCoverage(expect.required, outcome),
+          dataNothingBroken(outcome),
           dataFormat(outcome),
           dataVariants(expect.variants, outcome),
           dataOrder(expect.order, outcome),

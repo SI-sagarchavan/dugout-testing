@@ -1,15 +1,30 @@
 import type { AgentSpec, RunContext, RunMemoryContext } from "@dugout/contracts";
 import type { CompletedRun } from "@dugout/core";
-import { consolidateRun, type LessonWriter } from "./consolidate.ts";
+import {
+  type BuildReporter,
+  type CorrectionReporter,
+  consolidateRun,
+  type LessonWriter,
+  recordCorrections,
+} from "./consolidate.ts";
 import { buildContext, MEMORY_SHARE } from "./context.ts";
 import type { MemoryStore } from "./store.ts";
-import { noteOf, renderThread, THREAD_BUDGET_TOKENS, type ThreadNotes } from "./thread.ts";
+import {
+  noteOf,
+  renderThread,
+  THREAD_BUDGET_TOKENS,
+  type ThreadNoteParts,
+  type ThreadNotes,
+} from "./thread.ts";
 import { createMemoryTools, createSkillTool } from "./tools.ts";
 
+export * from "./built.ts";
 export * from "./consolidate.ts";
 export * from "./context.ts";
 export * from "./decisions.ts";
 export * from "./embeddings.ts";
+export * from "./patterns.ts";
+export * from "./reembed.ts";
 export * from "./shared.ts";
 export * from "./skills.ts";
 export * from "./store.ts";
@@ -34,8 +49,12 @@ export interface MemoryHooksOptions {
    * thread did, and leaves a note of its own when it ends. A child run does neither.
    */
   threads?: ThreadNotes;
-  /** The agent's own sentence on what a run did, for its thread's note. */
-  threadNote?: (input: unknown, output: unknown) => string | undefined;
+  /** The agent's account of what a run built, kept as a build record (ADR 0034). */
+  record?: BuildReporter;
+  /** What the run's edits changed in a preview people commented on (ADR 0034). */
+  corrects?: CorrectionReporter;
+  /** The agent's own word on what a run did, made and left open, for its thread's note. */
+  threadNote?: (input: unknown, output: unknown) => string | ThreadNoteParts | undefined;
 }
 
 /** Everything `runLocal` needs to give an agent memory: tools, a context builder, consolidation. */
@@ -64,7 +83,10 @@ export function memoryHooks(opts: MemoryHooksOptions) {
         query: typeof input === "string" ? input : JSON.stringify(input),
         budgetTokens: Math.floor(opts.contextWindow * MEMORY_SHARE),
         readSemantic: spec.memory.read.includes("semantic"),
+        ...(spec.memory.pin ? { pin: spec.memory.pin } : {}),
         readEpisodic: spec.memory.read.includes("episodic"),
+        // approved lessons are how the agent works, as its skills are
+        readLessons: spec.memory.read.includes("procedural"),
       });
       // a child's window is its own: its parent hands it what it needs
       if (!opts.threads || ctx.parent) return built;
@@ -73,7 +95,10 @@ export function memoryHooks(opts: MemoryHooksOptions) {
       const notes = (await opts.threads.list(ctx.tenantId, threadId)).filter(
         (n) => n.runId !== ctx.runId,
       );
-      const thread = renderThread(notes, THREAD_BUDGET_TOKENS);
+      // versions are read where the table is: a database before migration 026 has none
+      const versions =
+        (await opts.threads.versions?.(ctx.tenantId, threadId).catch(() => [])) ?? [];
+      const thread = renderThread(notes, THREAD_BUDGET_TOKENS, versions);
       if (!thread) return built;
       const tokens = Math.ceil(thread.length / 4);
       return {
@@ -114,13 +139,30 @@ export function memoryHooks(opts: MemoryHooksOptions) {
         }
       }
       if (opts.consolidate === false) return;
+      const corrections =
+        opts.corrects && result.status === "completed"
+          ? opts.corrects({ input: ctx.input, output: result.output, events })
+          : undefined;
+      if (corrections)
+        await recordCorrections({
+          writer: store,
+          tenantId: ctx.tenantId,
+          agentId: spec.id,
+          runId: ctx.runId,
+          at: events.at(-1)?.at ?? new Date().toISOString(),
+          report: corrections,
+        });
       await consolidateRun({
         writer: store,
         tenantId: ctx.tenantId,
         agentId: spec.id,
         runId: ctx.runId,
         events,
+        childEvents,
+        ...(opts.record ? { record: opts.record } : {}),
+        ...(ctx.situation ? { situation: ctx.situation } : {}),
         ...(opts.lessons ? { lessons: opts.lessons } : {}),
+        model: spec.model,
         // a child's questions are learned in the run a person answered (ADR 0033)
         learnsAnswers: !ctx.parent,
       });

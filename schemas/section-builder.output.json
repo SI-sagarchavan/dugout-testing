@@ -216,6 +216,14 @@
       },
       "description": "What the compiler should have done"
     },
+    "behaviours": {
+      "default": [],
+      "description": "What the section does when a fan presses, types or scrolls (the interaction stage)",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "notes": {
       "default": [],
       "description": "Each note the designer left: addressed by one of the stages, or why not",
@@ -264,6 +272,7 @@
     "remaining",
     "kept",
     "compilerFindings",
+    "behaviours",
     "notes"
   ],
   "additionalProperties": false

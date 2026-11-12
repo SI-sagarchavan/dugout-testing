@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Tool, ToolContext } from "@dugout/contracts";
+import { memoryRunState, type Tool, type ToolContext } from "@dugout/contracts";
 import { REPO_ROOT } from "@dugout/core";
 import { createMcpHost } from "@dugout/mcp";
 import { fakeHub } from "@dugout/mcp/testing";
@@ -94,6 +94,7 @@ const ctx = (runId: string, data?: string): ToolContext => ({
   tenantId: `bind-${runId}`,
   runId,
   signal: new AbortController().signal,
+  state: memoryRunState(),
   input: { preview: `http://localhost:3000/preview/default/${TREE_ID}`, ...(data ? { data } : {}) },
 });
 const tool = (tools: Tool[], name: string) => tools.find((t) => t.name === name) as Tool;

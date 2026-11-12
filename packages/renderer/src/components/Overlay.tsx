@@ -23,6 +23,7 @@ import { cssClassName } from "@fanos/tokens";
 import { resolveNode } from "../resolve/style.js";
 import type { NodeRenderContext } from "../context.js";
 import { styleToReact } from "./dom.js";
+import { Anchor, linkOf } from "./link.js";
 
 export function Overlay({
   node,
@@ -74,15 +75,17 @@ export function Overlay({
   if (clip) rootStyle.overflow = "hidden";
   else rootStyle.overflow = "visible";
 
-  return (
-    <div
-      className={rootClass}
-      style={styleToReact(rootStyle)}
-      data-fos-id={node.id}
-      data-fos-type="Overlay"
-      data-fos-clip={clip ? "true" : "false"}
-      {...resolved.dataAttrs}
-    >
+  const link = linkOf(node, ctx);
+  const attrs = {
+    className: rootClass,
+    style: styleToReact(rootStyle),
+    "data-fos-id": node.id,
+    "data-fos-type": "Overlay",
+    "data-fos-clip": clip ? "true" : "false",
+    ...resolved.dataAttrs,
+  };
+  const content = (
+    <>
       {surfaceLeaf || stateSurfaces.length > 0 ? (
         <div className="fos-surface-layer" aria-hidden data-fos-surface-layer>
           <div
@@ -93,6 +96,13 @@ export function Overlay({
         </div>
       ) : null}
       {children}
-    </div>
+    </>
+  );
+  return link ? (
+    <Anchor to={link} ctx={ctx} {...attrs}>
+      {content}
+    </Anchor>
+  ) : (
+    <div {...attrs}>{content}</div>
   );
 }

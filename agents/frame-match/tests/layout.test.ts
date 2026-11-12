@@ -1,6 +1,6 @@
 /**
- * Layouts in a run: a carousel the frame shows is applied without a question, as long as the
- * first paint holds; anything the frame cannot show comes back from frame.load as an open item
+ * Layouts in a run: frame.load proposes what each container is and applies none of it. Every
+ * carousel and tab bar, and anything else the frame cannot show, comes back as an open item
  * (evidence, candidates, a proposal, what memory holds), which the agent's model settles and
  * applies with frame.layout as ordinary input. No tool asks anyone, and frame.publish waits.
  */
@@ -10,6 +10,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { memoryRunState, type RunState } from "@dugout/contracts";
 import { REPO_ROOT, toolDefinition } from "@dugout/core";
 import { describe, expect, it } from "vitest";
 import type { ControlPlane } from "../src/control-plane.ts";
@@ -18,7 +19,6 @@ import {
   describeChoice,
   LayoutChoice,
   type LayoutIntent,
-  type LayoutJudge,
   type PlatformRead,
   withPlatform,
 } from "../src/layout.ts";
@@ -183,11 +183,16 @@ function setup(intents: LayoutIntent[], score: (overrides: Overrides) => Measure
   return { engine, plane, builds };
 }
 
+// one state for each run, as the loop keeps it (ADR 0035)
+const states = new Map<string, RunState>();
+const stateOf = (runId: string) =>
+  states.get(runId) ?? (states.set(runId, memoryRunState()).get(runId) as RunState);
 const ctx = (runId: string) =>
   ({
     tenantId: "t",
     runId,
     signal: new AbortController().signal,
+    state: stateOf(runId),
     input: { exportId: "6f1d2c1e-7a3b-4c7e-9a10-000000000001", project: "default" },
   }) as const;
 
@@ -200,7 +205,6 @@ type Memory = Parameters<typeof createMatchTools>[0] extends infer O
 async function tools(
   intents: LayoutIntent[],
   score: (o: Overrides) => Measurement = () => measured(90),
-  judge: LayoutJudge | false = false,
   decisions?: Memory,
 ) {
   const { engine, plane, builds } = setup(intents, score);
@@ -211,7 +215,6 @@ async function tools(
     plane: () => plane,
     web: "http://web",
     vision: false,
-    judge,
     read: async () => "",
     ...(decisions ? { decisions } : {}),
   });
@@ -252,45 +255,55 @@ type Open = {
   canTake: string;
   before?: string;
 };
-const openOf = (result: Record<string, unknown>) => (result.open ?? []) as Open[];
+/** What is open about the containers: the content item, open in every run until publishing, aside. */
+const openOf = (result: Record<string, unknown>) =>
+  ((result.open ?? []) as Open[]).filter((i) => i.id !== "content");
 
 describe("frame.load", () => {
-  it("applies a carousel the frame shows, when the first paint holds", async () => {
-    const { named } = await tools([players, latest]);
+  it("proposes a carousel the frame shows and applies nothing: what it is is the agent's to settle", async () => {
+    const { named, builds } = await tools([players, latest]);
     const loaded = await named("frame.load").run({}, ctx("l1"));
     expect(loaded.match).toBe(90);
     const [carousel, list] = layoutsOf(loaded);
     expect(carousel).toMatchObject({
       src: "35:10529",
       kind: "carousel",
-      applied: true,
+      applied: false,
       decided: false,
     });
+    // however sure the reading and the IR are, the kind is open, with how sure as evidence
+    const kind = openOf(loaded).find((i) => i.id === "kind");
+    expect(kind?.about).toContain("Players");
+    expect(kind?.proposed).toBe("carousel");
+    expect(kind?.evidence).toContain("Proposed carousel (certain)");
+    // nothing lowered
+    expect(builds.every((b) => b.layouts.length === 0)).toBe(true);
     // A list is what the compiler drew: nothing to apply and nothing to ask.
     expect(list).toMatchObject({ kind: "list", applied: true });
-    // nothing is open about it: no item names it
     expect(openOf(loaded).some((i) => i.about.includes("Latest"))).toBe(false);
   });
 
-  it("leaves a carousel out when lowering moves the first paint, and says why", async () => {
-    const { named } = await tools([players], (o) => measured(o.layouts.length > 0 ? 88 : 90));
-    const loaded = await named("frame.load").run({}, ctx("l2"));
-    expect(loaded.match).toBe(90);
-    const [carousel] = layoutsOf(loaded);
-    expect(carousel?.applied).toBe(false);
-    expect(carousel?.note).toContain("first paint moved (match 90 → 88");
-  });
-
-  it("reports only what the frame cannot answer, with the evidence the frame gave", async () => {
+  it("reports what the frame cannot answer, the compiler's own question folded into the evidence", async () => {
     const { named } = await tools([videos, latest]);
     const loaded = await named("frame.load").run({}, ctx("l3"));
     const [row] = layoutsOf(loaded);
     expect(row).toMatchObject({ kind: "row", applied: true, decided: false });
     // the compiler's own open line is evidence, not a question put to anyone
     const open = openOf(loaded);
-    expect(open.map((i) => i.id)).toEqual(["kind", "ask_1"]);
-    expect(open[1]?.evidence).toContain("a fixed row of 4, or a carousel");
+    expect(open.map((i) => i.id)).toEqual(["kind"]);
+    expect(open[0]?.evidence).toContain("a fixed row of 4, or a carousel");
     expect(String(loaded.openRule)).toContain("`ask`");
+  });
+
+  it("reports whether the section shows data as an open item the agent settles at frame.publish", async () => {
+    const { named } = await tools([players]);
+    const loaded = await named("frame.load").run({}, ctx("l4"));
+    const content = ((loaded.open ?? []) as Open[]).find((i) => i.id === "content");
+    expect(content?.candidates?.map((c) => c.value)).toEqual(["none", "some"]);
+    expect(content?.proposed).toBe("some");
+    expect(content?.evidence).toContain('"Players" repeats 5 items as a carousel');
+    expect(content?.canTake).toContain("frame.publish");
+    expect((loaded.content as { note: string }).note).toContain("not settled");
   });
 });
 
@@ -308,7 +321,6 @@ describe("when the frame cannot be read", () => {
       },
       plane: () => plane,
       vision: false,
-      judge: false,
       read: async () => "",
     });
     const load = list.find((t) => t.name === "frame.load") as unknown as {
@@ -348,7 +360,7 @@ describe("frame.layout", () => {
     const loaded = await named("frame.load").run({}, ctx("q1"));
     expect(named("frame.layout").effect).toBe("read");
     const open = openOf(loaded);
-    expect(open.map((i) => i.id)).toEqual(["items", "autoplay", "loop", "platform"]);
+    expect(open.map((i) => i.id)).toEqual(["kind", "items", "autoplay", "loop", "platform"]);
     const by = (id: string) => open.find((i) => i.id === id) as Open;
     expect(by("items")).toMatchObject({ proposed: "data" });
     expect(by("items").canTake).toContain("config.pages");
@@ -367,9 +379,9 @@ describe("frame.layout", () => {
   it("reports the same for a design that is not cricket, from its own evidence", async () => {
     const { named } = await tools([recipes]);
     const open = openOf(await named("frame.load").run({}, ctx("q1r")));
-    expect(open.map((i) => i.id)).toEqual(["items", "autoplay", "loop", "platform"]);
+    expect(open.map((i) => i.id)).toEqual(["kind", "items", "autoplay", "loop", "platform"]);
     expect(open[0]?.about).toContain("Weeknight recipes");
-    expect(open[0]?.evidence).toContain("The frame shows 4");
+    expect(open[1]?.evidence).toContain("The frame shows 4");
   });
 
   it("reports what a row leaves open: what it is, with the frame's evidence and the detector's guess", async () => {
@@ -379,14 +391,15 @@ describe("frame.layout", () => {
     expect(open[0]?.evidence).toContain("all 4 fit inside");
     expect(open[0]?.candidates?.map((c) => c.value)).toEqual(["carousel", "row", "list"]);
     expect(open[0]?.canTake).toContain("grid");
-    expect(open[1]).toMatchObject({ id: "ask_1" });
+    expect(open[0]?.evidence).toContain("The compiler asks:");
+    expect(open).toHaveLength(1);
   });
 
   it("takes what the model decided as plain input, and what is open is gone once applied", async () => {
     const { named, decide } = await tools([videos]);
     await named("frame.load").run({}, ctx("q1c"));
     const result = await decide(videos.choice, "q1c");
-    expect(result.open).toBeUndefined();
+    expect(openOf(result)).toEqual([]);
     expect(layoutsOf(result)[0]).toMatchObject({ decided: true });
   });
 
@@ -412,16 +425,32 @@ describe("frame.layout", () => {
       kind: "carousel",
       config: { autoplay: { delayMs: 4000 }, loop: true, pages: 12 },
     });
-    // a config the choice schema refuses never reaches the tool: no translating of words
-    const tool = named("frame.layout");
-    expect(() =>
-      tool.input.parse({
-        choice: {
-          ...fixtures.choice,
-          config: { slidesPerView: "auto", autoplay: "every 4 seconds" },
-        },
-      }),
-    ).toThrow();
+    // a config the choice schema refuses is not applied: no translating of words
+    const refused = await decide(
+      { ...fixtures.choice, config: { slidesPerView: "auto", autoplay: "every 4 seconds" } },
+      "q1d",
+    );
+    expect(refused).toMatchObject({ kept: false });
+    expect(refused.reason).toContain("config.autoplay");
+  });
+
+  it("takes the proposal for what a choice of the proposed kind leaves out", async () => {
+    const { named, decide, builds } = await tools([fixtures]);
+    await named("frame.load").run({}, ctx("q1e"));
+    await decide({ src: fixtures.src, kind: "carousel", config: { loop: true } }, "q1e");
+    expect(builds.at(-1)?.layouts.find((l) => l.src === fixtures.src)).toMatchObject({
+      config: { centered: true, initialSlide: 1, loop: true },
+      chrome: fixtures.chrome,
+    });
+  });
+
+  it("measures a decided carousel and reports the match before and after", async () => {
+    const { named, decide } = await tools([players], (o) =>
+      measured(o.layouts.length > 0 ? 88 : 90),
+    );
+    await named("frame.load").run({}, ctx("q1g"));
+    const result = await decide(players.choice, "q1g");
+    expect(result).toMatchObject({ kept: true, was: 90, match: 88 });
   });
 
   it("lets the model turn a carousel into a row, and needs a grid's own settings", async () => {
@@ -432,9 +461,9 @@ describe("frame.layout", () => {
       src: fixtures.src,
       kind: "row",
     });
-    expect(() =>
-      named("frame.layout").input.parse({ choice: { src: fixtures.src, kind: "grid" } }),
-    ).toThrow();
+    const grid = await decide({ src: fixtures.src, kind: "grid" }, "q1f");
+    expect(grid).toMatchObject({ kept: false });
+    expect(grid.reason).toContain("grid needs config { columns, rows }");
   });
 
   it("records who settled each open item, with the value read from the choice applied", async () => {
@@ -454,6 +483,8 @@ describe("frame.layout", () => {
       ],
     );
     expect(result.settled).toEqual([
+      // what it is: left out, so the model's own
+      { id: "kind", by: "agent", value: "35:10545: carousel" },
       { id: "items", by: "agent", value: "35:10545: 9" },
       { id: "autoplay", by: "person", value: "35:10545: 5000" },
       { id: "loop", by: "agent", value: "35:10545: yes" },
@@ -471,7 +502,7 @@ describe("frame.layout", () => {
           ? ({ value: "5000" } as never)
           : undefined,
     };
-    const { named, decide } = await tools([recipes], undefined, false, memory);
+    const { named, decide } = await tools([recipes], undefined, memory);
     const open = openOf(await named("frame.load").run({}, ctx("m1")));
     const autoplay = open.find((i) => i.id === "autoplay");
     expect(autoplay?.before).toBe("the club's active fact layout.carousel.autoplay: 5000");
@@ -505,7 +536,6 @@ describe("frame.layout", () => {
       engine: { ...engine, bundle: async () => sectioned },
       plane: () => plane,
       vision: false,
-      judge: false,
       decisions: memory,
     });
     const load = list.find((t) => t.name === "frame.load") as unknown as {
@@ -566,7 +596,8 @@ describe("frame.publish", () => {
     const { named, decide, builds } = await tools([videos]);
     await named("frame.load").run({}, ctx("p2"));
     await decide({ src: "35:4813", kind: "carousel", config: { slidesPerView: "auto" } }, "p2");
-    await named("frame.publish").run(named("frame.publish").resolve({}, ctx("p2")), ctx("p2"));
+    const said = { content: { data: "some", why: "a row of video cards" }, slots: [] };
+    await named("frame.publish").run(named("frame.publish").resolve(said, ctx("p2")), ctx("p2"));
     expect(builds.at(-1)?.layouts).toEqual([
       {
         src: "35:4813",
@@ -682,13 +713,16 @@ describe("a platform carousel config", () => {
         "text_main_prim",
       ]),
     });
-    const { choice, notes } = withPlatform(proposal, read, { arrows: true, indicator: false });
+    const { choice, notes, conflicts } = withPlatform(proposal, read, {
+      arrows: true,
+      indicator: false,
+    });
     expect(choice.config).toMatchObject({
-      // the frame's
-      slidesPerView: "auto",
-      centered: true,
+      // the frame's, where the config says nothing
       initialSlide: 1,
-      // the config's
+      // the config's, a person's word, where the frame shows otherwise too
+      slidesPerView: 1,
+      centered: false,
       loop: false,
       autoplay: { delayMs: 3000 },
       // the design drew the arrows: at the edges (position center), and no disabled colours the
@@ -704,10 +738,17 @@ describe("a platform carousel config", () => {
       "the config shows a counter (variant 1), but the design draws none",
     );
     expect(notes.join("\n")).toContain("autoplay progress bar, but the design draws none");
-    expect(notes.join("\n")).toContain(
-      "slides_per_view 1 left out: the frame shows each slide at its designed width",
-    );
-    expect(notes.join("\n")).toContain("centered_slides false left out");
+    // where the two disagree it is reported, never dropped
+    expect(conflicts).toContainEqual({
+      field: "slides_per_view",
+      config: 1,
+      frame: "each slide at its designed width",
+      applied: "config",
+    });
+    expect(conflicts.find((c) => c.field === "centered_slides")).toMatchObject({
+      config: false,
+      applied: "config",
+    });
     expect(notes.join("\n")).toContain("the design draws its arrows, so they keep their look");
   });
 
@@ -717,7 +758,9 @@ describe("a platform carousel config", () => {
       await named("frame.load").run({}, ctx("pl"));
       const result = await decide({ ...proposal, config: { ...proposal.config, platform } }, "pl");
       expect(result).toMatchObject({ kept: true });
-      expect((result.platform as string[]).join("\n")).toContain("slides_per_view 1 left out");
+      expect(result.platformConflicts).toContainEqual(
+        expect.objectContaining({ field: "slides_per_view", applied: "config" }),
+      );
       const applied = builds.at(-1)?.layouts.find((l) => l.src === fixtures.src);
       expect(applied).toMatchObject({
         kind: "carousel",
@@ -738,7 +781,10 @@ describe("a platform carousel config", () => {
     const text = (result.platformSets as string[]).join("\n");
     expect(text).toContain("From the platform config: autoplay every 3s; no loop;");
     expect(text).toContain(
-      "Left to the frame, which shows them: slides_per_view, centered_slides, space_between, direction.",
+      "Applied from the config where the frame shows otherwise: slides_per_view, centered_slides.",
+    );
+    expect(text).toContain(
+      "Drawn by the tree, so reported where they differ from the frame: space_between, direction.",
     );
     expect(builds.at(-1)?.layouts.find((l) => l.src === fixtures.src)).toMatchObject({
       config: { autoplay: { delayMs: 3000 } },
@@ -749,11 +795,14 @@ describe("a platform carousel config", () => {
       value: "35:10545: applied",
     });
     // JSON that is not JSON is refused with the schema's message, and nothing is applied from it
-    expect(() =>
-      named("frame.layout").input.parse({
-        choice: { ...proposal, config: { ...proposal.config, platform: "slides_per_view: 1" } },
-      }),
-    ).toThrow();
+    const before = builds.length;
+    const refused = await decide(
+      { ...proposal, config: { ...proposal.config, platform: "slides_per_view: 1" } },
+      "pc",
+    );
+    expect(refused).toMatchObject({ kept: false });
+    expect(refused.reason).toContain("config.platform is not a JSON object");
+    expect(builds.length).toBe(before);
   });
 
   it("is refused for anything but a carousel", async () => {

@@ -50,3 +50,12 @@ Decisions expire like other episodes (180 days, pushed back each time one is see
 - frame-match asks per container, but a decision is per section. A section with two carousels shares one `items`, `autoplay` and `loop` decision.
 - A section is signed from its IR. When data-bind cannot read the IR (a preview with no IR beside it), the run has no section, and its section questions are asked and not learned.
 - Answering from memory without asking is ours: no framework does it. It is kept behind a fact a person approved.
+
+## Amendment (2026-11-12): no agent declares its questions
+
+The `questions` catalog in an agent's spec (and `defineWorkflow`'s) is gone. A list of question ids per agent was a list of questions decided in code: the model asked what the catalog named, and an agent learned nothing it had not been told to ask.
+
+- The model says how far each answer holds when it asks: `remember` (`section`, `club`, `no`) and, for an answer that should become a house fact, `fact` (a dotted key). Both are required in `ask`'s input and optional on `AskedQuestion`, so hosts keep working. `withAbout` builds `about` from them.
+- The id is still what memory keys on, so the model names it for what it settles and keeps it stable; `ask`'s description says so, and a tool's open item carries its id with `holds` and `fact`, so an item asked about from a report is learned the same way every time.
+- Skills describe what an answer lets a tool do, not which questions to ask. An agent asks only what the design, the data and the tools leave open.
+- The consequence above ("An agent's questions are part of its spec") no longer holds. What a model names differently on two runs is learned under two ids; open items and the `before` lists of load tools keep the common ones stable.

@@ -1,16 +1,13 @@
 import { agent as bind } from "@dugout/agent-data-bind";
 import { agent as frameMatch } from "@dugout/agent-frame-match";
-import type { Message } from "@dugout/contracts";
 import { describe, expect, it } from "vitest";
-import {
-  agent,
-  assemble,
-  builtIn,
-  completeFinal,
-  mergeNotes,
-  pipeline,
-  verifyFinal,
-} from "../src/agent.ts";
+import { agent, assemble, makeStages, mergeNotes, settleBudget } from "../src/agent.ts";
+
+/**
+ * The stages before interaction, with no control plane behind them: these frames have one slot, so
+ * none is read. The interaction stage is `behave.test.ts`'s.
+ */
+const build = makeStages();
 
 const frame = {
   previewUrl: "http://localhost:3000/preview/default/frame-1?theme=t",
@@ -40,7 +37,7 @@ const EXPORT = "6f0e8c1a-0000-4000-8000-000000000001";
 describe("section-builder", () => {
   it("runs frame-match, then bind on the preview it published, and hands over bind's preview", async () => {
     const calls: Array<{ agent: string; input: unknown }> = [];
-    const answer = await pipeline.run(
+    const answer = await build(
       async (child, input) => {
         calls.push({ agent: child.spec.id, input });
         return child.spec.id === "frame-match" ? frame : data;
@@ -79,7 +76,7 @@ describe("section-builder", () => {
       ],
     };
     const ran: string[] = [];
-    const answer = await pipeline.run(
+    const answer = await build(
       async (child) => {
         ran.push(child.spec.id);
         return header;
@@ -103,7 +100,7 @@ describe("section-builder", () => {
       ...frame,
       content: { data: "unsure" as const, evidence: ["a picture 320×240px"] },
     };
-    const answer = await pipeline.run(
+    const answer = await build(
       async (child) =>
         child.spec.id === "frame-match"
           ? unsure
@@ -129,7 +126,7 @@ describe("section-builder", () => {
   it("does not run bind when frame-match failed", async () => {
     const ran: string[] = [];
     await expect(
-      pipeline.run(
+      build(
         async (child) => {
           ran.push(child.spec.id);
           throw new Error("frame-match failed, invalid_output: no screenshot");
@@ -155,36 +152,17 @@ describe("section-builder", () => {
     expect(out).not.toHaveProperty("match");
   });
 
-  it("copies every field of its answer from what page.build returned, whatever the model sent", () => {
-    const built = assemble(frame, data);
-    const messages: Message[] = [
-      {
-        role: "assistant",
-        content: "",
-        toolCalls: [{ id: "c1", name: "page.build", arguments: "{}" }],
-      },
-      { role: "tool", toolCallId: "c1", content: JSON.stringify(built) },
-    ];
-    expect(builtIn(messages)).toEqual(built);
-    expect(completeFinal({ previewUrl: "http://invented" }, { messages })).toEqual(built);
-    expect(verifyFinal(built, { messages })).toBeUndefined();
-    // nothing built: an answer is refused, and a failed build is not a result
-    const failed: Message[] = [
-      {
-        role: "assistant",
-        content: "",
-        toolCalls: [{ id: "c1", name: "page.build", arguments: "{}" }],
-      },
-      { role: "tool", toolCallId: "c1", content: "bind failed", isError: true },
-    ];
-    expect(builtIn(failed)).toBeUndefined();
-    expect(verifyFinal({ previewUrl: "x" }, { messages: failed })).toMatch(/has not completed/);
-  });
-
-  it("gives the model the one tool, and lists the two agents it runs", () => {
-    expect(agent.spec.agents).toEqual([frameMatch.spec.id, bind.spec.id]);
+  it("is a workflow: one tool that runs its steps in code, and no step offered to a model", () => {
+    expect(agent.spec.agents).toEqual([
+      frameMatch.spec.id,
+      bind.spec.id,
+      settleBudget.spec.id,
+      "interaction",
+    ]);
     expect(agent.spec.tools).toEqual(["page.build"]);
     expect(agent.spec.tools).not.toContain("agent.frameMatch");
+    // it starts without asking: a stage still stops for a person when it has a question
+    expect(agent.spec.approvals).toEqual([]);
   });
 
   it("leaves room below it for bind's researcher and builder", () => {

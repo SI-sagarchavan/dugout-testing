@@ -418,8 +418,8 @@ const TOOLS: Array<[string, string]> = [
     "Approve proposed facts (those from people's answers too), propose shared memory, list or forget decisions on sections, or write a house fact",
   ],
   [
-    "library <index|search|share|previews|palette>",
-    "The section library: add Handoffs' sections, search it (--shared: other clubs' too), sharing, previewed sections, the palette other clubs' skeletons are drawn in",
+    "library <index|search|serve|reembed|share|previews|palette>",
+    "The section library: add Handoffs' sections, search it (`serve`: a search page for a phrase or a screenshot), embed it again after the embedder changed (--shared: other clubs' too), sharing, previewed sections, the palette other clubs' skeletons are drawn in",
   ],
   [
     "mcp <list|sync|login>",
@@ -483,6 +483,24 @@ export function summaryOf(instructions: string): string {
 }
 
 /** Help for one agent: what it does, and the flags its input schema takes. */
+
+/** What a listing reads of an agent; `shape` is left out by callers that only have a spec. */
+type Listed = Pick<AnyAgent, "spec"> & { shape?: AnyAgent["shape"] };
+
+/** Who answers for it, and what runs it: its model, or code when it is a workflow. */
+export const bylineOf = (agent: Listed): string =>
+  [agent.spec.owner, agent.shape === "workflow" ? "workflow" : agent.spec.model]
+    .filter(Boolean)
+    .join(" · ");
+
+/** What it does, in a sentence: a workflow's own words, an agent's first instruction. */
+export const aboutOf = (agent: Listed): string =>
+  summaryOf(
+    agent.shape === "workflow" && agent.spec.description
+      ? agent.spec.description
+      : agent.spec.instructions,
+  );
+
 export function renderAgentHelp(
   agent: Pick<AnyAgent, "spec" | "input" | "cli">,
   command?: string,
@@ -494,9 +512,9 @@ export function renderAgentHelp(
     `  ${paint.name(syntax.padEnd(width))}  ${detail}`;
   const lines = [
     paint.title(agent.spec.id),
-    paint.dim(`${agent.spec.owner} · ${agent.spec.model}`),
+    paint.dim(bylineOf(agent)),
     "",
-    summaryOf(agent.spec.instructions),
+    aboutOf(agent),
     "",
     paint.heading("Usage"),
     `  ${usage(agent, command)}`,

@@ -144,8 +144,14 @@ export const Overrides = z
   .object({
     /** A layer-name slug to a glyph in the icon registry: the compiler's own `icons` option. */
     icons: z.record(z.string(), z.string()).default({}),
-    /** Figma ids to draw as a crop of the screenshot: art the export has no vectors for. */
+    /** Figma ids to draw as a crop of the screenshot: art the export has no vectors for. Placed as drawn. */
     crops: z.array(z.string()).default([]),
+    /**
+     * Figma ids to crop as the backdrop of the band around them: the picture fills that band at any
+     * window width, and each wrapper up to the band fills with it. For art that spans a band with no
+     * text in it (a banner's photo, a wedge); frame.override reports which crops are such a picture.
+     */
+    backdrops: z.array(z.string()).default([]),
     /** Figma ids to leave out: their pixels are already in a crop painted under them. */
     drops: z.array(z.string()).default([]),
     /** Figma ids of text the compiler dropped for want of an exact style: added with the nearest. */
@@ -170,6 +176,7 @@ export type Overrides = z.infer<typeof Overrides>;
 export const noOverrides = (): Overrides => ({
   icons: {},
   crops: [],
+  backdrops: [],
   drops: [],
   gradients: [],
   texts: [],
@@ -430,10 +437,53 @@ export interface Built {
   missing: string[];
   /** One per layout override: what lowering did with it, and whether the tree has it. */
   layoutNotes: Array<{ src: string; message: string; applied: boolean }>;
+  /** What became of a crop that was not drawn as asked (a backdrop with no band to follow). */
+  cropNotes?: string[];
 }
 
 const channels = (value: string) =>
   [1, 3, 5].map((at) => Number.parseInt(value.slice(at, at + 2), 16)) as [number, number, number];
+
+/**
+ * Each `tone` a change gives a text, beside the colour the design paints that text when the IR names
+ * it: the two hexes and their RGB distance. A report, not a check: a title made blue on a blue band
+ * can score as well as the white one (a band of blue pixels "matches"), and only the IR says it was
+ * white, so the agent reads both. Empty when the change sets no tone, or the IR or the theme cannot
+ * say what either colour is.
+ */
+export function toneAgainstDesign(
+  bundle: Pick<Bundle, "byId" | "themeRaw">,
+  props: ReadonlyArray<{ src: string; props: Record<string, unknown> }>,
+): Array<{ src: string; design: string; tone: string; distance: number }> {
+  const colours = new Map(
+    tokensOf(bundle.themeRaw, "color", undefined, Number.POSITIVE_INFINITY).map((t) => [
+      t.ref,
+      t.value,
+    ]),
+  );
+  const hex = (v: unknown) => (typeof v === "string" && /^#[0-9a-f]{6}/i.test(v) ? v : undefined);
+  const out: Array<{ src: string; design: string; tone: string; distance: number }> = [];
+  for (const { src, props: given } of props) {
+    const tone = given.tone;
+    if (typeof tone !== "string") continue;
+    const node = bundle.byId.get(src) as
+      | { type?: string; fill?: { tokenRef?: string } }
+      | undefined;
+    const designRef = node?.type === "TEXT" ? node.fill?.tokenRef : undefined;
+    if (!designRef) continue;
+    const design = hex(colours.get(`color.${designRef.replace(/[/\s-]+/g, "_").toLowerCase()}`));
+    const asked = hex(colours.get(tone));
+    if (!design || !asked) continue;
+    const [a, b] = [channels(design), channels(asked)];
+    out.push({
+      src,
+      design: `${designRef} (${design})`,
+      tone: `${tone} (${asked})`,
+      distance: Math.round(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])),
+    });
+  }
+  return out;
+}
 
 const gradientName = (src: string) => `paint_${src.replace(/[^a-zA-Z0-9]+/g, "_").toLowerCase()}`;
 const gradientKey = (name: string) => `gradient_${name}_gradient`;
@@ -850,13 +900,21 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
     if (added) addedTexts.push(added);
     else missing.push(src);
   }
-  for (const src of overrides.crops) {
+  const backdrops = new Set(overrides.backdrops);
+  const cropNotes: string[] = [];
+  for (const src of [...new Set([...overrides.crops, ...overrides.backdrops])]) {
     const ir = bundle.byId.get(src);
     const found = nodesOf(src);
     // The compiler draws a clipped picture as the window it fills: the IR box is the whole bitmap,
     // positioned so its window shows the right part. The crop is the window, whatever the box is.
     const parent = bundle.parents.get(src);
-    const band = backdropBand(bundle, nodes, found[0]);
+    // only a crop asked for as a backdrop follows its band: any other is placed as drawn
+    const band = backdrops.has(src) ? backdropBand(bundle, nodes, found[0]) : undefined;
+    if (backdrops.has(src) && !band && found.length > 0) {
+      cropNotes.push(
+        `${src}: asked for as a backdrop, and no band without text spans it: placed as drawn`,
+      );
+    }
     const window = band
       ? visibleBox(bundle, band.src)
       : parent && found.some((node) => (node.props.place as { anchor?: string })?.anchor === "fill")
@@ -956,6 +1014,7 @@ export function buildFrame(tools: Toolchain, bundle: Bundle, overrides: Override
     warnings: check.warnings.length,
     missing,
     layoutNotes,
+    ...(cropNotes.length > 0 ? { cropNotes } : {}),
   };
 }
 
@@ -1014,6 +1073,30 @@ export function backdropBand(
   if (across < outer.w * MIN_BACKDROP_SHARE) return undefined;
   const hasText = [...subtreeOf(bundle, at.src)].some((id) => bundle.byId.get(id)?.type === "TEXT");
   return hasText ? undefined : at;
+}
+
+/**
+ * Of these crops, the ones whose picture spans most of a band with no text in it: what the agent
+ * may draw as that band's backdrop (`backdrops`), so a wider window shows no edge of the art. A
+ * report of the geometry with its values; the agent decides.
+ */
+export function backdropCandidates(
+  bundle: Bundle,
+  nodes: TreeNode[],
+  srcs: readonly string[],
+): string[] {
+  const out: string[] = [];
+  for (const src of srcs) {
+    const node = nodes.find((n) => n.src === src);
+    const band = backdropBand(bundle, nodes, node);
+    const box = bundle.byId.get(src)?.geometry.bbox;
+    const outer = band && bundle.byId.get(band.src)?.geometry.bbox;
+    if (!band || !box || !outer) continue;
+    out.push(
+      `${src} is ${Math.round(box.w)}px wide across the ${Math.round(outer.w)}px band ${band.src}, which holds no text: as crops it keeps its drawn box; as backdrops it fills the band at any width`,
+    );
+  }
+  return out;
 }
 
 /** A backdrop inside wrappers fills them, so each wrapper up to its band has to fill as well. */
@@ -1247,6 +1330,12 @@ export interface SurfaceFinding {
   spec: unknown;
   nodes: number;
   mismatch: number;
+  /**
+   * The share of the pixels its nodes draw on top that are off, 0 to 1. A surface whose colour is
+   * wrong is off nearly everywhere it shows; one that is right and only has text or a line drawn a
+   * pixel off on it (glyphs the IR boxes too short) has a low share, however large `mismatch` is.
+   */
+  offShare: number;
   /** A node using it, to read with frame.node. */
   src: string;
   design: string;
@@ -1553,7 +1642,7 @@ export async function measureFrame(
     if (!note.nodeId || note.kind === "fluid-band" || note.kind === "pinned-size") continue;
     notesOf.set(note.nodeId, [...(notesOf.get(note.nodeId) ?? []), note.message]);
   }
-  const bySurface = new Map<string, SurfaceFinding & { worst: number }>();
+  const bySurface = new Map<string, SurfaceFinding & { worst: number; owned: number }>();
   for (const [id, entry] of tally) {
     const node = byNode.get(id) as TreeNode;
     const name = String(node.props.surface ?? "").replace(/^surface\./, "");
@@ -1564,6 +1653,8 @@ export async function measureFrame(
       spec: built.surfaces.surfaces[name],
       nodes: 0,
       mismatch: 0,
+      offShare: 0,
+      owned: 0,
       src: node.src,
       design: "none",
       render: "none",
@@ -1571,6 +1662,8 @@ export async function measureFrame(
     };
     held.nodes += 1;
     held.mismatch += mismatch;
+    held.owned += Math.round(entry.seen / scaleSquared);
+    held.offShare = held.owned > 0 ? Math.round((held.mismatch / held.owned) * 100) / 100 : 0;
     if (mismatch > held.worst) {
       held.worst = mismatch;
       held.src = node.src;
@@ -1583,7 +1676,7 @@ export async function measureFrame(
     .filter((finding) => finding.nodes > 1 && finding.mismatch >= MIN_SURFACE_MISMATCH)
     .sort((a, b) => b.mismatch - a.mismatch)
     .slice(0, MAX_SURFACES)
-    .map(({ worst: _worst, ...finding }) => finding);
+    .map(({ worst: _worst, owned: _owned, ...finding }) => finding);
   const findings: NodeFinding[] = [...tally.entries()]
     .map(([id, entry]) => {
       const node = byNode.get(id) as TreeNode;
@@ -1825,7 +1918,12 @@ export async function keepWhatHelps(
 ): Promise<{ overrides: Overrides; match: number; undone: string[] }> {
   const without: Record<string, (o: Overrides) => Overrides> = {
     "raw gradients": (o) => ({ ...o, gradients: start.gradients }),
-    "crops from the screenshot": (o) => ({ ...o, crops: start.crops, drops: start.drops }),
+    "crops from the screenshot": (o) => ({
+      ...o,
+      crops: start.crops,
+      backdrops: start.backdrops,
+      drops: start.drops,
+    }),
     // Not text, round surfaces or alignment: words the compiler dropped come back whatever the
     // score says, and the others rarely interact with anything and cost a render each to test.
   };
@@ -1907,12 +2005,21 @@ export async function firstPass(
   const noToken = bundle.themeFixed ? unbound.filter((src) => !themeGradientFor(bundle, src)) : [];
   // until the theme has the token, the gradient is drawn as its own picture: exactly the paint, see-through where it is
   const standIns = noToken.filter((src) => visibleBox(bundle, src) && pictureSource(bundle, src));
+  // the first pass's own crops: a picture that spans a band with no text is that band's backdrop
+  const ownCrops = [
+    ...new Set([...art, ...vectorPictures, ...parts, ...pictured, ...standIns]),
+  ].filter((src) => !start.crops.includes(src) && !start.backdrops.includes(src));
+  const isBackdrop = (src: string) =>
+    backdropBand(
+      bundle,
+      base.tree.nodes,
+      base.tree.nodes.find((n) => n.src === src),
+    ) !== undefined;
   const overrides: Overrides = {
     ...start,
     gradients: [...start.gradients, ...unbound.filter((src) => !noToken.includes(src))],
-    crops: [
-      ...new Set([...start.crops, ...art, ...vectorPictures, ...parts, ...pictured, ...standIns]),
-    ],
+    crops: [...start.crops, ...ownCrops.filter((src) => !isBackdrop(src))],
+    backdrops: [...start.backdrops, ...ownCrops.filter(isBackdrop)],
     drops: start.drops,
     texts: [...new Set([...start.texts, ...texts])],
     surfaces: { ...start.surfaces, ...roundSurfaces(bundle, base) },
@@ -2006,12 +2113,15 @@ export function vectorArt(tools: Toolchain, bundle: Bundle, base: Built): string
   return out;
 }
 
-/** A childless rectangle with no stroke, painted with a linear gradient a token can hold. */
+/**
+ * A childless vector with no stroke, painted with a linear gradient a token can hold: its box is its
+ * shape and its paint a gradient, so there is no picture in it to crop. Read from its paint and its
+ * shape, never its name.
+ */
 export function gradientRectangle(node: IrNode): boolean {
   return (
     node.type === "VECTOR" &&
     (node.children ?? []).length === 0 &&
-    /^rectangle( \d+)?$/i.test(node.name.trim()) &&
     node.stroke == null &&
     gradientOf(node) !== undefined
   );

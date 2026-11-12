@@ -1,13 +1,20 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { approve } from "@dugout/contracts";
+import { approve, proposedAnswers } from "@dugout/contracts";
 import {
   createBedrockClient,
   createMemorySink,
   loadModelConfig,
   type Responder,
 } from "@dugout/core";
-import { type CaseOutcome, type DataOutcome, type EvalSuite, gradeData } from "@dugout/evals";
+import {
+  type CaseOutcome,
+  type DataOutcome,
+  type EvalSuite,
+  gradeData,
+  questionsAsked,
+  stepsTaken,
+} from "@dugout/evals";
 import type { MemoryStore } from "@dugout/memory";
 import { loadDsl } from "../src/dsl.ts";
 import { dateKey } from "../src/facts.ts";
@@ -60,7 +67,12 @@ const skipped = (why: string): CaseOutcome => ({
 
 export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<DataCase>> {
   const live = opts.mode === "live";
-  const responder: Responder = async () => approve("eval");
+  // a write is approved; the model's own questions take its proposals, as `--yes` does, so a
+  // question is answered rather than left for the model to guess
+  const responder: Responder = async (req) =>
+    req.questions.some((q) => q.kind === "review")
+      ? approve("eval")
+      : { by: "eval", answers: proposedAnswers(req.questions) };
 
   /** The grades for an outcome; an unconfirmed case reports them and does not gate. */
   const outcome = (c: DataCase, data: DataOutcome, extra: Partial<CaseOutcome>): CaseOutcome => {
@@ -96,13 +108,41 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<DataCas
   return {
     agentId: "data-bind",
     cases: CASES,
-    async runCase(c) {
+    // a hook that does not exist, as the one the section was bound to (ADR 0034)
+    plant: (record) => {
+      const did = (record.did ?? {}) as { sources?: Array<Record<string, unknown>> };
+      return {
+        ...record,
+        did: {
+          ...did,
+          sources: (did.sources?.length ? did.sources : [{}]).map((s) => ({
+            ...s,
+            hookId: "dugout_wrong_hook",
+          })),
+        },
+      };
+    },
+    async runCase(c, _attempt, options) {
       if (!c.preview) return skipped(c.needs ?? "no published frame for it (set `preview`)");
       // scripted: no model and no Cast, so grade the outcome a live run recorded, if there is one
       if (!live) {
         if (!existsSync(recordedPath(c.id))) return skipped("scripted mode: no recorded outcome");
         const recorded = JSON.parse(readFileSync(recordedPath(c.id), "utf8")) as DataOutcome;
         return outcome(c, recorded, {});
+      }
+
+      // the facts the case assumes the club has, active before the run reads its memory
+      for (const fact of c.facts ?? []) {
+        const active = (await opts.store.activeFacts(c.tenant)).find((f) => f.key === fact.key);
+        if (active?.content === fact.content) continue;
+        const proposal = await opts.store.proposeFact({
+          tenantId: c.tenant,
+          agentId: null,
+          ...fact,
+          confidence: 1,
+          sourceRunId: null,
+        });
+        await opts.store.activateFact(c.tenant, proposal.id, "eval");
       }
 
       const { project, tree: treeId } = previewOf(c.preview);
@@ -135,7 +175,8 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<DataCas
         client: createBedrockClient({ models }),
         ...(opts.model ? { model: opts.model } : {}),
         runsDir: opts.runsDir,
-        consolidate: false,
+        // the memory evals leave the record of a run, for the next one to read (ADR 0034)
+        consolidate: options?.record === true,
         ...(await liveMcp(opts.live === true)),
       });
       const result = await run({
@@ -180,7 +221,11 @@ export async function createSuite(opts: SuiteOptions): Promise<EvalSuite<DataCas
         join(opts.runsDir, `data-${c.id}.outcome.json`),
         `${JSON.stringify(reduced, null, 2)}\n`,
       );
-      return outcome(c, reduced, { runIds: [result.runId] });
+      return outcome(c, reduced, {
+        runIds: [result.runId],
+        steps: stepsTaken(sink.events),
+        asked: questionsAsked(sink.events),
+      });
     },
   };
 }

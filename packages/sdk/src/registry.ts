@@ -18,7 +18,7 @@ export async function agentIds(): Promise<string[]> {
   for (const dir of dirs) {
     if (!dir.isDirectory() || !existsSync(entry(dir.name))) continue;
     const { agent } = (await import(entry(dir.name))) as { agent?: { kind?: string } };
-    // A folder can hold a program (`defineProgram`) instead of a `defineAgent`.
+    // an agent or a workflow: both are runs the worker serves (`defineAgent`, `defineWorkflow`)
     if (agent?.kind === "agent") ids.push(dir.name);
   }
   return ids.sort();

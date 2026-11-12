@@ -6,18 +6,21 @@ import {
   AskInput,
   AUTO_APPROVED,
   AwaitingAnswers,
+  applyStatePatch,
   type Decision,
   FROM_MEMORY,
   type Message,
   NEEDS_SETUP,
   proposedAnswers,
   type Question,
+  REMEMBER,
   REVIEW_ID,
   type ReviewAnswer,
   type RunCheckpoint,
   type RunContext,
   type RunMemoryContext,
   type RunUsage,
+  readRunState,
   reviewQuestion,
   type SavedAfter,
   type SavedRun,
@@ -28,7 +31,7 @@ import {
   type ToolOutcome,
 } from "@dugout/contracts";
 import { z } from "zod";
-import { compact, compactedView, SUMMARY_SYSTEM } from "./compact.ts";
+import { compact, compactedView, estimateTokens, SUMMARY_SYSTEM, supersede } from "./compact.ts";
 import { SpecError } from "./errors.ts";
 import type { RunLog } from "./events.ts";
 import {
@@ -45,7 +48,7 @@ export const FINAL_TOOL = "final";
 /** Built in like `final`: the run stops and asks a person, and waits for the answers (ADR 0029). */
 export const ASK_TOOL = "ask";
 const ASK_DESCRIPTION =
-  "Stop and ask a person what only they can settle: a choice the design and the data leave open, a value no tool can find (a domain, an id), or whether to go a way that costs something. Ask everything you need now in one call; the person answers each question and submits them together, and the run waits until they do. The answers come back as this call's result. Say in each question's why what you found, give options where there are some, and propose your best answer. Do not ask what a tool can find out, and do not ask to approve a write: writes are approved already.";
+  "Stop and ask a person what only they can settle: a choice your input and tools leave open, a value no tool can find (an address, an id), or whether to go a way that costs something. Ask everything you need now in one call; the person answers each question and submits them together, and the run waits until they do. The answers come back as this call's result. Say in each question's why what you found, give options where there are some, and propose your best answer. An option is an answer you can act on as it is: what a person has to type for you (a URL, a name, an id) is never an option that promises it ('I will give a URL'), since picking it gives you nothing. Ask for it as a text question, or let them write it with allowOther and say in the question what to write there. When an answer says a person will give something and it is not in the answer, ask once more for exactly that, as text, before you act on its absence. Do not ask what a tool can find out, and do not ask to approve a write: writes are approved already.";
 /** Invalid `final` calls (or turns that skip it) tolerated before the run fails. */
 const MAX_INVALID_OUTPUTS = 2;
 
@@ -75,6 +78,8 @@ export interface RunAgentOptions {
   compaction?: {
     window: number;
     at?: number;
+    /** Compact past this many tokens, whatever the window (`COMPACT_AT_TOKENS` when left out). */
+    maxTokens?: number;
     keep?: number;
     /** A model name; writes the summary of older turns. */
     summarizer: string;
@@ -223,6 +228,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
   const hooks = createHooks([...harnessHooks(agent), ...(agent.hooks ?? [])], state);
   const { usage } = state;
   let savedMessages = saved?.messages.length ?? 0;
+  // what the model counted the last request and its reply at, and where the transcript was then:
+  // the size of the next request is that plus what was added since
+  let measured: { tokens: number; at: number } | undefined;
   let decision = resume?.decision;
   if (decision && !state.waiting) throw new Error("the run is not waiting for a person");
 
@@ -531,10 +539,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         const result = parseFinal(call, final.schema);
         if (result.ok) {
           const unwrapped = final.unwrap(result.value);
+          // what the run's tools kept (ADR 0035): the checks read it, not the transcript
+          const kept = readRunState(state.state);
           const value = agent.completeFinal
-            ? agent.completeFinal(unwrapped, { ctx: opts.ctx, messages })
+            ? agent.completeFinal(unwrapped, { ctx: opts.ctx, messages, state: kept })
             : unwrapped;
-          const refusal = hooks.beforeFinal({ value, ctx: opts.ctx, messages });
+          const refusal = hooks.beforeFinal({ value, ctx: opts.ctx, messages, state: kept });
           if (refusal === undefined) return complete(value);
           if (++state.invalidOutputs > MAX_INVALID_OUTPUTS) return fail("invalid_output", refusal);
           await log.emit({
@@ -573,6 +583,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         runId: opts.ctx.runId,
         callId: call.id,
         ...(opts.ctx.input !== undefined ? { input: opts.ctx.input } : {}),
+        state: readRunState(state.state),
         // a call a person already saw may have been saved before writes said why
         replay: state.waiting?.callId === call.id || turn.approved.includes(call.id),
       });
@@ -713,6 +724,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
             input: checked.input,
             usdLeft: Math.max(0, spec.budget.usdPerRun - usage.budgetCostUsd),
             ...(state.situation ? { situation: state.situation } : {}),
+            ...(state.state ? { state: state.state } : {}),
             ...(withAnswers ? { answered: withAnswers } : {}),
           });
         } catch (err) {
@@ -731,6 +743,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
       if (outcome.usage) addSpend(usage, outcome.usage);
       // what the run works on, as the tool found it (ADR 0033): saved with the next save point
       if (outcome.situation) state.situation = outcome.situation;
+      // what the call kept (ADR 0035): the next call reads it, and so does a run resumed from here
+      if (outcome.ok && outcome.state) {
+        const next = applyStatePatch(state.state, outcome.state);
+        if (next) state.state = next;
+        else delete state.state;
+      }
       // the same call failing again and again is the model stuck, like a refused copy of it
       const stop = hooks.afterTool({
         stage: "ran",
@@ -747,6 +765,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           content,
           durationMs: Date.now() - started,
           ...(outcome.usage ? { usage: { ...outcome.usage } } : {}),
+          ...(outcome.situation ? { situation: outcome.situation } : {}),
+          ...(outcome.ok && outcome.state ? { state: outcome.state } : {}),
         },
       });
       messages.push({
@@ -756,6 +776,24 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         ...(outcome.ok ? {} : { isError: true }),
       });
       if (outcome.ok && registry.get(call.name)?.effect === "write") state.wrote = true;
+      // a result that replaces the last of its tool: the earlier ones leave the request
+      if (outcome.ok && outcome.replaces && opts.compaction) {
+        const before = compactedView(messages, state.compacted);
+        const dropped = await supersede(messages, state, call.name, call.id, opts.compaction.store);
+        if (dropped > 0) {
+          measured = undefined;
+          await log.emit({
+            type: "context.compacted",
+            data: {
+              step,
+              tokensBefore: estimateTokens(before, tools),
+              tokensAfter: estimateTokens(compactedView(messages, state.compacted), tools),
+              elided: dropped,
+              summarized: 0,
+            },
+          });
+        }
+      }
       await save("tool");
       // a sign-in or a key is missing: the run waits on a person setting it up, not on the model
       if (outcome.setup !== undefined) return fail("error", `${NEEDS_SETUP} ${outcome.setup}`);
@@ -782,6 +820,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
           let summarizedBy: string | undefined;
           const done = await compact(messages, state, tools, {
             ...rest,
+            ...(measured
+              ? {
+                  measuredTokens: measured.tokens + estimateTokens(messages.slice(measured.at)),
+                }
+              : {}),
             summarize: async (prompt) => {
               try {
                 const turn = await steps.model({
@@ -807,6 +850,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
             },
           });
           if (done) {
+            // the request is another one now: measured again by the next reply
+            measured = undefined;
             await log.emit({
               type: "context.compacted",
               data: { step, ...done, ...(summarizedBy ? { summarizer: summarizedBy } : {}) },
@@ -840,6 +885,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunResult> {
         state.step = step;
         addUsage(usage, turn.usage);
         messages.push(turn.message);
+        measured = {
+          tokens: turn.usage.inputTokens + turn.usage.outputTokens,
+          at: messages.length,
+        };
         await log.emit({
           type: "step.completed",
           data: {
@@ -1065,30 +1114,31 @@ function addUsage(total: RunUsage, step: StepUsage): void {
 }
 
 /**
- * `ask`'s description: what to ask and how, and the questions the agent declares (ADR 0033), so the
- * same question has the same id every time and what a person answers is learned.
+ * `ask`'s description. No agent declares its questions (ADR 0033, amended): the model asks what it
+ * needs, names each question for what it settles, and says how far the answer holds, which is how
+ * memory learns it and answers it next time.
  */
-function askDescription(spec: AgentSpec): string {
-  const declared = Object.entries(spec.questions ?? {});
-  if (declared.length === 0) return ASK_DESCRIPTION;
-  const list = declared.map(([id, q]) => `${id} (${q.about})`).join("; ");
-  return `${ASK_DESCRIPTION} When a question is one of these, use its id, so what the person answers is remembered: ${list}. Any other id is asked all the same and not remembered.`;
+function askDescription(_spec: AgentSpec): string {
+  return `${ASK_DESCRIPTION} ${REMEMBER_RULE}`;
 }
 
-/** A declared question of this run's, with what it is about (ADR 0033); others as they are. */
+const REMEMBER_RULE =
+  "Name each question's id for what it settles (item_count, not q1), the same id whenever you ask the same thing, since memory keys on it: what a load tool lists as decided before, or a tool reports as an open item, uses its id. Set remember: section when the answer holds only for the item this run works on (the one its tools situated it on; asked again on another), club when it holds for everything of this tenant, no when it is for this run alone. A tenant-wide answer may name the house fact it becomes in fact (a dotted key, such as area.setting); leave fact empty otherwise. Your instructions may name the questions and facts of your own work. An answer memory already holds comes back without a person being asked.";
+
+/** A question with what it is about (ADR 0033), from how far the model said its answer holds. */
 export function withAbout(
   q: AskedQuestion,
   spec: AgentSpec,
   situation: RunCheckpoint["situation"],
 ): AskedQuestion {
-  const declared = q.kind === "review" ? undefined : spec.questions?.[q.id];
-  if (!declared || q.about) return q;
+  if (q.kind === "review" || q.about || !q.remember || q.remember === "no") return q;
+  const fact = q.fact?.trim();
   return {
     ...q,
     about: {
       agent: spec.id,
-      scope: declared.scope,
-      ...(declared.fact ? { fact: declared.fact } : {}),
+      scope: REMEMBER[q.remember],
+      ...(fact ? { fact } : {}),
       ...(situation ? { section: situation.section } : {}),
       ...(situation?.name ? { name: situation.name } : {}),
     },

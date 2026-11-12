@@ -47,8 +47,11 @@ export function forkRun(
   };
 }
 
+/** How the user message that brings a fork its corrected input starts. */
+export const CORRECTED_INPUT = "The input was corrected.";
+
 /** The user message that brings a fork its corrected input. */
 export function correctedInput(input: unknown): string {
   const text = typeof input === "string" ? input : JSON.stringify(input);
-  return `The input was corrected. Work from this one instead:\n${text}`;
+  return `${CORRECTED_INPUT} Work from this one instead:\n${text}`;
 }

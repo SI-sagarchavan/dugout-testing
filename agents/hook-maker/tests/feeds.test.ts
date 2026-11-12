@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { basisOf } from "../src/agent.ts";
-import { wrongEntity } from "../src/entity.ts";
+import { namesIn } from "../src/entity.ts";
 import { planFeeds } from "../src/feeds.ts";
 
 const base = "https://www.example-club.com/cricket";
@@ -86,7 +86,7 @@ describe("feeds a person gave become providers and connectors, by code (ticket 1
     expect(JSON.stringify(out)).not.toContain("hunter2");
   });
 
-  it("never plans a secret as a literal: it is a credential, reported for a person to add", () => {
+  it("proposes as credentials the parameters that look like secrets, and says why", () => {
     const KEY = "sk_live_REDACTED";
     const out = planFeeds([
       { label: "table", url: `https://stats.example.com/v2/standings?league=7&api_key=${KEY}` },
@@ -105,10 +105,39 @@ describe("feeds a person gave become providers and connectors, by code (ticket 1
       ["sig", "sig", ["events"]],
       ["t", "t", ["clips"]],
     ]);
-    // an id is not a secret
-    expect(planFeeds([{ label: "x", url: `${base}/squad?client_id=4ab1ce0f` }]).secrets).toEqual(
-      [],
-    );
+    expect(out.secretsBy).toBe("proposal");
+    expect(out.looksSecret.map((l) => [l.key, l.why])).toEqual([
+      ["api_key", 'its name has the word "key" in it'],
+      ["sig", 'its name has the word "sig" in it'],
+      ["t", "its value is a long random string"],
+    ]);
+    // a short id looks like none
+    expect(
+      planFeeds([{ label: "x", url: `${base}/squad?client_id=4ab1ce0f` }]).looksSecret,
+    ).toEqual([]);
+  });
+
+  it("makes credentials of the parameters the model names, and only those", () => {
+    const url = `${base}/squad?client_id=4ab1ce0f&api_key=public-demo`;
+    const named = planFeeds([{ label: "squad", url }], ["client_id"]);
+    expect(named.secretsBy).toBe("you");
+    expect(named.providers[0]?.connectors[0]?.queryParams).toEqual([
+      { key: "client_id", value: "{{cred.client_id}}" },
+      { key: "api_key", value: "public-demo" },
+    ]);
+    expect(named.secrets.map((s) => [s.key, s.why])).toEqual([
+      ["client_id", "you named it a secret"],
+    ]);
+    // what looks like one is still reported, for the model to weigh
+    expect(named.looksSecret.map((l) => l.key)).toEqual(["api_key"]);
+    expect(JSON.stringify(named)).not.toContain("4ab1ce0f");
+    // none at all
+    const none = planFeeds([{ label: "squad", url }], []);
+    expect(none.secrets).toEqual([]);
+    expect(none.providers[0]?.connectors[0]?.queryParams[1]).toEqual({
+      key: "api_key",
+      value: "public-demo",
+    });
   });
 
   it("keeps repeated parameters, makes names safe, and keeps values encoded", () => {
@@ -143,17 +172,32 @@ describe("feeds a person gave become providers and connectors, by code (ticket 1
   });
 });
 
-describe("the entity check follows how the data came (ticket 17)", () => {
-  const squad = { players: [{ name: "Sophie Devine" }, { name: "Alex Hales" }] };
-  const other = { players: [{ name: "Glenn Maxwell", team: "Punjab Kings" }] };
-  const must = { team: "Southern Brave" };
+describe("what the data names, beside what the design is about (ticket 17)", () => {
+  const must = { team: "Rivertown Rovers" };
 
-  it("does not fault a person's feed that names no team, and faults one naming another", () => {
-    expect(wrongEntity(squad, must, { trusted: true })).toBeUndefined();
-    expect(wrongEntity(other, must, { trusted: true })).toContain("Punjab Kings");
-    // a hook the agent found has to name the team somewhere
-    expect(wrongEntity(squad, must)).toContain("nothing in the data names the team");
-    expect(wrongEntity({ team: "Southern Brave" }, must, { trusted: true })).toBeUndefined();
+  it("reports how often the must appears and the texts the data holds most, judging nothing", () => {
+    const fixtures = {
+      matches: [
+        { home: "Rivertown Rovers", away: "Hilltop Albion", venue: "The Park" },
+        { home: "Hilltop Albion", away: "Lakeside United", venue: "https://x.test/v.png" },
+        { home: "Lakeside United", away: "Hilltop Albion", venue: "The Park" },
+      ],
+    };
+    const report = namesIn(fixtures, must);
+    expect(report?.must).toEqual([{ kind: "team", value: "Rivertown Rovers", appears: 1 }]);
+    expect(report?.repeated[0]).toEqual({
+      value: "Hilltop Albion",
+      times: 3,
+      at: "matches[].away",
+    });
+    expect(report?.repeated.map((r) => r.value)).not.toContain("https://x.test/v.png");
+  });
+
+  it("reports a feed that never names its own team as it is: zero, for the model to weigh", () => {
+    const squad = { players: [{ name: "A. Player" }, { name: "B. Player" }] };
+    expect(namesIn(squad, must)?.must[0]?.appears).toBe(0);
+    expect(namesIn(squad, undefined)).toBeUndefined();
+    expect(namesIn(squad, { team: "" })).toBeUndefined();
   });
 
   it("derives the basis from the run, not the model", () => {

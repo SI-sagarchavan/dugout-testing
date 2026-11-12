@@ -122,7 +122,7 @@ export interface LayoutIntent {
   confidence: Confidence;
   /** Confidence in `kind`, 0 to 1 (`@fanos/dsl` `LAYOUT_THRESHOLDS`). */
   score?: number;
-  /** The container's surroundings in plain lines: what a judge reads. */
+  /** The container's surroundings in plain lines. */
   context?: string[];
   items: string[];
   evidence: string[];
@@ -134,100 +134,6 @@ export interface LayoutIntent {
   alternative?: LayoutKind;
   alternativeChoice?: LayoutChoice;
   alternativeAsk?: string[];
-}
-
-/** At or above this a layout is applied without asking anyone. */
-export const APPLY_SCORE = 0.8;
-/** A model's verdict counts when it is at least this sure; below it a person is asked. */
-export const ACCEPT_SCORE = 0.75;
-
-/** Asks a model one question in words (`describeText`), replaceable in a test. */
-export type LayoutJudge = (prompt: string, signal?: AbortSignal) => Promise<string>;
-
-/** Whether the detector's score leaves a model something to settle. */
-export const needsJudge = (i: LayoutIntent) =>
-  (i.score ?? 1) < APPLY_SCORE && Boolean(i.alternative && i.alternativeChoice);
-
-/** The question a model judges a doubtful container by: only what the frame and its names say. */
-export function judgePrompt(i: LayoutIntent): string {
-  const pick = [i.kind, i.alternative].filter(Boolean).join(" or ");
-  return [
-    "A designer's Figma frame is a still picture; a slider looks like a row of cards. Decide what this container is meant to be on the web.",
-    `Candidates: ${pick}. A carousel is a row of slides that moves (arrows, swipe, dots) and holds more items than it shows; a row is a fixed set that never moves.`,
-    "",
-    `Container: "${i.name}" (score ${i.score ?? "?"} for ${i.kind}).`,
-    "What the frame showed:",
-    ...i.evidence.map((e) => `- ${e}`),
-    "Its surroundings:",
-    ...(i.context ?? []).map((c) => `- ${c}`),
-    "",
-    "Things that usually mean a carousel: a team or player roster, a news or video rail, items at a fixed width with a gap, a heading with a 'view all' link, more items than a row comfortably holds. A fixed row is a short set of equal-width items such as three feature blocks, stats or logos.",
-    'Answer with one JSON object and nothing else: {"kind":"' +
-      [i.kind, i.alternative].filter(Boolean).join('"|"') +
-      '","confidence":0.0-1.0,"reason":"one short sentence"}',
-  ].join("\n");
-}
-
-export interface Verdict {
-  kind: LayoutKind;
-  confidence: number;
-  reason: string;
-}
-
-/** The model's answer, or undefined when it is not the JSON asked for. */
-export function readVerdict(text: string): Verdict | undefined {
-  const m = /\{[\s\S]*\}/.exec(text);
-  if (!m) return undefined;
-  try {
-    const v = JSON.parse(m[0]) as Record<string, unknown>;
-    const kind = v.kind;
-    const confidence = Number(v.confidence);
-    if (typeof kind !== "string" || !Number.isFinite(confidence)) return undefined;
-    if (!["carousel", "row", "list", "grid", "tabs"].includes(kind)) return undefined;
-    return {
-      kind: kind as LayoutKind,
-      confidence: Math.min(1, Math.max(0, confidence)),
-      reason: typeof v.reason === "string" ? v.reason : "",
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * The intent with a model's verdict in it. A verdict for the kind or its alternative that is sure
- * enough (`ACCEPT_SCORE`) settles it: that kind, that score, no question left to a person about
- * what it is. Anything else leaves the detector's answer, and a person is asked as before.
- */
-export function applyVerdict(i: LayoutIntent, v: Verdict | undefined): LayoutIntent {
-  if (!v) return i;
-  const line = `a model judged it ${v.kind} (${v.confidence.toFixed(2)})${v.reason ? `: ${v.reason}` : ""}`;
-  const evidence = [...i.evidence, line];
-  const settled = v.confidence >= ACCEPT_SCORE;
-  if (!settled) return { ...i, evidence };
-  if (v.kind === i.kind) {
-    return {
-      ...i,
-      evidence,
-      score: v.confidence,
-      confidence: "certain",
-      ask: i.kind === "row" ? [] : i.ask,
-    };
-  }
-  if (v.kind === i.alternative && i.alternativeChoice) {
-    // the questions that fit the new kind: a carousel's are written when it is asked, a row has none
-    const { alternative: _a, alternativeChoice: _c, alternativeAsk: _k, ...rest } = i;
-    return {
-      ...rest,
-      kind: v.kind,
-      choice: i.alternativeChoice,
-      score: v.confidence,
-      confidence: "certain",
-      evidence,
-      ask: i.alternativeAsk ?? [],
-    };
-  }
-  return { ...i, evidence };
 }
 
 /** What a run tells the model and the reviewer about one container. */
@@ -247,9 +153,9 @@ export interface LayoutReport {
   left: string[];
   /** What is applied now, or the proposal when nothing is yet. */
   choice: LayoutChoice;
-  /** The tree has this choice in it. */
+  /** The tree has this choice in it (a list or a row is what the compiler drew already). */
   applied: boolean;
-  /** A person approved this choice through frame.layout. */
+  /** The agent settled this choice through frame.layout. */
   decided: boolean;
   /** Why the choice is not in the tree, when it is not. */
   note?: string;
@@ -337,9 +243,22 @@ const KIND_CANDIDATES: Array<{ value: LayoutKind; does: string }> = [
     value: "carousel",
     does: "slides that move, with arrows or dots; its items, autoplay and loop are then open too",
   },
+  {
+    value: "tabs",
+    does: "each label is one option of a page choice (_page.<key>) any section can read; the selected look moves with the choice",
+  },
   { value: "row", does: "the items as drawn, no moving" },
   { value: "list", does: "the items stacked, as many as the data has" },
 ];
+
+/** Kinds that change what a visitor can do: a container proposed as one, or that may be one, is the agent's to settle. */
+const BEHAVIOURS: ReadonlySet<LayoutKind> = new Set(["carousel", "tabs"]);
+
+/** Whether what this container is changes how it behaves, and so is open until the agent settles it. */
+export const kindIsOpen = (r: Pick<LayoutReport, "kind" | "alternative" | "confidence">) =>
+  BEHAVIOURS.has(r.kind) ||
+  (r.alternative !== undefined && BEHAVIOURS.has(r.alternative)) ||
+  r.confidence === "unsure";
 
 /** The question ids memory learns a layout's answers under (ADR 0033) and the house fact each feeds. */
 export const LAYOUT_FACTS: Record<string, string> = {
@@ -357,28 +276,39 @@ const placeOf = (r: Pick<LayoutReport, "name" | "src">) => `"${r.name}" (${r.src
  * What is still open about one container (ADR 0029, 0033 amendment): written as data, never as a
  * question. Each item has the evidence the frame gave, the answers a tool can act on, what else
  * `frame.layout` takes, the tool's own proposal, and what memory holds. The agent's model decides
- * each from memory, from the evidence, or by asking a person in its own words. Nothing when the
- * frame leaves nothing open.
+ * each from memory, from the evidence, or by asking a person in its own words.
+ *
+ * What a container IS is open whenever the answer changes how it behaves (a carousel, tabs, or a
+ * row that may be one of them), however sure the reading and the IR are: their confidence is
+ * evidence for the agent, and nothing is applied until it settles the item with frame.layout.
  */
 export function openLayoutItems(
   report: LayoutReport,
   proposed: LayoutChoice,
   before: LayoutBefore = {},
 ): OpenItem[] {
-  if (report.left.length === 0 && report.confidence === "certain") return [];
+  const kindOpen = kindIsOpen(report);
+  if (!kindOpen && report.left.length === 0) return [];
   const shows = `The frame shows: ${report.evidence.join("; ")}.`;
   const memory = (id: string) => (before[id] ? { before: before[id] } : {});
   const out: OpenItem[] = [];
-  if (report.confidence !== "certain") {
+  if (kindOpen) {
+    const sure =
+      report.score !== undefined
+        ? ` Proposed ${report.kind} (${report.confidence}, ${report.score} of 1)${report.alternative ? `; it may also be ${report.alternative}` : ""}.`
+        : ` Proposed ${report.kind} (${report.confidence}).`;
+    const compiler = report.left.length > 0 ? ` The compiler asks: ${report.left.join(" ")}` : "";
+    const kinds = new Set([proposed.kind, report.kind, report.alternative]);
     out.push({
       id: "kind",
       about: `what ${placeOf(report)} is`,
-      evidence: `${shows}${report.score !== undefined ? ` The detector scored it ${report.score} for ${report.kind}.` : ""}`,
-      candidates: KIND_CANDIDATES.filter((c) => c.value === proposed.kind || c.value !== "tabs"),
+      evidence: `${shows}${sure}${compiler}`,
+      candidates: KIND_CANDIDATES.filter((c) => c.value !== "tabs" || kinds.has("tabs")),
       proposed: report.kind,
       canTake:
         "frame.layout's choice.kind: carousel, row, list, grid (with config columns and rows) or tabs (with config options and active)",
       ...memory("kind"),
+      holds: "section",
     });
   }
   if (proposed.kind === "carousel") {
@@ -394,6 +324,7 @@ export function openLayoutItems(
         canTake:
           "a number of items, as choice.config.pages; leave pages out for whatever the data holds",
         ...memory("items"),
+        holds: "section",
       },
       {
         id: "autoplay",
@@ -411,6 +342,8 @@ export function openLayoutItems(
         proposed: c.autoplay ? String(c.autoplay.delayMs) : "off",
         canTake: "any delay: config.autoplay { delayMs } in milliseconds, or false",
         ...memory("autoplay"),
+        holds: "section",
+        fact: "layout.carousel.autoplay",
       },
       {
         id: "loop",
@@ -423,6 +356,8 @@ export function openLayoutItems(
         proposed: c.loop ? "yes" : "no",
         canTake: "config.loop true or false",
         ...memory("loop"),
+        holds: "section",
+        fact: "layout.carousel.loop",
       },
       {
         id: "platform",
@@ -432,11 +367,14 @@ export function openLayoutItems(
         canTake:
           "the platform's carousel config as JSON, as choice.config.platform; leave it out when there is none",
         ...memory("platform"),
+        holds: "section",
       },
     );
     return out;
   }
-  // a container that is not a carousel: the compiler's own open lines, with its proposals
+  // a container that is not a carousel: the compiler's own open lines, with its proposals (folded
+  // into the kind item when there is one)
+  if (kindOpen) return out;
   for (const [n, line] of report.left.entries()) {
     out.push({
       id: `ask_${n + 1}`,
@@ -526,14 +464,26 @@ export interface PlatformRead {
 /** What a config may set on the Carousel beyond the layout: how it moves, never where. */
 const PLATFORM_MOTION = ["freeMode", "effect", "speed", "easing", "rewind"] as const;
 
+/** Where a person's platform config and the frame disagree: reported for the agent to settle. */
+export interface PlatformConflict {
+  field: string;
+  config: unknown;
+  frame: string;
+  /** What was applied: the config's value, or the frame's where the Carousel has no such setting. */
+  applied: "config" | "frame";
+}
+
 /**
- * A platform carousel config applied to a proposal, the design first.
+ * A platform carousel config applied to a choice. It is a person's word on how the carousel
+ * behaves, so it wins:
  *
- * - The frame shows how many slides are on show, the centring, the gap and the direction: those
- *   stay as detected, and the config's are noted.
- * - What a frame cannot show comes from the config: autoplay, loop, free mode, and the looks in
- *   a state of the controls the design drew (an arrow with nowhere to go, the current page's
- *   dot). `nav_arrows.position: center` puts the designed arrows at the carousel's two edges.
+ * - What a frame cannot show comes from the config: autoplay, loop, free mode, and the looks in a
+ *   state of the controls the design drew (an arrow with nowhere to go, the current page's dot).
+ *   `nav_arrows.position: center` puts the designed arrows at the carousel's two edges.
+ * - Where the frame shows something else (how many slides are on show, centring), the config's
+ *   value is applied and the disagreement is reported in `conflicts`, with what the frame shows.
+ *   The gap and the direction are drawn by the tree, not set on the Carousel: they stay as drawn,
+ *   and the disagreement is reported for the agent to settle (frame.override changes the gap).
  * - Controls the design did not draw are not drawn: the config names their look by number
  *   (`variant`), with no sizes or surfaces to draw it from. That is said, not guessed.
  */
@@ -541,9 +491,10 @@ export function withPlatform(
   choice: CarouselChoice,
   read: PlatformRead,
   drew: { arrows: boolean; indicator: boolean },
-): { choice: CarouselChoice; notes: string[] } {
+): { choice: CarouselChoice; notes: string[]; conflicts: PlatformConflict[] } {
   const p = read.props;
   const notes = [...read.warnings];
+  const conflicts: PlatformConflict[] = [];
   const config = { ...choice.config };
   if (typeof p.loop === "boolean") config.loop = p.loop;
   const autoplay = p.autoplay as false | { delay?: { raw?: unknown } } | undefined;
@@ -604,30 +555,45 @@ export function withPlatform(
   }
   if (Object.keys(controls).length > 0) config.controls = controls;
 
-  const shown = (field: string, value: unknown, frame: string) => {
-    if (value !== undefined)
-      notes.push(`${field} ${JSON.stringify(value)} left out: the frame shows ${frame}`);
-  };
   if (p.slidesPerView !== undefined && p.slidesPerView !== config.slidesPerView) {
-    shown(
-      "slides_per_view",
-      p.slidesPerView,
-      config.slidesPerView === "auto"
-        ? "each slide at its designed width"
-        : `${config.slidesPerView} on show`,
-    );
+    conflicts.push({
+      field: "slides_per_view",
+      config: p.slidesPerView,
+      frame:
+        config.slidesPerView === "auto"
+          ? "each slide at its designed width"
+          : `${config.slidesPerView} on show`,
+      applied: "config",
+    });
+    if (p.slidesPerView === "auto" || typeof p.slidesPerView === "number")
+      config.slidesPerView = p.slidesPerView as CarouselChoice["config"]["slidesPerView"];
   }
   if (typeof p.centered === "boolean" && p.centered !== config.centered) {
-    shown(
-      "centered_slides",
-      p.centered,
-      config.centered ? "the active slide centred" : "the slides from the start",
-    );
+    conflicts.push({
+      field: "centered_slides",
+      config: p.centered,
+      frame: config.centered ? "the active slide centred" : "the slides from the start",
+      applied: "config",
+    });
+    config.centered = p.centered;
   }
-  if (p.gap !== undefined)
-    shown("space_between", (p.gap as { raw?: unknown }).raw ?? p.gap, "the gap between the slides");
-  if (p.direction === "vertical") shown("direction", "vertical", "a horizontal row");
-  return { choice: { ...choice, config }, notes };
+  if (p.gap !== undefined) {
+    conflicts.push({
+      field: "space_between",
+      config: (p.gap as { raw?: unknown }).raw ?? p.gap,
+      frame: "the gap the tree draws between the slides",
+      applied: "frame",
+    });
+  }
+  if (p.direction === "vertical") {
+    conflicts.push({
+      field: "direction",
+      config: "vertical",
+      frame: "a horizontal row",
+      applied: "frame",
+    });
+  }
+  return { choice: { ...choice, config }, notes, conflicts };
 }
 
 /** A platform config in a line, for the approval card: what it sets, what the frame overrules. */
@@ -645,12 +611,16 @@ export function describePlatform(json: Record<string, unknown>): string[] {
   if (indicator.visibility === true)
     sets.push(`${indicator.type ?? "bullets"} indicator at the ${indicator.position ?? "bottom"}`);
   if (progress.visibility === true) sets.push(`${progress.type ?? "linear"} autoplay progress`);
-  const frame = ["slides_per_view", "centered_slides", "space_between", "direction"].filter(
-    (k) => k in json,
-  );
+  const frame = ["slides_per_view", "centered_slides"].filter((k) => k in json);
+  const drawn = ["space_between", "direction"].filter((k) => k in json);
   return [
     `From the platform config: ${sets.join("; ") || "nothing that applies"}.`,
-    ...(frame.length > 0 ? [`Left to the frame, which shows them: ${frame.join(", ")}.`] : []),
+    ...(frame.length > 0
+      ? [`Applied from the config where the frame shows otherwise: ${frame.join(", ")}.`]
+      : []),
+    ...(drawn.length > 0
+      ? [`Drawn by the tree, so reported where they differ from the frame: ${drawn.join(", ")}.`]
+      : []),
     "Arrows and dots the design drew keep their look; the config gives their disabled and current-page colours, and where the arrows sit. Controls the design did not draw are not drawn.",
   ];
 }

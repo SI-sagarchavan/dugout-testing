@@ -1,6 +1,6 @@
 # 0025 — Subagents are tools that start a child run
 
-Date: 2026-11-04 · Status: accepted · Extends ADR 0017 and ADR 0023 · Resolves harness-orchestration ticket 07
+Date: 2026-11-04 · Status: accepted (the `pipeline` option was replaced by `defineWorkflow`, ADR 0037, on 2026-11-11; child runs, their approvals and their tries are as written here) · Extends ADR 0017 and ADR 0023 · Resolves harness-orchestration ticket 07
 
 ## Context
 

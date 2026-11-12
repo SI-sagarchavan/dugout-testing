@@ -1,6 +1,6 @@
 # 0034. How a section was built is remembered, and read when one like it is built
 
-Date: 2026-11-10 · Status: proposed · Amends ADR 0013 (memory: examples, run records, one tier of facts, lessons) · Builds on ADR 0033 (a run knows its section) and the section library (`.scratch/section-library/spec.md`) · Related: ADR 0011, ADR 0014, ADR 0025, ADR 0031
+Date: 2026-11-10 · Status: accepted (steps 1 to 7 built; see Built) · Amends ADR 0013 (memory: examples, run records, one tier of facts, lessons) · Builds on ADR 0033 (a run knows its section) and the section library (`.scratch/section-library/spec.md`) · Related: ADR 0011, ADR 0014, ADR 0025, ADR 0031
 
 ## Context
 
@@ -162,6 +162,18 @@ Memory that is not measured is switched on by belief. Three evals, in `packages/
 - **Abstention.** A good record for an unlike section is planted under `like`. Nothing of it may appear in the result.
 
 Baseline first: the cold numbers for steps, cost and questions are recorded before any of this is built (`evals/data-baseline.json` has the scores, not these).
+
+## Built
+
+Steps 1 and 2 are as written. Steps 3 to 7, and where the build differs from the text above:
+
+- **Read (step 3).** `builtFor` (`packages/memory/src/built.ts`) returns `built` (`same`, `like`, `failed`) from `frame.load` and `bind.load`, beside `before`; `memory.read({ id })` returns one record. hook-maker has no load tool of its own, so it has `built.load`, which reads the section it inherited (`ctx.situation`); its skill says to call it first. The three skills have an "Earlier builds" section. A read does not push back a record's expiry yet.
+- **What happened next (step 4).** A reviewer's change is `corrected` on the record (as in step 2). An agent's `corrects` (ui-editor's) names the preview it started from, the one it made and the comments it addressed; consolidation adds each to the build records of that preview (found by its tree id, or by `run.edited`, so the next comment on the edited preview finds them again) and keeps each as a lesson about the section. A lesson with a section is keyed `lesson@<signature>`, embedded with the section's words, strengthened only by the same section's, and returned as `lessons`. The lesson writer runs on the agent's own model and answers `UNSURE` rather than reverse the reviewer; then the reviewer's words stand.
+- **Like (step 5).** `likeFinder` (`packages/library/src/like.ts`) finds the tenant's like sections in code: same kind and layout, then 50% of the data shape's field names, or, with no shape, of the summary's words. `liveDeps` supplies it as `deps.like`. A like record is listed only when good, with `why`. Likeness by picture and words waits for the library's embedding. Lessons of like sections are returned too.
+- **Facts (step 6).** `memory.pin` (key prefixes) and a one-line index of what the prompt does not hold, and of what did not fit; `memory.search` takes `kinds: ["build"]` and is in the three agents' specs. data-bind pins `club.`, `feed.`, `media.`, `locale.`; its copy and style facts are searched.
+- **Patterns (step 7).** `patternsOf` (`packages/memory/src/patterns.ts`) reads `data.hook.<list>`, `form.date.<field>` and `layout.<list>` from the typed `did` of the latest good records, when three sections agree and no other value ties; consolidation proposes each once. A "kind of section" is the list its hook-maker record names. Active ones come back from the load tools as `patterns`.
+- **Evals (section 11).** `pnpm eval <agent> --memory second|wrong` runs each case cold, then with its record, then (`wrong`) with the suite's `plant`ed record, and reports the change in steps, cost and questions; it exits non-zero when the second run fails where the cold one passed. Abstention is tested without a model (`packages/memory/tests/builds.test.ts`). No live numbers are recorded yet.
+- Not built: a `context.built` event (the load tool's result in the trace names every record given); step 8.
 
 ## Alternatives considered
 

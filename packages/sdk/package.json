@@ -15,6 +15,7 @@
     "@dugout/contracts": "workspace:^",
     "@dugout/core": "workspace:^",
     "@dugout/db": "workspace:^",
+    "@dugout/library": "workspace:^",
     "@dugout/mcp": "workspace:^",
     "@dugout/memory": "workspace:^",
     "@dugout/tracing": "workspace:^",

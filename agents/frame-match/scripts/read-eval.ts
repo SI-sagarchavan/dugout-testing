@@ -2,11 +2,12 @@
 // frame, held-out design and local frame, against evals/layouts.ts: what a person reads in each
 // design. Live: one vision call per frame. Exits non-zero on any miss.
 //
-// A miss is: a labelled container read as another kind; a carousel the frame shows that is only
-// asked about instead of applied; a designed control not wired; a layer of a carousel's one slide
-// left out of it, or a pinned part put in it; and anything applied unasked that nobody labelled
-// (a static row that would scroll on someone's page). A container labelled `unsure` may be asked
-// about or read as its labelled kind.
+// A miss is: a labelled container proposed as another kind; a designed control not wired; a layer
+// of a carousel's one slide left out of it, or a pinned part put in it; and a carousel or tabs
+// proposed sure that nobody labelled (a static row that would scroll on someone's page if the agent
+// took the proposal). Nothing the reading proposes is applied: frame-match's model settles every
+// carousel and tab bar, so how sure a proposal is is shown, not graded. A container labelled
+// `unsure` may be proposed unsure or as its labelled kind.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -101,14 +102,7 @@ export function grade(label: LayoutLabel, reading: Reading): string[] {
   const kind = got.choice.kind;
   if (label.confidence === "unsure") {
     if (kind !== label.kind && got.confidence !== "unsure") wrong.push(`read as ${kind}, sure`);
-  } else {
-    if (kind !== label.kind) wrong.push(`read as ${kind}`);
-    // applied as frame.load applies: a carousel when certain, tabs unless unsure
-    const applied =
-      got.confidence === "certain" || (kind === "tabs" && got.confidence === "likely");
-    const mustApply = label.confidence === "certain" || label.kind === "tabs";
-    if (mustApply && !applied) wrong.push(`asked (${got.confidence}, ${got.score}), not applied`);
-  }
+  } else if (kind !== label.kind) wrong.push(`read as ${kind} (${got.confidence}, ${got.score})`);
   for (const part of label.chrome ?? []) if (!got.chrome[part]) wrong.push(`no ${part} control`);
   const slide = new Set(got.slide ?? []);
   for (const id of label.slide ?? []) if (!slide.has(id)) wrong.push(`${id} not in the slide`);
@@ -156,7 +150,7 @@ async function run(c: Case): Promise<Result> {
       lines.push(`       read instead: ${seen.join("; ") || "no containers"}`);
     }
   }
-  // applied unasked, and nobody labelled it: it would move on someone's page
+  // proposed sure, and nobody labelled it: it would move on someone's page if the agent took it
   for (const l of reading.layouts) {
     if (c.labels.some((label) => label.src === l.src)) continue;
     // a carousel nobody labelled scrolls a static row; tabs nobody labelled are reported, not
@@ -164,21 +158,21 @@ async function run(c: Case): Promise<Result> {
     if (l.confidence !== "certain") continue;
     if (l.choice.kind === "tabs") {
       lines.push(
-        `  ·    tabs ${l.src} "${l.name}" applied, unlabelled: ${l.evidence.slice(0, 2).join("; ")}`,
+        `  ·    tabs ${l.src} "${l.name}" proposed sure, unlabelled: ${l.evidence.slice(0, 2).join("; ")}`,
       );
       continue;
     }
     if (l.choice.kind !== "carousel") continue;
     checks++;
     lines.push(
-      `  MISS ${l.choice.kind.padEnd(8)} ${l.src.padEnd(14)} "${l.name}" applied, and nobody labelled it — ${l.evidence.slice(0, 2).join("; ")}`,
+      `  MISS ${l.choice.kind.padEnd(8)} ${l.src.padEnd(14)} "${l.name}" proposed sure, and nobody labelled it — ${l.evidence.slice(0, 2).join("; ")}`,
     );
-    misses.push(`${c.id} ${l.src}: an unlabelled ${l.choice.kind} applied ("${l.name}")`);
+    misses.push(`${c.id} ${l.src}: an unlabelled ${l.choice.kind} proposed sure ("${l.name}")`);
   }
   const asks = reading.layouts.filter(
     (l) => l.confidence === "unsure" && !c.labels.some((label) => label.src === l.src),
   ).length;
-  if (asks > 0) lines.push(`  ·    ${asks} other container(s) put to the agent as a question`);
+  if (asks > 0) lines.push(`  ·    ${asks} other container(s) proposed unsure`);
   if (reading.dropped.length > 0)
     lines.push(`  ·    not borne out: ${reading.dropped.slice(0, 3).join("; ")}`);
   if (values.dump) {

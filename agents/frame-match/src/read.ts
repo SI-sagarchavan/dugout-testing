@@ -11,9 +11,10 @@
  * the outline's handles, so every claim lands on real layers, and code checks each one against the
  * IR: the items of a carousel are siblings, its one slide is a run of layers in one container, an
  * arrow is a small thing, a counter is a text with a number. A claim the IR does not bear out is
- * not applied: it is reported, and what is left in doubt becomes an open item the agent settles
- * from memory, from the evidence, or by asking a person. What the IR detector (`detectLayout`) sees
- * is evidence for the reading, never a verdict of its own.
+ * left out of the proposal and reported, on the container it was about, with the values that failed
+ * the check. Nothing here is applied: each container is a proposal the agent settles from memory,
+ * from the evidence, or by asking a person. What the IR detector (`detectLayout`) sees is evidence
+ * for the reading, never a verdict of its own.
  */
 
 import { z } from "zod";
@@ -32,7 +33,7 @@ const MAX_LINES = 180;
 const MAX_ARROW_PX = 96;
 /** A progress bar is a thin line. */
 const MAX_BAR_PX = 8;
-/** At or above this the reading is sure enough to apply without asking. */
+/** At or above this, a reading the IR bears out is proposed as `certain`: a label for the agent, never applied by code. */
 export const SURE = 0.75;
 
 // --- the outline -----------------------------------------------------------------------------
@@ -125,19 +126,19 @@ export function outlineOf(doc: { root: IrNode }): Outline {
 
 export function readPrompt(outline: Outline): string {
   return [
-    "You are reading a designer's frame: one still picture of a section of a sports club's website.",
+    "You are reading a designer's frame: one still picture of a section of a website.",
     `The picture is the design, ${outline.frame.w} x ${outline.frame.h} px, scaled to fit. Below it is the outline of its layers: each line is a handle (h1, h2 ...), the layer's type and name, its box [x,y wxh] in the frame's px, and its text. Indentation is nesting.`,
     "",
     "Say what experience this section is meant to give a fan on the live site, and how each part behaves beyond the one moment the picture shows. A still cannot move, so look for what gives the behaviour away:",
     "- a carousel: content that moves, given away by previous/next arrows, a row of dots, a counter such as 01 or 1/5, a progress bar, or cards cut off at an edge. It may draw several slides side by side (items), or only the one on show (slide: the layers that together are that one slide, its background photo and shade included when they change with it). Arrows, dots, the counter and the bar are its controls, not its slide.",
     "- tabs or a toggle: labels side by side where one is drawn selected, each showing other content.",
-    "- a list (a column that grows with the data), a grid, a fixed row (a short set that never moves, such as three feature blocks).",
-    "- parts that sit over the others and do not move with them (a match card pinned on a hero).",
+    "- a list (a column that grows with the data), a grid, a fixed row (a short set that never moves).",
+    "- parts that sit over the others and do not move with them.",
     "",
     "Reply with JSON only:",
     '{"experience":"one or two sentences: what this section is for and how a fan uses it",',
     ' "parts":[{"what":"what it is","role":"slide|items|control|card|heading|background|decoration|other","nodes":["h3"]}],',
-    ' "layouts":[{"kind":"carousel|tabs|list|grid|row","container":"h1","items":["h4","h5"],"slide":["h2","h6"],"controls":{"prev":"h7","next":"h8","pagination":"h9","counter":"h10","progress":"h11"},"selected":"h4","shows":"what each item or slide shows (news articles, fixtures, players)","sure":0.0,"why":"what in the picture says so"}],',
+    ' "layouts":[{"kind":"carousel|tabs|list|grid|row","container":"h1","items":["h4","h5"],"slide":["h2","h6"],"controls":{"prev":"h7","next":"h8","pagination":"h9","counter":"h10","progress":"h11"},"selected":"h4","shows":"what each item or slide shows","sure":0.0,"why":"what in the picture says so"}],',
     ' "unsure":["what the picture cannot settle about how it behaves, as a question"]}',
     "",
     "Rules: name layers only by their handles. items are siblings, the repeated cards or tabs, in order. Use slide only when the design draws one slide of a carousel. Give each control you see. sure is how certain you are of the kind, 0 to 1. Leave out what you do not see; do not list a row for every group of layers, only containers whose behaviour matters.",
@@ -309,9 +310,9 @@ function labelOf(node: IrNode | undefined): string | undefined {
 }
 
 /**
- * The reading's claims checked against the IR, as layout intents. `detected` is what the IR
- * detector saw: its evidence is added where it agrees, and a carousel or tabs it is sure of that
- * the reading left out is put to the agent as a question, never applied.
+ * The reading's claims checked against the IR, as layout intents: proposals, none applied. `detected`
+ * is what the IR detector saw: its proposal and evidence are added to the same container's, and a
+ * carousel or tabs it is sure of that the reading left out is proposed too, as unsure.
  */
 export function checkReading(
   raw: NonNullable<ReturnType<typeof parseReading>>,
@@ -333,7 +334,12 @@ export function checkReading(
     [l.shows ? `it shows ${l.shows}` : "", l.why ? `the reading: ${l.why}` : ""].filter(Boolean);
 
   for (const l of raw.layouts) {
-    const chrome = controlsOf(l, idOf, ir, dropped);
+    // what the IR did not bear out about this container's controls: left out of the proposal, said
+    // on the container, so the agent can pass it to frame.layout itself when it judges otherwise
+    const unborne: string[] = [];
+    const chrome = controlsOf(l, idOf, ir, unborne);
+    dropped.push(...unborne);
+    const notBorne = unborne.map((u) => `not in the proposal: ${u}`);
     if (
       l.kind === "carousel" &&
       l.slide &&
@@ -356,6 +362,7 @@ export function checkReading(
         `the design draws one slide: ${members.map((m) => `"${nameOf(ir, m)}"`).join(", ")}`,
         ...controlEvidence(chrome, ir),
         ...said(l),
+        ...notBorne,
       ];
       const backed = Object.keys(chrome).length > 0;
       if (!backed) evidence.push("no control the IR bears out: nothing drawn moves it");
@@ -410,23 +417,29 @@ export function checkReading(
             lineage(ir, d.src).includes(named),
         );
     const container = inner?.src ?? named;
-    if (inner)
-      dropped.push(`the ${l.kind} read on "${nameOf(ir, named)}" is "${inner.name}" inside it`);
+    const moved = inner
+      ? `the ${l.kind} was read on "${nameOf(ir, named)}" (${named}); the IR finds its items in "${inner.name}" inside it, so that is the container proposed`
+      : undefined;
+    if (moved) dropped.push(moved);
     const members =
       lifted && lifted.container === container ? inOrder(ir, container, lifted.members) : [];
     const twin = detected.find((d) => d.src === container);
-    // the eyes lean one way and the IR shows it (a card cut off by the edge, designed arrows): two
-    // signals that do not share a mistake agree, and that is enough to apply it
-    const agreed = twin?.kind === l.kind && twin.confidence === "certain" && l.sure >= 0.5;
-    const sure = agreed ? Math.max(l.sure, SURE) : l.sure;
+    // the score is the reading's own; what the IR detector proposes for the same container is
+    // evidence beside it, with its own kind and confidence, for the agent to weigh
+    const sure = l.sure;
     const evidence = [
       ...(members.length > 0 ? [`${members.length} items in "${nameOf(ir, container)}"`] : []),
       ...controlEvidence(chrome, ir),
       ...said(l),
-      ...(twin ? twin.evidence.map((e) => `the IR: ${e}`) : []),
-      ...(agreed && l.sure < SURE
-        ? [`the reading leaned ${l.kind} (${l.sure}) and the IR shows it`]
+      `the reading: ${l.kind}, ${l.sure} sure`,
+      ...(twin
+        ? [
+            `the IR detector proposes ${twin.kind} (${twin.confidence}${twin.score !== undefined ? `, ${twin.score}` : ""})`,
+            ...twin.evidence.map((e) => `the IR: ${e}`),
+          ]
         : []),
+      ...(moved ? [moved] : []),
+      ...notBorne,
     ];
 
     if (l.kind === "carousel") {
@@ -500,11 +513,12 @@ export function checkReading(
     }
     const xs = new Set(members.map((m) => Math.round(boxOf(ir, m)?.x ?? 0)));
     const ys = new Set(members.map((m) => Math.round(boxOf(ir, m)?.y ?? 0)));
-    // a grid the IR lays out on one line is that line: one row is a row, one column a list
+    // a grid the IR lays out on one line: proposed as that line (one row, one column), with the
+    // reading's grid kept as the alternative. Neither moves: both are drawn as compiled
     if (l.kind === "grid" && members.length >= 2 && (ys.size === 1 || xs.size === 1)) {
       const kind = ys.size === 1 ? ("row" as const) : ("list" as const);
-      layouts.push(
-        intentOf(
+      layouts.push({
+        ...intentOf(
           container,
           ir,
           kind,
@@ -512,13 +526,14 @@ export function checkReading(
           true,
           [
             ...evidence,
-            `read as a grid, and the IR lays its items on one ${kind === "row" ? "row" : "column"}`,
+            `read as a grid, and the IR lays its ${members.length} items on one ${kind === "row" ? "row" : "column"}`,
           ],
           { src: container, kind },
           {},
           { items: members, ask: [] },
         ),
-      );
+        alternative: "grid",
+      });
       continue;
     }
     if (l.kind === "grid") {
@@ -593,7 +608,10 @@ export function checkReading(
   };
 }
 
-/** The controls the reading names that the IR bears out, prev before next by where they are. */
+/**
+ * The controls the reading names that the IR bears out, prev before next by where they are. One
+ * that fails a check is left out and said in `dropped` with its measured values.
+ */
 function controlsOf(
   l: RawLayout,
   idOf: (h: string | undefined) => string | undefined,
@@ -608,7 +626,7 @@ function controlsOf(
     if (!id || !b) continue;
     if (b.w > MAX_ARROW_PX || b.h > MAX_ARROW_PX) {
       dropped.push(
-        `${part} "${nameOf(ir, id)}" is ${Math.round(b.w)}x${Math.round(b.h)}: too big for an arrow`,
+        `${part} "${nameOf(ir, id)}" (${id}) is ${Math.round(b.w)}x${Math.round(b.h)}, larger than an arrow's ${MAX_ARROW_PX}px`,
       );
       continue;
     }
@@ -625,18 +643,28 @@ function controlsOf(
     const node = ir.byId.get(counter);
     const t = node ? textOf(node) : undefined;
     if (node?.type === "TEXT" && t && /\d/.test(t)) out.counter = counter;
-    else dropped.push(`counter "${nameOf(ir, counter)}" is not a text with a number`);
+    else
+      dropped.push(
+        `counter "${nameOf(ir, counter)}" (${counter}) is ${node?.type === "TEXT" ? `the text "${t ?? ""}", with no digit` : `a ${node?.type ?? "missing"} layer, not a text`}`,
+      );
   }
   const progress = idOf(c.progress);
   if (progress) {
     const b = boxOf(ir, progress);
     if (b && Math.min(b.w, b.h) <= MAX_BAR_PX) out.progress = progress;
-    else dropped.push(`progress "${nameOf(ir, progress)}" is not a thin bar`);
+    else
+      dropped.push(
+        `progress "${nameOf(ir, progress)}" (${progress}) is ${b ? `${Math.round(b.w)}x${Math.round(b.h)}, thicker than a bar's ${MAX_BAR_PX}px` : "not a layer of the frame"}`,
+      );
   }
   const pagination = idOf(c.pagination);
   if (pagination) {
-    if ((ir.byId.get(pagination)?.children?.length ?? 0) >= 2) out.pagination = pagination;
-    else dropped.push(`pagination "${nameOf(ir, pagination)}" has fewer than two dots`);
+    const dots = ir.byId.get(pagination)?.children?.length ?? 0;
+    if (dots >= 2) out.pagination = pagination;
+    else
+      dropped.push(
+        `pagination "${nameOf(ir, pagination)}" (${pagination}) has ${dots} children, not a row of dots`,
+      );
   }
   return out;
 }
@@ -676,6 +704,11 @@ function carouselConfig(over: { slidesPerView: number | "auto" }) {
   };
 }
 
+/**
+ * A proposal for one container. Its confidence is a label for the agent (the reading sure and the IR
+ * bearing it out is `certain`), never a licence to apply: the agent settles every carousel and tab
+ * bar with frame.layout.
+ */
 function intentOf(
   src: string,
   ir: Ir,
@@ -687,7 +720,6 @@ function intentOf(
   chrome: LayoutChrome,
   more: { items?: string[]; slide?: string[]; ask: string[] },
 ): LayoutIntent {
-  // applied unasked only when the eyes are sure and the IR bears it out
   const confidence: Confidence = backed && sure >= SURE ? "certain" : backed ? "likely" : "unsure";
   const moving = kind === "carousel" || kind === "tabs";
   return {

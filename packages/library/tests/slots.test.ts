@@ -34,6 +34,33 @@ const slotsOf = (found: ReturnType<typeof findSlots>) =>
   found.bands.flatMap((b) => b.slots.map((s) => s.nodes));
 
 describe("findSlots", () => {
+  it("reports parts it joined for sitting side by side, and keeps a pair apart when told", () => {
+    const card = (id: string, x: number) =>
+      node(
+        "FRAME",
+        { x, y: 60, w: 280, h: 300 },
+        {
+          id,
+          children: [
+            node("IMAGE", { x, y: 60, w: 280, h: 200 }),
+            node("TEXT", { x, y: 300, w: 200, h: 20 }),
+          ],
+        },
+      );
+    const cards = [card("a", 40), card("b", 360), card("c", 680)];
+    const joined = findSlots(frame([heading("h", 0, "Fixtures"), ...cards]));
+    expect(slotsOf(joined)).toEqual([["h", "a", "b", "c"]]);
+    const slot = joined.bands[0]?.slots[0];
+    expect(slot?.joined).toEqual([
+      ["h", "b"],
+      ["b", "c"],
+    ]);
+    const kept = findSlots(frame([heading("h", 0, "Fixtures"), ...cards]), {
+      apart: [["b", "c"]],
+    });
+    expect(slotsOf(kept)).toEqual([["h", "a", "b"], ["c"]]);
+  });
+
   it("takes a full-width layer of only pictures, even wrapped, as the background", () => {
     const art = node(
       "GROUP",

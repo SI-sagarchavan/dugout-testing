@@ -6,6 +6,7 @@
  * tenant re-theming works without regenerating trees.
  */
 
+import { STATE_LOOKS, STATE_ON, type DrawnLooks } from "./state.js";
 import { lookStyle, stateClasses, stateNames } from "./look.js";
 import { cssClassName, cssVar, type AssetContext } from "@fanos/tokens";
 import { resolveAnchor, type CssProperties, type PlaceInput } from "./anchor.js";
@@ -107,6 +108,8 @@ const JUSTIFY_MAP: Record<string, string> = {
  */
 export const PAGE_SELECTED = "__fosSelected";
 
+export { STATE_LOOKS, STATE_ON } from "./state.js";
+
 /**
  * Resolve universal + layout props on a node into className / style / dataAttrs.
  *
@@ -172,6 +175,26 @@ export function resolveNode(
     dataAttrs.tabIndex = on ? "0" : "-1";
   }
 
+  // --- behaviour: events for the section's machine, and looks that follow its state ---
+  // The renderer resolved both (`resolve/state.ts`); the browser reads these (`state/dom.ts`).
+  const on = props[STATE_ON] as Record<string, unknown> | undefined;
+  if (on) {
+    dataAttrs["data-fos-on"] = JSON.stringify(on);
+    // a pressed node that is not a button or a link is still one a keyboard can press
+    if (on.click && !dataAttrs.role) {
+      dataAttrs.role = "button";
+      dataAttrs.tabIndex = "0";
+    }
+  }
+  const looks = props[STATE_LOOKS] as DrawnLooks | undefined;
+  if (looks) {
+    if (Object.keys(looks.looks).length) dataAttrs["data-fos-looks"] = JSON.stringify(looks.looks);
+    const states = [...(dataAttrs["data-fos-state"] ?? "").split(/\s+/).filter(Boolean), ...looks.states];
+    if (states.length) dataAttrs["data-fos-state"] = [...new Set(states)].join(" ");
+    if (looks.expanded !== undefined) dataAttrs["aria-expanded"] = String(looks.expanded);
+    if (looks.disabled !== undefined) dataAttrs["aria-disabled"] = String(looks.disabled);
+  }
+
   // --- clip ---------------------------------------------------------------
   // Figma's `clipsContent`. Deliberate overflow is a design device, not an
   // accident: the fixture row is 235px inside a 227px shell so the cards bleed
@@ -179,6 +202,17 @@ export function resolveNode(
   if (props.clip === true) {
     style.overflow = "hidden";
     dataAttrs["data-fos-clip"] = "true";
+  }
+  // A list in a box of fixed size that scrolls rather than being cut. A flex child's min-size
+  // would otherwise grow the box to its content and nothing would ever scroll.
+  if (props.scroll === "y" || props.scroll === "x" || props.scroll === "both") {
+    style.overflowX = props.scroll === "y" ? "hidden" : "auto";
+    style.overflowY = props.scroll === "x" ? "hidden" : "auto";
+    delete style.overflow;
+    if (props.scroll !== "x") style.minHeight = "0";
+    if (props.scroll !== "y") style.minWidth = "0";
+    style.overscrollBehavior = "contain";
+    dataAttrs["data-fos-scroll"] = String(props.scroll);
   }
 
   // --- blend -------------------------------------------------------------

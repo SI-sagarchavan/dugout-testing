@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Section search</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #fff; --ink: #1b1b1a; --muted: #6b6b66; --line: #deddd8;
+    --accent: #c4161c; --accent-ink: #fff; --chip: #eeeeea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141414; --panel: #1e1e1d; --ink: #ecece8; --muted: #9a9a94; --line: #34342f;
+      --accent: #ef4b50; --accent-ink: #141414; --chip: #2a2a28;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  .bar { display: grid; gap: 12px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  input[type=text], select { font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; }
+  input[type=text] { flex: 1 1 320px; min-width: 0; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); padding: 8px 12px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  button.small { padding: 4px 10px; font-size: 13px; }
+  button[aria-pressed=true] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 14px; color: var(--muted);
+    display: flex; gap: 12px; align-items: center; min-height: 64px; }
+  .drop.over { border-color: var(--accent); color: var(--ink); }
+  .drop img { max-height: 72px; max-width: 160px; border-radius: 6px; border: 1px solid var(--line); }
+  label.check { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+  #status { margin: 16px 2px; color: var(--muted); min-height: 1.4em; }
+  #status.error { color: var(--accent); }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; display: flex; flex-direction: column; }
+  .view { background: var(--chip); display: grid; place-items: center; min-height: 160px; }
+  .view img, .view svg { display: block; max-width: 100%; max-height: 260px; height: auto; }
+  .body { padding: 12px 14px 14px; display: grid; gap: 8px; }
+  .title { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-weight: 600; }
+  .score { color: var(--muted); font-weight: 400; font-size: 12px; white-space: nowrap; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tags span { background: var(--chip); border-radius: 999px; padding: 2px 9px; font-size: 12px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .badge { font-size: 12px; border-radius: 6px; padding: 1px 7px; border: 1px solid var(--line); color: var(--muted); }
+  .none { color: var(--muted); font-size: 13px; padding: 24px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Section search</h1>
+  <div class="bar">
+    <div class="row">
+      <select id="tenant" aria-label="Club"></select>
+      <input id="text" type="text" placeholder="Describe it: “fixtures strip with team crests and scores”">
+      <button id="go" type="button" class="primary">Search</button>
+    </div>
+    <div id="drop" class="drop">
+      <span id="drop-hint">Drop a screenshot here, paste one (⌘V), or
+        <button id="pick" type="button" class="small">choose a file</button></span>
+      <img id="preview" alt="" hidden>
+      <button id="clear" type="button" class="small" hidden>Remove picture</button>
+    </div>
+    <div class="row">
+      <label class="check"><input id="shared" type="checkbox"> Include other clubs (skeletons only)</label>
+    </div>
+    <input id="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+  </div>
+  <div id="status" role="status"></div>
+  <div id="results" class="grid"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let imageB64 = null;
+let seq = 0;
+
+fetch("/api/tenants").then((r) => r.json()).then((ids) => {
+  const saved = (() => { try { return localStorage.getItem("tenant"); } catch { return null; } })();
+  $("tenant").innerHTML = ids.map((t) => `<option>${t}</option>`).join("");
+  if (saved && ids.includes(saved)) $("tenant").value = saved;
+});
+$("tenant").addEventListener("change", () => {
+  try { localStorage.setItem("tenant", $("tenant").value); } catch {}
+});
+
+function setImage(file) {
+  if (!file?.type.startsWith("image/")) return;
+  if (file.size > 10 * 1024 * 1024) return status("That picture is over 10 MB.", true);
+  const reader = new FileReader();
+  reader.onload = () => {
+    const url = reader.result;
+    imageB64 = String(url).split(",")[1];
+    $("preview").src = url;
+    $("preview").hidden = false;
+    $("clear").hidden = false;
+    $("drop-hint").hidden = true;
+    search();
+  };
+  reader.readAsDataURL(file);
+}
+function clearImage() {
+  imageB64 = null;
+  $("preview").hidden = true; $("clear").hidden = true; $("drop-hint").hidden = false;
+}
+$("clear").onclick = () => { clearImage(); if ($("text").value.trim()) search(); };
+$("pick").onclick = () => $("file").click();
+$("file").onchange = (e) => setImage(e.target.files[0]);
+const drop = $("drop");
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); setImage(e.dataTransfer.files[0]); });
+document.addEventListener("paste", (e) => {
+  const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith("image/"));
+  if (item) setImage(item.getAsFile());
+});
+$("text").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
+$("go").onclick = search;
+$("shared").onchange = () => { if ($("text").value.trim() || imageB64) search(); };
+
+function status(msg, error = false) {
+  $("status").textContent = msg;
+  $("status").className = error ? "error" : "";
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function search() {
+  const text = $("text").value.trim();
+  if (!text && !imageB64) return status("Type a phrase or add a picture.");
+  const mine = ++seq;
+  status("Searching…");
+  try {
+    const res = await fetch("/api/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tenant: $("tenant").value, text, image: imageB64, shared: $("shared").checked }),
+    });
+    const body = await res.json();
+    if (mine !== seq) return;
+    if (!res.ok) return status(body.error ?? "The search failed.", true);
+    render(body.items);
+  } catch (e) {
+    if (mine === seq) status(String(e.message ?? e), true);
+  }
+}
+
+function render(found) {
+  status(found.length ? `${found.length} result${found.length === 1 ? "" : "s"}` : "Nothing found.");
+  const tenant = encodeURIComponent($("tenant").value);
+  $("results").innerHTML = "";
+  if (!found.length) {
+    $("results").innerHTML = '<div class="none">Nothing matched. Try other words, a clearer picture, or include other clubs.</div>';
+    return;
+  }
+  for (const f of found) {
+    const card = document.createElement("article");
+    card.className = "card";
+    const actual = f.picture ? `/api/picture?tenant=${tenant}&key=${encodeURIComponent(f.picture.key)}` : null;
+    const hasSkeleton = Boolean(f.skeletonSvg);
+    card.innerHTML = `
+      <div class="view"></div>
+      <div class="body">
+        <div class="title"><span>${f.own ? esc(f.name || "Section") : "Another club’s section"}</span>
+          <span class="score">${f.score.toFixed(4)}</span></div>
+        <div class="meta">${esc(f.kind)}${f.layout !== "none" ? `, ${esc(f.layout)}` : ""}
+          ${f.previewed ? '<span class="badge">previewed</span>' : ""}
+          ${f.own ? "" : '<span class="badge">skeleton only</span>'}</div>
+        ${f.caption ? `<div>${esc(f.caption)}</div>` : ""}
+        ${f.data ? `<div class="meta">${esc(f.data)}</div>` : ""}
+        <div class="tags">${f.tags.map((t) => `<span>${esc(t)}</span>`).join("")}</div>
+        <div class="actions"></div>
+      </div>`;
+    const view = card.querySelector(".view");
+    const actions = card.querySelector(".actions");
+    const show = (mode) => {
+      if (mode === "actual" && actual) view.innerHTML = `<img src="${actual}" alt="${esc(f.caption)}" loading="lazy">`;
+      else if (hasSkeleton) view.innerHTML = f.skeletonSvg;
+      else view.innerHTML = '<span class="meta">No picture</span>';
+      for (const b of actions.querySelectorAll("[data-mode]")) b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
+    };
+    if (actual && hasSkeleton) {
+      for (const [mode, label] of [["actual", "Actual"], ["skeleton", "Skeleton"]]) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "small"; b.textContent = label; b.dataset.mode = mode;
+        b.onclick = () => show(mode);
+        actions.append(b);
+      }
+    }
+    if (f.tree) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "small"; b.textContent = `Copy DSL (${f.tree.nodes?.length ?? 0} nodes)`;
+      b.onclick = async () => {
+        try { await navigator.clipboard.writeText(JSON.stringify(f.tree, null, 2)); b.textContent = "Copied"; }
+        catch { b.textContent = "Copy failed"; }
+      };
+      actions.append(b);
+    }
+    show(actual ? "actual" : "skeleton");
+    $("results").append(card);
+  }
+}
+</script>
+</body>
+</html>

@@ -79,6 +79,24 @@ describe("a when that reads the page", () => {
     expect(splitPageWhen({ path: "item.photo", exists: true }, {}).page).toEqual([]);
   });
 
+  it("searches an item's text for what is typed, ignoring case; nothing typed lets every item through", () => {
+    const when = { path: "p.name", containsPath: "_page.search" };
+    const ben = { p: { name: "Ben McKinney" } };
+    expect(evaluateWhen(when, { ...ben, ...pageScope({ search: "mck" }) })).toBe(true);
+    expect(evaluateWhen(when, { ...ben, ...pageScope({ search: "  BEN " }) })).toBe(true);
+    expect(evaluateWhen(when, { ...ben, ...pageScope({ search: "rew" }) })).toBe(false);
+    expect(evaluateWhen(when, { ...ben, ...pageScope({ search: "" }) })).toBe(true);
+    expect(evaluateWhen(when, ben)).toBe(true);
+    // the server reads the item's text; the browser compares what is typed with it
+    const split = splitPageWhen([{ path: "p.squad", eqPath: "_page.women_men" }, when], { p: { name: "Ben McKinney", squad: "men" } });
+    expect(split.page).toEqual([
+      { path: "_page.women_men", eq: "men" },
+      { path: "_page.search", within: "Ben McKinney" },
+    ]);
+    expect(evaluateWhen(split.page, pageScope({ women_men: "men", search: "ben" }))).toBe(true);
+    expect(evaluateWhen(split.page, pageScope({ women_men: "men", search: "thomas" }))).toBe(false);
+  });
+
   it("is listed among the keys a tree reads", () => {
     const strip = {
       schemaVersion: "1",

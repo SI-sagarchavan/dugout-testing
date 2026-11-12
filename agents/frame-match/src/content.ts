@@ -1,17 +1,16 @@
 /**
  * What on a section is data: whether binding it to a data source is a job at all.
  *
- * A section is three kinds of thing. Data is what changes without a designer: players, fixtures,
- * scores, headlines, photos of them. Copy is what the designer wrote and a person edits in the
- * CMS: a heading, a button's label, a tab's name. Behaviour is what a person does on the page: the
- * tab they choose (`select`, page state). Only data needs a source, so a section of copy and
- * behaviour is published as it is, with no hook to find or build.
+ * A section is three kinds of thing. Data is what changes without a designer: the items of a feed,
+ * the CMS's articles, numbers that change, photos of them. Copy is what the designer wrote and a
+ * person edits in the CMS: a heading, a button's label, a tab's name. Behaviour is what a person does
+ * on the page: the tab they choose (`select`, page state). Only data needs a source, so a section of
+ * copy and behaviour is published as it is, with no hook to find or build.
  *
- * Code reads the signs the design gives (`signsOf`): what repeats, text that reads as data (a date,
- * a score, a long headline, a placeholder), pictures the size of a photo. When the signs settle it,
- * that is the answer; when they don't (a banner with one photo and a heading), a model reads the
- * same outline (`contentPrompt`), and what it is not sure of stays `unsure`: the binding stage
- * runs, and says itself when it finds nothing to bind.
+ * Code only reports (`signsOf`): what repeats, text shaped like a date, a time or numbers, long
+ * prose, pictures the size of a photo, and the names the designer gave the layers. From those it
+ * proposes an answer (`contentOf`); the agent's model settles it, with why, when it publishes
+ * (`frame.publish`'s `content`), and that is what the section's `content` says.
  */
 
 import { z } from "zod";
@@ -21,9 +20,14 @@ export const Content = z.object({
   data: z
     .enum(["none", "some", "unsure"])
     .describe(
-      "none: nothing on it is data, so nothing is bound; some: it shows data; unsure: the signs do not say",
+      "none: nothing on it is data, so nothing is bound; some: it shows data; unsure: not settled (a proposal from the signs alone)",
     ),
-  evidence: z.array(z.string()).describe("What says so, each one sign"),
+  evidence: z.array(z.string()).describe("What says so: the agent's why first, then each sign"),
+  why: z.string().optional().describe("Why the agent settled it so"),
+  by: z
+    .enum(["person", "memory", "agent"])
+    .optional()
+    .describe("Who settled it; absent while it is only the signs' proposal"),
 });
 export type Content = z.infer<typeof Content>;
 
@@ -35,60 +39,62 @@ interface TreeNode {
   props: Record<string, unknown>;
 }
 
-/** At least this many px each way, a picture is a photo of something; under it, a crest or a glyph. */
+/** Pictures at least this many px each way are listed: a photo of something, or the design's own art. */
 const PHOTO_PX = 96;
-/** Copy a designer writes is short; more words than this read as an article's headline or text. */
-const PROSE_WORDS = 9;
+/** Texts with more words than this are listed with their length: a sentence, not a label. */
+const LONG_WORDS = 9;
 
 const MONTH = "(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*";
-const DAY = "(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)[a-z]*";
-/** Text that reads as data, each with what it is. */
-const DATA_TEXT: Array<[RegExp, string]> = [
-  [
-    /lorem ipsum|placeholder|\bplayer name\b|\bteam name\b|\bheadline\b|\btitle (goes )?here\b|\bxx+\b/i,
-    "placeholder copy",
-  ],
+const WEEKDAY = "(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)[a-z]*";
+/** Text shaped like a value that changes, each with what shape it is. No subject's vocabulary. */
+const SHAPES: Array<[RegExp, string]> = [
+  [/lorem ipsum/i, "placeholder text"],
   [
     new RegExp(
-      `\\b\\d{1,2}(st|nd|rd|th)?\\s+${MONTH}\\b|\\b${MONTH}\\s+\\d{1,2}\\b|\\b${DAY}\\b,?\\s+\\d`,
+      `\\b\\d{1,2}(st|nd|rd|th)?\\s+${MONTH}\\b|\\b${MONTH}\\s+\\d{1,2}\\b|\\b${WEEKDAY}\\b,?\\s+\\d`,
       "i",
     ),
     "a date",
   ],
   [/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/, "a date"],
-  [/\b\d{1,2}[:.]\d{2}\s*(am|pm|ist|gmt|bst)?\b/i, "a time"],
-  [/\b\d{1,3}\s*\/\s*\d{1,2}\b|\b\d{1,3}\s*[-–]\s*\d{1,3}\b(?!\s*(years?|yrs?))/i, "a score"],
-  [
-    /\b\d+(\.\d+)?\s*(overs?|ov|runs|wkts?|wickets|pts|points|goals|apps|%|kg|cm|mph|km\/h)\b/i,
-    "a stat",
-  ],
-  [/[£$€₹]\s?\d/, "a price"],
-  [/\b(vs?\.?|versus)\b/i, "a fixture"],
+  [/\b\d{1,2}[:.]\d{2}\s*(am|pm)?\b/i, "a time"],
+  [/\b\d+\s*[-–/]\s*\d+\b/, "two numbers joined"],
 ];
 
-/** What the design says about whether this section shows data. */
 /** A Figma layer's box, by id: what a node's drawn size is read from. */
 export type BoxOf = (src: string) => { w: number; h: number } | undefined;
+/** A Figma layer's name, by id. */
+export type NameOf = (src: string) => string | undefined;
 
+/** The signs, each one line with real values, grouped by which way each usually leans: for the proposal only. */
+export interface Signs {
+  /** Signs that usually mean data: something repeats, a value-shaped text, long prose. */
+  data: string[];
+  /** Signs that usually mean copy or behaviour: short labels, tabs. */
+  copy: string[];
+  /** Facts that lean neither way: photo-sized pictures, numbers in short text. */
+  neutral: string[];
+}
+
+/** What the design shows that bears on whether the section shows data. Reports; decides nothing. */
 export function signsOf(
   tree: { nodes: TreeNode[] },
   layouts: LayoutReport[],
   boxOf: BoxOf = () => undefined,
-): { data: string[]; copy: string[]; unsure: string[] } {
+  nameOf: NameOf = () => undefined,
+): Signs {
   const data: string[] = [];
   const copy: string[] = [];
-  const unsure: string[] = [];
+  const neutral: string[] = [];
 
-  // What repeats is a list of things, and a list of things is data. Tabs and a menu repeat too,
-  // and are the page's own: what a person chooses, where they go.
   for (const l of layouts) {
-    if (l.kind === "tabs") {
-      copy.push(`"${l.name}" is tabs: a choice a person makes on the page, not data`);
-    } else if (l.evidence.some((e) => /named as navigation/.test(e))) {
-      copy.push(`"${l.name}" is a menu`);
+    const count = l.items?.length ?? 0;
+    const items = count > 0 ? `${count} items` : "items";
+    if (l.choice.kind === "tabs") {
+      copy.push(`"${l.name}" is proposed as tabs: ${items}, one drawn selected`);
     } else {
       data.push(
-        `"${l.name}" repeats ${l.kind === "carousel" ? "as a carousel" : `as a ${l.kind}`}: a list of things`,
+        `"${l.name}" repeats ${items} as a ${l.choice.kind}${l.decided ? "" : ` (proposed, ${l.confidence})`}`,
       );
     }
   }
@@ -111,106 +117,63 @@ export function signsOf(
     if (typeof text === "string" && text.trim()) {
       const said = text.trim();
       if (inOption(node.id)) continue;
-      const hit = DATA_TEXT.find(([re]) => re.test(said));
-      if (hit) {
-        data.push(`"${short(said)}" reads as ${hit[1]}`);
-      } else if (said.split(/\s+/).length > PROSE_WORDS) {
-        data.push(
-          `"${short(said)}" is ${said.split(/\s+/).length} words: an article's headline or text`,
+      const layer = node.src ? nameOf(node.src) : undefined;
+      const named = layer?.trim() && layer.trim() !== said ? ` (layer "${layer}")` : "";
+      const words = said.split(/\s+/).length;
+      const shape = SHAPES.find(([re]) => re.test(said));
+      if (shape) data.push(`"${short(said)}"${named} is shaped like ${shape[1]}`);
+      else if (words > LONG_WORDS) data.push(`"${short(said)}"${named} is ${words} words`);
+      else if (/\d/.test(said)) neutral.push(`"${said}"${named} holds a number`);
+      else
+        copy.push(
+          `"${said}"${named} is ${node.type === "Button" ? "a button's label" : "a short text"}`,
         );
-      } else if (node.type === "Button") {
-        copy.push(`"${said}" is a button's label`);
-      } else {
-        copy.push(`"${said}" is a heading or label`);
-      }
     }
     if (node.type === "Image") {
       const size = sizeOf(node.props) ?? (node.src ? rounded(boxOf(node.src)) : undefined);
       if (size && size.w >= PHOTO_PX && size.h >= PHOTO_PX) {
-        unsure.push(
-          `a picture ${size.w}×${size.h}px (${node.id}): a photo of something, or the design's own art`,
+        const layer = node.src ? nameOf(node.src) : undefined;
+        neutral.push(
+          `a picture ${size.w}×${size.h}px (${node.id}${layer ? `, layer "${layer}"` : ""})`,
         );
       }
     }
   }
-  return { data, copy, unsure };
+  return { data, copy, neutral };
 }
 
-/** The answer from the signs alone: unsure when a picture is all there is to go on. */
+/**
+ * The signs, and the answer they propose: `some` when a sign leans to data, `none` when everything
+ * is short copy, `unsure` when only pictures or numbers are left to go on. A proposal: the agent
+ * settles it when it publishes.
+ */
 export function contentOf(
   tree: { nodes: TreeNode[] },
   layouts: LayoutReport[],
   boxOf?: BoxOf,
+  nameOf?: NameOf,
 ): Content {
-  const signs = signsOf(tree, layouts, boxOf);
-  if (signs.data.length > 0) return { data: "some", evidence: signs.data };
-  if (signs.unsure.length > 0)
-    return { data: "unsure", evidence: [...signs.unsure, ...signs.copy] };
+  const signs = signsOf(tree, layouts, boxOf, nameOf);
+  const evidence = [...signs.data, ...signs.neutral, ...signs.copy];
+  if (signs.data.length > 0) return { data: "some", evidence };
+  if (signs.neutral.length > 0) return { data: "unsure", evidence };
   return {
     data: "none",
-    evidence: signs.copy.length ? signs.copy : ["nothing on it is text, a picture or a list"],
+    evidence: evidence.length > 0 ? evidence : ["nothing on it is text, a picture or a list"],
   };
 }
 
-/** The question a model settles an unsure section by: the outline and the signs, nothing else. */
-export function contentPrompt(outline: string[], content: Content): string {
-  return [
-    "A designer handed off one section of a sports club's website. Decide whether anything on it is DATA: content that changes without a designer, from a feed or the CMS (players, fixtures, scores, results, news headlines, photos of players or matches, dates).",
-    "Not data: the section's own copy (a heading, a button's label, a tab's name), its artwork (a crest, a texture, a background, a decorative picture) and its controls.",
-    "",
-    "The section, one node a line:",
-    ...outline.slice(0, 80),
-    "",
-    "What code saw:",
-    ...content.evidence.map((e) => `- ${e}`),
-    "",
-    'Answer with one JSON object and nothing else: {"data":"none"|"some","confidence":0.0-1.0,"reason":"one short sentence"}',
-  ].join("\n");
-}
-
-/** Below this, a model's answer leaves the section unsure. */
-const ACCEPT = 0.8;
-
-/** The content with a model's answer in it, when it is the JSON asked for and sure enough. */
-export function applyContentVerdict(content: Content, text: string): Content {
-  const m = /\{[\s\S]*\}/.exec(text);
-  if (!m) return content;
-  try {
-    const v = JSON.parse(m[0]) as { data?: unknown; confidence?: unknown; reason?: unknown };
-    const confidence = Number(v.confidence);
-    if ((v.data !== "none" && v.data !== "some") || !Number.isFinite(confidence)) return content;
-    const line = `a model judged it ${v.data === "none" ? "to show no data" : "to show data"} (${confidence.toFixed(2)})${typeof v.reason === "string" && v.reason ? `: ${v.reason}` : ""}`;
-    return confidence >= ACCEPT
-      ? { data: v.data, evidence: [...content.evidence, line] }
-      : { ...content, evidence: [...content.evidence, line] };
-  } catch {
-    return content;
-  }
-}
-
-/** One line a node, for the model: its type, its id and what it says. */
-export function outlineOf(tree: { nodes: TreeNode[] }): string[] {
-  const kids = new Map<string | null, TreeNode[]>();
-  for (const n of tree.nodes) kids.set(n.parent, [...(kids.get(n.parent) ?? []), n]);
-  const lines: string[] = [];
-  const walk = (parent: string | null, depth: number) => {
-    for (const n of kids.get(parent) ?? []) {
-      const said =
-        typeof n.props.content === "string"
-          ? ` "${short(n.props.content)}"`
-          : typeof n.props.label === "string"
-            ? ` [${n.props.label}]`
-            : "";
-      const size = n.type === "Image" ? sizeOf(n.props) : undefined;
-      const extra = [size ? `${size.w}×${size.h}px` : "", n.props.select ? "tab" : ""]
-        .filter(Boolean)
-        .join(", ");
-      lines.push(`${"  ".repeat(depth)}${n.type} ${n.id}${said}${extra ? ` (${extra})` : ""}`);
-      walk(n.id, depth + 1);
-    }
+/** What the agent settled, as the section's content: its why first, then the signs it read. */
+export function settledContent(
+  proposal: Content,
+  decided: { data: "none" | "some"; why: string; by?: "person" | "memory" | "agent" | undefined },
+): Content {
+  return {
+    data: decided.data,
+    evidence: [`decided: ${decided.why}`, ...proposal.evidence],
+    why: decided.why,
+    by: decided.by ?? "agent",
   };
-  walk(null, 0);
-  return lines;
 }
 
 const rounded = (b: { w: number; h: number } | undefined) =>

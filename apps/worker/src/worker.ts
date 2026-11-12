@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { Decision } from "@dugout/contracts";
 import { forkRun, type Responder, RunInterrupted } from "@dugout/core";
 import { type Pool, withTenant } from "@dugout/db";
@@ -228,13 +229,14 @@ export function createWorker(opts: WorkerOptions) {
     const at = version ?? (await latestVersion(opts.pool, parentCtx));
     const saved = at === undefined ? undefined : await loadRun(opts.pool, parentCtx, at);
     if (at === undefined || !saved) return `the run it follows (${parentId}) has no save point`;
-    const parentAgent = await withTenant(opts.pool, tenantId, async (db) => {
-      const { rows } = await db.query<{ agent_id: string }>(
-        "select agent_id from runs where id = $1",
+    const parent = await withTenant(opts.pool, tenantId, async (db) => {
+      const { rows } = await db.query<{ agent_id: string; input: unknown }>(
+        "select agent_id, input from runs where id = $1",
         [parentId],
       );
-      return rows[0]?.agent_id;
+      return rows[0];
     });
+    const parentAgent = parent?.agent_id;
     const own = await withTenant(opts.pool, tenantId, async (db) => {
       const { rows } = await db.query<{ agent_id: string }>(
         "select agent_id from runs where id = $1",
@@ -245,7 +247,10 @@ export function createWorker(opts: WorkerOptions) {
     if (parentAgent !== own) return `the run it follows (${parentId}) is another agent's`;
     let forked: ReturnType<typeof forkRun>;
     try {
-      forked = forkRun(saved, { runId: parentId, version: at }, { input });
+      // a retry carries the parent's own input: that corrects nothing, so the run goes on from
+      // the save point as it is (a mid-turn one included) instead of appending a message
+      const unchanged = isDeepStrictEqual(input, parent?.input);
+      forked = forkRun(saved, { runId: parentId, version: at }, unchanged ? {} : { input });
     } catch (err) {
       return err instanceof Error ? err.message : String(err);
     }

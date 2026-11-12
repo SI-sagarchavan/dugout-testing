@@ -97,6 +97,7 @@ const contentType: Question = {
   ],
   allowOther: false,
   proposed: ["build"],
+  remember: "section",
 };
 const count: Question = {
   id: "cards",
@@ -107,7 +108,8 @@ const count: Question = {
   allowOther: false,
   proposed: ["4"],
 };
-const ask = (...questions: Question[]) => call("ask", { questions });
+const ask = (...questions: Question[]) =>
+  call("ask", { questions: questions.map((q) => ({ remember: "no", fact: "", ...q })) });
 
 let runsDir: string;
 beforeEach(async () => {
@@ -479,10 +481,7 @@ describe("what a question is about (ADR 0033)", () => {
       return { opened: true };
     },
   });
-  const declaring = spec({
-    tools: ["frame.open"],
-    questions: { content: { scope: "section", about: "what the cards show" } },
-  });
+  const declaring = spec({ tools: ["frame.open"] });
   const start = (opts: {
     runId: string;
     store: RunStore;
@@ -508,7 +507,7 @@ describe("what a question is about (ADR 0033)", () => {
     }).then((result) => ({ result, events: sink.events, model }));
   };
 
-  it("says a declared question's agent, scope and the section a tool situated the run on; others as they are", async () => {
+  it("says a remembered question's agent, scope and the section a tool situated the run on; others as they are", async () => {
     const store = createMemoryRunStore();
     const { result, events, model } = await start({
       runId: "s1",
@@ -527,9 +526,9 @@ describe("what a question is about (ADR 0033)", () => {
     // kept with the run, so a resumed run still knows its section
     const saved = store.runs.get("demo-cricket/s1")?.points.at(-1)?.checkpoint as RunCheckpoint;
     expect(saved.situation).toEqual({ section: "sig-1", name: "Frame 1" });
-    // and `ask` lists the declared ids
+    // and `ask` tells the model to say how far each answer holds; no agent declares its questions
     const askTool = model.requests[0]?.tools.find((t) => t.name === "ask");
-    expect(askTool?.description).toContain("content (what the cards show)");
+    expect(askTool?.description).toContain("remember: section");
   });
 
   it("starts a child on its parent's section", async () => {

@@ -1,6 +1,6 @@
 # 05 · Versions in the thread
 
-Status: ready-for-agent
+Status: done (2026-11-11)
 Type: task
 
 ## What
@@ -17,3 +17,7 @@ Each `ui.publish` and each bind saves a new tree, so earlier versions exist. But
 
 - Three edits in a thread give versions v1 to v3 in the rendered thread, each naming what it changed.
 - Going back to v1 publishes it as v4, and the thread says so.
+
+## Done (2026-11-11)
+
+`section_versions` (migration 026): one row per preview after the build, by ui-editor (`ui.edit`), a person's hand edits or a person going back (`restored_from`). The thread's context lists them (`Versions of the section`, `renderThread`). The backend lists them and goes back to one (`GET /surface/runs/:id/versions`, `POST …/versions/:id/restore`, `POST …/tree` for hand edits); the section's preview is its newest row's.

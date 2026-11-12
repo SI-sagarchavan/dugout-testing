@@ -20,6 +20,7 @@ import { walkProps } from "./walk.js";
 import { zodOfFields, type FieldType } from "./field.js";
 import { type BindingCheckOptions, checkBindings, checkPipes } from "./contract.js";
 import { PAGE_KEY_RE, selectOf } from "./page.js";
+import { checkMachine } from "./machine/tree.js";
 
 export const ISSUE_CODES = [
   "S1", // reify failed: cycle, orphan, multi-root, idx gap
@@ -39,6 +40,8 @@ export const ISSUE_CODES = [
   "S15", // Carousel options Swiper cannot combine, or a moving carousel nobody can pause
   "S16", // controlFor names no Carousel, or a carousel has two of one control part
   "S17", // a page choice sets one value twice, starts twice, or has one option; a field's key is not one name or is written twice
+  "S18", // a section's machine is not one, or not on the root; a node sends an event nobody handles, reads $state with no machine, or a Repeater draws state
+  "S19", // a link (href, or a Button that navigates) inside another link, or href on a Button
   "T1", // token ref does not resolve
   "T2", // Text.style is not a TypeToken
   "T3", // Resp<> wrapper around a TypeToken
@@ -55,6 +58,9 @@ export const ISSUE_CODES = [
 ] as const;
 
 export type IssueCode = (typeof ISSUE_CODES)[number];
+
+/** The nodes drawn as a link when they have `href` (S19): a card, a box, a text. */
+const LINKABLE = new Set(["Stack", "Box", "Overlay", "Text"]);
 
 export interface Issue {
   code: IssueCode;
@@ -268,7 +274,9 @@ export function validate(tree: FlatTree, options: ValidateOptions): ValidationRe
       const slice = node.props["slice"];
       if (slice !== undefined) {
         /**
-         * `[start, end)`, end exclusive, both integers, start before end.
+         * `[start, end)`, end exclusive, both integers, start before end; or `[start]`, from start to
+         * the end of the list, however long it grows (the cards after a mosaic, as LOAD MORE adds
+         * pages).
          *
          * The field language has no tuple kind, so the schema accepts
          * `number[]` and the arity is checked here. Reported as one issue per
@@ -276,25 +284,26 @@ export function validate(tree: FlatTree, options: ValidateOptions): ValidationRe
          * after start" and "you also set limit" are different mistakes with
          * different fixes.
          */
-        if (!Array.isArray(slice) || slice.length !== 2) {
+        if (!Array.isArray(slice) || (slice.length !== 2 && slice.length !== 1)) {
           add({
             code: "S13",
             severity: "error",
             nodeId: node.id,
             path: "slice",
-            message: `Repeater.slice must be [start, end), got ${JSON.stringify(slice)}`,
+            message: `Repeater.slice must be [start, end) or [start], got ${JSON.stringify(slice)}`,
           });
           cover(node.id, "slice");
         } else {
           const [start, end] = slice as [unknown, unknown];
-          const ints = typeof start === "number" && typeof end === "number";
-          if (!ints || !Number.isInteger(start) || !Number.isInteger(end)) {
+          const open = slice.length === 1;
+          const ints = typeof start === "number" && (open || typeof end === "number");
+          if (!ints || !Number.isInteger(start) || (!open && !Number.isInteger(end))) {
             add({
               code: "S13",
               severity: "error",
               nodeId: node.id,
               path: "slice",
-              message: `Repeater.slice takes two integers, got ${JSON.stringify(slice)}`,
+              message: `Repeater.slice takes integers, got ${JSON.stringify(slice)}`,
             });
             cover(node.id, "slice");
           } else {
@@ -308,7 +317,7 @@ export function validate(tree: FlatTree, options: ValidateOptions): ValidationRe
               });
               cover(node.id, "slice");
             }
-            if (end <= start) {
+            if (!open && (end as number) <= start) {
               add({
                 code: "S13",
                 severity: "error",
@@ -347,6 +356,42 @@ export function validate(tree: FlatTree, options: ValidateOptions): ValidationRe
           path: "minItemWidth",
           message: `Grid "${node.id}" uses columns:"auto" and must declare minItemWidth`,
         });
+      }
+    }
+
+    // --- S19 --------------------------------------------------------------
+    // A link inside a link is not HTML: the browser closes the outer one. A Button links by its action.
+    if (node.type === "Button" && node.props["href"] !== undefined) {
+      add({
+        code: "S19",
+        severity: "error",
+        nodeId: node.id,
+        path: "href",
+        message: `Button "${node.id}" has href: a Button goes somewhere by its action ({ kind: "navigate", href })`,
+      });
+    }
+    if (node.props["href"] !== undefined && node.type !== "Button" && !LINKABLE.has(node.type)) {
+      add({
+        code: "S19",
+        severity: "error",
+        nodeId: node.id,
+        path: "href",
+        message: `${node.type} "${node.id}" cannot be a link: put href on the card or box around it (a Stack, Box, Overlay or Text)`,
+      });
+    }
+    const links = (n: FlatNode) =>
+      n.props["href"] !== undefined ||
+      (n.type === "Button" && (n.props["action"] as { kind?: unknown } | undefined)?.kind === "navigate");
+    if (links(node)) {
+      for (let up = parentOf(node); up; up = parentOf(up)) {
+        if (up.props["href"] === undefined) continue;
+        add({
+          code: "S19",
+          severity: "error",
+          nodeId: node.id,
+          message: `"${node.id}" links inside "${up.id}", which links already: a link cannot hold another; keep one of them`,
+        });
+        break;
       }
     }
 
@@ -607,7 +652,7 @@ export function validate(tree: FlatTree, options: ValidateOptions): ValidationRe
           severity: "warning",
           nodeId: a.nodeId,
           path: "slice",
-          message: `slice [${a.start}, ${a.end}) overlaps "${b.nodeId}"'s [${b.start}, ${b.end}) over the same "${source}" — items ${Math.max(a.start, b.start)}..${Math.min(a.end, b.end) - 1} are drawn twice`,
+          message: `slice ${shown(a)} overlaps "${b.nodeId}"'s ${shown(b)} over the same "${source}" — items ${Math.max(a.start, b.start)}..${Number.isFinite(Math.min(a.end, b.end)) ? Math.min(a.end, b.end) - 1 : "the end"} are drawn twice`,
         });
       }
     }
@@ -615,6 +660,7 @@ export function validate(tree: FlatTree, options: ValidateOptions): ValidationRe
 
   // --- B: bindings ---------------------------------------------------------
   issues.push(...checkPipes(tree));
+  issues.push(...checkMachine(tree));
   if (options.data !== undefined) issues.push(...checkBindings(tree, options.data, options.choices ? { choices: options.choices } : {}));
 
   const errors = issues.filter((i) => i.severity === "error");
@@ -637,6 +683,8 @@ interface SliceWindow {
   end: number;
 }
 
+const shown = (w: SliceWindow) => (Number.isFinite(w.end) ? `[${w.start}, ${w.end})` : `[${w.start}]`);
+
 /** Well-formed slices, grouped by the list they window. Malformed ones are S13's. */
 function slicesBySource(tree: FlatTree): Map<string, SliceWindow[]> {
   const out = new Map<string, SliceWindow[]>();
@@ -644,8 +692,9 @@ function slicesBySource(tree: FlatTree): Map<string, SliceWindow[]> {
     if (node.type !== "Repeater") continue;
     const over = node.props["over"];
     const slice = node.props["slice"];
-    if (typeof over !== "string" || !Array.isArray(slice) || slice.length !== 2) continue;
-    const [start, end] = slice as [unknown, unknown];
+    if (typeof over !== "string" || !Array.isArray(slice) || (slice.length !== 2 && slice.length !== 1)) continue;
+    // an open slice, `[start]`, runs to the end of the list
+    const [start, end = Number.POSITIVE_INFINITY] = slice as [unknown, unknown];
     if (typeof start !== "number" || typeof end !== "number" || end <= start) continue;
     const list = out.get(over) ?? [];
     list.push({ nodeId: node.id, start, end });

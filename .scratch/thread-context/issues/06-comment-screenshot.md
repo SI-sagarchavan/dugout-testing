@@ -1,6 +1,6 @@
 # 06 · Screenshot on a comment
 
-Status: ready-for-agent
+Status: done (2026-11-11)
 Type: task
 
 ## What
@@ -18,3 +18,7 @@ A comment carries the element as the person saw it (`ui_comments.context`: type,
 
 - A sent comment has a screenshot reference, and `ui.look` returns the picture for it.
 - A comment without one still works.
+
+## Done differently (2026-11-11)
+
+Studio sends no picture. `ui.look` takes it on the worker: the section drawn with the renderer's pixel harness from the artifacts the preview link names (there is no preview web app), the element cut out with 48px around it, read by Haiku (`describeImage`); the picture never enters the transcript. It looks at the newest preview, so it also checks an edit.

@@ -15,17 +15,27 @@
  * components import it by package name, never by path.
  */
 
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import {
   clockTick,
   clockValues,
   evaluateCondition,
   pageScope,
   resolveTemplate,
+  stateScope,
   type ClockUnit,
   type Condition,
+  type Json,
+  type MachineSnapshot,
+  type MachineSpec,
   type PageState,
+  type PageSystem,
 } from "@fanos/dsl/runtime";
+import { currentValues, getSystem, registerMachine, seedValues, setValue, subscribe as subscribeStore } from "./state/store.js";
+import { wire } from "./state/dom.js";
+
+export { configureRuntime, send } from "./state/store.js";
+export type { RequestError, RuntimeConfig } from "./state/store.js";
 import { gateSlides } from "./carousel/gate.js";
 import type { CarouselSpec } from "./carousel/shared.js";
 
@@ -47,7 +57,7 @@ export function CarouselRoot({ spec, className, style, dataAttrs, page, children
   useEffect(() => {
     const root = ref.current;
     if (!root || !root.querySelector("[data-fos-gate]")) return;
-    const gate = () => gateSlides(root, { ...(page ?? {}), ...choiceSnapshot });
+    const gate = () => gateSlides(root, { ...(page ?? {}), ...currentChoices() });
     gate();
     return subscribeChoices(gate);
   }, [page]);
@@ -181,34 +191,28 @@ export function ClockGate({ conditions, clocks, now: initial, children }: ClockG
 
 /**
  * The page's choices (`select`, `_page`): what one section's options set and any section's `when`
- * reads. One store per window, so every section drawn in it shares it, as one page does.
+ * reads. They live in the page's one store (`state/store.ts`) beside the sections' machines, so a
+ * machine reads a tab as `$page.<key>` and a tab's gate reads what a machine shares the same way.
  */
-const choices = new Map<string, string>();
-const choiceListeners = new Set<() => void>();
-let choiceSnapshot: PageState = {};
-
 function subscribeChoices(listener: () => void): () => void {
-  choiceListeners.add(listener);
-  return () => {
-    choiceListeners.delete(listener);
-  };
-}
-
-function changedChoices(): void {
-  choiceSnapshot = Object.fromEntries(choices);
-  for (const listener of choiceListeners) listener();
+  return subscribeStore(listener);
 }
 
 /** Set a page choice, as pressing one of its options does. */
 export function choose(key: string, value: string): void {
-  if (choices.get(key) === value) return;
-  choices.set(key, value);
-  changedChoices();
+  setValue(key, value);
 }
 
-/** The page's choices now: `{ squad: "men" }`. */
+let choiceCache: { from: PageSystem | undefined; state: PageState } = { from: undefined, state: {} };
+
+/** The page's choices now, as text: `{ squad: "men" }`. */
 export function currentChoices(): PageState {
-  return choiceSnapshot;
+  const system = getSystem();
+  if (choiceCache.from === system) return choiceCache.state;
+  const state: PageState = {};
+  for (const [k, v] of Object.entries(currentValues())) if (typeof v === "string") state[k] = v;
+  choiceCache = { from: system, state };
+  return state;
 }
 
 /** The documents sections are drawn in: the page, and an iframe a host draws into. */
@@ -219,8 +223,9 @@ const withState = (states: string | null, on: boolean): string =>
 
 /** Each drawn option says whether it is the chosen one: its `active` or `inactive` look. */
 function paintOptions(doc: Document): void {
+  const choices = currentChoices();
   for (const el of doc.querySelectorAll<HTMLElement>("[data-fos-select]")) {
-    const value = choices.get(el.dataset.fosSelect ?? "");
+    const value = choices[el.dataset.fosSelect ?? ""];
     if (value === undefined) continue;
     const on = el.dataset.fosValue === value;
     el.setAttribute("data-fos-state", withState(el.getAttribute("data-fos-state"), on));
@@ -234,8 +239,9 @@ function paintOptions(doc: Document): void {
  * in its `active` look. A field being typed in is left alone: it is where the value came from.
  */
 function paintFields(doc: Document): void {
+  const choices = currentChoices();
   for (const el of doc.querySelectorAll<HTMLInputElement>("[data-fos-root] [data-fos-field]")) {
-    const value = choices.get(el.dataset.fosField ?? "");
+    const value = choices[el.dataset.fosField ?? ""];
     if (value === undefined) continue;
     if (el.type === "checkbox") {
       const on = value === "true";
@@ -278,6 +284,7 @@ function optionOf(target: EventTarget | null): HTMLElement | null {
 
 /** One listener per document: pressing an option chooses it; arrows move along its choice. */
 function listen(doc: Document): void {
+  wire(doc);
   if (documents.has(doc)) return;
   documents.add(doc);
   const pick = (option: HTMLElement) => {
@@ -335,14 +342,9 @@ export function PageChoices({ initial }: PageChoicesProps) {
     const doc = ref.current?.ownerDocument;
     if (!doc) return;
     listen(doc);
-    let started = false;
-    for (const [key, value] of Object.entries(initial)) {
-      if (choices.has(key)) continue;
-      choices.set(key, value);
-      started = true;
-    }
-    if (started) changedChoices();
-    else {
+    const before = getSystem();
+    seedValues(initial);
+    if (getSystem() === before) {
       paintOptions(doc);
       paintFields(doc);
     }
@@ -363,8 +365,136 @@ export function PageGate({ conditions, page, children }: PageGateProps) {
   const holds = (state: PageState) => conditions.every((c) => evaluateCondition(c, pageScope({ ...page, ...state })));
   const shown = useSyncExternalStore(
     subscribeChoices,
-    () => holds(choiceSnapshot),
+    () => holds(currentChoices()),
     () => holds({}),
   );
   return shown ? <>{children}</> : null;
+}
+
+// ---------------------------------------------------------------------------
+// Machines
+// ---------------------------------------------------------------------------
+
+export interface MachineHostProps {
+  /** The section drawn: its machine's name on the page. */
+  instance: string;
+  spec: MachineSpec;
+  /** The machine as the server drew it. */
+  snapshot: MachineSnapshot;
+  /** The signed-in fan and the route the server drew with. */
+  host: { user: Json; route: Json };
+  /** The page's values written outside any machine, as the server drew them. */
+  free: Record<string, Json>;
+}
+
+/**
+ * Joins a drawn section's machine to the page, at the snapshot the server drew it at, so the first
+ * client render is the server's; then wires the document's presses, typing and keys to it.
+ */
+export function MachineHost({ instance, spec, snapshot, host, free }: MachineHostProps) {
+  const ref = useRef<HTMLSpanElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a section's machine is its tree's, fixed for its life
+  useEffect(() => {
+    const doc = ref.current?.ownerDocument;
+    if (!doc) return;
+    listen(doc);
+    registerMachine(instance, spec, snapshot, { host, free });
+  }, []);
+  return <span ref={ref} hidden data-fos-machine={instance} />;
+}
+
+/** A followed item's entry in the list in state: `$entry` for what is drawn inside it. */
+const EntryContext = createContext<{ entry: Json } | undefined>(undefined);
+
+/**
+ * The scope a node of `instance`'s section reads state in, live; `undefined` until its machine has
+ * joined the page (a gate then keeps the server's answer, so hydration matches the markup).
+ */
+function useLiveScope(instance: string | undefined): Record<string, unknown> | undefined {
+  const entry = useContext(EntryContext);
+  const system = useSyncExternalStore(subscribeStore, getSystem, () => undefined);
+  if (!system || (instance !== undefined && !system.specs[instance] && Object.keys(system.free).length === 0)) return undefined;
+  const scope = stateScope(system, instance);
+  return entry ? { ...scope, $entry: entry.entry } : scope;
+}
+
+export interface StateGateProps {
+  instance?: string;
+  /** The conditions of the node's `when` that read state, made to read nothing else. */
+  conditions: Condition[];
+  /** Whether they held when the server drew the page. */
+  initial: boolean;
+  children: ReactNode;
+}
+
+/** Draws its node while the state satisfies its conditions: a menu's panel while the menu is open. */
+export function StateGate({ instance, conditions, initial, children }: StateGateProps) {
+  const scope = useLiveScope(instance);
+  const shown = scope === undefined ? initial : conditions.every((c) => evaluateCondition(c, scope));
+  return shown ? <>{children}</> : null;
+}
+
+export interface StateTextProps {
+  instance?: string;
+  /** The text in pieces: literal text and everything else resolved, the refs to state as written. */
+  parts: Array<string | { ref: string }>;
+  /** The characters as the server drew them. */
+  initial: string;
+  timeZone?: string;
+  dateOrder?: "mdy" | "dmy";
+}
+
+/** The characters of a Text that reads state: `0/2` as favourites are picked, a cart's count. */
+export function StateText({ instance, parts, initial, timeZone, dateOrder }: StateTextProps) {
+  const scope = useLiveScope(instance);
+  if (scope === undefined) return <>{initial}</>;
+  const options = { ...(timeZone ? { timeZone } : {}), ...(dateOrder ? { dateOrder } : {}) };
+  return <>{parts.map((part) => (typeof part === "string" ? part : resolveTemplate(part.ref, scope, options).value)).join("")}</>;
+}
+
+export interface FollowItemProps {
+  instance?: string;
+  /** The list in state: `$page.followed`, `$state.context.lines`. */
+  list: string;
+  /** This item's key: the value its entry is, or holds under `by`. */
+  itemKey: Json;
+  by?: string;
+  /** Its entry when the server drew the page, or undefined when it was not in the list. */
+  initial?: Json;
+  /** The repetition's attributes, as the server drew them. */
+  attrs: Record<string, string | number>;
+  children: ReactNode;
+}
+
+const entryIn = (list: unknown, key: Json, by: string | undefined): Json | undefined => {
+  if (!Array.isArray(list)) return undefined;
+  const hit = list.find((e) => (by ? e && typeof e === "object" && (e as Record<string, unknown>)[by] === key : e === key));
+  return hit as Json | undefined;
+};
+
+/**
+ * One item of a Repeater that follows a list in state (`follow`): drawn while the list holds it,
+ * with its entry as `$entry` (a cart line's quantity). The server drew every item the data has, in
+ * the data's order, each shown or not as the state stood; the browser shows and hides them.
+ */
+export function FollowItem({ instance, list, itemKey, by, initial, attrs, children }: FollowItemProps) {
+  const scope = useLiveScope(instance);
+  const entry = scope === undefined ? initial : entryIn(readList(scope, list), itemKey, by);
+  if (entry === undefined) return null;
+  return (
+    <EntryContext.Provider value={{ entry }}>
+      <div style={{ display: "contents" }} data-fos-entry={JSON.stringify(entry)} {...attrs}>
+        {children}
+      </div>
+    </EntryContext.Provider>
+  );
+}
+
+function readList(scope: Record<string, unknown>, path: string): unknown {
+  let cur: unknown = scope;
+  for (const part of path.split(".")) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
 }

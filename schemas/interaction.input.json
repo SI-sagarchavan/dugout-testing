@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "preview": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/",
+      "description": "The preview of the section: /preview/<project>/<tree>?plan=…&data=…"
+    },
+    "section": {
+      "description": "The section's run (the run that built it): its versions are kept under it",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "request": {
+      "description": "What a person asked the section to do, in their words, each with the element it is on: from ui-editor. Left out, the design is the brief",
+      "type": "string",
+      "maxLength": 4000
+    }
+  },
+  "required": [
+    "preview"
+  ]
+}

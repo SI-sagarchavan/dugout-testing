@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Situation, Tool, ToolContext } from "@dugout/contracts";
+import { memoryRunState, type Situation, type Tool, type ToolContext } from "@dugout/contracts";
 import { REPO_ROOT } from "@dugout/core";
 import type { MemoryItem } from "@dugout/memory";
 import { describe, expect, it } from "vitest";
@@ -75,6 +75,7 @@ describe("bind.load and what a person decided before (ADR 0033)", () => {
       tenantId: "t",
       runId: "run-d",
       signal: new AbortController().signal,
+      state: memoryRunState(),
       input: { preview: `http://localhost:3000/preview/default/${TREE_ID}` },
       situate: (s) => {
         situated = s;
@@ -107,6 +108,7 @@ describe("bind.load and what a person decided before (ADR 0033)", () => {
       tenantId: "t",
       runId: "run-settled",
       signal: new AbortController().signal,
+      state: memoryRunState(),
       input: { preview: `http://localhost:3000/preview/default/${TREE_ID}` },
     };
     const out = (await (tools.find((t) => t.name === "bind.load") as Tool).run({}, ctx)) as {
@@ -116,20 +118,16 @@ describe("bind.load and what a person decided before (ADR 0033)", () => {
     expect(out.settled).toEqual({ data_source: "stand_in" });
   });
 
-  it("names only declared questions in its skill", () => {
+  it("declares no questions: the model asks what it needs and says how far each answer holds", () => {
+    expect("questions" in spec).toBe(false);
     const skill = readFileSync(join(REPO_ROOT, "agents/data-bind/skills/bind.md"), "utf8");
-    const listed =
-      /Give each question the id `ask` lists for it \(([^)]*)\)/.exec(skill)?.[1] ?? "";
-    const ids = [...listed.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
-    expect(ids.length).toBeGreaterThan(0);
-    expect(ids.sort()).toEqual(Object.keys(spec.questions ?? {}).sort());
+    expect(skill).toContain("No question is set in advance");
   });
 });
 
 describe("data_source: the feeds a person gives (ticket 02)", () => {
   it("is a question of the section, and the call to hook-maker shows the feeds", async () => {
     const { needLines } = await import("../src/agent.ts");
-    expect(spec.questions?.data_source?.scope).toBe("section");
     const lines = needLines({
       list: "players",
       count: "data",
@@ -186,6 +184,7 @@ describe("a club's feeds, known once (ticket 07)", () => {
       tenantId: "t",
       runId: "run-feeds",
       signal: new AbortController().signal,
+      state: memoryRunState(),
       input: { preview: `http://localhost:3000/preview/default/${TREE_ID}` },
     };
     const out = (await (tools.find((t) => t.name === "bind.load") as Tool).run({}, ctx)) as {
@@ -242,6 +241,7 @@ describe("the club's locale, for dates and times (ticket 10)", () => {
       tenantId: "t",
       runId: "run-locale",
       signal: new AbortController().signal,
+      state: memoryRunState(),
       input: { preview: `http://localhost:3000/preview/default/${TREE_ID}` },
     };
     const out = (await (tools.find((t) => t.name === "bind.load") as Tool).run({}, ctx)) as {
@@ -269,6 +269,7 @@ describe("tools report what is open, the model asks (ticket 11)", () => {
       tenantId: "t",
       runId: "run-open",
       signal: new AbortController().signal,
+      state: memoryRunState(),
       input: { preview: `http://localhost:3000/preview/default/${TREE_ID}` },
     };
     const out = (await (tools.find((t) => t.name === "bind.load") as Tool).run({}, ctx)) as {

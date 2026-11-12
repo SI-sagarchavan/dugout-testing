@@ -239,6 +239,7 @@ export {
   collapseToRepeater,
   detachAsVariant,
   insertBefore,
+  insertSubtree,
   moveNode,
   removeNode,
   replaceNode,
@@ -246,10 +247,24 @@ export {
   TreeOpError,
   wrapIn,
 } from "./ops.js";
-export type { Binding, CollapseOptions, DetachOptions, RemoveOptions } from "./ops.js";
+export type {
+  Binding,
+  CollapseOptions,
+  DetachOptions,
+  InsertSubtreeOptions,
+  RemoveOptions,
+} from "./ops.js";
 
 // The property panel of a node: what a person can edit, from the field descriptors
 export { panelOf, propIssues, propNamesOf } from "./panel.js";
 export type { PanelField, PanelGroup, PanelGroupId } from "./panel.js";
 export { measureOf, measureText, readProp, shownValue, storedValue } from "./panel-values.js";
 export type { PanelControl } from "./panel-values.js";
+
+// Interaction state: a machine per section (XState v5, as JSON), a page of them, what nodes read
+export * from "./machine/index.js";
+export { readsLive, splitLiveWhen } from "./machine/when.js";
+export { checkMachine, machineOf } from "./machine/tree.js";
+
+// More of a data source, added to what the page holds of it (a machine request with `source`)
+export { addToSource } from "./source.js";

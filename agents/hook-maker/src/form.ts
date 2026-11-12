@@ -1,7 +1,7 @@
 /**
  * The form of a short text a design writes around a number: a date, a time, a score, a count with
- * its unit. Shared by hook-maker (does its output have the design's form?) and data-bind (does the
- * page?). Code only, so it holds for any data.
+ * its unit. Exported for data-bind (does the page write the design's form?); hook-maker itself
+ * shows its model the values beside the design's example (`hook.evidence`) and lets it judge.
  */
 const MONTHS = new Set(
   "january february march april may june july august september october november december jan feb mar apr jun jul aug sep sept oct nov dec".split(

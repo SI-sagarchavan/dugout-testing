@@ -13,10 +13,12 @@ import { z } from "zod";
  * - each query parameter, in the order and as often as the feeds write it, still encoded: a literal
  *   when every feed of the connector has the same value, an input (`{{input.<name>}}`, the name made
  *   safe) when they differ or only some feeds have it, each call setting only the inputs its feed has;
- * - a value that looks like a secret (a key, a token, a signature, a password, or a long random
- *   string) is never a literal of a connector others share: it is `{{cred.<name>}}`, and reported in
- *   `secrets` for a person to add to Cast. A URL with credentials in it (`https://user:pass@…`) is
- *   refused.
+ * - which parameters hold a secret is the model's call: it names them (`secrets`), and each is
+ *   `{{cred.<name>}}` in the connector, never a literal, reported in `secrets` for a person to add
+ *   to Cast. Code reports the parameters that look like one, and why (`looksSecret`: a name with a
+ *   word such as key or token in it, a long random value); when the model names none, those are
+ *   the plan's proposal, which the model may change by calling again with `secrets`. A URL with
+ *   credentials in it (`https://user:pass@…`) is refused.
  */
 export interface FeedSource {
   label: string;
@@ -55,11 +57,18 @@ export interface PlannedSecret {
   key: string;
   /** The credential the connector reads it from: `{{cred.<cred>}}`. */
   cred: string;
-  /** Why it reads as a secret. */
+  /** Why it is one: the model named it, or what makes it look like one (the plan's proposal). */
   why: string;
 }
 
-/** Query parameter names that hold a secret, as words of the name (`api_key`, `accessToken`). */
+/** A parameter that looks like a secret, and why: evidence, not a decision. */
+export interface LooksSecret {
+  labels: string[];
+  key: string;
+  why: string;
+}
+
+/** Words of a parameter's name that often mean it holds a secret (`api_key`, `accessToken`). */
 const SECRET_WORDS = new Set([
   "key",
   "apikey",
@@ -86,10 +95,10 @@ const wordsOfName = (name: string) =>
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
 
-/** Why a parameter is a secret, or undefined. `value` is decoded. */
+/** Why a parameter looks like a secret, or undefined: evidence for the model. `value` is decoded. */
 export function secretWhy(key: string, value: string): string | undefined {
   const named = wordsOfName(key).find((w) => SECRET_WORDS.has(w));
-  if (named) return `its name says it is a ${named}`;
+  if (named) return `its name has the word "${named}" in it`;
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
   if (
     !uuid &&
@@ -152,11 +161,23 @@ const decoded = (raw: string) => {
   }
 };
 
-export function planFeeds(sources: FeedSource[]): {
+/**
+ * The plan for the feeds. `secrets` names the parameters (as the feeds write them, or decoded) the
+ * model decided hold a secret; left out, the ones that look like one are the plan's proposal.
+ */
+export function planFeeds(
+  sources: FeedSource[],
+  chosen?: string[],
+): {
   providers: PlannedProvider[];
   refused: string[];
   secrets: PlannedSecret[];
+  looksSecret: LooksSecret[];
+  /** Whose call the secrets are: the model's (`secrets` given) or the plan's proposal. */
+  secretsBy: "you" | "proposal";
 } {
+  const named = chosen ? new Set(chosen.map((k) => decoded(k))) : undefined;
+  const looks = new Map<string, LooksSecret>();
   const refused: string[] = [];
   const byOrigin = new Map<string, Array<FeedSource & { parsed: URL; params: Param[] }>>();
   for (const source of sources) {
@@ -210,9 +231,23 @@ export function planFeeds(sources: FeedSource[]): {
       };
       const planned = [...slots.values()].map(({ key, nth }) => {
         const values = group.map((f) => f.params.find((p) => p.key === key && p.nth === nth));
-        const secret = values
+        const sending = group.filter((_, i) => values[i]).map((f) => f.label);
+        const looksWhy = values
           .map((v) => (v ? secretWhy(decoded(key), decoded(v.raw)) : undefined))
           .find(Boolean);
+        if (looksWhy) {
+          const known = looks.get(decoded(key));
+          looks.set(decoded(key), {
+            key: decoded(key),
+            why: looksWhy,
+            labels: [...new Set([...(known?.labels ?? []), ...sending])],
+          });
+        }
+        const secret = named
+          ? named.has(decoded(key))
+            ? "you named it a secret"
+            : undefined
+          : looksWhy;
         if (secret) {
           const cred = safeName(key);
           const known = secrets.get(cred);
@@ -220,12 +255,7 @@ export function planFeeds(sources: FeedSource[]): {
             key: decoded(key),
             cred,
             why: secret,
-            labels: [
-              ...new Set([
-                ...(known?.labels ?? []),
-                ...group.filter((_, i) => values[i]).map((f) => f.label),
-              ]),
-            ],
+            labels: [...new Set([...(known?.labels ?? []), ...sending])],
           });
           return { key, nth, value: `{{cred.${cred}}}`, secret: true, input: undefined };
         }
@@ -263,21 +293,33 @@ export function planFeeds(sources: FeedSource[]): {
       connectors,
     });
   }
-  return { providers, refused, secrets: [...secrets.values()] };
+  return {
+    providers,
+    refused,
+    secrets: [...secrets.values()],
+    looksSecret: [...looks.values()],
+    secretsBy: named ? "you" : "proposal",
+  };
 }
 
 export const planFeedsTool = defineTool({
   name: "feeds.plan",
   description:
-    "Work out the providers and connectors for the feeds a person gave (need.sources), the same way every time: one provider for each origin (its base URL the origin, no path: look an existing one up by it), one connector for each path (the whole path in its url), and its query parameters in order, still encoded: a literal when every feed has the same value, an input when they differ or only some feeds have it (each call's input says what that feed sets), a credential ({{cred.<name>}}) for a value that looks like a secret, listed in secrets. Create exactly what it says with cast.upsertProvider and cast.upsertApi. Takes the sources as given; reads nothing.",
+    "Work out the providers and connectors for the feeds a person gave (need.sources), the same way every time: one provider for each origin (its base URL the origin, no path: look an existing one up by it), one connector for each path (the whole path in its url), and its query parameters in order, still encoded: a literal when every feed has the same value, an input when they differ or only some feeds have it (each call's input says what that feed sets), and a credential ({{cred.<name>}}) for each parameter that holds a secret, listed in secrets. Which parameters hold a secret is yours to decide: looksSecret lists those that look like one and why; pass secrets (the parameter names) to say which are, or leave it out to take looksSecret as the plan's proposal (secretsBy says which it is), and call again with secrets when the proposal is wrong. Create what the plan says with cast.upsertProvider and cast.upsertApi. Takes the sources as given; reads nothing.",
   input: z
     .object({
       sources: z.array(z.object({ label: z.string().min(1), url: z.string().min(1) })).min(1),
+      secrets: z
+        .array(z.string().min(1))
+        .optional()
+        .describe(
+          "The query parameters (names as the feeds write them) that hold a secret, as you judge them: each becomes a credential a person adds in Cast. [] for none; left out, the plan proposes the ones that look like one",
+        ),
     })
     .strict(),
   effect: "read",
   timeoutMs: 5_000,
-  async run({ sources }) {
-    return planFeeds(sources);
+  async run({ sources, secrets }) {
+    return planFeeds(sources, secrets);
   },
 });

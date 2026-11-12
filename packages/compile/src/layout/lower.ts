@@ -202,7 +202,7 @@ function lowerCarousel(
 
   node.type = "Carousel";
   node.props = carousel;
-  wireControls(nodes, node, intent.chrome, config, aside);
+  wireControls(nodes, node, intent.chrome, config, ir, aside);
   return undefined;
 }
 
@@ -210,10 +210,17 @@ function lowerCarousel(
  * The designed arrows, dots and counter stay as drawn, wired to the carousel. What a frame cannot
  * draw, their look in a state, comes from the config; an arrow with nowhere to go fades without
  * one. A counter writes the slide on show in the form the design drew ("01", "1 / 5"). A progress
- * bar stays as drawn: the renderer fills a bar by scale, and a design that moves a segment along a
- * track is not that.
+ * bar is wired only on a carousel that moves on its own (`wireProgress`); otherwise it stays as
+ * drawn.
  */
-function wireControls(nodes: FlatNode[], carousel: FlatNode, chrome: LayoutChrome, config: CarouselConfig, aside: string[]): void {
+function wireControls(
+  nodes: FlatNode[],
+  carousel: FlatNode,
+  chrome: LayoutChrome,
+  config: CarouselConfig,
+  ir: Map<string, FrameIRNode>,
+  aside: string[],
+): void {
   const looks = config.controls;
   const arrows: FlatNode[] = [];
   for (const part of ["prev", "next", "pagination", "counter"] as const) {
@@ -245,11 +252,71 @@ function wireControls(nodes: FlatNode[], carousel: FlatNode, chrome: LayoutChrom
     const states = looks?.arrows?.states ?? { disabled: { opacity: "opacity.40" } };
     control.props = { ...control.props, states: { ...((control.props.states as object | undefined) ?? {}), ...states } };
   }
-  if (chrome.progress) aside.push("the progress bar stays as drawn: it does not move with the slides");
+  if (chrome.progress) wireProgress(nodes, carousel, chrome.progress, config, ir, aside);
   if (looks?.arrows?.placement === "edges") {
     const why = toEdges(nodes, arrows);
     if (why) aside.push(`arrows left where they are drawn: ${why}`);
   }
+}
+
+/** A bar is a thin line; the segment drawn on a track is one too, within a few pixels of it. */
+const MAX_BAR_PX = 8;
+const ON_TRACK_PX = 4;
+
+/**
+ * The progress bar of a carousel that moves on its own shows the time gone on the slide: the
+ * renderer fills it by scale, from nothing to its whole width, once per slide. A design draws that
+ * as a track with a short segment at its start (the time gone so far); the segment becomes the bar,
+ * as wide as the track, and the track stays as drawn under it. A bar drawn alone is filled itself.
+ * Without autoplay nothing moves it, and it stays as drawn.
+ */
+function wireProgress(
+  nodes: FlatNode[],
+  carousel: FlatNode,
+  src: string,
+  config: CarouselConfig,
+  ir: Map<string, FrameIRNode>,
+  aside: string[],
+): void {
+  if (config.autoplay === false) {
+    aside.push("the progress bar stays as drawn: the carousel does not move on its own, so nothing fills it");
+    return;
+  }
+  const track = nodes.find((n) => n.src === src);
+  const box = ir.get(src)?.geometry.bbox;
+  if (!track || !box) {
+    aside.push(`the progress bar ${src} is not in the tree: nothing to fill`);
+    return;
+  }
+  if (box.h > box.w) {
+    aside.push("the progress bar stays as drawn: a bar that fills downwards is not wired yet");
+    return;
+  }
+  const controlFor = { target: carousel.id, part: "progress" };
+  const segment = nodes.find((n) => {
+    if (n === track || n.parent !== track.parent) return false;
+    const b = ir.get(n.src)?.geometry.bbox;
+    if (!b || b.h > MAX_BAR_PX || b.w >= box.w) return false;
+    const onTrack = Math.abs(b.y + b.h / 2 - (box.y + box.h / 2)) <= ON_TRACK_PX;
+    return onTrack && Math.abs(b.x - box.x) <= 1 && b.x + b.w <= box.x + box.w + 1;
+  });
+  if (!segment) {
+    track.props = { ...track.props, controlFor };
+    return;
+  }
+  const meta = { ...((segment.props._meta as Record<string, unknown> | undefined) ?? {}) };
+  const deviations = [...((meta.deviations as unknown[] | undefined) ?? [])];
+  deviations.push({
+    check: "C2",
+    reason: "the segment drawn on the progress track is the bar: as wide as the track, filled as the slide's time runs out",
+    max: 1,
+  });
+  segment.props = {
+    ...segment.props,
+    size: { ...((segment.props.size as Record<string, unknown> | undefined) ?? {}), w: { raw: round(box.w), _unbound: true } },
+    controlFor,
+    _meta: { ...meta, deviations },
+  };
 }
 
 /** The counter's text in the form the design drew it: "01" → "0{index}", "1 / 5" → "{index} / {count}". */
@@ -347,7 +414,7 @@ function lowerOneSlide(
   // idx stays a run from 0 under the container, the carousel where the slide's layers were
   const rest = kids.filter((k) => !wanted.has(k.src));
   [...rest.slice(0, from), carousel, ...rest.slice(from)].forEach((k, i) => (k.idx = i));
-  wireControls(nodes, carousel, chrome, config, aside);
+  wireControls(nodes, carousel, chrome, config, ir, aside);
   return { made: `carousel of one drawn slide (${parts.length} layers), repeated for each item the data holds` };
 }
 
