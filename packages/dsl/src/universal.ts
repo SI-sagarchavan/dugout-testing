@@ -55,6 +55,23 @@ export const placeFields: Fields = {
   z: opt(f.num(true), { doc: "explicit override; never a layout mechanism" }),
 };
 
+/**
+ * The node scrolls with the page until it reaches an edge of what scrolls, then stays there while
+ * the rest scrolls past, for as long as its parent is on screen (Figma's "sticky" and "fixed
+ * position when scrolling"). A header that stays at the top, a side panel beside an article that
+ * stops at the article's end.
+ *
+ * It sticks inside its PARENT's box: a side panel sticks until the end of the Stack it shares with
+ * the article, and stays there. On the tree's root the parent is the host's page, so a whole
+ * section sticks to the top of the page (the renderer puts it on the section's wrapper). What
+ * scrolls is the page, or the nearest Stack with `scroll` above it. An ancestor that clips still
+ * clips, and the node still sticks; a node in a Carousel's slides never does (S20).
+ */
+export const stickyFields: Fields = {
+  edge: opt(f.enum("top", "bottom"), { doc: 'the edge it stays at (default "top")' }),
+  offset: opt(f.val(), { doc: "how far from that edge it stays, as a space token (default 0)" }),
+};
+
 export const semanticsFields: Fields = {
   as: opt(f.str()),
   label: opt(f.str()),
@@ -173,6 +190,9 @@ export const universalFields: Fields = {
   space: opt(f.obj(spaceFields)),
   size: opt(f.obj(sizeFields)),
   place: opt(f.obj(placeFields)),
+  sticky: opt(f.obj(stickyFields), {
+    doc: "stays at an edge of the page while the rest scrolls, inside its parent's box: { edge?: top|bottom, offset? }; on the root, the whole section sticks (S20)",
+  }),
   /** How the node mixes with what is under it. Default: it paints over it. */
   blend: opt(f.enum(...BLENDS)),
   /**
@@ -347,6 +367,8 @@ export const REPEATER_FORBIDDEN_PROPS = [
   "size",
   "place",
   // a look needs a box to paint, and a fragment has none
+  // sticking moves a box, and a fragment has none
+  "sticky",
   "fill",
   "opacity",
   "transform",

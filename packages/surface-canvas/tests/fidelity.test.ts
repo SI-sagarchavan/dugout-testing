@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blendOf, imageDetailOf, maskOf, renderBoxOf, textAlignOf } from "../src/fidelity";
+import { blendOf, imageDetailOf, maskOf, renderBoxOf, scrollOf, textAlignOf } from "../src/fidelity";
 import { IR_VERSIONS, parseFrameIRDocument, safeParseFrameIRDocument } from "../src/ir/index";
 import { document, looseText, node, resetIds } from "./health-fixtures";
 
@@ -154,5 +154,33 @@ describe("IR 1.10.0", () => {
     expect(IR_VERSIONS).toContain("1.10.0");
     const parsed = parseFrameIRDocument(JSON.parse(JSON.stringify(document(root))));
     expect(parsed.root.blendMode).toBe("LUMINOSITY");
+  });
+});
+
+describe("scrollOf", () => {
+  it("reads the layer's own scroll behaviour", () => {
+    expect(scrollOf({ scrollBehavior: "STICKY_SCROLLS" })).toBe("sticky");
+    expect(scrollOf({ scrollBehavior: "FIXED" })).toBe("fixed");
+    expect(scrollOf({ scrollBehavior: "SCROLLS" })).toBeUndefined();
+  });
+
+  it("reads a fixed child from its frame: the last numberOfFixedChildren of its children", () => {
+    const header: { parent?: unknown } = {};
+    const body: { parent?: unknown } = {};
+    const parent = { numberOfFixedChildren: 1, children: [body, header] };
+    header.parent = parent;
+    body.parent = parent;
+    expect(scrollOf(header as Parameters<typeof scrollOf>[0])).toBe("fixed");
+    expect(scrollOf(body as Parameters<typeof scrollOf>[0])).toBeUndefined();
+  });
+
+  it("writes nothing for a layer that scrolls with the rest", () => {
+    expect(scrollOf({})).toBeUndefined();
+    expect(scrollOf({ parent: { numberOfFixedChildren: 0, children: [] } })).toBeUndefined();
+    expect(scrollOf({ parent: null })).toBeUndefined();
+  });
+
+  it("is read by IR 1.14.0", () => {
+    expect(IR_VERSIONS).toContain("1.14.0");
   });
 });

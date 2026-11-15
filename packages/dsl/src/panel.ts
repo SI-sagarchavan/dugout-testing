@@ -57,6 +57,7 @@ const UNIVERSAL_GROUP: Record<string, PanelGroupId> = {
   column: "size",
   space: "space",
   place: "place",
+  sticky: "place",
   _meta: "meta",
 };
 

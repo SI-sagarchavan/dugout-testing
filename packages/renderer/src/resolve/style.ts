@@ -111,6 +111,37 @@ export const PAGE_SELECTED = "__fosSelected";
 export { STATE_LOOKS, STATE_ON } from "./state.js";
 
 /**
+ * Set by the renderer on a box that clips (`clip: true`) and holds a sticky node, with the box's
+ * node type. Not a prop of the tree. `overflow: hidden` makes a box what a sticky node sticks to,
+ * and a box that clips never scrolls, so nothing under it would ever stick: such a box clips with
+ * `overflow: clip` instead, which cuts the same pixels without being a scroll container. What
+ * `hidden` also did is kept: a block box still starts its own formatting context (`flow-root`, so a
+ * child's negative margin stays inside), and a flex or grid item's least size is still 0.
+ */
+export const CLIP_HOLDS_STICKY = "__fosClipHoldsSticky";
+
+export interface StickyInput {
+  edge?: "top" | "bottom";
+  offset?: unknown;
+}
+
+/**
+ * `sticky` to CSS: the node stays `offset` from its edge of what scrolls, inside its parent's box.
+ * It is drawn over what scrolls under it (`z-index: 1`), or a later sibling with a box of its own
+ * would paint across it. Nothing changes until the page scrolls, so a still picture of the section
+ * is the design's.
+ */
+export function resolveSticky(sticky: StickyInput): { style: CssProperties; edge: "top" | "bottom"; raw: boolean } {
+  const edge = sticky.edge === "bottom" ? "bottom" : "top";
+  const offset = sticky.offset === undefined ? undefined : resolveValue(sticky.offset);
+  return {
+    style: { position: "sticky", [edge]: offset?.css || "0px", zIndex: "1" },
+    edge,
+    raw: offset?.raw === true,
+  };
+}
+
+/**
  * Resolve universal + layout props on a node into className / style / dataAttrs.
  *
  * `props` is the node's props bag as stored on the flat tree. Node-specific
@@ -199,9 +230,11 @@ export function resolveNode(
   // Figma's `clipsContent`. Deliberate overflow is a design device, not an
   // accident: the fixture row is 235px inside a 227px shell so the cards bleed
   // and get cut rather than leaving a strip of shell colour showing.
+  const holdsSticky = props.clip === true && typeof props[CLIP_HOLDS_STICKY] === "string";
   if (props.clip === true) {
-    style.overflow = "hidden";
+    style.overflow = holdsSticky ? "clip" : "hidden";
     dataAttrs["data-fos-clip"] = "true";
+    if (holdsSticky) dataAttrs["data-fos-clip-holds-sticky"] = "";
   }
   // A list in a box of fixed size that scrolls rather than being cut. A flex child's min-size
   // would otherwise grow the box to its content and nothing would ever scroll.
@@ -242,6 +275,16 @@ export function resolveNode(
       // at render time; the data attr lets tests assert it.
       dataAttrs["data-fos-z-override"] = String(place.z);
     }
+  }
+
+  // --- sticky ------------------------------------------------------------
+  // Never with an anchor (S20): the anchor's `position: absolute` stands.
+  const sticky = props.sticky as StickyInput | undefined;
+  if (sticky && typeof sticky === "object" && !place?.anchor) {
+    const s = resolveSticky(sticky);
+    Object.assign(style, s.style);
+    dataAttrs["data-fos-sticky"] = s.edge;
+    if (s.raw) markRaw(dataAttrs, "sticky.offset");
   }
 
   // --- column ------------------------------------------------------------
@@ -319,6 +362,15 @@ export function resolveNode(
   // --- Overlay -----------------------------------------------------------
   if (props.clip === true) {
     classes.add("fos-overlay-clip");
+  }
+
+  // --- a clip that lets a sticky node stick (CLIP_HOLDS_STICKY) -----------
+  if (holdsSticky) {
+    const sized = (props.size ?? {}) as Record<string, unknown>;
+    if (sized.minW === undefined && style.minWidth === undefined) style.minWidth = "0";
+    if (sized.minH === undefined && style.minHeight === undefined) style.minHeight = "0";
+    const type = props[CLIP_HOLDS_STICKY];
+    if ((type === "Box" || type === "Overlay") && style.display === undefined) style.display = "flow-root";
   }
 
   return {

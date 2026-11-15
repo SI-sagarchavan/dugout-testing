@@ -56,6 +56,31 @@ export function snapSpace(theme: NormalizedTheme, n: number): string | undefined
   return undefined;
 }
 
+/**
+ * A layer Figma keeps in view while its frame scrolls (IR 1.14.0), as the DSL's `sticky`.
+ *
+ * Figma's sticky stays at the frame's top once it gets there: `{}`, the top at 0. A fixed layer
+ * never scrolls, so it stays where it is drawn: at the edge of its frame it is nearer (a bottom bar
+ * at the bottom), that far from it. On the web it sticks inside its parent, which for a layer of
+ * the page's frame is the whole section. Undefined when the layer scrolls with the rest.
+ */
+export function sticky(
+  theme: NormalizedTheme,
+  node: FrameIRNode,
+  parent: FrameIRNode | undefined,
+): { edge?: "bottom"; offset?: string | Raw } | undefined {
+  if (!node.scroll) return undefined;
+  if (node.scroll === "sticky" || !parent) return {};
+  const box = node.geometry.bbox;
+  const frame = parent.geometry.bbox;
+  const top = box.y - frame.y;
+  const bottom = frame.y + frame.h - (box.y + box.h);
+  const edge = bottom < top ? "bottom" : "top";
+  const distance = Math.max(0, edge === "top" ? top : bottom);
+  const offset = distance < 0.5 ? undefined : (snapSpace(theme, distance) ?? raw(distance));
+  return { ...(edge === "bottom" ? { edge } : {}), ...(offset !== undefined ? { offset } : {}) };
+}
+
 const ALIGN: Record<string, string> = {
   MIN: "start",
   CENTER: "center",

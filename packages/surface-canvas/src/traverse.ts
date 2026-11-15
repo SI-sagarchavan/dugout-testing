@@ -27,7 +27,7 @@ import {
   type TokenValue,
 } from "./ir/schema";
 import { annotateTree } from "./ir/signature";
-import { blendOf, imageDetailOf, maskOf, renderBoxOf, textAlignOf } from "./fidelity";
+import { blendOf, imageDetailOf, maskOf, renderBoxOf, scrollOf, textAlignOf } from "./fidelity";
 
 const YIELD_EVERY = 500;
 
@@ -238,6 +238,10 @@ async function normalize(
 
   const blendMode = blendOf(node as { blendMode?: unknown; fills?: unknown });
   if (blendMode) ir.blendMode = blendMode;
+
+  // Sticky or fixed while the frame scrolls (1.14.0); the frame holding it says which are fixed.
+  const scroll = scrollOf(node as Parameters<typeof scrollOf>[0]);
+  if (scroll) ir.scroll = scroll;
 
   return ir;
 }

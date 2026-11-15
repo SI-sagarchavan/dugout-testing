@@ -132,7 +132,13 @@ import { z } from "zod";
  * behind the sections. They tell the agents' section finder what the frame is made of, and are
  * never requirements for the build. Older readers took an unknown kind as `must-do`.
  */
-export const IR_VERSION = "1.13.0" as const;
+/**
+ * 1.14.0 — adds `scroll` on a layer: `sticky` (Figma's "Sticky": it scrolls with the frame until it
+ * reaches the frame's top, then stays) or `fixed` (a fixed child: "Fix position when scrolling").
+ * Absent when the layer scrolls with the rest, and on older documents. The compiler draws both as
+ * the DSL's `sticky`.
+ */
+export const IR_VERSION = "1.14.0" as const;
 export const IR_VERSIONS = [
   "1.1.0",
   "1.2.0",
@@ -147,6 +153,7 @@ export const IR_VERSIONS = [
   "1.11.0",
   "1.12.0",
   "1.13.0",
+  "1.14.0",
 ] as const;
 
 /**
@@ -568,6 +575,10 @@ export const blendModeSchema = z.enum([
 ]);
 export type BlendMode = z.infer<typeof blendModeSchema>;
 
+/** How a layer moves when its frame scrolls, when it does not simply scroll with it (1.14.0+). */
+export const scrollBehaviorSchema = z.enum(["sticky", "fixed"]);
+export type ScrollBehavior = z.infer<typeof scrollBehaviorSchema>;
+
 /** Figma's `maskType`. `ALPHA` clips by the mask's opacity, `VECTOR` by its outline. */
 export const maskTypeSchema = z.enum(["ALPHA", "VECTOR", "LUMINANCE"]);
 export type MaskType = z.infer<typeof maskTypeSchema>;
@@ -600,6 +611,11 @@ export interface FrameIRNode {
   maskType?: MaskType;
   /** How the layer mixes with what is under it (1.10.0+). Absent when it doesn't. */
   blendMode?: BlendMode;
+  /**
+   * How the layer moves when the frame holding it scrolls (1.14.0+): `sticky` stays at the top once
+   * it gets there, `fixed` never scrolls. Absent when it scrolls with the rest.
+   */
+  scroll?: ScrollBehavior;
 
   text?: TextInfo;
   image?: ImageInfo;
@@ -653,6 +669,7 @@ export const frameIRNodeSchema: z.ZodType<FrameIRNode, z.ZodTypeDef, unknown> = 
     isMask: z.boolean().optional(),
     maskType: maskTypeSchema.optional(),
     blendMode: blendModeSchema.optional(),
+    scroll: scrollBehaviorSchema.optional(),
 
     text: textSchema.optional(),
     image: imageSchema.optional(),

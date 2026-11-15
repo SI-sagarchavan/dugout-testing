@@ -42,6 +42,7 @@ export const ISSUE_CODES = [
   "S17", // a page choice sets one value twice, starts twice, or has one option; a field's key is not one name or is written twice
   "S18", // a section's machine is not one, or not on the root; a node sends an event nobody handles, reads $state with no machine, or a Repeater draws state
   "S19", // a link (href, or a Button that navigates) inside another link, or href on a Button
+  "S20", // sticky inside a Carousel's slides (it would never stick), or sticky and place.anchor on one node
   "T1", // token ref does not resolve
   "T2", // Text.style is not a TypeToken
   "T3", // Resp<> wrapper around a TypeToken
@@ -390,6 +391,36 @@ export function validate(tree: FlatTree, options: ValidateOptions): ValidationRe
           severity: "error",
           nodeId: node.id,
           message: `"${node.id}" links inside "${up.id}", which links already: a link cannot hold another; keep one of them`,
+        });
+        break;
+      }
+    }
+
+    // --- S20 --------------------------------------------------------------
+    // A sticky node sticks to the nearest box that scrolls, inside its parent. A box that clips is
+    // drawn so it still sticks (the renderer clips it without making it a scroll container), and a
+    // Stack with `scroll` is a box that scrolls on purpose (a list's header sticks inside it). A
+    // Carousel's slides are moved and clipped by Swiper, so a node in one never sticks: refused
+    // rather than shipped as a header that silently scrolls away.
+    if (node.props["sticky"] !== undefined) {
+      if (place && typeof place === "object" && place["anchor"] !== undefined) {
+        add({
+          code: "S20",
+          severity: "error",
+          nodeId: node.id,
+          path: "sticky",
+          message: `"${node.id}" is placed by place.anchor and sticky at once: a node is pinned in its parent or sticks while the page scrolls, not both`,
+        });
+      }
+      for (let up = parentOf(node); up; up = parentOf(up)) {
+        if (up.props["scroll"] !== undefined) break;
+        if (up.type !== "Carousel") continue;
+        add({
+          code: "S20",
+          severity: "error",
+          nodeId: node.id,
+          path: "sticky",
+          message: `"${node.id}" is sticky inside the Carousel "${up.id}", whose slides move and clip, so it would never stick: take sticky off "${node.id}"`,
         });
         break;
       }

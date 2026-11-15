@@ -20,6 +20,8 @@ export {
   ASSET_NAME_RE,
   ASSET_PLUGIN_KEY,
   blendModeSchema,
+  scrollBehaviorSchema,
+  type ScrollBehavior,
   type BlendMode,
   IR_VERSION,
   IR_VERSIONS,

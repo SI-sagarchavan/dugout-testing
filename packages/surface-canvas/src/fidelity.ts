@@ -15,7 +15,7 @@
  *
  * PURE. No Figma.
  */
-import { type BlendMode, blendModeSchema } from "./ir/schema";
+import { type BlendMode, blendModeSchema, type ScrollBehavior } from "./ir/schema";
 import type {
   ImageInfo,
   MaskType,
@@ -84,6 +84,26 @@ export function blendOf(node: { blendMode?: unknown; fills?: unknown }): BlendMo
   );
   const paint = shown.length === 1 ? blendModeSchema.safeParse(shown[0]?.blendMode) : undefined;
   return paint?.success ? paint.data : undefined;
+}
+
+/**
+ * How a layer moves when its frame scrolls (IR 1.14.0). Figma says it two ways: newer files on the
+ * layer (`scrollBehavior`: `STICKY_SCROLLS`, `FIXED`), and every file on the parent, as its
+ * `numberOfFixedChildren`: the frame's children in two runs, the fixed ones last (on top in the
+ * layers panel), with no flag on the layer itself.
+ */
+export function scrollOf(node: {
+  scrollBehavior?: unknown;
+  parent?: { numberOfFixedChildren?: unknown; children?: ReadonlyArray<unknown> } | null;
+}): ScrollBehavior | undefined {
+  if (node.scrollBehavior === "STICKY_SCROLLS") return "sticky";
+  if (node.scrollBehavior === "FIXED") return "fixed";
+  if (node.scrollBehavior !== undefined) return undefined;
+  const parent = node.parent;
+  const fixed = parent?.numberOfFixedChildren;
+  if (typeof fixed !== "number" || fixed <= 0 || !parent?.children) return undefined;
+  const at = parent.children.indexOf(node);
+  return at >= 0 && at >= parent.children.length - fixed ? "fixed" : undefined;
 }
 
 /**

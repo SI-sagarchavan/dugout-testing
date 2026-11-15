@@ -69,10 +69,12 @@ export function Overlay({
    * became flex items at the end of their row and landed 272px right of the
    * design. `absolute` is a containing block just as well, so nothing is lost.
    */
-  if (rootStyle.position !== "absolute") rootStyle.position = "relative";
+  // A sticky Overlay sticks (`resolveNode` wrote it), and is a containing block just as well.
+  if (rootStyle.position !== "absolute" && rootStyle.position !== "sticky") rootStyle.position = "relative";
   // Fill the Render width so aspect-ratio resolves to a real height.
   if (!rootStyle.width) rootStyle.width = "100%";
-  if (clip) rootStyle.overflow = "hidden";
+  // `clip` when it holds a sticky node, which `hidden` would stop sticking (CLIP_HOLDS_STICKY)
+  if (clip) rootStyle.overflow = resolved.style.overflow === "clip" ? "clip" : "hidden";
   else rootStyle.overflow = "visible";
 
   const link = linkOf(node, ctx);

@@ -57,6 +57,7 @@ import {
   size,
   space,
   stack,
+  sticky,
   text,
   unhuggableAxes,
   type Raw,
@@ -142,7 +143,8 @@ export interface CompileNote {
     | "unsupported-type"
     | "crop-dropped"
     | "zero-props"
-    | "form-field";
+    | "form-field"
+    | "sticky-dropped";
   irId: string;
   nodeId?: string;
   message: string;
@@ -632,6 +634,23 @@ function emit(
         props.column = outer.w;
       }
     }
+  }
+
+  /**
+   * Kept in view while the page scrolls: Figma's sticky, or a fixed layer (IR 1.14.0). Only a layer
+   * in flow can stick; one placed by an anchor (a layer of a frame without auto-layout) stays
+   * pinned in its parent, as S20 requires, and the note says so.
+   */
+  const stuck = sticky(ctx.theme, node, parent?.node);
+  if (stuck && (props.place as { anchor?: string } | undefined)?.anchor !== undefined) {
+    ctx.notes.push({
+      kind: "sticky-dropped",
+      irId: node.id,
+      nodeId: id,
+      message: `"${node.name}" is ${node.scroll} while the frame scrolls, but it is placed in a frame without auto-layout, so it cannot stick: give its frame auto-layout in Figma`,
+    });
+  } else if (stuck) {
+    props.sticky = stuck;
   }
 
   /**

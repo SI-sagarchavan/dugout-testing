@@ -49,7 +49,7 @@ import { stateRules } from "../resolve/look.js";
 import { splitWhen, withClock } from "../resolve/clock.js";
 import { ClockGate, FollowItem, MachineHost, PageChoices, PageGate, StateGate } from "@fanos/renderer/client";
 import { behaviourOf, entryIn, isLegacyPage } from "../resolve/state.js";
-import { PAGE_SELECTED } from "../resolve/style.js";
+import { CLIP_HOLDS_STICKY, PAGE_SELECTED, resolveSticky, type StickyInput } from "../resolve/style.js";
 
 export interface RenderProps {
   tree: FlatTree;
@@ -139,7 +139,14 @@ export function Render({ tree, data, assets, themeSlug, origin, timeZone, dateOr
   const designHeight =
     designWidth && rw && rh && rw > 0 ? (designWidth * rh) / rw : undefined;
 
-  const inner = <RenderNode node={root} tree={tree} ctx={ctx} />;
+  const drawn = withStickyHolders(tree);
+  const inner = <RenderNode node={rootOf(drawn) ?? root} tree={drawn} ctx={ctx} />;
+  /**
+   * A sticky root sticks the whole section to the page. The root's own box fills this wrapper and
+   * cannot move inside it, so the wrapper, the page's child, is what sticks.
+   */
+  const stickyRoot = (root.props as { sticky?: StickyInput }).sticky;
+  const sticky = stickyRoot && typeof stickyRoot === "object" ? resolveSticky(stickyRoot) : undefined;
   // How each node looks in its states, from the tree's tokens; scoped to this tree.
   const states = stateRules(tree, root.id);
 
@@ -151,7 +158,9 @@ export function Render({ tree, data, assets, themeSlug, origin, timeZone, dateOr
       data-fos-tree={root.id}
       data-fos-instance={instance}
       {...(scaled ? { "data-fos-scale": scale.toFixed(4) } : {})}
+      {...(sticky ? { "data-fos-sticky": sticky.edge } : {})}
       style={{
+        ...(sticky?.style ?? {}),
         ...(width ? { width: `${width}px` } : {}),
         // Rounded: a 17-digit float in the DOM helps nobody and makes the
         // emitted markup non-deterministic to eyeball.
@@ -293,6 +302,28 @@ function RenderNode({ node: given, tree, ctx: outer }: { node: Node; tree: FlatT
       {gated}
     </PageGate>
   );
+}
+
+/**
+ * The tree with each box that clips and holds a sticky node marked (`CLIP_HOLDS_STICKY`), up to the
+ * nearest box that scrolls, which is what the node sticks to. Unchanged when nothing is sticky.
+ */
+function withStickyHolders(tree: FlatTree): FlatTree {
+  const byId = new Map(tree.nodes.map((n) => [n.id, n]));
+  const holders = new Map<string, string>();
+  for (const node of tree.nodes) {
+    if (!(node.props as Record<string, unknown>).sticky) continue;
+    for (let up = node.parent ? byId.get(node.parent) : undefined; up; up = up.parent ? byId.get(up.parent) : undefined) {
+      const props = up.props as Record<string, unknown>;
+      if (props.scroll !== undefined) break;
+      if (props.clip === true) holders.set(up.id, up.type);
+    }
+  }
+  if (holders.size === 0) return tree;
+  return {
+    ...tree,
+    nodes: tree.nodes.map((n) => (holders.has(n.id) ? ({ ...n, props: { ...n.props, [CLIP_HOLDS_STICKY]: holders.get(n.id) } } as typeof n) : n)),
+  };
 }
 
 /** An option of a page choice, marked when it is the choice the page is drawn at. */
